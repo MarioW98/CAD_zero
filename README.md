@@ -2,7 +2,7 @@
 
 **Dual-representation CAD kernel — native SDF + B-Rep, in C++20 and Python.**
 
-cadforge is a from-scratch CAD kernel where **SDF (signed distance fields) and B-Rep (boundary representation) are first-class peers**, inspired by Siemens NX *Convergent Modeling*. There is no "primary" representation: every operation has native implementations in both domains, and the system dispatches based on operand types.
+cadforge is a from-scratch CAD kernel where **SDF (signed distance fields) and B-Rep (boundary representation) are first-class peers**. There is no "primary" representation: every operation has native implementations in both domains, and the system dispatches based on operand types.
 
 > **Status**: Phase A (foundations) is in progress. See `docs/adr/` for the architectural decisions, and `docs/architecture/` for the high-level overview.
 
