@@ -1,7 +1,7 @@
 // core/io/src/stl.cpp
-#include "cadforge/io/stl.hpp"
+#include "CAD_0/io/stl.hpp"
 
-#include <cadforge/math/vec.hpp>
+#include <CAD_0/math/vec.hpp>
 
 #include <cmath>
 #include <cstdint>
@@ -10,7 +10,7 @@
 #include <iomanip>
 #include <ios>
 
-namespace cadforge::io {
+namespace CAD_0::io {
 
 namespace {
 
@@ -30,7 +30,7 @@ math::Vec3f triangle_normal(const math::Vec3f& v0,
 } // namespace
 
 bool export_stl_binary(const std::string& path,
-                       const cadforge::sdf::TriangleMesh& mesh,
+                       const CAD_0::sdf::TriangleMesh& mesh,
                        std::string_view name) {
     std::ofstream f(path, std::ios::binary);
     if (!f) return false;
@@ -80,7 +80,7 @@ bool export_stl_binary(const std::string& path,
 }
 
 bool export_stl_ascii(const std::string& path,
-                      const cadforge::sdf::TriangleMesh& mesh,
+                      const CAD_0::sdf::TriangleMesh& mesh,
                       std::string_view name) {
     std::ofstream f(path);
     if (!f) return false;
@@ -116,4 +116,4 @@ bool export_stl_ascii(const std::string& path,
     return static_cast<bool>(f);
 }
 
-} // namespace cadforge::io
+} // namespace CAD_0::io

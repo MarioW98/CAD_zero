@@ -19,12 +19,12 @@ Options considered:
 - **oneTBB** — mature, Apache-2.0, supports both pools and DAGs
 
 ## Decision
-**oneTBB** is the concurrency library for cadforge.
+**oneTBB** is the concurrency library for CAD_0.
 
 ### Module layout
 ```
 core/concurrency/
-├── include/cadforge/concurrency/
+├── include/CAD_0/concurrency/
 │   ├── thread_pool.hpp      # wraps tbb::task_arena + global_control
 │   ├── parallel_for.hpp     # tbb::parallel_for with grain size
 │   ├── task_graph.hpp        # tbb::flow::graph wrapper for feature tree
@@ -57,6 +57,6 @@ topologically and parallelizes independent features.
 - TBB is a build dependency. CPM downloads a pinned version (2021.13).
 - TBB must be statically linked on Windows to avoid DLL shipping
   complications.
-- When TBB is not available (`CADFORGE_USE_TBB=OFF`), the system
+- When TBB is not available (`CAD_0_USE_TBB=OFF`), the system
   falls back to a single-threaded shim. This is for tests/CI only;
   production wheels will always ship with TBB.

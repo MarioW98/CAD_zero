@@ -4,7 +4,7 @@
 Accepted (2025-10-07)
 
 ## Context
-cadforge ships under Apache-2.0. Not all open-source licenses are
+CAD_0 ships under Apache-2.0. Not all open-source licenses are
 compatible. The two main risk areas are CGAL (mixed licenses) and
 OpenVDB (file-level copyleft).
 
@@ -17,7 +17,7 @@ OpenVDB (file-level copyleft).
 | fmt | MIT | Yes | No restrictions |
 | spdlog | MIT | Yes | No restrictions |
 | doctest | MIT | Yes | No restrictions |
-| oneTBB | Apache-2.0 | Yes | Same license as cadforge |
+| oneTBB | Apache-2.0 | Yes | Same license as CAD_0 |
 | xsimd | BSD-3-Clause | Yes | BSD-3 is Apache-2.0-compatible |
 | nanobind | BSD-3-Clause | Yes | BSD-3 is Apache-2.0-compatible |
 | Shewchuk predicates | Public Domain | Yes | No restrictions |
@@ -25,13 +25,13 @@ OpenVDB (file-level copyleft).
 | OpenVDB | MPL-2.0 | Yes | File-level copyleft; modifications to OpenVDB source must be released. Use as a *library* (no source modification) is unrestricted. |
 
 ### Forbidden combinations
-- Linking against any GPL-3+-only library — would force cadforge to
+- Linking against any GPL-3+-only library — would force CAD_0 to
   become GPL-3+. Specifically:
   - CGAL's `Boolean_set_operations` package is GPLv3+. We do not link
     it. Our boolean operations are implemented natively.
   - CGAL's `Nef_2`/`Nef_3` packages are GPLv3+. Same.
 - Static linking against LGPL-2.1+ libraries without releasing the
-  object files — would force cadforge to ship object files for every
+  object files — would force CAD_0 to ship object files for every
   released version. Acceptable but operationally heavy; avoid by
   using dynamic linking or by re-implementing the needed utility.
 

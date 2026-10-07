@@ -3,13 +3,13 @@ requires = ["scikit-build-core>=0.10.0", "nanobind>=2.2.0"]
 build-backend = "scikit_build_core.build"
 
 [project]
-name = "cadforge"
+name = "CAD_0"
 version = "0.1.0"
-description = "CADForge — dual-representation CAD kernel (native SDF + B-Rep)"
+description = "CAD_0 — dual-representation CAD kernel (native SDF + B-Rep)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
-authors = [{ name = "CADForge contributors" }]
+authors = [{ name = "CAD_0 contributors" }]
 keywords = ["cad", "sdf", "brep", "geometry", "implicit"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
@@ -41,16 +41,22 @@ dev = [
 ]
 
 [project.scripts]
-cadforge = "cadforge.cli:app"
+CAD_0 = "CAD_0.cli:app"
 
 [tool.scikit-build]
 cmake.minimum-version = "3.22"
 ninja.make-fallback = true
 cmake.args = [
-    "-DCADFORGE_BUILD_PYTHON=ON",
-    "-DCADFORGE_BUILD_TESTING=OFF",
+    "-DCAD_0_BUILD_PYTHON=ON",
+    "-DCAD_0_BUILD_TESTING=OFF",
 ]
-wheel.packages = ["cadforge"]
+# The CAD_0 Python package is split across two locations:
+#   - bindings/python/CAD_0/  — core API (math, sdf, geometry, io)
+#   - app/src/CAD_0/          — PySide6 UI (ui.* submodules)
+wheel.packages = [
+    "bindings/python/CAD_0",
+    "app/src/CAD_0",
+]
 
 [tool.nanobind]
 clang-version = "17"

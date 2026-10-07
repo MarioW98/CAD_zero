@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
 # ---------------------------------------------------------------------------
-# Top-level CMake project for cadforge
+# Top-level CMake project for CAD_0
 # ---------------------------------------------------------------------------
 #
 # Build phases:
@@ -13,9 +13,9 @@ cmake_minimum_required(VERSION 3.22)
 # (PySide6) lives entirely in Python and is invoked via `pip install`.
 #
 # ---------------------------------------------------------------------------
-project(cadforge
+project(CAD_0
     VERSION 0.1.0
-    DESCRIPTION "CADForge — dual-representation CAD kernel (native SDF + B-Rep)"
+    DESCRIPTION "CAD_0 — dual-representation CAD kernel (native SDF + B-Rep)"
     LANGUAGES CXX
 )
 
@@ -44,12 +44,12 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
-option(CADFORGE_BUILD_TESTING  "Build unit + regression tests" ON)
-option(CADFORGE_BUILD_BENCHMARKS "Build benchmarks" OFF)
-option(CADFORGE_BUILD_PYTHON   "Build Python bindings (nanobind)" ON)
-option(CADFORGE_BUILD_EXAMPLES "Build C++ examples" ON)
-option(CADFORGE_SANITIZE       "Enable ASan/UBSan (debug builds only)" OFF)
-option(CADFORGE_USE_TBB        "Use oneTBB for thread pool" ON)
+option(CAD_0_BUILD_TESTING  "Build unit + regression tests" ON)
+option(CAD_0_BUILD_BENCHMARKS "Build benchmarks" OFF)
+option(CAD_0_BUILD_PYTHON   "Build Python bindings (nanobind)" ON)
+option(CAD_0_BUILD_EXAMPLES "Build C++ examples" ON)
+option(CAD_0_SANITIZE       "Enable ASan/UBSan (debug builds only)" OFF)
+option(CAD_0_USE_TBB        "Use oneTBB for thread pool" ON)
 
 # ---------------------------------------------------------------------------
 # Dependencies — fetched via CPM.cmake for reproducibility
@@ -71,7 +71,7 @@ cpmaddpackage(
 )
 
 # doctest — unit testing
-if(CADFORGE_BUILD_TESTING)
+if(CAD_0_BUILD_TESTING)
     cpmaddpackage(
         NAME doctest
         GITHUB_REPOSITORY doctest/doctest
@@ -87,7 +87,7 @@ cpmaddpackage(
 )
 
 # nanobind — Python bindings (replaces pybind11, see ADR-0011)
-if(CADFORGE_BUILD_PYTHON)
+if(CAD_0_BUILD_PYTHON)
     cpmaddpackage(
         NAME nanobind
         GITHUB_REPOSITORY wjakob/nanobind
@@ -96,7 +96,7 @@ if(CADFORGE_BUILD_PYTHON)
 endif()
 
 # oneTBB — thread pool + task graph (see ADR-0009)
-if(CADFORGE_USE_TBB)
+if(CAD_0_USE_TBB)
     cpmaddpackage(
         NAME TBB
         GITHUB_REPOSITORY oneapi-src/oneTBB
@@ -117,13 +117,13 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         -Wno-unused-parameter
         -Wconversion -Wno-sign-conversion
     )
-    if(CADFORGE_SANITIZE)
+    if(CAD_0_SANITIZE)
         add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
         add_link_options(-fsanitize=address,undefined)
     endif()
 elseif(MSVC)
     add_compile_options(/W4 /permissive- /Wv:19.40 /Zc:__cplusplus /utf-8)
-    if(CADFORGE_SANITIZE)
+    if(CAD_0_SANITIZE)
         message(WARNING "ASan/UBSan not natively supported on MSVC — skipped")
     endif()
 endif()
@@ -132,32 +132,37 @@ endif()
 # Subdirectories
 # ---------------------------------------------------------------------------
 add_subdirectory(core)
-if(CADFORGE_BUILD_PYTHON)
+if(CAD_0_BUILD_PYTHON)
     add_subdirectory(bindings/python)
 endif()
-if(CADFORGE_BUILD_TESTING)
+if(CAD_0_BUILD_TESTING)
     enable_testing()
     add_subdirectory(tests)
 endif()
-if(CADFORGE_BUILD_EXAMPLES)
+if(CAD_0_BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+# Phase C: install the PySide6 desktop UI package. This is a pure-Python
+# addition; no C++ is built here.
+if(CAD_0_BUILD_PYTHON)
+    add_subdirectory(app)
 endif()
 
 # ---------------------------------------------------------------------------
 # Config header — exposes version + feature flags
 # ---------------------------------------------------------------------------
 configure_file(
-    ${CMAKE_SOURCE_DIR}/cmake/cadforge_config.h.in
-    ${CMAKE_BINARY_DIR}/include/cadforge/config.h
+    ${CMAKE_SOURCE_DIR}/cmake/CAD_0_config.h.in
+    ${CMAKE_BINARY_DIR}/include/CAD_0/config.h
     @ONLY
 )
 
 message(STATUS "")
-message(STATUS "cadforge ${PROJECT_VERSION}")
+message(STATUS "CAD_0 ${PROJECT_VERSION}")
 message(STATUS "  C++ standard     : ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Build type       : ${CMAKE_BUILD_TYPE}")
-message(STATUS "  Python bindings  : ${CADFORGE_BUILD_PYTHON}")
-message(STATUS "  Testing          : ${CADFORGE_BUILD_TESTING}")
-message(STATUS "  TBB              : ${CADFORGE_USE_TBB}")
-message(STATUS "  Sanitizers       : ${CADFORGE_SANITIZE}")
+message(STATUS "  Python bindings  : ${CAD_0_BUILD_PYTHON}")
+message(STATUS "  Testing          : ${CAD_0_BUILD_TESTING}")
+message(STATUS "  TBB              : ${CAD_0_USE_TBB}")
+message(STATUS "  Sanitizers       : ${CAD_0_SANITIZE}")
 message(STATUS "")

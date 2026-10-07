@@ -1,15 +1,15 @@
 // tests/unit/sdf/test_evaluate.cpp
 #include <doctest/doctest.h>
 
-#include "cadforge/sdf/primitives.hpp"
-#include "cadforge/sdf/operators.hpp"
-#include "cadforge/sdf/transforms.hpp"
-#include "cadforge/sdf/evaluate.hpp"
+#include "CAD_0/sdf/primitives.hpp"
+#include "CAD_0/sdf/operators.hpp"
+#include "CAD_0/sdf/transforms.hpp"
+#include "CAD_0/sdf/evaluate.hpp"
 
 #include <vector>
 
-using namespace cadforge::sdf;
-using namespace cadforge::math;
+using namespace CAD_0::sdf;
+using namespace CAD_0::math;
 
 TEST_CASE("CpuEvalBackend: empty body returns zero") {
     SDFBody body;

@@ -18,21 +18,21 @@ Wenzel Jakob) is now the de facto choice for new projects:
 | License | BSD-3 | BSD-3 |
 
 ## Decision
-**nanobind** is the Python binding library for cadforge. All bindings
+**nanobind** is the Python binding library for CAD_0. All bindings
 live under `bindings/python/` and produce a single compiled extension
-`_cadforge.*.so` (Linux) / `_cadforge.pyd` (Windows).
+`_CAD_0.*.so` (Linux) / `_CAD_0.pyd` (Windows).
 
 ### Build integration
 - `scikit-build-core` as the Python build backend (not setuptools).
 - The CMake build invokes `nanobind_add_module()` (see
   `bindings/python/CMakeLists.txt`).
-- `pip install cadforge` builds the extension from source on the user's
+- `pip install CAD_0` builds the extension from source on the user's
   machine; cibuildwheel produces binary wheels for CI.
 
 ### Public Python API
-The compiled extension exposes submodules: `cadforge.math`,
-`cadforge.geometry`, `cadforge.sdf`. The Python package
-(`bindings/python/cadforge/__init__.py`) re-exports these as
+The compiled extension exposes submodules: `CAD_0.math`,
+`CAD_0.geometry`, `CAD_0.sdf`. The Python package
+(`bindings/python/CAD_0/__init__.py`) re-exports these as
 top-level symbols for convenience.
 
 ## Consequences

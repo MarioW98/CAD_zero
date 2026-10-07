@@ -8,24 +8,24 @@
 // to a SoA representation. We can add that as an optimization in Phase B
 // without changing the EvalBackend interface.
 //
-#include "cadforge/sdf/evaluate.hpp"
-#include "cadforge/sdf/field.hpp"
+#include "CAD_0/sdf/evaluate.hpp"
+#include "CAD_0/sdf/field.hpp"
 
 #include <xsimd/xsimd.hpp>
 
-#include <cadforge/config.h>
-#if defined(CADFORGE_USE_TBB) && CADFORGE_USE_TBB
+#include <CAD_0/config.h>
+#if defined(CAD_0_USE_TBB) && CAD_0_USE_TBB
 #  include <tbb/parallel_for.h>
 #  include <tbb/blocked_range.h>
 #  include <tbb/global_control.h>
-#  define CADFORGE_HAVE_TBB 1
+#  define CAD_0_HAVE_TBB 1
 #else
-#  define CADFORGE_HAVE_TBB 0
+#  define CAD_0_HAVE_TBB 0
 #endif
 
 #include <thread>
 
-namespace cadforge::sdf {
+namespace CAD_0::sdf {
 
 // ----------------------------------------------------------------------------
 // CpuEvalBackend
@@ -50,7 +50,7 @@ void CpuEvalBackend::evaluate(const SDFBody& body,
 
     const SDFNode* root = body.root();
 
-#if CADFORGE_HAVE_TBB
+#if CAD_0_HAVE_TBB
     // Use oneTBB's parallel_for with a reasonable grain size so that
     // small inputs (< 1000 points) don't pay for thread startup.
     constexpr std::size_t kGrain = 1024;
@@ -91,4 +91,4 @@ void GpuEvalBackend::evaluate(const SDFBody& body,
     cpu.evaluate(body, points, out);
 }
 
-} // namespace cadforge::sdf
+} // namespace CAD_0::sdf

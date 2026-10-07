@@ -1,11 +1,11 @@
 // tests/unit/sdf/test_transforms.cpp
 #include <doctest/doctest.h>
 
-#include "cadforge/sdf/primitives.hpp"
-#include "cadforge/sdf/transforms.hpp"
+#include "CAD_0/sdf/primitives.hpp"
+#include "CAD_0/sdf/transforms.hpp"
 
-using namespace cadforge::sdf;
-using namespace cadforge::math;
+using namespace CAD_0::sdf;
+using namespace CAD_0::math;
 
 TEST_CASE("Translate: shifts the field") {
     auto sph = make_sphere(1.0f);

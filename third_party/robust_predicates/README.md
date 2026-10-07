@@ -1,7 +1,7 @@
 # Robust Geometric Predicates (Shewchuk 1997)
 
 Public-domain adaptive precision arithmetic for `orient2d`, `orient3d`,
-`incircle`, `insphere`. Used by cadforge for robust B-Rep boolean
+`incircle`, `insphere`. Used by CAD_0 for robust B-Rep boolean
 operations and triangulation.
 
 - **Original source**: http://www.cs.cmu.edu/~quake/robust.html

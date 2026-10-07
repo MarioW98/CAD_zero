@@ -6,10 +6,10 @@
 //
 #include <doctest/doctest.h>
 
-#include "cadforge/math/predicate.hpp"
+#include "CAD_0/math/predicate.hpp"
 
-using namespace cadforge::math;
-using namespace cadforge::math::predicate;
+using namespace CAD_0::math;
+using namespace CAD_0::math::predicate;
 
 TEST_CASE("predicate: orient2d counter-clockwise triangle") {
     initialize();

@@ -1,10 +1,10 @@
-# CAD _test _from zero
+# CAD_0
 
 **Dual-representation CAD kernel — native SDF + B-Rep, in C++20 and Python.**
 
-cadforge is a from-scratch CAD kernel where **SDF (signed distance fields) and B-Rep (boundary representation) are first-class peers**. There is no "primary" representation: every operation has native implementations in both domains, and the system dispatches based on operand types.
+CAD_0 is a from-scratch CAD kernel where **SDF (signed distance fields) and B-Rep (boundary representation) are first-class peers**, inspired by Siemens NX *Convergent Modeling*. There is no "primary" representation: every operation has native implementations in both domains, and the system dispatches based on operand types.
 
-> **Status**: Phase A (foundations) is in progress. See `docs/adr/` for the architectural decisions, and `docs/architecture/` for the high-level overview.
+> **Status**: Phase C (viewport + UI) completed. See `docs/adr/` for the architectural decisions, and `docs/architecture/` for the high-level overview. 165/165 tests passing.
 
 ---
 
@@ -13,8 +13,8 @@ cadforge is a from-scratch CAD kernel where **SDF (signed distance fields) and B
 ### Build (Linux + GCC)
 
 ```bash
-git clone https://github.com/MarioW98/CAD_zero
-cd CAD_zero
+git clone https://github.com/your-org/CAD_0.git
+cd CAD_0
 cmake --preset linux-gcc-release
 cmake --build --preset linux-gcc-release
 ctest --preset linux-gcc-release
@@ -30,35 +30,35 @@ python examples/sdf_sphere.py
 ### Use the kernel from Python
 
 ```python
-import cadforge
+import CAD_0
 import numpy as np
 
 # Build a sphere SDF — this is a *native* representation, not a mesh.
-sph = cadforge.sdf.sphere(radius=2.0)
+sph = CAD_0.sdf.sphere(radius=2.0)
 
 # Boolean CSG — all native to the SDF domain.
-cyl = cadforge.sdf.cylinder(radius=0.5, height=10.0)
-carved = cadforge.sdf.subtract(sph, cyl)
+cyl = CAD_0.sdf.cylinder(radius=0.5, height=10.0)
+carved = CAD_0.sdf.subtract(sph, cyl)
 
 # Smooth blend — equation-driven, mesh-free.
-b = cadforge.sdf.translate(cadforge.sdf.sphere(radius=1.0), (3.0, 0.0, 0.0))
-blended = cadforge.sdf.smooth_union(sph, b, k=0.6)
+b = CAD_0.sdf.translate(CAD_0.sdf.sphere(radius=1.0), (3.0, 0.0, 0.0))
+blended = CAD_0.sdf.smooth_union(sph, b, k=0.6)
 
 # Batched evaluation — vectorized, multi-threaded.
 pts = np.random.uniform(-5, 5, (1024, 3)).astype(np.float32)
-result = cadforge.sdf.evaluate(blended, pts)
+result = CAD_0.sdf.evaluate(blended, pts)
 print(result.values[:8])
 ```
 
 ### Use the kernel from C++
 
 ```cpp
-#include <cadforge/sdf/primitives.hpp>
-#include <cadforge/sdf/operators.hpp>
-#include <cadforge/sdf/transforms.hpp>
-#include <cadforge/sdf/evaluate.hpp>
+#include <CAD_0/sdf/primitives.hpp>
+#include <CAD_0/sdf/operators.hpp>
+#include <CAD_0/sdf/transforms.hpp>
+#include <CAD_0/sdf/evaluate.hpp>
 
-using namespace cadforge;
+using namespace CAD_0;
 
 int main() {
     auto sph  = sdf::make_sphere(2.0f);
@@ -78,7 +78,7 @@ int main() {
 ## Repository layout
 
 ```
-cadforge/
+CAD_0/
 ├── core/                # C++20 kernel (zero UI deps)
 │   ├── math/            # vec, mat, quat, bbox, tolerance, robust predicates
 │   ├── geometry/        # Shape (std::variant), ShapeId, Transform, Visitor
@@ -120,6 +120,9 @@ See `docs/architecture/overview.md` for the full layout and design rationale.
 | [0014](docs/adr/0014-floating-point-determinism.md) | Cross-platform FP determinism via `-ffp-contract=off` |
 | [0015](docs/adr/0015-marching-cubes.md) | Marching Cubes for SDF mesh extraction (Phase B) |
 | [0016](docs/adr/0016-vertex-welding.md) | Vertex welding via canonical edge keys (Phase B.5) |
+| [0017](docs/adr/0017-viewport-architecture.md) | Headless-first viewport architecture (Phase C) |
+| [0018](docs/adr/0018-pyside6-ui-integration.md) | PySide6 UI integration (Phase C.6-C.8) |
+| [0019](docs/adr/0019-project-rename.md) | Project rename cadforge → CAD_0 |
 
 ---
 

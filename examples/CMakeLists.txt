@@ -3,10 +3,10 @@
 add_executable(example_sphere_to_stl cpp/sphere_to_stl.cpp)
 
 target_link_libraries(example_sphere_to_stl PRIVATE
-    cadforge_math
-    cadforge_geometry
-    cadforge_sdf
-    cadforge_io
+    CAD_0_math
+    CAD_0_geometry
+    CAD_0_sdf
+    CAD_0_io
 )
 
 target_include_directories(example_sphere_to_stl PRIVATE

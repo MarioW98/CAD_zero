@@ -1,10 +1,10 @@
 // tests/unit/sdf/test_primitives.cpp
 #include <doctest/doctest.h>
 
-#include "cadforge/sdf/primitives.hpp"
+#include "CAD_0/sdf/primitives.hpp"
 
-using namespace cadforge::sdf;
-using namespace cadforge::math;
+using namespace CAD_0::sdf;
+using namespace CAD_0::math;
 
 TEST_CASE("SphereSDF: value at center is -radius") {
     auto s = make_sphere(2.0f);

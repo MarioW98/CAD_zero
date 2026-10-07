@@ -16,7 +16,7 @@ Options considered:
 - Highway (Google) — also mature, similar feature set to xsimd
 
 ## Decision
-**xsimd** is the SIMD abstraction layer for cadforge. We define the
+**xsimd** is the SIMD abstraction layer for CAD_0. We define the
 evaluation backend as an abstract `EvalBackend` with two concrete
 implementations:
 

@@ -2,14 +2,14 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/array.h>
 
-#include "cadforge/math/vec.hpp"
-#include "cadforge/math/mat.hpp"
-#include "cadforge/math/quat.hpp"
-#include "cadforge/math/bbox.hpp"
-#include "cadforge/math/tolerance.hpp"
+#include "CAD_0/math/vec.hpp"
+#include "CAD_0/math/mat.hpp"
+#include "CAD_0/math/quat.hpp"
+#include "CAD_0/math/bbox.hpp"
+#include "CAD_0/math/tolerance.hpp"
 
 namespace nb = nanobind;
-using namespace cadforge::math;
+using namespace CAD_0::math;
 
 void bind_math(nb::module_& m) {
     // Vec3f — the workhorse for SDF evaluation

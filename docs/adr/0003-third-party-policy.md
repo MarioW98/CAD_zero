@@ -46,6 +46,6 @@ would compromise the dual-representation design (ADR-0002).
   a GPLv3+ shared object, the integration is rejected.
 - All third-party additions require a companion ADR before merging.
 
-## License of cadforge itself
+## License of CAD_0 itself
 Apache-2.0 (see `LICENSE`). Compatible with all the "Allowed" libraries
 above.

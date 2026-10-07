@@ -1,13 +1,13 @@
 // tests/unit/sdf/test_mesh_extract.cpp
 #include <doctest/doctest.h>
 
-#include "cadforge/sdf/primitives.hpp"
-#include "cadforge/sdf/operators.hpp"
-#include "cadforge/sdf/transforms.hpp"
-#include "cadforge/sdf/mesh_extract.hpp"
+#include "CAD_0/sdf/primitives.hpp"
+#include "CAD_0/sdf/operators.hpp"
+#include "CAD_0/sdf/transforms.hpp"
+#include "CAD_0/sdf/mesh_extract.hpp"
 
-using namespace cadforge::sdf;
-using namespace cadforge::math;
+using namespace CAD_0::sdf;
+using namespace CAD_0::math;
 
 TEST_CASE("marching_cubes: sphere produces non-empty mesh") {
     auto sph = make_sphere(1.0f);
@@ -59,7 +59,7 @@ TEST_CASE("marching_cubes: composite (sphere - cylinder)") {
 TEST_CASE("marching_cubes: bounds override works for infinite plane") {
     // PlaneSDF has infinite bounds — must supply explicit bounds.
     auto plane = make_plane();
-    cadforge::math::Bboxf bnds{{-2, -2, -2}, {2, 2, 2}};
+    CAD_0::math::Bboxf bnds{{-2, -2, -2}, {2, 2, 2}};
     auto mesh = marching_cubes(plane, bnds, 16, false);
     CHECK(mesh.triangle_count() > 0);
 }
@@ -76,8 +76,8 @@ TEST_CASE("marching_cubes: weld_vertices reduces vertex count significantly") {
     auto sph = make_sphere(1.0f);
 
     // Use the SAME bounds for both calls so the triangle counts match.
-    cadforge::math::Bboxf box = sph.bounds();
-    const cadforge::math::Vec3f pad = box.extent() * 0.01f;
+    CAD_0::math::Bboxf box = sph.bounds();
+    const CAD_0::math::Vec3f pad = box.extent() * 0.01f;
     box.min = box.min - pad;
     box.max = box.max + pad;
 
@@ -108,7 +108,7 @@ TEST_CASE("marching_cubes: narrow-band culling skips empty cells") {
     // outside and should be skipped. Triangle count should still be
     // correct (matches the unbounded version).
     auto sph = make_sphere(1.0f);
-    cadforge::math::Bboxf big_box{{-5, -5, -5}, {5, 5, 5}};
+    CAD_0::math::Bboxf big_box{{-5, -5, -5}, {5, 5, 5}};
 
     MarchingCubesOptions opts;
     opts.resolution = 32;

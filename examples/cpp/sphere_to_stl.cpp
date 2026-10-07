@@ -9,19 +9,19 @@
 // Output:
 //   /home/z/my-project/download/lattice_ball.{stl,obj,3mf}
 //
-#include "cadforge/sdf/primitives.hpp"
-#include "cadforge/sdf/operators.hpp"
-#include "cadforge/sdf/transforms.hpp"
-#include "cadforge/sdf/mesh_extract.hpp"
-#include "cadforge/io/stl.hpp"
-#include "cadforge/io/obj.hpp"
-#include "cadforge/io/threemf.hpp"
+#include "CAD_0/sdf/primitives.hpp"
+#include "CAD_0/sdf/operators.hpp"
+#include "CAD_0/sdf/transforms.hpp"
+#include "CAD_0/sdf/mesh_extract.hpp"
+#include "CAD_0/io/stl.hpp"
+#include "CAD_0/io/obj.hpp"
+#include "CAD_0/io/threemf.hpp"
 
 #include <chrono>
 #include <iostream>
 
 int main() {
-    using namespace cadforge;
+    using namespace CAD_0;
 
     // Build a "lattice ball": sphere with a cylindrical hole through it,
     // then subtract two more perpendicular cylinders for a 3-axis hole pattern.
@@ -82,7 +82,7 @@ int main() {
     const auto ms_obj = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
 
     t_start = std::chrono::steady_clock::now();
-    io::export_3mf(out_dir + "lattice_ball.3mf", mesh, "lattice_ball", "cadforge");
+    io::export_3mf(out_dir + "lattice_ball.3mf", mesh, "lattice_ball", "CAD_0");
     t_end = std::chrono::steady_clock::now();
     const auto ms_3mf = std::chrono::duration_cast<std::chrono::milliseconds>(t_end - t_start).count();
 

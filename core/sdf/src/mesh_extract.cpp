@@ -24,8 +24,8 @@
 //     4: 4-5, 5: 5-6, 6: 6-7, 7: 7-4  (top face)
 //     8: 0-4, 9: 1-5, 10: 2-6, 11: 3-7  (vertical edges)
 //
-#include "cadforge/sdf/mesh_extract.hpp"
-#include "cadforge/sdf/evaluate.hpp"
+#include "CAD_0/sdf/mesh_extract.hpp"
+#include "CAD_0/sdf/evaluate.hpp"
 
 #include <array>
 #include <cmath>
@@ -34,7 +34,7 @@
 #include <utility>
 #include <vector>
 
-namespace cadforge::sdf {
+namespace CAD_0::sdf {
 
 // ---------------------------------------------------------------------------
 // Edge table — for each of the 256 cube sign configurations, lists which
@@ -699,4 +699,4 @@ std::size_t weld_vertices(TriangleMesh& mesh, float tolerance) {
     return mesh.positions.size();
 }
 
-} // namespace cadforge::sdf
+} // namespace CAD_0::sdf

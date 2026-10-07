@@ -1,9 +1,9 @@
 // tests/unit/io/test_threemf.cpp
 #include <doctest/doctest.h>
 
-#include "cadforge/sdf/primitives.hpp"
-#include "cadforge/sdf/mesh_extract.hpp"
-#include "cadforge/io/threemf.hpp"
+#include "CAD_0/sdf/primitives.hpp"
+#include "CAD_0/sdf/mesh_extract.hpp"
+#include "CAD_0/io/threemf.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -11,13 +11,13 @@
 #include <string>
 #include <vector>
 
-using namespace cadforge;
+using namespace CAD_0;
 
 TEST_CASE("3MF: export writes valid ZIP archive") {
     auto sph = sdf::make_sphere(1.0f);
     auto mesh = sdf::marching_cubes(sph, 16, true);
 
-    const std::string path = "/tmp/test_cadforge_3mf.3mf";
+    const std::string path = "/tmp/test_CAD_0_3mf.3mf";
     REQUIRE(io::export_3mf(path, mesh, "test_sphere"));
 
     std::ifstream f(path, std::ios::binary);
@@ -52,7 +52,7 @@ TEST_CASE("3MF: export writes valid ZIP archive") {
 
 TEST_CASE("3MF: empty mesh returns false") {
     sdf::TriangleMesh empty;
-    const std::string path = "/tmp/test_cadforge_3mf_empty.3mf";
+    const std::string path = "/tmp/test_CAD_0_3mf_empty.3mf";
     CHECK_FALSE(io::export_3mf(path, empty));
 }
 
@@ -60,7 +60,7 @@ TEST_CASE("3MF: archive contains expected entries") {
     auto sph = sdf::make_sphere(1.0f);
     auto mesh = sdf::marching_cubes(sph, 8, false);
 
-    const std::string path = "/tmp/test_cadforge_3mf_entries.3mf";
+    const std::string path = "/tmp/test_CAD_0_3mf_entries.3mf";
     REQUIRE(io::export_3mf(path, mesh));
 
     std::ifstream f(path, std::ios::binary);

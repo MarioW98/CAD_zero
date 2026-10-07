@@ -1,11 +1,11 @@
 // core/concurrency/src/thread_pool.cpp
-#include "cadforge/concurrency/thread_pool.hpp"
-#include "cadforge/concurrency/parallel_for.hpp"
-#include "cadforge/concurrency/task_graph.hpp"
+#include "CAD_0/concurrency/thread_pool.hpp"
+#include "CAD_0/concurrency/parallel_for.hpp"
+#include "CAD_0/concurrency/task_graph.hpp"
 
-#include <cadforge/config.h>
+#include <CAD_0/config.h>
 
-#if defined(CADFORGE_USE_TBB) && CADFORGE_USE_TBB
+#if defined(CAD_0_USE_TBB) && CAD_0_USE_TBB
 #  include <tbb/global_control.h>
 #  include <tbb/task_arena.h>
 #  include <tbb/task_group.h>
@@ -13,10 +13,10 @@
 
 #include <thread>
 
-namespace cadforge::concurrency {
+namespace CAD_0::concurrency {
 
 struct ThreadPool::Impl {
-#if defined(CADFORGE_USE_TBB) && CADFORGE_USE_TBB
+#if defined(CAD_0_USE_TBB) && CAD_0_USE_TBB
     std::unique_ptr<tbb::global_control> control;
     std::unique_ptr<tbb::task_arena>     arena;
     tbb::task_group                       group;
@@ -30,7 +30,7 @@ ThreadPool::ThreadPool()
 ThreadPool::ThreadPool(std::size_t num_threads) {
     impl_ = new Impl{};
     impl_->num_threads = (num_threads == 0) ? 1 : num_threads;
-#if defined(CADFORGE_USE_TBB) && CADFORGE_USE_TBB
+#if defined(CAD_0_USE_TBB) && CAD_0_USE_TBB
     impl_->control = std::make_unique<tbb::global_control>(
         tbb::global_control::max_allowed_parallelism,
         impl_->num_threads);
@@ -45,7 +45,7 @@ std::size_t ThreadPool::size() const noexcept {
 }
 
 void ThreadPool::submit(std::function<void()> task) {
-#if defined(CADFORGE_USE_TBB) && CADFORGE_USE_TBB
+#if defined(CAD_0_USE_TBB) && CAD_0_USE_TBB
     impl_->arena->execute([this, task = std::move(task)]() {
         impl_->group.run(std::move(task));
     });
@@ -89,4 +89,4 @@ void TaskGraph::execute() {
     for (auto& n : impl_->nodes) n.task();
 }
 
-} // namespace cadforge::concurrency
+} // namespace CAD_0::concurrency

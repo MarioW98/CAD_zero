@@ -10,9 +10,9 @@
 // The ZIP uses the "store" method (no compression) for simplicity.
 // CRC32 is computed for each entry because the ZIP format requires it.
 //
-#include "cadforge/io/threemf.hpp"
+#include "CAD_0/io/threemf.hpp"
 
-#include <cadforge/math/vec.hpp>
+#include <CAD_0/math/vec.hpp>
 
 #include <cstdint>
 #include <cstring>
@@ -21,7 +21,7 @@
 #include <sstream>
 #include <vector>
 
-namespace cadforge::io {
+namespace CAD_0::io {
 
 namespace {
 
@@ -142,7 +142,7 @@ std::string format_xml_float(float v) {
     return ss.str();
 }
 
-std::string build_3dmodel_xml(const cadforge::sdf::TriangleMesh& mesh,
+std::string build_3dmodel_xml(const CAD_0::sdf::TriangleMesh& mesh,
                                std::string_view name,
                                std::string_view application) {
     std::ostringstream xml;
@@ -213,7 +213,7 @@ std::string build_rels_xml() {
 } // namespace
 
 bool export_3mf(const std::string& path,
-                const cadforge::sdf::TriangleMesh& mesh,
+                const CAD_0::sdf::TriangleMesh& mesh,
                 std::string_view name,
                 std::string_view application) {
     if (mesh.triangle_count() == 0) return false;
@@ -233,4 +233,4 @@ bool export_3mf(const std::string& path,
     return static_cast<bool>(f);
 }
 
-} // namespace cadforge::io
+} // namespace CAD_0::io

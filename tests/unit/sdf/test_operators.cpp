@@ -1,11 +1,11 @@
 // tests/unit/sdf/test_operators.cpp
 #include <doctest/doctest.h>
 
-#include "cadforge/sdf/primitives.hpp"
-#include "cadforge/sdf/operators.hpp"
-#include "cadforge/sdf/transforms.hpp"
+#include "CAD_0/sdf/primitives.hpp"
+#include "CAD_0/sdf/operators.hpp"
+#include "CAD_0/sdf/transforms.hpp"
 
-using namespace cadforge::sdf;
+using namespace CAD_0::sdf;
 
 TEST_CASE("Union: two spheres — value at midpoint") {
     auto a = make_sphere(1.0f);

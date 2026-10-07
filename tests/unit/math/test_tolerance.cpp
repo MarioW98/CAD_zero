@@ -1,9 +1,9 @@
 // tests/unit/math/test_tolerance.cpp
 #include <doctest/doctest.h>
 
-#include "cadforge/math/tolerance.hpp"
+#include "CAD_0/math/tolerance.hpp"
 
-using namespace cadforge::math;
+using namespace CAD_0::math;
 
 TEST_CASE("Tolerance: default linear") {
     auto t = Tolerance::linear();

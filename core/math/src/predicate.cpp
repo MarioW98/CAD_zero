@@ -3,7 +3,7 @@
 // Wraps Shewchuk's robust predicates C implementation.
 // The C source is vendored under third_party/robust_predicates/.
 //
-#include "cadforge/math/predicate.hpp"
+#include "CAD_0/math/predicate.hpp"
 
 // We compile the C implementation as part of the C++ translation unit
 // with `extern "C"` linkage. The implementation is public domain.
@@ -13,7 +13,7 @@ extern "C" {
 #include "predicates.c.h"
 }
 
-namespace cadforge::math::predicate {
+namespace CAD_0::math::predicate {
 
 void initialize() noexcept {
     static bool initialized = false;
@@ -61,4 +61,4 @@ double incircle2d(const Vec<2, double>& a, const Vec<2, double>& b,
                       const_cast<double*>(&d.x));
 }
 
-} // namespace cadforge::math::predicate
+} // namespace CAD_0::math::predicate

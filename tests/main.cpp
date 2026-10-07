@@ -5,7 +5,7 @@
 // per-module test files can simply `#include <doctest/doctest.h>`
 // without re-defining the macro.
 //
-// (See tests/CMakeLists.txt: CADFORGE_TEST_SOURCES include this file
+// (See tests/CMakeLists.txt: CAD_0_TEST_SOURCES include this file
 // last; the macro is defined via target_compile_definitions.)
 //
 #include <doctest/doctest.h>

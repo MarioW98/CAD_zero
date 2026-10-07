@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import numpy as np
 
-import cadforge
+import CAD_0
 
 
 def main() -> None:
-    a = cadforge.sdf.sphere(radius=1.0)
-    b = cadforge.sdf.translate(cadforge.sdf.sphere(radius=1.0), (2.0, 0.0, 0.0))
+    a = CAD_0.sdf.sphere(radius=1.0)
+    b = CAD_0.sdf.translate(CAD_0.sdf.sphere(radius=1.0), (2.0, 0.0, 0.0))
 
-    smooth = cadforge.sdf.smooth_union(a, b, k=0.6)
+    smooth = CAD_0.sdf.smooth_union(a, b, k=0.6)
     print(f"Body: {smooth.describe()}")
 
     # Sample along the X axis between the two spheres.
@@ -25,7 +25,7 @@ def main() -> None:
         [2.0, 0.0, 0.0],  # center of sphere B → -1
     ], dtype=np.float32)
 
-    out = cadforge.sdf.evaluate(smooth, pts)
+    out = CAD_0.sdf.evaluate(smooth, pts)
     print("\nSmooth union values (k=0.6):")
     for i, v in enumerate(out.values):
         print(f"  pt={pts[i].tolist()}  sdf={v:.6f}")

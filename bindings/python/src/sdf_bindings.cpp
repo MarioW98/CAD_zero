@@ -9,20 +9,20 @@
 #include <nanobind/stl/unique_ptr.h>
 #include <nanobind/stl/vector.h>
 
-#include "cadforge/sdf/field.hpp"
-#include "cadforge/sdf/primitives.hpp"
-#include "cadforge/sdf/operators.hpp"
-#include "cadforge/sdf/transforms.hpp"
-#include "cadforge/sdf/evaluate.hpp"
+#include "CAD_0/sdf/field.hpp"
+#include "CAD_0/sdf/primitives.hpp"
+#include "CAD_0/sdf/operators.hpp"
+#include "CAD_0/sdf/transforms.hpp"
+#include "CAD_0/sdf/evaluate.hpp"
 
-#include "cadforge/math/vec.hpp"
-#include "cadforge/math/quat.hpp"
+#include "CAD_0/math/vec.hpp"
+#include "CAD_0/math/quat.hpp"
 
 #include <memory>
 
 namespace nb = nanobind;
-using namespace cadforge::sdf;
-using namespace cadforge::math;
+using namespace CAD_0::sdf;
+using namespace CAD_0::math;
 
 void bind_sdf(nb::module_& m) {
     // SDFBody — opaque handle to an SDF tree root.

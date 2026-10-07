@@ -3,14 +3,14 @@
 // Python bindings for the SDF mesh extraction + IO module.
 //
 // Exposes:
-//   * cadforge.sdf.TriangleMesh          — mesh result type
-//   * cadforge.sdf.MarchingCubesOptions  — extraction options
-//   * cadforge.sdf.marching_cubes(...)   — extraction (multiple overloads)
-//   * cadforge.sdf.weld_vertices(...)    — vertex welding utility
-//   * cadforge.io.export_stl_binary(...)
-//   * cadforge.io.export_stl_ascii(...)
-//   * cadforge.io.export_obj(...)
-//   * cadforge.io.export_3mf(...)
+//   * CAD_0.sdf.TriangleMesh          — mesh result type
+//   * CAD_0.sdf.MarchingCubesOptions  — extraction options
+//   * CAD_0.sdf.marching_cubes(...)   — extraction (multiple overloads)
+//   * CAD_0.sdf.weld_vertices(...)    — vertex welding utility
+//   * CAD_0.io.export_stl_binary(...)
+//   * CAD_0.io.export_stl_ascii(...)
+//   * CAD_0.io.export_obj(...)
+//   * CAD_0.io.export_3mf(...)
 //
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
@@ -19,17 +19,17 @@
 #include <nanobind/stl/unique_ptr.h>
 #include <nanobind/stl/vector.h>
 
-#include "cadforge/sdf/field.hpp"
-#include "cadforge/sdf/mesh_extract.hpp"
-#include "cadforge/io/stl.hpp"
-#include "cadforge/io/obj.hpp"
-#include "cadforge/io/threemf.hpp"
+#include "CAD_0/sdf/field.hpp"
+#include "CAD_0/sdf/mesh_extract.hpp"
+#include "CAD_0/io/stl.hpp"
+#include "CAD_0/io/obj.hpp"
+#include "CAD_0/io/threemf.hpp"
 
-#include "cadforge/math/vec.hpp"
-#include "cadforge/math/bbox.hpp"
+#include "CAD_0/math/vec.hpp"
+#include "CAD_0/math/bbox.hpp"
 
 namespace nb = nanobind;
-using namespace cadforge;
+using namespace CAD_0;
 
 void bind_mesh(nb::module_& m) {
     auto sdf_mod = m.def_submodule("sdf", "SDF mesh extraction (already exists if sdf module bound)");
@@ -98,21 +98,21 @@ void bind_mesh(nb::module_& m) {
            std::string_view name) {
             return io::export_stl_binary(path, mesh, name);
         },
-        nb::arg("path"), nb::arg("mesh"), nb::arg("name") = "cadforge");
+        nb::arg("path"), nb::arg("mesh"), nb::arg("name") = "CAD_0");
 
     io_mod.def("export_stl_ascii",
         [](const std::string& path, const sdf::TriangleMesh& mesh,
            std::string_view name) {
             return io::export_stl_ascii(path, mesh, name);
         },
-        nb::arg("path"), nb::arg("mesh"), nb::arg("name") = "cadforge");
+        nb::arg("path"), nb::arg("mesh"), nb::arg("name") = "CAD_0");
 
     io_mod.def("export_obj",
         [](const std::string& path, const sdf::TriangleMesh& mesh,
            std::string_view name) {
             return io::export_obj(path, mesh, name);
         },
-        nb::arg("path"), nb::arg("mesh"), nb::arg("name") = "cadforge");
+        nb::arg("path"), nb::arg("mesh"), nb::arg("name") = "CAD_0");
 
     io_mod.def("export_3mf",
         [](const std::string& path, const sdf::TriangleMesh& mesh,
@@ -120,5 +120,5 @@ void bind_mesh(nb::module_& m) {
             return io::export_3mf(path, mesh, name, application);
         },
         nb::arg("path"), nb::arg("mesh"),
-        nb::arg("name") = "cadforge", nb::arg("application") = "cadforge");
+        nb::arg("name") = "CAD_0", nb::arg("application") = "CAD_0");
 }

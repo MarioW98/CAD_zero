@@ -1,21 +1,21 @@
 # core/geometry/CMakeLists.txt
 
-set(CADFORGE_GEOMETRY_HEADERS
-    include/cadforge/geometry/representation.hpp
-    include/cadforge/geometry/shape_id.hpp
-    include/cadforge/geometry/transform.hpp
-    include/cadforge/geometry/shape_bodies.hpp
-    include/cadforge/geometry/shape.hpp
-    include/cadforge/geometry/visitor.hpp
+set(CAD_0_GEOMETRY_HEADERS
+    include/CAD_0/geometry/representation.hpp
+    include/CAD_0/geometry/shape_id.hpp
+    include/CAD_0/geometry/transform.hpp
+    include/CAD_0/geometry/shape_bodies.hpp
+    include/CAD_0/geometry/shape.hpp
+    include/CAD_0/geometry/visitor.hpp
 )
 
-set(CADFORGE_GEOMETRY_SOURCES
+set(CAD_0_GEOMETRY_SOURCES
     src/shape.cpp
 )
 
-add_library(cadforge_geometry STATIC ${CADFORGE_GEOMETRY_SOURCES} ${CADFORGE_GEOMETRY_HEADERS})
+add_library(CAD_0_geometry STATIC ${CAD_0_GEOMETRY_SOURCES} ${CAD_0_GEOMETRY_HEADERS})
 
-target_include_directories(cadforge_geometry
+target_include_directories(CAD_0_geometry
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
@@ -24,13 +24,13 @@ target_include_directories(cadforge_geometry
         ${CMAKE_SOURCE_DIR}/core/brep/include
 )
 
-target_link_libraries(cadforge_geometry
-    PUBLIC cadforge_math
-    PRIVATE cadforge_brep
+target_link_libraries(CAD_0_geometry
+    PUBLIC CAD_0_math
+    PRIVATE CAD_0_brep
 )
-target_compile_features(cadforge_geometry PUBLIC cxx_std_20)
+target_compile_features(CAD_0_geometry PUBLIC cxx_std_20)
 
-source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/include FILES ${CADFORGE_GEOMETRY_HEADERS})
+source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/include FILES ${CAD_0_GEOMETRY_HEADERS})
 
-install(TARGETS cadforge_geometry ARCHIVE DESTINATION lib LIBRARY DESTINATION lib)
-install(DIRECTORY include/cadforge DESTINATION include)
+install(TARGETS CAD_0_geometry ARCHIVE DESTINATION lib LIBRARY DESTINATION lib)
+install(DIRECTORY include/CAD_0 DESTINATION include)

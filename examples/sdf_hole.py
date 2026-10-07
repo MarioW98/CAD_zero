@@ -7,16 +7,16 @@ from __future__ import annotations
 
 import numpy as np
 
-import cadforge
+import CAD_0
 
 
 def main() -> None:
     # A sphere of radius 2
-    ball = cadforge.sdf.sphere(radius=2.0)
+    ball = CAD_0.sdf.sphere(radius=2.0)
     # A cylinder of radius 0.5 along Y, height 10
-    cyl = cadforge.sdf.cylinder(radius=0.5, height=10.0)
+    cyl = CAD_0.sdf.cylinder(radius=0.5, height=10.0)
     # Subtract: ball - cyl
-    body = cadforge.sdf.subtract(ball, cyl)
+    body = CAD_0.sdf.subtract(ball, cyl)
     print(f"Body: {body.describe()}")
     print(f"Lipschitz: {body.lipschitz()}")
 
@@ -28,7 +28,7 @@ def main() -> None:
         [3.0, 0.0, 0.0],  # outside sphere — should be outside
     ], dtype=np.float32)
 
-    out = cadforge.sdf.evaluate(body, pts)
+    out = CAD_0.sdf.evaluate(body, pts)
     print("\nSampled values:")
     for i, v in enumerate(out.values):
         print(f"  pt={pts[i].tolist()}  sdf={v:.6f}")

@@ -1,6 +1,6 @@
 # Architecture Overview
 
-cadforge is a **dual-representation CAD kernel** — both SDF (signed distance fields) and B-Rep (boundary representation) are first-class peers. There is no "primary" representation that the other is converted into; the user works in whichever domain fits the design problem.
+CAD_0 is a **dual-representation CAD kernel** — both SDF (signed distance fields) and B-Rep (boundary representation) are first-class peers. There is no "primary" representation that the other is converted into; the user works in whichever domain fits the design problem.
 
 This document is the entry point to the architecture. Deeper topics are covered in dedicated files under `docs/architecture/` and `docs/adr/`.
 
@@ -8,7 +8,7 @@ This document is the entry point to the architecture. Deeper topics are covered 
 
 ```
 +----------------------------------+
-|        Python bindings          |  ← cadforge.sdf, cadforge.geometry, ...
+|        Python bindings          |  ← CAD_0.sdf, CAD_0.geometry, ...
 |        (nanobind, Phase A)      |
 +----------------------------------+
                 |
@@ -103,7 +103,7 @@ Every binding function that does heavy work uses:
 
 ```cpp
 {
-    cadforge::concurrency::gil_release no_gil;
+    CAD_0::concurrency::gil_release no_gil;
     backend.evaluate(body, points, out);  // pure C++
 }  // GIL reacquired before returning to Python
 ```

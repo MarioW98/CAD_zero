@@ -1,9 +1,9 @@
 // tests/unit/math/test_vec.cpp
 #include <doctest/doctest.h>
 
-#include "cadforge/math/vec.hpp"
+#include "CAD_0/math/vec.hpp"
 
-using namespace cadforge::math;
+using namespace CAD_0::math;
 
 TEST_CASE("Vec3f: basic construction and access") {
     Vec3f v{1.0f, 2.0f, 3.0f};

@@ -1,6 +1,6 @@
 """Example: build a sphere SDF and evaluate it on a grid.
 
-Usage (after `pip install cadforge`):
+Usage (after `pip install CAD_0`):
     python examples/sdf_sphere.py
 """
 
@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import numpy as np
 
-import cadforge
+import CAD_0
 
 
 def main() -> None:
     # Build a unit sphere centered at the origin.
-    sph = cadforge.sdf.sphere(radius=1.0)
+    sph = CAD_0.sdf.sphere(radius=1.0)
     print(f"Body: {sph.describe()}")
     print(f"Bounds: min={sph.bounds().min}, max={sph.bounds().max}")
     print(f"Lipschitz constant: {sph.lipschitz()}")
@@ -25,7 +25,7 @@ def main() -> None:
         [2.0, 0.0, 0.0],   # outside → +1
     ], dtype=np.float32)
 
-    out = cadforge.sdf.evaluate(sph, pts)
+    out = CAD_0.sdf.evaluate(sph, pts)
     print(f"\nEvaluated {pts.shape[0]} points:")
     for i, v in enumerate(out.values):
         print(f"  pt={pts[i].tolist()}  sdf={v:.6f}")

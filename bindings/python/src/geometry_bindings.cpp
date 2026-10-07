@@ -9,14 +9,14 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/unique_ptr.h>
 
-#include "cadforge/geometry/shape.hpp"
-#include "cadforge/geometry/shape_bodies.hpp"
-#include "cadforge/geometry/transform.hpp"
-#include "cadforge/sdf/field.hpp"
+#include "CAD_0/geometry/shape.hpp"
+#include "CAD_0/geometry/shape_bodies.hpp"
+#include "CAD_0/geometry/transform.hpp"
+#include "CAD_0/sdf/field.hpp"
 
 namespace nb = nanobind;
-using namespace cadforge::geometry;
-using namespace cadforge::sdf;
+using namespace CAD_0::geometry;
+using namespace CAD_0::sdf;
 
 void bind_geometry(nb::module_& m) {
     // FeatureId / SubshapeRef / Generation / ShapeId

@@ -1,9 +1,9 @@
 // tests/unit/math/test_bbox.cpp
 #include <doctest/doctest.h>
 
-#include "cadforge/math/bbox.hpp"
+#include "CAD_0/math/bbox.hpp"
 
-using namespace cadforge::math;
+using namespace CAD_0::math;
 
 TEST_CASE("Bboxf: default is empty") {
     Bboxf b;

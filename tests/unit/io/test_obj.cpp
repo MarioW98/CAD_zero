@@ -1,21 +1,21 @@
 // tests/unit/io/test_obj.cpp
 #include <doctest/doctest.h>
 
-#include "cadforge/sdf/primitives.hpp"
-#include "cadforge/sdf/mesh_extract.hpp"
-#include "cadforge/io/obj.hpp"
+#include "CAD_0/sdf/primitives.hpp"
+#include "CAD_0/sdf/mesh_extract.hpp"
+#include "CAD_0/io/obj.hpp"
 
 #include <cstdio>
 #include <fstream>
 #include <string>
 
-using namespace cadforge;
+using namespace CAD_0;
 
 TEST_CASE("OBJ: export writes valid file with vertices and faces") {
     auto sph = sdf::make_sphere(1.0f);
     auto mesh = sdf::marching_cubes(sph, 16, true);
 
-    const std::string path = "/tmp/test_cadforge_obj.obj";
+    const std::string path = "/tmp/test_CAD_0_obj.obj";
     REQUIRE(io::export_obj(path, mesh, "test_sphere"));
 
     std::ifstream f(path);
@@ -46,7 +46,7 @@ TEST_CASE("OBJ: export without normals") {
     opts.weld_vertices = true;
     auto mesh = sdf::marching_cubes(sph, sph.bounds(), opts);
 
-    const std::string path = "/tmp/test_cadforge_obj_nonorm.obj";
+    const std::string path = "/tmp/test_CAD_0_obj_nonorm.obj";
     REQUIRE(io::export_obj(path, mesh));
 
     std::ifstream f(path);
@@ -68,7 +68,7 @@ TEST_CASE("OBJ: 1-based indexing") {
     mesh.positions = {{0,0,0}, {1,0,0}, {0,1,0}};
     mesh.indices = {0, 1, 2};
 
-    const std::string path = "/tmp/test_cadforge_obj_idx.obj";
+    const std::string path = "/tmp/test_CAD_0_obj_idx.obj";
     REQUIRE(io::export_obj(path, mesh, "test"));
 
     std::ifstream f(path);

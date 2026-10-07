@@ -7,8 +7,8 @@
             "binaryDir": "${sourceDir}/build/${presetName}",
             "cacheVariables": {
                 "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "CADFORGE_BUILD_TESTING": "ON",
-                "CADFORGE_BUILD_PYTHON": "ON"
+                "CAD_0_BUILD_TESTING": "ON",
+                "CAD_0_BUILD_PYTHON": "ON"
             }
         },
         {
@@ -18,7 +18,7 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
                 "CMAKE_CXX_COMPILER": "g++",
-                "CADFORGE_SANITIZE": "ON"
+                "CAD_0_SANITIZE": "ON"
             },
             "condition": {
                 "type": "equals",

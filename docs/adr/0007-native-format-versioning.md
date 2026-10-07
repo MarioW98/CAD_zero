@@ -4,7 +4,7 @@
 Accepted (2025-10-07)
 
 ## Context
-The native project format (`.cadforge`) is a structured file containing
+The native project format (`.CAD_0`) is a structured file containing
 feature tree, parameters, scripts, and any embedded meshes/voxels.
 The format will evolve. We need a versioning strategy that:
 

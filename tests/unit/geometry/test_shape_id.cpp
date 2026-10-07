@@ -1,9 +1,9 @@
 // tests/unit/geometry/test_shape_id.cpp
 #include <doctest/doctest.h>
 
-#include "cadforge/geometry/shape_id.hpp"
+#include "CAD_0/geometry/shape_id.hpp"
 
-using namespace cadforge::geometry;
+using namespace CAD_0::geometry;
 
 TEST_CASE("ShapeId: default is zero") {
     ShapeId id;

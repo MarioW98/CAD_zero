@@ -8,14 +8,14 @@
 // forward-declared members: declare the destructor in the header, define
 // it in a TU that sees the full type definition.
 
-#include "cadforge/geometry/shape.hpp"
-#include "cadforge/geometry/shape_bodies.hpp"
-#include "cadforge/sdf/field.hpp"        // IWYU pragma: keep — needed for ~HybridBody
-#include "cadforge/brep/topology.hpp"    // IWYU pragma: keep — Phase D stub; complete type for ~HybridBody
+#include "CAD_0/geometry/shape.hpp"
+#include "CAD_0/geometry/shape_bodies.hpp"
+#include "CAD_0/sdf/field.hpp"        // IWYU pragma: keep — needed for ~HybridBody
+#include "CAD_0/brep/topology.hpp"    // IWYU pragma: keep — Phase D stub; complete type for ~HybridBody
 
 #include <sstream>
 
-namespace cadforge::geometry {
+namespace CAD_0::geometry {
 
 const sdf::SDFBody* Shape::as_sdf() const noexcept {
     if (auto* p = std::get_if<std::unique_ptr<sdf::SDFBody>>(&payload_)) {
@@ -67,4 +67,4 @@ std::string ShapeId::to_string() const {
     return ss.str();
 }
 
-} // namespace cadforge::geometry
+} // namespace CAD_0::geometry

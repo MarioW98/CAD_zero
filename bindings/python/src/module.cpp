@@ -1,6 +1,6 @@
 // bindings/python/src/module.cpp
 //
-// Top-level nanobind module for cadforge.
+// Top-level nanobind module for CAD_0.
 // Submodules: math, sdf, geometry, io (Phase B.5+).
 //
 // Build: see bindings/python/CMakeLists.txt
@@ -14,8 +14,8 @@ void bind_geometry(nb::module_&);
 void bind_sdf(nb::module_&);
 void bind_mesh(nb::module_&);
 
-NB_MODULE(_cadforge, m) {
-    m.doc() = "cadforge — dual-representation CAD kernel (native SDF + B-Rep)";
+NB_MODULE(_CAD_0, m) {
+    m.doc() = "CAD_0 — dual-representation CAD kernel (native SDF + B-Rep)";
 
     auto math_mod     = m.def_submodule("math",     "Vector / matrix / quaternion math");
     auto geometry_mod = m.def_submodule("geometry", "Shape, ShapeId, Transform, DatumCS");

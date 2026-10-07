@@ -1,11 +1,11 @@
 // tests/unit/geometry/test_shape.cpp
 #include <doctest/doctest.h>
 
-#include "cadforge/geometry/shape.hpp"
-#include "cadforge/sdf/primitives.hpp"
+#include "CAD_0/geometry/shape.hpp"
+#include "CAD_0/sdf/primitives.hpp"
 
-using namespace cadforge::geometry;
-using namespace cadforge::sdf;
+using namespace CAD_0::geometry;
+using namespace CAD_0::sdf;
 
 TEST_CASE("Shape: default is empty (no body)") {
     Shape s;

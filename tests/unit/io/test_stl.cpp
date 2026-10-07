@@ -1,21 +1,21 @@
 // tests/unit/io/test_stl.cpp
 #include <doctest/doctest.h>
 
-#include "cadforge/sdf/primitives.hpp"
-#include "cadforge/sdf/mesh_extract.hpp"
-#include "cadforge/io/stl.hpp"
+#include "CAD_0/sdf/primitives.hpp"
+#include "CAD_0/sdf/mesh_extract.hpp"
+#include "CAD_0/io/stl.hpp"
 
 #include <cstdio>
 #include <fstream>
 #include <string>
 
-using namespace cadforge;
+using namespace CAD_0;
 
 TEST_CASE("STL: binary export writes valid file") {
     auto sph = sdf::make_sphere(1.0f);
     auto mesh = sdf::marching_cubes(sph, 16, true);
 
-    const std::string path = "/tmp/test_cadforge_sphere.stl";
+    const std::string path = "/tmp/test_CAD_0_sphere.stl";
     REQUIRE(io::export_stl_binary(path, mesh, "test_sphere"));
 
     // File should exist and be non-empty.
@@ -36,7 +36,7 @@ TEST_CASE("STL: ascii export writes valid file") {
     auto sph = sdf::make_sphere(1.0f);
     auto mesh = sdf::marching_cubes(sph, 8, false);
 
-    const std::string path = "/tmp/test_cadforge_sphere_ascii.stl";
+    const std::string path = "/tmp/test_CAD_0_sphere_ascii.stl";
     REQUIRE(io::export_stl_ascii(path, mesh, "test_sphere_ascii"));
 
     std::ifstream f(path);
@@ -62,7 +62,7 @@ TEST_CASE("STL: ascii export writes valid file") {
 
 TEST_CASE("STL: empty mesh writes empty file") {
     sdf::TriangleMesh empty_mesh;
-    const std::string path = "/tmp/test_cadforge_empty.stl";
+    const std::string path = "/tmp/test_CAD_0_empty.stl";
     REQUIRE(io::export_stl_binary(path, empty_mesh, "empty"));
 
     std::ifstream f(path, std::ios::binary);

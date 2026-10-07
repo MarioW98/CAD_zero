@@ -1,9 +1,9 @@
 // core/math/src/tolerance.cpp
-#include "cadforge/math/tolerance.hpp"
+#include "CAD_0/math/tolerance.hpp"
 
 #include <sstream>
 
-namespace cadforge::math {
+namespace CAD_0::math {
 
 std::string Tolerance::describe() const {
     std::ostringstream ss;
@@ -15,4 +15,4 @@ std::string Tolerance::describe() const {
     return ss.str();
 }
 
-} // namespace cadforge::math
+} // namespace CAD_0::math

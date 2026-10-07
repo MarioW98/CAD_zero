@@ -1,6 +1,6 @@
-# Contributing to cadforge
+# Contributing to CAD_0
 
-Thank you for your interest in contributing to cadforge! This document
+Thank you for your interest in contributing to CAD_0! This document
 describes how to set up your environment and the conventions we follow.
 
 ## Build prerequisites
@@ -13,8 +13,8 @@ describes how to set up your environment and the conventions we follow.
 ## Quick setup
 
 ```bash
-git clone https://github.com/your-org/cadforge.git
-cd cadforge
+git clone https://github.com/your-org/CAD_0.git
+cd CAD_0
 
 # Configure (Linux)
 cmake --preset linux-gcc-release
@@ -32,9 +32,9 @@ ctest --preset linux-gcc-release
   authoritative; CI rejects PRs that don't pass `clang-format --verify`.
 - **Python**: ruff + black. Type-checked with mypy.
 - **Headers**: every public header lives under
-  `core/<module>/include/cadforge/<module>/`. Internal headers (no
+  `core/<module>/include/CAD_0/<module>/`. Internal headers (no
   public API) live under `core/<module>/src/`.
-- **Includes**: relative includes use `#include "cadforge/..."` (project
+- **Includes**: relative includes use `#include "CAD_0/..."` (project
   root). Third-party includes use `#include <...>`.
 
 ## ADRs (Architecture Decision Records)

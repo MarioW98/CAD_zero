@@ -1,10 +1,10 @@
 // tests/unit/math/test_mat.cpp
 #include <doctest/doctest.h>
 
-#include "cadforge/math/mat.hpp"
-#include "cadforge/math/quat.hpp"
+#include "CAD_0/math/mat.hpp"
+#include "CAD_0/math/quat.hpp"
 
-using namespace cadforge::math;
+using namespace CAD_0::math;
 
 TEST_CASE("Mat4f: identity") {
     Mat4f m = Mat4f::identity();

@@ -5,24 +5,26 @@ add_subdirectory(geometry)
 add_subdirectory(sdf)
 add_subdirectory(brep)
 add_subdirectory(io)
+add_subdirectory(viewport)
 
-# Concurrency is added when CADFORGE_USE_TBB is set; otherwise a header-only
+# Concurrency is added when CAD_0_USE_TBB is set; otherwise a header-only
 # scalar fallback is provided.
 add_subdirectory(concurrency)
 
 # Bridge and modeling land in later phases.
-if(CADFORGE_BUILD_BREP)
+if(CAD_0_BUILD_BREP)
     add_subdirectory(bridge)
     add_subdirectory(modeling)
 endif()
 
 # Convenience aggregate target for downstream consumers.
-add_library(cadforge_core INTERFACE)
-target_link_libraries(cadforge_core INTERFACE
-    cadforge_math
-    cadforge_geometry
-    cadforge_sdf
-    cadforge_concurrency
-    cadforge_brep
-    cadforge_io
+add_library(CAD_0_core INTERFACE)
+target_link_libraries(CAD_0_core INTERFACE
+    CAD_0_math
+    CAD_0_geometry
+    CAD_0_sdf
+    CAD_0_concurrency
+    CAD_0_brep
+    CAD_0_io
+    CAD_0_viewport
 )

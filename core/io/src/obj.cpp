@@ -1,22 +1,22 @@
 // core/io/src/obj.cpp
-#include "cadforge/io/obj.hpp"
+#include "CAD_0/io/obj.hpp"
 
-#include <cadforge/math/vec.hpp>
+#include <CAD_0/math/vec.hpp>
 
 #include <fstream>
 #include <iomanip>
 
-namespace cadforge::io {
+namespace CAD_0::io {
 
 bool export_obj(const std::string& path,
-                const cadforge::sdf::TriangleMesh& mesh,
+                const CAD_0::sdf::TriangleMesh& mesh,
                 std::string_view name) {
     std::ofstream f(path);
     if (!f) return false;
     f << std::setprecision(6) << std::scientific;
 
     // Header comment.
-    f << "# Exported by cadforge\n";
+    f << "# Exported by CAD_0\n";
     f << "# name: " << name << "\n";
     f << "# vertices: " << mesh.vertex_count() << "\n";
     f << "# triangles: " << mesh.triangle_count() << "\n";
@@ -55,4 +55,4 @@ bool export_obj(const std::string& path,
     return static_cast<bool>(f);
 }
 
-} // namespace cadforge::io
+} // namespace CAD_0::io
