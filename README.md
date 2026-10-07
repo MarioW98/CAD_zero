@@ -1,4 +1,4 @@
-# cadforge
+# CAD _test _from zero
 
 **Dual-representation CAD kernel — native SDF + B-Rep, in C++20 and Python.**
 
