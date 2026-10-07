@@ -1,0 +1,72 @@
+[build-system]
+requires = ["scikit-build-core>=0.10.0", "nanobind>=2.2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "cadforge"
+version = "0.1.0"
+description = "CADForge — dual-representation CAD kernel (native SDF + B-Rep)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "CADForge contributors" }]
+keywords = ["cad", "sdf", "brep", "geometry", "implicit"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Manufacturing",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    "Topic :: Scientific/Engineering",
+]
+
+dependencies = [
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+ui = ["PySide6>=6.6.0"]
+cli = ["typer>=0.12.0", "rich>=13.0.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-xdist>=3.5",
+    "mypy>=1.10",
+    "ruff>=0.5",
+    "black>=24.0",
+]
+
+[project.scripts]
+cadforge = "cadforge.cli:app"
+
+[tool.scikit-build]
+cmake.minimum-version = "3.22"
+ninja.make-fallback = true
+cmake.args = [
+    "-DCADFORGE_BUILD_PYTHON=ON",
+    "-DCADFORGE_BUILD_TESTING=OFF",
+]
+wheel.packages = ["cadforge"]
+
+[tool.nanobind]
+clang-version = "17"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "RUF"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.pytest.ini_options]
+testpaths = ["bindings/python/tests", "tests"]
+addopts = "-ra -q"
