@@ -13,7 +13,7 @@ cadforge is a from-scratch CAD kernel where **SDF (signed distance fields) and B
 ### Build (Linux + GCC)
 
 ```bash
-git clone https://github.com/your-org/cadforge.git
+git clone https://github.com/MarioW98/CAD_zero
 cd cadforge
 cmake --preset linux-gcc-release
 cmake --build --preset linux-gcc-release
