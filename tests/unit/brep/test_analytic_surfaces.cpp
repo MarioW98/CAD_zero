@@ -101,7 +101,7 @@ TEST_CASE("CylinderSurface: all surface points at distance R from axis") {
 
 TEST_CASE("CylinderSurface: normal points outward") {
     CylinderSurface cyl(1.0f, 2.0f);
-    auto p = cyl.evaluate(0.0f, 0.0f);
+    (void)cyl.evaluate(0.0f, 0.0f);
     auto n = cyl.normal(0.0f, 0.0f);
     // At u=0, point is (1, 0, 0), normal should be (1, 0, 0)
     CHECK(n.x == doctest::Approx(1.0f));
@@ -134,7 +134,7 @@ TEST_CASE("SphereSurface: all points at distance R from center") {
 
 TEST_CASE("SphereSurface: normal points outward") {
     SphereSurface sph(2.0f);
-    auto p = sph.evaluate(0.0f, 3.14159f * 0.5f);  // equator at u=0
+    (void)sph.evaluate(0.0f, 3.14159f * 0.5f);  // equator at u=0
     auto n = sph.normal(0.0f, 3.14159f * 0.5f);
     // At equator u=0, point is (R, 0, 0), normal should be (1, 0, 0)
     CHECK(n.x == doctest::Approx(1.0f));

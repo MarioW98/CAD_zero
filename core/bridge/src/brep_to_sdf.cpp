@@ -48,7 +48,7 @@ public:
         for (const auto& tri : triangles_) {
             if (tri.normal.dot(p - tri.v0) < 0) inside_count++;
         }
-        inside = (inside_count > triangles_.size() / 2);
+        inside = (static_cast<std::size_t>(inside_count) > triangles_.size() / 2);
 
         float signed_dist = inside ? -min_dist : min_dist;
         return {signed_dist, inside ? -best_normal : best_normal};

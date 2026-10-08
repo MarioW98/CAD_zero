@@ -86,7 +86,7 @@ public:
 
     // Approximate arc length (Ramanujan's formula)
     float length() const noexcept {
-        const float h = std::pow((a_ - b_) / (a_ + b_), 2);
+        const float h = static_cast<float>(std::pow((a_ - b_) / (a_ + b_), 2));
         return 3.14159265358979f * (a_ + b_) * (1.0f + 3.0f * h / (10.0f + std::sqrt(4.0f - 3.0f * h)));
     }
 
