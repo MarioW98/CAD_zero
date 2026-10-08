@@ -87,8 +87,12 @@ class ViewportWidget(QWidget):
         normals = []
         indices = []
         offset = 0
-        for node in self._scene.nodes():
-            if not node.visible:
+        # Use node_count() + node_at() instead of nodes() to avoid
+        # vector copy issues with move-only SceneNode.
+        count = self._scene.node_count()
+        for i in range(count):
+            node = self._scene.node_at(i)
+            if node is None or not node.visible:
                 continue
             pos = node.cached_mesh.positions
             nor = node.cached_mesh.normals

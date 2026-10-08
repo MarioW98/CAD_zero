@@ -67,9 +67,10 @@ void bind_scene(nb::module_& m) {
         .def("empty", &scene::Scene::empty)
         .def("bounds", &scene::Scene::bounds)
         .def("update_meshes", &scene::Scene::update_meshes, nb::arg("resolution") = 48)
-        .def_prop_ro("nodes", [](scene::Scene& s) {
-            return &s.nodes();
-        }, nb::rv_policy::reference_internal);
+        .def("node_count", &scene::Scene::node_count)
+        .def("node_at", [](scene::Scene& s, std::size_t i) -> scene::SceneNode* {
+            return s.node_at(i);
+        }, nb::arg("index"), nb::rv_policy::reference_internal);
 
     // OrbitCamera — bind to Python so the viewport widget can use it
     auto cam_mod = m.def_submodule("camera", "Camera system");

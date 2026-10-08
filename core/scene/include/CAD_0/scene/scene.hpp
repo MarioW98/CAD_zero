@@ -150,6 +150,18 @@ public:
     std::size_t size() const noexcept { return nodes_.size(); }
     bool empty() const noexcept { return nodes_.empty(); }
 
+    // Index-based access (for Python bindings — avoids vector copy issues
+    // since SceneNode contains move-only SDFBody).
+    std::size_t node_count() const noexcept { return nodes_.size(); }
+    SceneNode* node_at(std::size_t index) {
+        if (index >= nodes_.size()) return nullptr;
+        return &nodes_[index];
+    }
+    const SceneNode* node_at(std::size_t index) const {
+        if (index >= nodes_.size()) return nullptr;
+        return &nodes_[index];
+    }
+
     math::Bboxf bounds() const {
         math::Bboxf b;
         for (const auto& n : nodes_) {

@@ -365,8 +365,9 @@ class MainWindow(QMainWindow):
         if not path or not self._has_kernel:
             return
         # Export first visible mesh
-        for node in self._scene.nodes():
-            if node.visible and node.cached_mesh.vertex_count() > 0:
+        for i in range(self._scene.node_count()):
+            node = self._scene.node_at(i)
+            if node is None or not node.visible or node.cached_mesh.vertex_count() == 0:
                 self._cpp.io.export(path, node.cached_mesh)
                 self._status.showMessage(f"Exported: {path}", 3000)
                 return
@@ -578,8 +579,9 @@ class MainWindow(QMainWindow):
         # Ray-bbox intersection for each visible node
         best_node = None
         best_t = float('inf')
-        for node in self._scene.nodes():
-            if not node.visible:
+        for i in range(self._scene.node_count()):
+            node = self._scene.node_at(i)
+            if node is None or not node.visible:
                 continue
             b = node.body.bounds()
             # Simple slab-based ray-AABB test
