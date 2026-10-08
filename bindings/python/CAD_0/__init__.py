@@ -1,22 +1,24 @@
 """CAD_0 - dual-representation CAD kernel (native SDF + B-Rep).
 
-Public API entry point. The compiled extension is imported lazily so that
-`import CAD_0` works even on a pure-Python checkout (e.g. to inspect
-types or read docstrings).
+Unified package: kernel (C++ extension) + Python convenience wrappers
++ PySide6 desktop UI.
+
+Run the desktop app:
+    cmake -B build -DCAD_0_BUILD_PYTHON=ON -DPython3_EXECUTABLE=$(which python3) -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+    cmake --build build
+    PYTHONPATH=build/python python -m CAD_0.ui
 """
 
 from __future__ import annotations
 
 __version__ = "0.1.0"
 
-# Lazy import: the compiled extension lives in `_CAD_0`. We re-export
-# the public symbols so that the canonical access path is `from CAD_0
-# import sdf` (not `from CAD_0._CAD_0 import sdf`).
-from . import _CAD_0  # noqa: F401  (compiled extension)
+# Import the compiled C++ extension
+from . import _CAD_0  # noqa: F401
 
-from ._CAD_0 import math, geometry, sdf  # noqa: F401
-from ._CAD_0 import scene, camera, commands  # noqa: F401
-from ._CAD_0.geometry import (
+# Re-export kernel submodules
+from ._CAD_0 import math, geometry, sdf, scene, camera, commands  # noqa: F401
+from ._CAD_0.geometry import (  # noqa: F401
     Shape,
     ShapeId,
     FeatureId,
@@ -27,17 +29,20 @@ from ._CAD_0.geometry import (
     Units,
 )
 
-# The Python-side `io` module wraps the C++ io submodule with a
-# higher-level `export()` function that auto-detects file format from
-# the extension. Import the Python file (not the C++ submodule).
+# Python-side io module (wraps C++ io with auto-detect export)
 from . import io  # noqa: F401
 
-# The Python-side `viewer` module provides matplotlib-based 3D mesh
-# visualization and 2D SDF cross-section views.
+# Python-side viewer (matplotlib 3D + 2D slices)
 try:
     from . import viewer  # noqa: F401
 except ImportError:
-    pass  # matplotlib not installed — viewer is optional
+    pass  # matplotlib not installed
+
+# UI module (PySide6 desktop app)
+try:
+    from . import ui  # noqa: F401
+except ImportError:
+    pass  # PySide6 not installed
 
 __all__ = [
     "__version__",
@@ -49,6 +54,7 @@ __all__ = [
     "scene",
     "camera",
     "commands",
+    "ui",
     "Shape",
     "ShapeId",
     "FeatureId",

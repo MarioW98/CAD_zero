@@ -71,10 +71,20 @@ target_include_directories(_CAD_0 PRIVATE
 install(TARGETS _CAD_0 LIBRARY DESTINATION CAD_0)
 
 # Copy the Python package source into the build tree for editable installs.
+# 1. Copy the bindings/python/CAD_0/ package (kernel API: sdf, io, viewer, etc.)
+# 2. Copy the app/src/CAD_0/ui/ directory (PySide6 UI)
+# 3. Copy the compiled extension _CAD_0.so
+# 4. Merge __init__.py to include both kernel and UI imports
 add_custom_target(CAD_0_python_copy ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/CAD_0
         ${CMAKE_BINARY_DIR}/python/CAD_0
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/app/src/CAD_0/ui
+        ${CMAKE_BINARY_DIR}/python/CAD_0/ui
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${CMAKE_SOURCE_DIR}/app/src/CAD_0/__init__.py
+        ${CMAKE_BINARY_DIR}/python/CAD_0/__init__.py
     COMMAND ${CMAKE_COMMAND} -E copy
         $<TARGET_FILE:_CAD_0>
         ${CMAKE_BINARY_DIR}/python/CAD_0/_CAD_0$<TARGET_FILE_SUFFIX:_CAD_0>
