@@ -150,33 +150,20 @@ Mat<4, 4, T> Mat<4, 4, T>::inverse_orthonormal() const noexcept {
     // For rotation R (cols[0..2] are rotation columns):
     //   R[i][k] = cols[k][i]  (column k, component i)
     //
-    // Transpose:
-    //   R^T[k][i] = R[i][k] = cols[k][i]
-    // So the columns of R^T are exactly the rows of R, which (in column-major)
-    // are accessed by reading components across the original cols[0..2]:
-    //   R^T col 0 = (R[0][0], R[1][0], R[2][0]) = (cols[0].x, cols[0].y, cols[0].z)
-    //
-    // Wait — that's just cols[0]! R^T col 0 = R row 0 = (R[0][0], R[1][0], R[2][0])
-    // = (cols[0].x, cols[0].y, cols[0].z) = original cols[0]. So R^T's columns
-    // are the same as R's columns. This can't be right.
-    //
-    // Let's redo: R^T's row k = R's column k. So R^T's *column* k = R's *row* k.
+    // R^T's row k = R's column k. So R^T's *column* k = R's *row* k.
     // R's row k = (R[k][0], R[k][1], R[k][2]) = (cols[0][k], cols[1][k], cols[2][k]).
     //
     // So R^T's column k = (cols[0][k], cols[1][k], cols[2][k]).
     //
     // In column-major form, inv.cols[k] = R^T's column k:
-    //   inv.cols[0] = (cols[0][0], cols[1][0], cols[2][0]) = (cols[0].x, cols[1].x, cols[2].x)
-    //   inv.cols[1] = (cols[0][1], cols[1][1], cols[2][1]) = (cols[0].y, cols[1].y, cols[2].y)
-    //   inv.cols[2] = (cols[0][2], cols[1][2], cols[2][2]) = (cols[0].z, cols[1].z, cols[2].z)
+    //   inv.cols[0] = (cols[0].x, cols[1].x, cols[2].x)
+    //   inv.cols[1] = (cols[0].y, cols[1].y, cols[2].y)
+    //   inv.cols[2] = (cols[0].z, cols[1].z, cols[2].z)
     //
     // For -R^T * t, we want each component k of the result:
     //   (R^T * t)[k] = sum_i R^T[k][i] * t[i] = sum_i R[i][k] * t[i]
     //                = sum_i cols[k][i] * t[i]
     //                = cols[k].x * t.x + cols[k].y * t.y + cols[k].z * t.z
-    //
-    // (Note: cols[k][i] means column k, component i. With our Vec3 indexing,
-    // cols[k].x = component 0, cols[k].y = component 1, cols[k].z = component 2.)
     Mat inv = Mat::identity();
     inv.cols[0].x = cols[0].x;  inv.cols[0].y = cols[1].x;  inv.cols[0].z = cols[2].x;
     inv.cols[1].x = cols[0].y;  inv.cols[1].y = cols[1].y;  inv.cols[1].z = cols[2].y;
@@ -184,7 +171,7 @@ Mat<4, 4, T> Mat<4, 4, T>::inverse_orthonormal() const noexcept {
 
     const Vec<3, T> t{cols[3].x, cols[3].y, cols[3].z};
     // (R^T * t)[k] = cols[k].x*t.x + cols[k].y*t.y + cols[k].z*t.z
-    // (using ORIGINAL cols, not inv.cols — that's the trick!)
+    // using ORIGINAL cols, not inv.cols.
     inv.cols[3].x = -(cols[0].x * t.x + cols[0].y * t.y + cols[0].z * t.z);
     inv.cols[3].y = -(cols[1].x * t.x + cols[1].y * t.y + cols[1].z * t.z);
     inv.cols[3].z = -(cols[2].x * t.x + cols[2].y * t.y + cols[2].z * t.z);

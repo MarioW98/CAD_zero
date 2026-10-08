@@ -14,7 +14,7 @@ __version__ = "0.1.0"
 # import sdf` (not `from CAD_0._CAD_0 import sdf`).
 from . import _CAD_0  # noqa: F401  (compiled extension)
 
-from ._CAD_0 import math, geometry, sdf, io  # noqa: F401
+from ._CAD_0 import math, geometry, sdf  # noqa: F401
 from ._CAD_0.geometry import (
     Shape,
     ShapeId,
@@ -25,6 +25,11 @@ from ._CAD_0.geometry import (
     Representation,
     Units,
 )
+
+# The Python-side `io` module wraps the C++ io submodule with a
+# higher-level `export()` function that auto-detects file format from
+# the extension. Import the Python file (not the C++ submodule).
+from . import io  # noqa: F401
 
 __all__ = [
     "__version__",

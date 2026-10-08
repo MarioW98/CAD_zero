@@ -10,22 +10,76 @@ CAD_0 is a from-scratch CAD kernel where **SDF (signed distance fields) and B-Re
 
 ## Quick start
 
-### Build (Linux + GCC)
+### Prerequisites
+
+- C++20 compiler: GCC ≥ 11, Clang ≥ 14, or MSVC ≥ 17.10
+- CMake ≥ 3.22 (or install via `pip install cmake`)
+- Ninja (recommended, install via `pip install ninja`)
+- Python ≥ 3.10 with dev headers (for Python bindings)
+- For Python bindings: `pip install nanobind scikit-build-core`
+
+### Build (Linux + GCC, no Python bindings)
 
 ```bash
 git clone https://github.com/your-org/CAD_0.git
 cd CAD_0
-cmake --preset linux-gcc-release
-cmake --build --preset linux-gcc-release
-ctest --preset linux-gcc-release
+cmake -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCAD_0_BUILD_PYTHON=OFF \
+    -DCAD_0_BUILD_TESTING=ON
+cmake --build build
+ctest --test-dir build
 ```
 
-### Install the Python package (editable)
+### Build with Python bindings
+
+The Python bindings require Python dev headers + nanobind. If you use a
+venv (e.g. uv-managed), make sure to point CMake at the right interpreter:
 
 ```bash
-pip install -e .[dev]
-python examples/sdf_sphere.py
+# Install build dependencies in your venv
+pip install cmake ninja nanobind scikit-build-core
+
+# Configure — pass Python3_EXECUTABLE so CMake finds the right Python
+cmake -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCAD_0_BUILD_PYTHON=ON \
+    -DCAD_0_BUILD_TESTING=ON \
+    -DPython3_EXECUTABLE=$(which python3)
+
+cmake --build build
+
+# Test the Python extension
+cd build/python
+python3 -c "
+import sys; sys.path.insert(0, '.')
+import CAD_0
+sph = CAD_0.sdf.sphere(radius=2.0)
+print(sph.describe())
+mesh = CAD_0.sdf.marching_cubes(sph, resolution=16)
+print(f'Vertices: {mesh.vertex_count()}, Triangles: {mesh.triangle_count()}')
+"
 ```
+
+### Troubleshooting: "Could NOT find Python3 (missing: Development.Module)"
+
+This means CMake found a Python interpreter but not its development headers.
+Fixes:
+
+1. **Debian/Ubuntu (system Python):**
+   ```bash
+   sudo apt install python3-dev
+   ```
+
+2. **Venv (uv-managed or pip-managed):**
+   - The venv must have its own dev headers. uv-managed Pythons ship them
+     under `<uv-cache>/python/cpython-3.XX-*/include/python3.XX/Python.h`.
+   - Pass `-DPython3_EXECUTABLE=/path/to/venv/bin/python3` to CMake so it
+     picks the right interpreter.
+
+3. **Multiple Python versions:**
+   - CMake might find Python 3.13 (with dev headers) when your venv uses
+     3.12 (without). Always pass `-DPython3_EXECUTABLE=` explicitly.
 
 ### Use the kernel from Python
 
@@ -48,6 +102,10 @@ blended = CAD_0.sdf.smooth_union(sph, b, k=0.6)
 pts = np.random.uniform(-5, 5, (1024, 3)).astype(np.float32)
 result = CAD_0.sdf.evaluate(blended, pts)
 print(result.values[:8])
+
+# Mesh extraction + export.
+mesh = CAD_0.sdf.marching_cubes(blended, resolution=64)
+CAD_0.io.export('output.stl', mesh)  # auto-detects format from extension
 ```
 
 ### Use the kernel from C++
@@ -123,6 +181,7 @@ See `docs/architecture/overview.md` for the full layout and design rationale.
 | [0017](docs/adr/0017-viewport-architecture.md) | Headless-first viewport architecture (Phase C) |
 | [0018](docs/adr/0018-pyside6-ui-integration.md) | PySide6 UI integration (Phase C.6-C.8) |
 | [0019](docs/adr/0019-project-rename.md) | Project rename cadforge → CAD_0 |
+| [0020](docs/adr/0020-python-bindings-build.md) | Python bindings build configuration |
 
 ---
 

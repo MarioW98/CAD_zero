@@ -31,15 +31,13 @@ TEST_CASE("Subtract: cube minus sphere") {
     auto box = make_box({1, 1, 1});
     auto sph = make_sphere(0.5f);
     auto cut = sdf_subtract(std::move(box), std::move(sph));
-    // Center of the cube — sphere center is also at origin, so center is "outside" (in the carved region)
-    const float v = cut.value({0, 0, 0});
-    // Inside the cube (negative) intersected with "not in sphere" (= positive, since sphere is inside cube)
-    // Result: max(box_value, -sphere_value) = max(-1, 0.5) = 0.5
-    // Wait: subtraction is intersect(a, complement(b)) = max(a_value, -b_value)
+    // Center of the cube — sphere center is also at origin.
+    // Subtraction = intersect(a, complement(b)) = max(a_value, -b_value).
     // a (box) at center = -1 (inside)
     // b (sphere r=0.5) at center = -0.5 (inside)
     // -b = 0.5
     // max(-1, 0.5) = 0.5  → outside the result
+    const float v = cut.value({0, 0, 0});
     CHECK(v == doctest::Approx(0.5f).epsilon(1e-5f));
 }
 

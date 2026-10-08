@@ -131,6 +131,21 @@ endif()
 # ---------------------------------------------------------------------------
 # Subdirectories
 # ---------------------------------------------------------------------------
+
+# Find Python3 once at the top level so all subdirectories can use the
+# Python3::Module imported target. We use Development.Module (not
+# Development) because we only need Python.h, not the full libpython
+# (nanobind links the libpython it needs).
+#
+# Pass -DPython3_EXECUTABLE=/path/to/python to CMake to pick a specific
+# interpreter (e.g. when using a venv or uv-managed Python).
+if(CAD_0_BUILD_PYTHON)
+    find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
+    message(STATUS "Python3_EXECUTABLE:  ${Python3_EXECUTABLE}")
+    message(STATUS "Python3_INCLUDE_DIRS: ${Python3_INCLUDE_DIRS}")
+    message(STATUS "Python3_VERSION:     ${Python3_VERSION}")
+endif()
+
 add_subdirectory(core)
 if(CAD_0_BUILD_PYTHON)
     add_subdirectory(bindings/python)

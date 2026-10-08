@@ -249,8 +249,9 @@ static const std::array<std::pair<int, int>, 12> kEdgeCorners = {{
 // ---------------------------------------------------------------------------
 // For each edge, the canonical (cell-anchored) corner coordinates.
 // Edge 0 (corners 0-1) is anchored at (0,0,0); it's shared with the
-// cell at (-1,0,0). To deduplicate, we always anchor the edge at the
-// cell with the *smaller* coordinate of the two endpoints.
+// cell at (-1,0,0). To deduplicate, anchor each edge at the cell
+// whose origin (corner 0) coincides with the smaller-coordinate
+// endpoint of the edge.
 // ---------------------------------------------------------------------------
 struct EdgeAnchor {
     std::int32_t dx, dy, dz;       // offset of the anchoring cell
@@ -260,34 +261,21 @@ struct EdgeAnchor {
 // For each of the 12 edges, return the anchor offset (dx, dy, dz) and
 // the edge index in the anchored cell.
 //
-// Edge 0 connects (0,0,0) - (1,0,0). Anchored at (0,0,0) as edge 0.
-// Edge 1 connects (1,0,0) - (1,1,0). Anchored at (0,0,0) as edge 1.
-// Edge 2 connects (1,1,0) - (0,1,0). Anchored at (-1,0,0) as edge 1
-//   (since edge 1 in the cell at (-1,0,0) connects (1,0,0)-(1,1,0)
-//    = (0,1,0)-(0,2,0) in absolute coords — wait, that's wrong).
-//
-// Let me re-derive carefully. For a cell at (cx, cy, cz), its 8 corners
-// are at (cx+dx, cy+dy, cz+dz) where (dx,dy,dz) ∈ {0,1}^3.
-//
 // Edge 0 of cell (cx,cy,cz) connects corner 0 (cx,cy,cz) and corner 1 (cx+1,cy,cz).
 // Edge 1 connects corner 1 (cx+1,cy,cz) and corner 2 (cx+1,cy+1,cz).
 // Edge 2 connects corner 2 (cx+1,cy+1,cz) and corner 3 (cx,cy+1,cz).
 // Edge 3 connects corner 3 (cx,cy+1,cz) and corner 0 (cx,cy,cz).
 // Edge 8 connects corner 0 (cx,cy,cz) and corner 4 (cx,cy,cz+1).
 //
-// Now consider an edge in the grid: it's identified by its two endpoint
-// grid coordinates. To deduplicate, we want each grid edge to have a
-// canonical (cell, edge_idx) representation.
+// Consider an edge in the grid: identified by its two endpoint grid coords.
+// To deduplicate, each grid edge has a canonical (cell, edge_idx) representation.
 //
 // Edge 0 of cell (cx,cy,cz): endpoints (cx,cy,cz) and (cx+1,cy,cz).
-//   This same edge is also edge 0 of cell (cx-1,cy,cz) — no wait,
-//   cell (cx-1,cy,cz)'s edge 0 connects (cx-1,cy,cz) and (cx,cy,cz). Same edge!
-//   So edge 0 of cell (cx,cy,cz) is shared with edge 0 of cell (cx-1,cy,cz).
+//   Also edge 0 of cell (cx-1,cy,cz): endpoints (cx-1,cy,cz) and (cx,cy,cz).
 //   Canonical: the cell with smaller cx, i.e. (cx-1, cy, cz), edge 0.
 //
-// We pick: each edge is anchored at the cell where its endpoint with
-// smallest coordinate lives. For edge 0 (along +X), the cell at the
-// smaller x is canonical.
+// Each edge is anchored at the cell whose corner 0 is at the
+// smaller-coordinate endpoint.
 static const std::array<EdgeAnchor, 12> kEdgeAnchors = {{
     {0, 0, 0, 0},  // edge 0: along +X, anchored at (cx, cy, cz)
     {0, 0, 0, 1},  // edge 1: along +Y at x=cx+1, anchored at (cx, cy, cz)

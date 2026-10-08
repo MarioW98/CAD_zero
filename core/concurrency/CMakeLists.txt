@@ -27,12 +27,18 @@ if(TBB::tbb)
     target_compile_definitions(CAD_0_concurrency PRIVATE CAD_0_USE_TBB=1)
 endif()
 
+# When Python bindings are enabled, the GIL guard needs Python.h.
+# find_package(Python3) is called once at the top-level CMakeLists.txt,
+# so the Python3::Module target is available here.
 if(CAD_0_BUILD_PYTHON)
     target_compile_definitions(CAD_0_concurrency PUBLIC CAD_0_BUILD_PYTHON=1)
-    # We need Python.h — but we don't link against libpython directly
-    # (nanobind does that for us). Find_Python3 is enough for headers.
-    find_package(Python3 COMPONENTS Development.Module REQUIRED)
-    target_link_libraries(CAD_0_concurrency PRIVATE Python3::Module)
+    if(TARGET Python3::Module)
+        target_link_libraries(CAD_0_concurrency PRIVATE Python3::Module)
+    else()
+        # Fallback: at least add the include dirs if the imported target
+        # isn't available (shouldn't happen with modern CMake + Development.Module).
+        target_include_directories(CAD_0_concurrency PRIVATE ${Python3_INCLUDE_DIRS})
+    endif()
 endif()
 
 target_compile_features(CAD_0_concurrency PUBLIC cxx_std_20)

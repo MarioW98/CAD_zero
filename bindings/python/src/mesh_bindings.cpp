@@ -32,17 +32,19 @@ namespace nb = nanobind;
 using namespace CAD_0;
 
 void bind_mesh(nb::module_& m) {
-    auto sdf_mod = m.def_submodule("sdf", "SDF mesh extraction (already exists if sdf module bound)");
+    // TriangleMesh and marching_cubes are exposed on the SDF submodule
+    // passed in by the caller (typically the existing `CAD_0.sdf` module).
+    nb::module_& sdf_mod = m;
 
     // TriangleMesh — return as numpy arrays + counts.
     nb::class_<sdf::TriangleMesh>(sdf_mod, "TriangleMesh")
-        .def_ro("positions", [](const sdf::TriangleMesh& mesh) {
+        .def_prop_ro("positions", [](const sdf::TriangleMesh& mesh) {
             return nb::ndarray<nb::numpy, float, nb::ndim<2>>(
                 const_cast<float*>(reinterpret_cast<const float*>(mesh.positions.data())),
                 {mesh.positions.size(), std::size_t(3)},
                 nb::handle());
         })
-        .def_ro("normals", [](const sdf::TriangleMesh& mesh) {
+        .def_prop_ro("normals", [](const sdf::TriangleMesh& mesh) {
             if (mesh.normals.empty()) {
                 return nb::ndarray<nb::numpy, float, nb::ndim<2>>();
             }
@@ -51,7 +53,7 @@ void bind_mesh(nb::module_& m) {
                 {mesh.normals.size(), std::size_t(3)},
                 nb::handle());
         })
-        .def_ro("indices", [](const sdf::TriangleMesh& mesh) {
+        .def_prop_ro("indices", [](const sdf::TriangleMesh& mesh) {
             return nb::ndarray<nb::numpy, std::uint32_t, nb::ndim<1>>(
                 const_cast<std::uint32_t*>(mesh.indices.data()),
                 {mesh.indices.size()},
@@ -89,8 +91,10 @@ void bind_mesh(nb::module_& m) {
         },
         nb::arg("mesh"), nb::arg("tolerance"),
         nb::rv_policy::reference_internal);
+}
 
-    // IO module
+// IO bindings — exported to a separate io submodule.
+void bind_io(nb::module_& m) {
     auto io_mod = m.def_submodule("io", "Mesh export (STL / OBJ / 3MF)");
 
     io_mod.def("export_stl_binary",

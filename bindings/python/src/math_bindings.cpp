@@ -1,6 +1,7 @@
 // bindings/python/src/math_bindings.cpp
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/array.h>
+#include <nanobind/stl/string.h>
 
 #include "CAD_0/math/vec.hpp"
 #include "CAD_0/math/mat.hpp"
@@ -27,16 +28,16 @@ void bind_math(nb::module_& m) {
             if (i >= 3) throw std::out_of_range("Vec3f index");
             v[i] = x;
         })
-        .def("__add__", &Vec3f::operator+)
-        .def("__sub__", &Vec3f::operator-)
+        .def("__add__", [](const Vec3f& a, const Vec3f& b) { return a + b; })
+        .def("__sub__", [](const Vec3f& a, const Vec3f& b) { return a - b; })
         .def("__mul__", [](const Vec3f& v, float s) { return v * s; })
         .def("__rmul__", [](const Vec3f& v, float s) { return v * s; })
         .def("__neg__", [](const Vec3f& v) { return -v; })
         .def("length",      &Vec3f::length)
         .def("length_sq",   &Vec3f::length_sq)
         .def("normalized",  &Vec3f::normalized)
-        .def("dot",          &Vec3f::dot)
-        .def("cross",       &Vec3f::cross)
+        .def("dot",          [](const Vec3f& a, const Vec3f& b) { return a.dot(b); })
+        .def("cross",       [](const Vec3f& a, const Vec3f& b) { return a.cross(b); })
         .def("__repr__", [](const Vec3f& v) {
             return "<Vec3f " + std::to_string(v.x) + ", " +
                    std::to_string(v.y) + ", " + std::to_string(v.z) + ">";
@@ -58,7 +59,7 @@ void bind_math(nb::module_& m) {
         .def_static("rotation_z", &Mat4f::rotation_z,    nb::arg("rad"))
         .def("transform_point", &Mat4f::transform_point)
         .def("transform_dir",   &Mat4f::transform_dir)
-        .def("__mul__",         &Mat4f::operator*)
+        .def("__mul__",         [](const Mat4f& a, const Mat4f& b) { return a * b; })
         .def("inverse",         &Mat4f::inverse)
         .def("inverse_orthonormal", &Mat4f::inverse_orthonormal);
 
@@ -72,7 +73,7 @@ void bind_math(nb::module_& m) {
         .def("to_matrix",  &Quatf::to_matrix)
         .def("conjugate",  &Quatf::conjugate)
         .def("normalized", &Quatf::normalized)
-        .def("__mul__",    &Quatf::operator*);
+        .def("__mul__",    [](const Quatf& a, const Quatf& b) { return a * b; });
 
     // Bboxf
     nb::class_<Bboxf>(m, "Bboxf")

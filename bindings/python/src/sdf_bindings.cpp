@@ -8,6 +8,7 @@
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/unique_ptr.h>
 #include <nanobind/stl/vector.h>
+#include <nanobind/stl/string.h>
 
 #include "CAD_0/sdf/field.hpp"
 #include "CAD_0/sdf/primitives.hpp"

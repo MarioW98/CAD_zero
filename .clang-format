@@ -20,9 +20,9 @@ SpaceAfterCStyleCast: false
 SpaceAfterTemplateKeyword: false
 IncludeBlocks: Regroup
 IncludeCategories:
-  - Regex: '^"cadforge'
+  - Regex: '^"CAD_0'
     Priority: 1
-  - Regex: '^<cadforge'
+  - Regex: '^<CAD_0'
     Priority: 1
   - Regex: '^"'
     Priority: 2
