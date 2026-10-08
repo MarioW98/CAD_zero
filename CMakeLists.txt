@@ -49,13 +49,7 @@ option(CAD_0_BUILD_BENCHMARKS "Build benchmarks" OFF)
 option(CAD_0_BUILD_PYTHON   "Build Python bindings (nanobind)" ON)
 option(CAD_0_BUILD_EXAMPLES "Build C++ examples" ON)
 option(CAD_0_SANITIZE       "Enable ASan/UBSan (debug builds only)" OFF)
-# TBB is OFF by default because the CPM-fetched oneTBB headers don't always
-# end up on the include path of downstream targets (depends on the CMake
-# generator and the imported target's INTERFACE_INCLUDE_DIRECTORIES).
-# The build works perfectly without TBB (single-threaded fallback).
-# Enable explicitly with -DCAD_0_USE_TBB=ON if you need parallelism and
-# have oneTBB properly installed system-wide.
-option(CAD_0_USE_TBB        "Use oneTBB for thread pool" OFF)
+option(CAD_0_USE_TBB        "Use oneTBB for thread pool" ON)
 
 # ---------------------------------------------------------------------------
 # Dependencies — fetched via CPM.cmake for reproducibility
