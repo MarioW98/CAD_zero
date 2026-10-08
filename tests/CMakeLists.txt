@@ -24,6 +24,9 @@ set(CAD_0_TEST_SOURCES
     unit/viewport/test_selection.cpp
     unit/viewport/test_renderer.cpp
     unit/viewport/test_ray_march.cpp
+    unit/brep/test_topology.cpp
+    unit/brep/test_analytic_surfaces.cpp
+    unit/bridge/test_bridge.cpp
     main.cpp
 )
 
@@ -35,8 +38,11 @@ target_include_directories(CAD_0_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/core/sdf/include
     ${CMAKE_SOURCE_DIR}/core/concurrency/include
     ${CMAKE_SOURCE_DIR}/core/brep/include
+    ${CMAKE_SOURCE_DIR}/core/scene/include
     ${CMAKE_SOURCE_DIR}/core/io/include
     ${CMAKE_SOURCE_DIR}/core/viewport/include
+    ${CMAKE_SOURCE_DIR}/core/scene/include
+    ${CMAKE_SOURCE_DIR}/core/bridge/include
     ${CMAKE_SOURCE_DIR}/third_party/robust_predicates
     ${CMAKE_BINARY_DIR}/include
 )
@@ -48,6 +54,8 @@ target_link_libraries(CAD_0_tests PRIVATE
     CAD_0_concurrency
     CAD_0_io
     CAD_0_viewport
+    CAD_0_brep
+    CAD_0_bridge
 )
 
 # doctest is fetched via CPM. If CPM exposes the doctest target, link it.

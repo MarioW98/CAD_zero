@@ -1,6 +1,6 @@
 // bindings/python/src/scene_bindings.cpp
 //
-// Python bindings for the Scene class and OrbitCamera.
+// Python bindings for the Scene class, OrbitCamera, and CommandStack.
 //
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
@@ -9,6 +9,7 @@
 
 #include "CAD_0/scene/scene.hpp"
 #include "CAD_0/viewport/camera.hpp"
+#include "CAD_0/viewport/command_stack.hpp"
 #include "CAD_0/sdf/primitives.hpp"
 #include "CAD_0/sdf/operators.hpp"
 #include "CAD_0/sdf/transforms.hpp"
@@ -40,7 +41,11 @@ void bind_scene(nb::module_& m) {
         }, nb::rv_policy::reference_internal)
         .def_prop_ro("cached_mesh", [](const scene::SceneNode& n) -> const sdf::TriangleMesh& {
             return n.cached_mesh;
-        }, nb::rv_policy::reference_internal);
+        }, nb::rv_policy::reference_internal)
+        .def("rebuild_body", &scene::SceneNode::rebuild_body)
+        .def("set_param", [](scene::SceneNode& n, const std::string& key, float v) {
+            n.set_param(key, v);
+        }, nb::arg("key"), nb::arg("value"));
 
     // Scene
     nb::class_<scene::Scene>(scene_mod, "Scene")
@@ -54,6 +59,9 @@ void bind_scene(nb::module_& m) {
         }, nb::arg("id"), nb::rv_policy::reference_internal)
         .def("mark_dirty", &scene::Scene::mark_dirty, nb::arg("id"))
         .def("set_visible", &scene::Scene::set_visible, nb::arg("id"), nb::arg("visible"))
+        .def("set_node_param", [](scene::Scene& s, std::uint32_t id, const std::string& key, float v) {
+            s.set_node_param(id, key, v);
+        }, nb::arg("id"), nb::arg("key"), nb::arg("value"))
         .def("clear", &scene::Scene::clear)
         .def("size", &scene::Scene::size)
         .def("empty", &scene::Scene::empty)
@@ -95,4 +103,37 @@ void bind_scene(nb::module_& m) {
         .def("view_matrix", &viewport::OrbitCamera::view_matrix)
         .def("projection_matrix", &viewport::OrbitCamera::projection_matrix)
         .def("view_projection_matrix", &viewport::OrbitCamera::view_projection_matrix);
+
+    // CommandStack — undo/redo support
+    auto cmd_mod = m.def_submodule("commands", "Undo/redo command stack");
+
+    nb::class_<viewport::Command>(cmd_mod, "Command")
+        .def("execute", &viewport::Command::execute)
+        .def("undo", &viewport::Command::undo)
+        .def("description", &viewport::Command::description);
+
+    nb::class_<viewport::LambdaCommand, viewport::Command>(cmd_mod, "LambdaCommand")
+        .def(nb::init<std::function<void()>, std::function<void()>, const char*>(),
+             nb::arg("execute_fn"), nb::arg("undo_fn"), nb::arg("desc") = "command");
+
+    nb::class_<viewport::CommandStack>(cmd_mod, "CommandStack")
+        .def(nb::init<>())
+        .def(nb::init<std::size_t>(), nb::arg("max_size"))
+        .def("push", [](viewport::CommandStack& cs, std::function<void()> exec_fn,
+                        std::function<void()> undo_fn, const char* desc) {
+            cs.push(std::move(exec_fn), std::move(undo_fn), desc);
+        }, nb::arg("execute_fn"), nb::arg("undo_fn"), nb::arg("desc") = "command")
+        .def("undo", &viewport::CommandStack::undo)
+        .def("redo", &viewport::CommandStack::redo)
+        .def("can_undo", &viewport::CommandStack::can_undo)
+        .def("can_redo", &viewport::CommandStack::can_redo)
+        .def("undo_count", &viewport::CommandStack::undo_count)
+        .def("redo_count", &viewport::CommandStack::redo_count)
+        .def("next_undo_description", &viewport::CommandStack::next_undo_description,
+             nb::rv_policy::reference)
+        .def("next_redo_description", &viewport::CommandStack::next_redo_description,
+             nb::rv_policy::reference)
+        .def("clear", &viewport::CommandStack::clear)
+        .def("max_size", &viewport::CommandStack::max_size)
+        .def("set_max_size", &viewport::CommandStack::set_max_size);
 }

@@ -37,7 +37,7 @@ class ViewportWidget(QWidget):
         self._setup_ui()
         self._setup_input_handlers()
 
-        # Camera state (Python-side; mirrors OrbitCamera).
+        # Camera state
         self._cam_target = (0.0, 0.0, 0.0)
         self._cam_distance = 5.0
         self._cam_yaw = 0.0
@@ -45,15 +45,16 @@ class ViewportWidget(QWidget):
         self._cam_fov = 45.0
         self._cam_aspect = 1.0
 
-        # Mouse tracking state.
+        # Mouse tracking
         self._last_mouse_pos: Optional[QPoint] = None
         self._mouse_button = Qt.MouseButton.NoButton
+        self._drag_distance = 0  # Track drag distance to distinguish click from drag
 
-        # Show grid/axes flags.
+        # Show grid/axes
         self._show_grid = True
         self._show_axes = True
 
-        # Mesh data cache (set from outside).
+        # Mesh data cache
         self._mesh_positions = None
         self._mesh_normals = None
         self._mesh_indices = None
@@ -171,6 +172,7 @@ class ViewportWidget(QWidget):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         self._last_mouse_pos = event.position().toPoint()
         self._mouse_button = event.button()
+        self._drag_distance = 0
         self.setFocus()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
@@ -178,6 +180,7 @@ class ViewportWidget(QWidget):
             return
         delta = event.position().toPoint() - self._last_mouse_pos
         self._last_mouse_pos = event.position().toPoint()
+        self._drag_distance += abs(delta.x()) + abs(delta.y())
 
         if self._mouse_button == Qt.MouseButton.LeftButton:
             sensitivity = 0.005
@@ -194,6 +197,16 @@ class ViewportWidget(QWidget):
             self._gl_window.request_update()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        # If left button and minimal drag, treat as click (picking)
+        if (self._mouse_button == Qt.MouseButton.LeftButton and
+            self._drag_distance < 5 and event.button() == Qt.MouseButton.LeftButton):
+            # Convert pixel position to NDC [-1, 1]
+            pos = event.position().toPoint()
+            w = max(1, self.width())
+            h = max(1, self.height())
+            ndc_x = (2.0 * pos.x() / w) - 1.0
+            ndc_y = 1.0 - (2.0 * pos.y() / h)  # Y flipped
+            self.clicked.emit(ndc_x, ndc_y)
         self._last_mouse_pos = None
         self._mouse_button = Qt.MouseButton.NoButton
 

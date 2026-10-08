@@ -440,70 +440,55 @@ TriangleMesh marching_cubes(const SDFBody& body,
     // Evaluate the SDF on the grid.
     Grid g = evaluate_grid(body, bounds, opts.resolution, opts.compute_normals);
 
-    // Edge-key cache: maps (canonical cell coord + edge index) -> vertex id.
-    // We use a 64-bit key: (cx & 0xFFFF) | ((cy & 0xFFFF) << 16) | ((cz & 0xFFFF) << 32) | (edge_idx << 48)
-    auto edge_key = [](std::int32_t cx, std::int32_t cy, std::int32_t cz, int edge) -> std::uint64_t {
-        const std::uint64_t kx = static_cast<std::uint16_t>(cx);
-        const std::uint64_t ky = static_cast<std::uint16_t>(cy);
-        const std::uint64_t kz = static_cast<std::uint16_t>(cz);
-        const std::uint64_t ke = static_cast<std::uint64_t>(edge);
-        return kx | (ky << 16) | (kz << 32) | (ke << 48);
+    // Vertex cache keyed by grid-edge endpoints (provably correct).
+    // Each marching-cubes edge is identified by its two grid vertex
+    // coordinates. Adjacent cells sharing the same edge compute the
+    // same key, so they get the same vertex ID.
+    static const std::int8_t kCornerOffset[8][3] = {
+        {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0},
+        {0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1},
     };
-
+    auto grid_edge_key = [](std::int32_t ax, std::int32_t ay, std::int32_t az,
+                             std::int32_t bx, std::int32_t by, std::int32_t bz) -> std::uint64_t {
+        // Canonicalize: smaller endpoint first
+        if (ax > bx || (ax == bx && ay > by) || (ax == bx && ay == by && az > bz)) {
+            std::swap(ax, bx); std::swap(ay, by); std::swap(az, bz);
+        }
+        // Each coordinate fits in 10 bits (supports resolution up to 1023).
+        // 6 coordinates × 10 bits = 60 bits, fits in uint64_t with NO collisions.
+        const std::uint64_t ux = std::uint64_t(std::uint32_t(ax) & 0x3FF);
+        const std::uint64_t uy = std::uint64_t(std::uint32_t(ay) & 0x3FF);
+        const std::uint64_t uz = std::uint64_t(std::uint32_t(az) & 0x3FF);
+        const std::uint64_t vx = std::uint64_t(std::uint32_t(bx) & 0x3FF);
+        const std::uint64_t vy = std::uint64_t(std::uint32_t(by) & 0x3FF);
+        const std::uint64_t vz = std::uint64_t(std::uint32_t(bz) & 0x3FF);
+        return ux | (uy << 10) | (uz << 20) | (vx << 30) | (vy << 40) | (vz << 50);
+    };
     std::unordered_map<std::uint64_t, std::uint32_t> edge_cache;
 
-    // Helper to get-or-create a vertex for a given cell-edge.
     auto get_vertex = [&](std::uint32_t cx, std::uint32_t cy, std::uint32_t cz,
                           int local_edge) -> std::uint32_t {
-        // Compute the canonical (anchor cell, anchor edge) for this edge.
-        const EdgeAnchor& a = kEdgeAnchors[local_edge];
-        const std::int32_t acx = static_cast<std::int32_t>(cx) + a.dx;
-        const std::int32_t acy = static_cast<std::int32_t>(cy) + a.dy;
-        const std::int32_t acz = static_cast<std::int32_t>(cz) + a.dz;
-        const int aedge = a.edge_idx;
-
+        const auto [ca, cb] = kEdgeCorners[local_edge];
+        const std::int32_t ax = cx + kCornerOffset[ca][0];
+        const std::int32_t ay = cy + kCornerOffset[ca][1];
+        const std::int32_t az = cz + kCornerOffset[ca][2];
+        const std::int32_t bx = cx + kCornerOffset[cb][0];
+        const std::int32_t by = cy + kCornerOffset[cb][1];
+        const std::int32_t bz = cz + kCornerOffset[cb][2];
+        const auto key = grid_edge_key(ax, ay, az, bx, by, bz);
         if (opts.weld_vertices) {
-            const auto key = edge_key(acx, acy, acz, aedge);
             auto it = edge_cache.find(key);
             if (it != edge_cache.end()) return it->second;
         }
-
-        // Compute the vertex position using the anchor cell + anchor edge.
-        // The anchor edge connects corners kEdgeCorners[aedge].first and .second
-        // in the anchor cell.
-        const auto [ca, cb] = kEdgeCorners[aedge];
-        // The anchor cell may be at negative coordinates (when the original
-        // cell is at (0, *, *) and the edge is anchored at (-1, *, *)).
-        // In that case, we can't use the grid directly. Instead, compute
-        // the vertex using the ORIGINAL cell's edge — same physical edge,
-        // just different (cell, edge_idx) representation.
-        //
-        // For edges that don't shift (anchor == original), use the original.
-        // For edges that shift (anchor cell is at negative coord), fall back
-        // to the original cell's edge_idx but with the SAME physical endpoints.
-        math::Vec3f pos;
+        math::Vec3f pos = interp_edge(g, cx, cy, cz, ca, cb);
         math::Vec3f nrm;
-        if (a.dx == 0 && a.dy == 0 && a.dz == 0) {
-            // Anchor cell == original cell. Use the anchor edge directly.
-            pos = interp_edge(g, cx, cy, cz, ca, cb);
-            if (opts.compute_normals) nrm = interp_gradient(g, cx, cy, cz, ca, cb);
-        } else {
-            // Anchor cell differs from original cell. The edge is shared,
-            // so we can compute it from EITHER cell. Use the original cell
-            // with the ORIGINAL local_edge.
-            const auto [oca, ocb] = kEdgeCorners[local_edge];
-            pos = interp_edge(g, cx, cy, cz, oca, ocb);
-            if (opts.compute_normals) nrm = interp_gradient(g, cx, cy, cz, oca, ocb);
+        if (opts.compute_normals) {
+            nrm = interp_gradient(g, cx, cy, cz, ca, cb);
         }
-
         const std::uint32_t vid = static_cast<std::uint32_t>(mesh.positions.size());
         mesh.positions.push_back(pos);
         if (opts.compute_normals) mesh.normals.push_back(nrm);
-
-        if (opts.weld_vertices) {
-            const auto key = edge_key(acx, acy, acz, aedge);
-            edge_cache[key] = vid;
-        }
+        if (opts.weld_vertices) edge_cache[key] = vid;
         return vid;
     };
 

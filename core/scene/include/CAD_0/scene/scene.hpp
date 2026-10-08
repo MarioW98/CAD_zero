@@ -5,6 +5,9 @@
 #pragma once
 
 #include "CAD_0/sdf/field.hpp"
+#include "CAD_0/sdf/primitives.hpp"
+#include "CAD_0/sdf/operators.hpp"
+#include "CAD_0/sdf/transforms.hpp"
 #include "CAD_0/sdf/mesh_extract.hpp"
 #include "CAD_0/math/vec.hpp"
 #include "CAD_0/math/mat.hpp"
@@ -12,10 +15,19 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace CAD_0::scene {
+
+// A parameter value that can be edited from the property panel.
+using ParamValue = std::variant<float, std::string, bool>;
+
+// A shape factory: given the current parameters, rebuild the SDFBody.
+// This allows interactive editing — change a radius, the body is rebuilt.
+using ShapeFactory = std::function<sdf::SDFBody(const std::map<std::string, ParamValue>&)>;
 
 struct SceneNode {
     std::uint32_t id{0};
@@ -25,6 +37,25 @@ struct SceneNode {
     bool visible{true};
     sdf::TriangleMesh cached_mesh;
     bool mesh_dirty{true};
+
+    // Shape factory + parameters for interactive editing.
+    // When params change, the body is rebuilt via the factory.
+    ShapeFactory factory;
+    std::map<std::string, ParamValue> params;
+
+    // Rebuild the SDF body from the factory + current params.
+    void rebuild_body() {
+        if (factory) {
+            body = factory(params);
+            mesh_dirty = true;
+        }
+    }
+
+    // Set a parameter and rebuild if a factory exists.
+    void set_param(const std::string& key, ParamValue value) {
+        params[key] = std::move(value);
+        rebuild_body();
+    }
 };
 
 enum class SceneChange {
@@ -50,6 +81,29 @@ public:
         nodes_.push_back(std::move(node));
         notify(SceneChange::NodeAdded, nodes_.back().id);
         return nodes_.back().id;
+    }
+
+    // Add a node with a shape factory for interactive editing.
+    std::uint32_t add_node(const std::string& name, sdf::SDFBody body,
+                           ShapeFactory factory, std::map<std::string, ParamValue> params) {
+        SceneNode node;
+        node.id = next_id_++;
+        node.name = name.empty() ? ("Shape_" + std::to_string(node.id)) : name;
+        node.body = std::move(body);
+        node.factory = std::move(factory);
+        node.params = std::move(params);
+        node.mesh_dirty = true;
+        nodes_.push_back(std::move(node));
+        notify(SceneChange::NodeAdded, nodes_.back().id);
+        return nodes_.back().id;
+    }
+
+    // Set a parameter on a node (triggers rebuild + re-tessellation).
+    void set_node_param(std::uint32_t id, const std::string& key, ParamValue value) {
+        if (auto* n = get_node_mut(id)) {
+            n->set_param(key, std::move(value));
+            notify(SceneChange::NodeModified, id);
+        }
     }
 
     bool remove_node(std::uint32_t id) {
