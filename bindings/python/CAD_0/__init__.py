@@ -31,12 +31,20 @@ from ._CAD_0.geometry import (
 # the extension. Import the Python file (not the C++ submodule).
 from . import io  # noqa: F401
 
+# The Python-side `viewer` module provides matplotlib-based 3D mesh
+# visualization and 2D SDF cross-section views.
+try:
+    from . import viewer  # noqa: F401
+except ImportError:
+    pass  # matplotlib not installed — viewer is optional
+
 __all__ = [
     "__version__",
     "math",
     "geometry",
     "sdf",
     "io",
+    "viewer",
     "Shape",
     "ShapeId",
     "FeatureId",
