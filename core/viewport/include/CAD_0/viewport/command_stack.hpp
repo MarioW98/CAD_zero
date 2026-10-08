@@ -73,6 +73,13 @@ public:
     CommandStack() = default;
     explicit CommandStack(std::size_t max_size) : max_size_(max_size) {}
 
+    // Non-copyable (contains unique_ptr<Command> vectors)
+    CommandStack(const CommandStack&) = delete;
+    CommandStack& operator=(const CommandStack&) = delete;
+    // Movable
+    CommandStack(CommandStack&&) = default;
+    CommandStack& operator=(CommandStack&&) = default;
+
     // Push a command: execute it, add to undo stack, clear redo stack.
     void push(std::unique_ptr<Command> cmd) {
         if (!cmd) return;

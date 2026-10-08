@@ -104,7 +104,10 @@ void bind_scene(nb::module_& m) {
         .def("projection_matrix", &viewport::OrbitCamera::projection_matrix)
         .def("view_projection_matrix", &viewport::OrbitCamera::view_projection_matrix);
 
-    // CommandStack — undo/redo support
+    // CommandStack — undo/redo support.
+    // CommandStack is move-only (contains vector<unique_ptr<Command>>),
+    // so we use nb::is_final to prevent nanobind from trying to generate
+    // a copy constructor.
     auto cmd_mod = m.def_submodule("commands", "Undo/redo command stack");
 
     nb::class_<viewport::Command>(cmd_mod, "Command")
@@ -116,7 +119,7 @@ void bind_scene(nb::module_& m) {
         .def(nb::init<std::function<void()>, std::function<void()>, const char*>(),
              nb::arg("execute_fn"), nb::arg("undo_fn"), nb::arg("desc") = "command");
 
-    nb::class_<viewport::CommandStack>(cmd_mod, "CommandStack")
+    nb::class_<viewport::CommandStack>(cmd_mod, "CommandStack", nb::is_final())
         .def(nb::init<>())
         .def(nb::init<std::size_t>(), nb::arg("max_size"))
         .def("push", [](viewport::CommandStack& cs, std::function<void()> exec_fn,
