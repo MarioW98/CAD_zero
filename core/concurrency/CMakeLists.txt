@@ -22,8 +22,14 @@ target_include_directories(CAD_0_concurrency
 
 target_link_libraries(CAD_0_concurrency PUBLIC CAD_0_math)
 
-if(TBB::tbb)
-    target_link_libraries(CAD_0_concurrency PRIVATE TBB::tbb)
+# Link TBB when enabled. TBB::tbb is an imported target created by
+# oneTBB's CMake config. We check both names for robustness.
+if(CAD_0_USE_TBB)
+    if(TARGET TBB::tbb)
+        target_link_libraries(CAD_0_concurrency PRIVATE TBB::tbb)
+    elseif(TARGET tbb)
+        target_link_libraries(CAD_0_concurrency PRIVATE tbb)
+    endif()
     target_compile_definitions(CAD_0_concurrency PRIVATE CAD_0_USE_TBB=1)
 endif()
 

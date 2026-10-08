@@ -15,6 +15,7 @@ __version__ = "0.1.0"
 from . import _CAD_0  # noqa: F401  (compiled extension)
 
 from ._CAD_0 import math, geometry, sdf  # noqa: F401
+from ._CAD_0 import scene, camera  # noqa: F401
 from ._CAD_0.geometry import (
     Shape,
     ShapeId,
@@ -45,6 +46,8 @@ __all__ = [
     "sdf",
     "io",
     "viewer",
+    "scene",
+    "camera",
     "Shape",
     "ShapeId",
     "FeatureId",

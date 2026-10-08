@@ -136,12 +136,6 @@ void write_central_directory(std::vector<unsigned char>& out,
     put_u16_le(out, 0);                                              // comment length
 }
 
-std::string format_xml_float(float v) {
-    std::ostringstream ss;
-    ss << std::setprecision(6) << std::scientific << v;
-    return ss.str();
-}
-
 std::string build_3dmodel_xml(const CAD_0::sdf::TriangleMesh& mesh,
                                std::string_view name,
                                std::string_view application) {

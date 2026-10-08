@@ -6,6 +6,7 @@ set(CAD_0_PY_SOURCES
     src/geometry_bindings.cpp
     src/sdf_bindings.cpp
     src/mesh_bindings.cpp
+    src/scene_bindings.cpp
 )
 
 # Find Python3 with Development.Module component (provides Python.h + libpython).
@@ -50,6 +51,7 @@ target_link_libraries(_CAD_0 PRIVATE
     CAD_0_io
     CAD_0_viewport
     CAD_0_brep
+    CAD_0_scene
 )
 
 target_include_directories(_CAD_0 PRIVATE
@@ -59,6 +61,8 @@ target_include_directories(_CAD_0 PRIVATE
     ${CMAKE_SOURCE_DIR}/core/concurrency/include
     ${CMAKE_SOURCE_DIR}/core/brep/include
     ${CMAKE_SOURCE_DIR}/core/io/include
+    ${CMAKE_SOURCE_DIR}/core/viewport/include
+    ${CMAKE_SOURCE_DIR}/core/scene/include
     ${CMAKE_BINARY_DIR}/include
     ${Python3_INCLUDE_DIRS}
 )

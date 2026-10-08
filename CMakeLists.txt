@@ -77,11 +77,12 @@ cpmaddpackage(
 )
 
 # doctest — unit testing
+# v2.4.12 fixes CMake 4.x compatibility (cmake_minimum_required bumped to 3.5)
 if(CAD_0_BUILD_TESTING)
     cpmaddpackage(
         NAME doctest
         GITHUB_REPOSITORY doctest/doctest
-        GIT_TAG v2.4.11
+        GIT_TAG v2.4.12
     )
 endif()
 
@@ -102,11 +103,16 @@ if(CAD_0_BUILD_PYTHON)
 endif()
 
 # oneTBB — thread pool + task graph (see ADR-0009)
+# v2022.0.0 fixes GCC 12+ -Werror false positives on atomic_base.h
+# (stringop-overflow). Older versions (v2021.x) fail on GCC 14.
 if(CAD_0_USE_TBB)
     cpmaddpackage(
         NAME TBB
         GITHUB_REPOSITORY oneapi-src/oneTBB
-        GIT_TAG v2021.13.0
+        GIT_TAG v2022.0.0
+        OPTIONS
+            "TBB_TEST OFF"
+            "TBB_STRICT OFF"
     )
 endif()
 

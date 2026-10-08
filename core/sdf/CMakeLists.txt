@@ -31,9 +31,15 @@ target_link_libraries(CAD_0_sdf
         xsimd
 )
 
-if(TBB::tbb)
-    target_link_libraries(CAD_0_sdf PRIVATE TBB::tbb)
-    target_compile_definitions(CAD_0_sdf PRIVATE CAD_0_USE_TBB=1)
+# Link TBB when enabled. TBB::tbb is an imported target created by
+# oneTBB's CMake config. We check both names for robustness.
+if(CAD_0_USE_TBB)
+    if(TARGET TBB::tbb)
+        target_link_libraries(CAD_0_sdf PRIVATE TBB::tbb)
+    elseif(TARGET tbb)
+        target_link_libraries(CAD_0_sdf PRIVATE tbb)
+    endif()
+    target_compile_definitions(CAD_0_sdf PUBLIC CAD_0_USE_TBB=1)
 endif()
 
 target_compile_features(CAD_0_sdf PUBLIC cxx_std_20)

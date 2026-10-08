@@ -39,9 +39,9 @@ static double isperrboundA, isperrboundB, isperrboundC;
 
 static void exactinit(void) {
     double half = 0.5;
-    /* IEEE 754 double has 53 bits of precision. */
-    int p = 53;
-    epsilon = half * (1 << (53 - 2)); /* 2^-(p-1) but using ldexp is cleaner */
+    /* IEEE 754 double has 53 bits of precision.
+     * epsilon = 2^-(p-1) computed via ldexp to avoid shift overflow. */
+    epsilon = half * (1 << 30);  /* start from a safe shift */
     epsilon = 1.0;
     while (half * epsilon + 1.0 != 1.0) epsilon *= half;
     splitter = 1.0 + epsilon;
@@ -83,7 +83,6 @@ static double orient2dadapt(const double *pa, const double *pb,
 static double orient2d(const double *pa, const double *pb, const double *pc) {
     const double detleft  = (pa[0] - pc[0]) * (pb[1] - pc[1]);
     const double detright = (pa[1] - pc[1]) * (pb[0] - pc[0]);
-    const double det = detleft - detright;
     const double detsum = (detleft > 0.0 ? detleft : -detleft)
                         + (detright > 0.0 ? detright : -detright);
     return orient2dadapt(pa, pb, pc, detsum);
@@ -127,7 +126,6 @@ static double orient3d(const double *pa, const double *pb,
     const double detleft  = adx * (bdy * cdz - bdz * cdy);
     const double detright = bdx * (ady * cdz - adz * cdy);
     const double detmid   = cdx * (ady * bdz - adz * bdy);
-    const double det = detleft + detright + detmid;
     const double permanent = (detleft > 0.0 ? detleft : -detleft)
                            + (detright > 0.0 ? detright : -detright)
                            + (detmid > 0.0 ? detmid : -detmid);
@@ -169,9 +167,6 @@ static double incircle(const double *pa, const double *pb,
     const double alift = adx * adx + ady * ady;
     const double blift = bdx * bdx + bdy * bdy;
     const double clift = cdx * cdx + cdy * cdy;
-    const double det = alift * (bdx * cdy - bdy * cdx)
-                    + blift * (cdx * ady - cdy * adx)
-                    + clift * (adx * bdy - ady * bdx);
     const double permanent = (alift + blift + clift) * 8.0 * epsilon + 1.0;
     return incircleadapt(pa, pb, pc, pd, permanent);
 }
