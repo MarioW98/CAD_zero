@@ -17,6 +17,32 @@ from PySide6.QtGui import QSurfaceFormat, QMouseEvent, QWheelEvent, QOpenGLFunct
 from PySide6.QtOpenGL import QOpenGLWindow
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 
+# OpenGL constants — PySide6.QtGui.QOpenGLFunctions doesn't expose them
+# as attributes, so we import them from PySide6.QtOpenGL or use PyOpenGL.
+# Fallback: define them manually (standard OpenGL 2.1 values).
+try:
+    from OpenGL.GL import *  # noqa: F401,F403
+    _HAS_PYOPENGL = True
+except ImportError:
+    _HAS_PYOPENGL = False
+
+# OpenGL constant values (from the OpenGL spec)
+GL_DEPTH_TEST = 0x0B71
+GL_LEQUAL = 0x0203
+GL_LIGHTING = 0x0B50
+GL_LIGHT0 = 0x4000
+GL_COLOR_MATERIAL = 0x0B57
+GL_NORMALIZE = 0x0BA1
+GL_COLOR_BUFFER_BIT = 0x4000
+GL_DEPTH_BUFFER_BIT = 0x0100
+GL_PROJECTION = 0x1701
+GL_MODELVIEW = 0x1700
+GL_LINES = 0x0001
+GL_TRIANGLES = 0x0004
+GL_POSITION = 0x1203
+GL_DIFFUSE = 0x1201
+GL_AMBIENT = 0x1200
+
 
 class ViewportWidget(QWidget):
     """A QWidget that hosts an OpenGL viewport with real rendering."""
@@ -215,11 +241,11 @@ class _ViewportWindow(QOpenGLWindow):
         self._gl = QOpenGLFunctions()
         self._gl.initializeOpenGLFunctions()
         gl = self._gl
-        gl.glEnable(gl.GL_DEPTH_TEST)
-        gl.glEnable(gl.GL_LIGHTING)
-        gl.glEnable(gl.GL_LIGHT0)
-        gl.glEnable(gl.GL_COLOR_MATERIAL)
-        gl.glEnable(gl.GL_NORMALIZE)
+        gl.glEnable(GL_DEPTH_TEST)
+        gl.glEnable(GL_LIGHTING)
+        gl.glEnable(GL_LIGHT0)
+        gl.glEnable(GL_COLOR_MATERIAL)
+        gl.glEnable(GL_NORMALIZE)
 
     def resizeGL(self, w: int, h: int) -> None:
         self._parent._cam_aspect = w / max(1, h)
@@ -231,10 +257,10 @@ class _ViewportWindow(QOpenGLWindow):
             return
         gl = self._gl
         gl.glClearColor(0.15, 0.15, 0.18, 1.0)
-        gl.glClear(gl.GL_COLOR_BUFFER_BIT | gl.GL_DEPTH_BUFFER_BIT)
+        gl.glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
         # Projection
-        gl.glMatrixMode(gl.GL_PROJECTION)
+        gl.glMatrixMode(GL_PROJECTION)
         gl.glLoadIdentity()
         fov_y = self._parent._cam_fov
         aspect = self._parent._cam_aspect
@@ -247,7 +273,7 @@ class _ViewportWindow(QOpenGLWindow):
         gl.glFrustum(left, right, bottom, top, near_p, far_p)
 
         # View (look-at)
-        gl.glMatrixMode(gl.GL_MODELVIEW)
+        gl.glMatrixMode(GL_MODELVIEW)
         gl.glLoadIdentity()
 
         cp = math.cos(self._parent._cam_pitch)
@@ -290,9 +316,9 @@ class _ViewportWindow(QOpenGLWindow):
         gl.glTranslatef(-cam_pos[0], -cam_pos[1], -cam_pos[2])
 
         # Light
-        gl.glLightfv(gl.GL_LIGHT0, gl.GL_POSITION, [0.5, 0.8, 0.3, 0.0])
-        gl.glLightfv(gl.GL_LIGHT0, gl.GL_DIFFUSE, [0.8, 0.8, 0.8, 1.0])
-        gl.glLightfv(gl.GL_LIGHT0, gl.GL_AMBIENT, [0.2, 0.2, 0.2, 1.0])
+        gl.glLightfv(GL_LIGHT0, GL_POSITION, [0.5, 0.8, 0.3, 0.0])
+        gl.glLightfv(GL_LIGHT0, GL_DIFFUSE, [0.8, 0.8, 0.8, 1.0])
+        gl.glLightfv(GL_LIGHT0, GL_AMBIENT, [0.2, 0.2, 0.2, 1.0])
 
         # Grid
         if self._parent._show_grid:
@@ -305,9 +331,9 @@ class _ViewportWindow(QOpenGLWindow):
             self._draw_meshes(gl)
 
     def _draw_grid(self, gl) -> None:
-        gl.glDisable(gl.GL_LIGHTING)
+        gl.glDisable(GL_LIGHTING)
         gl.glColor3f(0.3, 0.3, 0.3)
-        gl.glBegin(gl.GL_LINES)
+        gl.glBegin(GL_LINES)
         extent = 5.0
         step = 1.0
         i = -extent
@@ -318,28 +344,28 @@ class _ViewportWindow(QOpenGLWindow):
             gl.glVertex3f(extent, 0, i)
             i += step
         gl.glEnd()
-        gl.glEnable(gl.GL_LIGHTING)
+        gl.glEnable(GL_LIGHTING)
 
     def _draw_axes(self, gl) -> None:
-        gl.glDisable(gl.GL_LIGHTING)
+        gl.glDisable(GL_LIGHTING)
         gl.glLineWidth(2.0)
         gl.glColor3f(1, 0, 0)
-        gl.glBegin(gl.GL_LINES)
+        gl.glBegin(GL_LINES)
         gl.glVertex3f(0, 0, 0)
         gl.glVertex3f(2, 0, 0)
         gl.glEnd()
         gl.glColor3f(0, 1, 0)
-        gl.glBegin(gl.GL_LINES)
+        gl.glBegin(GL_LINES)
         gl.glVertex3f(0, 0, 0)
         gl.glVertex3f(0, 2, 0)
         gl.glEnd()
         gl.glColor3f(0, 0, 1)
-        gl.glBegin(gl.GL_LINES)
+        gl.glBegin(GL_LINES)
         gl.glVertex3f(0, 0, 0)
         gl.glVertex3f(0, 0, 2)
         gl.glEnd()
         gl.glLineWidth(1.0)
-        gl.glEnable(gl.GL_LIGHTING)
+        gl.glEnable(GL_LIGHTING)
 
     def _draw_meshes(self, gl) -> None:
         positions = self._parent._mesh_positions
@@ -353,7 +379,7 @@ class _ViewportWindow(QOpenGLWindow):
         batch_size = min(4096, n_tris)
         for batch_start in range(0, n_tris, batch_size):
             batch_end = min(batch_start + batch_size, n_tris)
-            gl.glBegin(gl.GL_TRIANGLES)
+            gl.glBegin(GL_TRIANGLES)
             for t in range(batch_start, batch_end):
                 i0 = int(indices[t * 3 + 0])
                 i1 = int(indices[t * 3 + 1])
