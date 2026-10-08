@@ -231,7 +231,7 @@ class _ViewportWindow(QOpenGLWindow):
 
     def initializeGL(self) -> None:
         from PySide6.QtGui import QOpenGLFunctions
-        self._gl = QOpenGLFunctions(self)
+        self._gl = QOpenGLFunctions()
         self._gl.initializeOpenGLFunctions()
         self._gl.glEnable(self._gl.GL_DEPTH_TEST)
         self._gl.glEnable(self._gl.GL_LIGHTING)

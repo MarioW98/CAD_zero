@@ -4,6 +4,7 @@ Now connects to the C++ Scene kernel and renders meshes in the viewport.
 """
 
 from __future__ import annotations
+
 import sys
 from typing import Optional
 
@@ -37,32 +38,29 @@ class MainWindow(QMainWindow):
 
         # Try to import the C++ kernel
         try:
-            # The kernel might be in a different CAD_0 package (bindings/python/)
-            # Try importing from the current package first, then from a
-            # separate CAD_0 package on sys.path.
-            try:
-                import CAD_0 as _kernel_pkg
-                # Check if this package has the compiled extension
-                if not hasattr(_kernel_pkg, '_CAD_0'):
-                    raise ImportError("No _CAD_0 in this package")
-            except ImportError:
-                pass
-
-            # Force reimport with the right sys.path
-            import importlib
-            if '_CAD_0' not in sys.modules:
+            import CAD_0
+            # Check if this package has the compiled extension
+            if not hasattr(CAD_0, '_CAD_0'):
                 # Try to find _CAD_0 on sys.path
                 import importlib.util
                 spec = importlib.util.find_spec('_CAD_0')
-                if spec is None:
-                    raise ImportError("_CAD_0 compiled extension not found")
+                if spec is not None:
+                    import importlib
+                    _CAD_0_mod = importlib.import_module('_CAD_0')
+                    # Inject submodules
+                    CAD_0._CAD_0 = _CAD_0_mod
+                    from CAD_0._CAD_0 import scene, camera, commands
+                    CAD_0.scene = scene
+                    CAD_0.camera = camera
+                    CAD_0.commands = commands
+                else:
+                    raise ImportError("_CAD_0 compiled extension not found on sys.path")
 
-            import CAD_0
             self._cpp = CAD_0
             self._scene = CAD_0.scene.Scene()
             self._command_stack = CAD_0.commands.CommandStack(1000)
             self._has_kernel = True
-        except (ImportError, AttributeError) as e:
+        except Exception as e:
             self._cpp = None
             self._scene = None
             self._command_stack = None

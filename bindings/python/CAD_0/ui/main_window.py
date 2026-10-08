@@ -4,7 +4,7 @@ Now connects to the C++ Scene kernel and renders meshes in the viewport.
 """
 
 from __future__ import annotations
-import sys
+
 from typing import Optional
 
 from PySide6.QtCore import Qt
