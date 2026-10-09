@@ -145,7 +145,8 @@ if [[ ! -d "${PROJECT_DIR}/build/python/CAD_0" ]]; then
     # Make sure PySide6 + PyOpenGL are installed (needed for the UI at runtime)
     python3 -c "import PySide6" 2>/dev/null || python3 -m pip install --quiet PySide6 2>&1 | tail -3
     python3 -c "import OpenGL" 2>/dev/null || python3 -m pip install --quiet PyOpenGL 2>&1 | tail -3
-    ( cd "${PROJECT_DIR}" && \
+    REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    ( cd "REPO_DIR" && \
       cmake -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
