@@ -74,64 +74,18 @@ class ViewportWidget(QWidget):
         fmt.setSwapBehavior(QSurfaceFormat.DoubleBuffer)
         QSurfaceFormat.setDefaultFormat(fmt)
 
-        # Try to create a real GL window. In headless / no-GPU environments
-        # this can fail and Qt may segfault during cleanup; we offer a
-        # non-GL fallback so the rest of the application still works.
-        self._gl_window = None
-        self._gl_fallback_label = None
-        self._gl_container = None
-        gl_available = self._check_gl_available(fmt)
-        if gl_available:
-            try:
-                self._gl_window = _ViewportWindow(self)
-                self._gl_window.setFormat(fmt)
-                container = QWidget.createWindowContainer(self._gl_window, self)
-                container.setFocusPolicy(Qt.StrongFocus)
-                self._gl_container = container
-            except Exception as e:
-                print(f"[viewport] GL window creation failed: {e}")
-                self._gl_window = None
-                self._gl_container = None
+        self._gl_window = _ViewportWindow(self)
+        self._gl_window.setFormat(fmt)
+        container = QWidget.createWindowContainer(self._gl_window, self)
+        container.setFocusPolicy(Qt.StrongFocus)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        if self._gl_container is not None:
-            layout.addWidget(self._gl_container)
-        else:
-            from PySide6.QtWidgets import QLabel
-            self._gl_fallback_label = QLabel(
-                "OpenGL not available.\n"
-                "The C++ kernel and scene graph still work, but the 3D "
-                "viewport requires a GPU or software OpenGL renderer."
-            )
-            self._gl_fallback_label.setAlignment(Qt.AlignCenter)
-            layout.addWidget(self._gl_fallback_label)
+        layout.addWidget(container)
         self.setLayout(layout)
 
-    @staticmethod
-    def _check_gl_available(fmt: QSurfaceFormat) -> bool:
-        """Probe whether we can actually create a GL context.
-
-        This avoids the QOpenGLWindow segfault that happens on cleanup
-        when GL context creation fails (common in headless environments).
-        """
-        try:
-            from PySide6.QtGui import QOpenGLContext
-            ctx = QOpenGLContext()
-            ctx.setFormat(fmt)
-            if not ctx.create():
-                print("[viewport] GL context probe failed — using fallback widget")
-                return False
-            return True
-        except Exception as e:
-            print(f"[viewport] GL probe error: {e}")
-            return False
-
     def _request_update(self) -> None:
-        if self._gl_window is not None:
-            self._gl_window.requestUpdate()
-        else:
-            self.update()
+        self._gl_window.requestUpdate()
 
     # ----- Public API -----
 
@@ -271,61 +225,21 @@ class _ViewportWindow(QOpenGLWindow):
         self._initialized = False
 
     def initializeGL(self) -> None:
-        # Guard against headless / no-GPU environments: if Qt failed to
-        # create a GL context, all PyOpenGL calls would crash. Detect this
-        # early and skip every subsequent paintGL.
-        try:
-            from PySide6.QtGui import QOpenGLContext
-            ctx = QOpenGLContext.currentContext()
-            if ctx is None:
-                print("[viewport] no GL context available — GL rendering disabled")
-                self._initialized = False
-                return
-        except Exception:
-            self._initialized = False
-            return
-        try:
-            glEnable(GL_DEPTH_TEST)
-            glDepthFunc(GL_LEQUAL)
-            glEnable(GL_LIGHTING)
-            glEnable(GL_LIGHT0)
-            glEnable(GL_COLOR_MATERIAL)
-            glEnable(GL_NORMALIZE)
-            self._initialized = True
-        except Exception as e:
-            print(f"[viewport] GL initialization failed: {e}")
-            self._initialized = False
+        glEnable(GL_DEPTH_TEST)
+        glDepthFunc(GL_LEQUAL)
+        glEnable(GL_LIGHTING)
+        glEnable(GL_LIGHT0)
+        glEnable(GL_COLOR_MATERIAL)
+        glEnable(GL_NORMALIZE)
+        self._initialized = True
 
     def resizeGL(self, w: int, h: int) -> None:
-        if not self._initialized:
-            return
-        try:
-            self._parent._cam_aspect = w / max(1, h)
-            glViewport(0, 0, w, h)
-        except Exception:
-            pass
+        self._parent._cam_aspect = w / max(1, h)
+        glViewport(0, 0, w, h)
 
     def paintGL(self) -> None:
         if not self._initialized:
             return
-        # Re-check the context on every paint — in headless environments
-        # the context may become invalid between frames.
-        try:
-            from PySide6.QtGui import QOpenGLContext
-            ctx = QOpenGLContext.currentContext()
-            if ctx is None:
-                return
-        except Exception:
-            return
-        try:
-            self._paint_impl()
-        except Exception as e:
-            # Don't let a GL error crash the whole app — log and skip.
-            # In real desktop usage with a working GPU this never fires.
-            print(f"[viewport] paint error (suppressed): {e}")
-
-    def _paint_impl(self) -> None:
-        """Actual GL painting — wrapped by paintGL for safety."""
 
         glClearColor(0.15, 0.15, 0.18, 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
