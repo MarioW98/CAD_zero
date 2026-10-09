@@ -27,7 +27,8 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-PROJECT_DIR="/home/z/my-project/CAD_0"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 LIBS_DIR="/home/z/my-project/.libs"
 VNC_BIN_DIR="/home/z/my-project/vnc_extract/usr/bin"
 NOVNC_DIR="/home/z/my-project/vnc_extract/usr/share/novnc"
