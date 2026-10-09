@@ -1,0 +1,32 @@
+---
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: c++20
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+AccessModifierOffset: -4
+AlignAfterOpenBracket: Align
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+BreakBeforeBraces: Attach
+BreakConstructorInitializers: BeforeColon
+NamespaceIndentation: None
+PointerAlignment: Left
+SortIncludes: CaseInsensitive
+SpaceAfterCStyleCast: false
+SpaceAfterTemplateKeyword: false
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^"CAD_0'
+    Priority: 1
+  - Regex: '^<CAD_0'
+    Priority: 1
+  - Regex: '^"'
+    Priority: 2
+  - Regex: '^<.*\.h>$'
+    Priority: 3
+  - Regex: '^<.*>$'
+    Priority: 4

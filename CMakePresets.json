@@ -1,0 +1,104 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "CAD_0_BUILD_TESTING": "ON",
+                "CAD_0_BUILD_PYTHON": "ON"
+            }
+        },
+        {
+            "name": "linux-gcc-debug",
+            "inherits": "base",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_CXX_COMPILER": "g++",
+                "CAD_0_SANITIZE": "ON"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "linux-gcc-release",
+            "inherits": "base",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_CXX_COMPILER": "g++"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "linux-clang",
+            "inherits": "base",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_CXX_COMPILER": "clang++"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
+            "name": "windows-msvc",
+            "inherits": "base",
+            "generator": "Visual Studio 17 2022",
+            "architecture": "x64",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            }
+        },
+        {
+            "name": "linux-python",
+            "inherits": "base",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_CXX_COMPILER": "g++",
+                "CAD_0_BUILD_PYTHON": "ON",
+                "CAD_0_BUILD_TESTING": "ON",
+                "CAD_0_BUILD_EXAMPLES": "ON"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        }
+    ],
+    "buildPresets": [
+        { "name": "linux-gcc-debug",   "configurePreset": "linux-gcc-debug" },
+        { "name": "linux-gcc-release", "configurePreset": "linux-gcc-release" },
+        { "name": "linux-clang",       "configurePreset": "linux-clang" },
+        { "name": "windows-msvc",      "configurePreset": "windows-msvc" },
+        { "name": "linux-python",      "configurePreset": "linux-python" }
+    ],
+    "testPresets": [
+        { "name": "linux-gcc-debug",   "configurePreset": "linux-gcc-debug",
+          "output": { "outputOnFailure": true } },
+        { "name": "linux-gcc-release", "configurePreset": "linux-gcc-release",
+          "output": { "outputOnFailure": true } },
+        { "name": "linux-python",      "configurePreset": "linux-python",
+          "output": { "outputOnFailure": true } }
+    ]
+}
