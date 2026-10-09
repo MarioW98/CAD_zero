@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -43,7 +44,12 @@ public:
     virtual void undo() = 0;
 
     // Optional: human-readable description for the undo/redo menu.
-    virtual const char* description() const { return "command"; }
+    // Returns a const reference to a stable string, so callers don't
+    // need to worry about lifetime.
+    virtual const std::string& description() const {
+        static const std::string empty{"command"};
+        return empty;
+    }
 };
 
 // A command backed by two lambdas (execute_fn, undo_fn).
@@ -52,19 +58,19 @@ class LambdaCommand final : public Command {
 public:
     LambdaCommand(std::function<void()> execute_fn,
                   std::function<void()> undo_fn,
-                  const char* desc = "command")
+                  std::string desc = "command")
         : execute_fn_(std::move(execute_fn)),
           undo_fn_(std::move(undo_fn)),
-          desc_(desc) {}
+          desc_(std::move(desc)) {}
 
     void execute() override { execute_fn_(); }
     void undo() override { undo_fn_(); }
-    const char* description() const override { return desc_; }
+    const std::string& description() const override { return desc_; }
 
 private:
     std::function<void()> execute_fn_;
     std::function<void()> undo_fn_;
-    const char* desc_;
+    std::string desc_;
 };
 
 // Command stack — owns the undo and redo stacks.
@@ -92,9 +98,10 @@ public:
     // Convenience overload for LambdaCommand-style usage.
     void push(std::function<void()> execute_fn,
               std::function<void()> undo_fn,
-              const char* desc = "command") {
+              std::string desc = "command") {
         push(std::make_unique<LambdaCommand>(std::move(execute_fn),
-                                              std::move(undo_fn), desc));
+                                              std::move(undo_fn),
+                                              std::move(desc)));
     }
 
     // Undo the last command. Returns true if anything was undone.
@@ -124,15 +131,17 @@ public:
     std::size_t undo_count() const noexcept { return undo_stack_.size(); }
     std::size_t redo_count() const noexcept { return redo_stack_.size(); }
 
-    // Description of the next command to be undone (or nullptr).
-    const char* next_undo_description() const noexcept {
-        if (undo_stack_.empty()) return nullptr;
+    // Description of the next command to be undone (or empty string).
+    const std::string& next_undo_description() const {
+        static const std::string empty{};
+        if (undo_stack_.empty()) return empty;
         return undo_stack_.back()->description();
     }
 
-    // Description of the next command to be redone (or nullptr).
-    const char* next_redo_description() const noexcept {
-        if (redo_stack_.empty()) return nullptr;
+    // Description of the next command to be redone (or empty string).
+    const std::string& next_redo_description() const {
+        static const std::string empty{};
+        if (redo_stack_.empty()) return empty;
         return redo_stack_.back()->description();
     }
 

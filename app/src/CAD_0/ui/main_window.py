@@ -223,6 +223,7 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         self._feature_tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
+        self._property_panel.parameter_changed.connect(self._on_parameter_changed)
 
     # ----- Slots -----
 
@@ -253,73 +254,100 @@ class MainWindow(QMainWindow):
         """Re-tessellate and redraw."""
         self._viewport._refresh_meshes()
 
+    def _make_body(self, shape_type: str, params: dict):
+        """Build an SDF body from a shape_type + params dict."""
+        import CAD_0
+        if shape_type == "sphere":
+            return CAD_0.sdf.sphere(radius=params.get("radius", 1.0))
+        if shape_type == "box":
+            return CAD_0.sdf.box(CAD_0.math.Vec3f(
+                params.get("extent_x", 0.5),
+                params.get("extent_y", 0.5),
+                params.get("extent_z", 0.5)))
+        if shape_type == "cylinder":
+            return CAD_0.sdf.cylinder(
+                radius=params.get("radius", 0.5),
+                height=params.get("height", 2.0))
+        if shape_type == "torus":
+            return CAD_0.sdf.torus(
+                R=params.get("major_radius", 1.0),
+                r=params.get("minor_radius", 0.3))
+        raise ValueError(f"unknown shape type: {shape_type}")
+
+    def _shape_display_name(self, shape_type: str) -> str:
+        return {"sphere": "Sphere", "box": "Box",
+                "cylinder": "Cylinder", "torus": "Torus"}.get(shape_type, shape_type)
+
+    def _push_create_command(self, shape_type: str, params: dict) -> None:
+        """Push a fully-functional undoable 'create shape' command.
+
+        The command stack's push() calls execute() immediately, so we let
+        execute() be the action that creates the node, and undo() removes it.
+        A mutable holder tracks the node_id (which may differ between
+        do/redo cycles because Scene assigns new IDs).
+        """
+        name = self._shape_display_name(shape_type)
+        state = {"node_id": None}
+
+        def execute():
+            body = self._make_body(shape_type, params)
+            nid = self._scene.add_node(name, body)
+            self._node_params[nid] = dict(params)
+            self._node_types[nid] = shape_type
+            item = QTreeWidgetItem([name, "SDF"])
+            item.setData(0, Qt.UserRole, nid)
+            self._feature_tree.addTopLevelItem(item)
+            state["node_id"] = nid
+            self._refresh_viewport()
+
+        def undo():
+            nid = state["node_id"]
+            if nid is not None:
+                # Remove from scene + side dicts + tree widget
+                if self._scene and self._scene.remove_node(nid):
+                    self._node_params.pop(nid, None)
+                    self._node_types.pop(nid, None)
+                    for i in range(self._feature_tree.topLevelItemCount()):
+                        it = self._feature_tree.topLevelItem(i)
+                        if it.data(0, Qt.UserRole) == nid:
+                            self._feature_tree.takeTopLevelItem(i)
+                            break
+                    self._property_panel.clear()
+                    state["node_id"] = None
+                    self._refresh_viewport()
+
+        if self._command_stack:
+            self._command_stack.push(execute, undo, f"Create {name}")
+        else:
+            execute()
+
     def on_create_sphere(self) -> None:
         if not self._has_kernel:
             return
-        import CAD_0
         params = {"radius": 1.0}
-        body = CAD_0.sdf.sphere(radius=1.0)
-        node_id = self._scene.add_node("Sphere", body)
-        self._node_params[node_id] = params
-        self._node_types[node_id] = "sphere"
-        item = QTreeWidgetItem(["Sphere", "SDF"])
-        item.setData(0, Qt.UserRole, node_id)
-        self._feature_tree.addTopLevelItem(item)
-
-        # Register undo: remove the node we just added
-        if self._command_stack:
-            self._command_stack.push(
-                lambda: None,  # already executed (node added above)
-                lambda nid=node_id: self._do_remove_node(nnid=nid),
-                "Create Sphere"
-            )
-        self._refresh_viewport()
-        self._status.showMessage(f"Created Sphere (id={node_id})", 3000)
+        self._push_create_command("sphere", params)
+        self._status.showMessage("Created Sphere", 3000)
 
     def on_create_box(self) -> None:
         if not self._has_kernel:
             return
-        import CAD_0
         params = {"extent_x": 0.5, "extent_y": 0.5, "extent_z": 0.5}
-        body = CAD_0.sdf.box(CAD_0.math.Vec3f(0.5, 0.5, 0.5))
-        node_id = self._scene.add_node("Box", body)
-        self._node_params[node_id] = params
-        self._node_types[node_id] = "box"
-        item = QTreeWidgetItem(["Box", "SDF"])
-        item.setData(0, Qt.UserRole, node_id)
-        self._feature_tree.addTopLevelItem(item)
-        self._refresh_viewport()
-        self._status.showMessage(f"Created Box (id={node_id})", 3000)
+        self._push_create_command("box", params)
+        self._status.showMessage("Created Box", 3000)
 
     def on_create_cylinder(self) -> None:
         if not self._has_kernel:
             return
-        import CAD_0
         params = {"radius": 0.5, "height": 2.0}
-        body = CAD_0.sdf.cylinder(radius=0.5, height=2.0)
-        node_id = self._scene.add_node("Cylinder", body)
-        self._node_params[node_id] = params
-        self._node_types[node_id] = "cylinder"
-        item = QTreeWidgetItem(["Cylinder", "SDF"])
-        item.setData(0, Qt.UserRole, node_id)
-        self._feature_tree.addTopLevelItem(item)
-        self._refresh_viewport()
-        self._status.showMessage(f"Created Cylinder (id={node_id})", 3000)
+        self._push_create_command("cylinder", params)
+        self._status.showMessage("Created Cylinder", 3000)
 
     def on_create_torus(self) -> None:
         if not self._has_kernel:
             return
-        import CAD_0
         params = {"major_radius": 1.0, "minor_radius": 0.3}
-        body = CAD_0.sdf.torus(R=1.0, r=0.3)
-        node_id = self._scene.add_node("Torus", body)
-        self._node_params[node_id] = params
-        self._node_types[node_id] = "torus"
-        item = QTreeWidgetItem(["Torus", "SDF"])
-        item.setData(0, Qt.UserRole, node_id)
-        self._feature_tree.addTopLevelItem(item)
-        self._refresh_viewport()
-        self._status.showMessage(f"Created Torus (id={node_id})", 3000)
+        self._push_create_command("torus", params)
+        self._status.showMessage("Created Torus", 3000)
 
     def _rebuild_node(self, node_id: int) -> None:
         """Rebuild an SDF body from its stored params and type."""
@@ -409,25 +437,54 @@ class MainWindow(QMainWindow):
         node_id = item.data(0, Qt.UserRole)
         if node_id is None:
             return
-        # Store info for undo (re-add)
+        # Snapshot the node so we can re-create it on redo-after-undo
         shape_type = self._node_types.get(node_id, "")
         params = dict(self._node_params.get(node_id, {}))
+        name = self._shape_display_name(shape_type)
+        state = {"node_id": node_id, "tree_item_idx": None}
+        # Capture the tree-widget index so undo can reinsert at the same slot
+        for i in range(self._feature_tree.topLevelItemCount()):
+            if self._feature_tree.topLevelItem(i) is item:
+                state["tree_item_idx"] = i
+                break
 
-        if self._scene and self._scene.remove_node(node_id):
-            self._node_params.pop(node_id, None)
-            self._node_types.pop(node_id, None)
-            self._feature_tree.takeTopLevelItem(self._feature_tree.indexOfTopLevelItem(item))
-            self._property_panel.clear()
+        def execute():
+            nid = state["node_id"]
+            if nid is None:
+                return
+            if self._scene and self._scene.remove_node(nid):
+                self._node_params.pop(nid, None)
+                self._node_types.pop(nid, None)
+                for i in range(self._feature_tree.topLevelItemCount()):
+                    it = self._feature_tree.topLevelItem(i)
+                    if it.data(0, Qt.UserRole) == nid:
+                        self._feature_tree.takeTopLevelItem(i)
+                        break
+                self._property_panel.clear()
+                state["node_id"] = None
+                self._refresh_viewport()
 
-            # Register undo: re-add the node
-            if self._command_stack:
-                self._command_stack.push(
-                    lambda: None,  # already executed (node removed)
-                    lambda nid=node_id, st=shape_type, p=params: self._do_re_add_node(nid, st, p),
-                    f"Delete {shape_type}"
-                )
+        def undo():
+            # Re-create the node with its original shape/params
+            body = self._make_body(shape_type, params)
+            new_id = self._scene.add_node(name, body)
+            self._node_params[new_id] = dict(params)
+            self._node_types[new_id] = shape_type
+            new_item = QTreeWidgetItem([name, "SDF"])
+            new_item.setData(0, Qt.UserRole, new_id)
+            idx = state.get("tree_item_idx")
+            if idx is not None and 0 <= idx <= self._feature_tree.topLevelItemCount():
+                self._feature_tree.insertTopLevelItem(idx, new_item)
+            else:
+                self._feature_tree.addTopLevelItem(new_item)
+            state["node_id"] = new_id
             self._refresh_viewport()
-            self._status.showMessage(f"Deleted node {node_id}", 2000)
+
+        if self._command_stack:
+            self._command_stack.push(execute, undo, f"Delete {name}")
+        else:
+            execute()
+        self._status.showMessage(f"Deleted {name}", 2000)
 
     def _do_remove_node(self, nnid: int) -> None:
         """Undo callback: remove a node (used by Create undo)."""
@@ -514,20 +571,28 @@ class MainWindow(QMainWindow):
         node_id = getattr(self, '_selected_node_id', None)
         if node_id is None or node_id not in self._node_params:
             return
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return
         old_value = self._node_params[node_id].get(name, 0.0)
-        self._node_params[node_id][name] = float(value)
-        # Register undo: restore old value
+
+        def execute():
+            self._node_params[node_id][name] = value
+            self._rebuild_node(node_id)
+
+        def undo():
+            self._node_params[node_id][name] = old_value
+            self._rebuild_node(node_id)
+
         if self._command_stack:
-            self._command_stack.push(
-                lambda: None,  # already applied
-                lambda nid=node_id, n=name, ov=old_value: self._do_restore_param(nid, n, ov),
-                f"Set {name} = {value}"
-            )
-        self._rebuild_node(node_id)
+            self._command_stack.push(execute, undo, f"Set {name} = {value}")
+        else:
+            execute()
         self._status.showMessage(f"Set {name} = {value}", 2000)
 
     def _do_restore_param(self, node_id: int, name: str, old_value: float) -> None:
-        """Undo callback: restore a parameter to its old value."""
+        """Legacy undo callback — kept for compatibility, unused after refactor."""
         if node_id in self._node_params:
             self._node_params[node_id][name] = old_value
             self._rebuild_node(node_id)

@@ -1,47 +1,37 @@
 """CAD_0.ui.viewport_widget — PySide6 viewport with real OpenGL rendering.
 
-Renders the scene's tessellated meshes using OpenGL 2.1 compatibility
-profile (fixed-function pipeline).
+Uses PyOpenGL for fixed-function pipeline (glMatrixMode, glBegin, etc.)
+and QOpenGLWindow as the rendering surface.
+
+Requires: pip install PyOpenGL PySide6
 """
 
 from __future__ import annotations
 
 import sys
 import math
-import os
 from typing import Optional, Any
 
 import numpy as np
 from PySide6.QtCore import Qt, QPoint, Signal
-from PySide6.QtGui import QSurfaceFormat, QMouseEvent, QWheelEvent, QOpenGLFunctions
+from PySide6.QtGui import QSurfaceFormat, QMouseEvent, QWheelEvent
 from PySide6.QtOpenGL import QOpenGLWindow
 from PySide6.QtWidgets import QWidget, QVBoxLayout
 
-# OpenGL constants — PySide6.QtGui.QOpenGLFunctions doesn't expose them
-# as attributes, so we import them from PySide6.QtOpenGL or use PyOpenGL.
-# Fallback: define them manually (standard OpenGL 2.1 values).
-try:
-    from OpenGL.GL import *  # noqa: F401,F403
-    _HAS_PYOPENGL = True
-except ImportError:
-    _HAS_PYOPENGL = False
-
-# OpenGL constant values (from the OpenGL spec)
-GL_DEPTH_TEST = 0x0B71
-GL_LEQUAL = 0x0203
-GL_LIGHTING = 0x0B50
-GL_LIGHT0 = 0x4000
-GL_COLOR_MATERIAL = 0x0B57
-GL_NORMALIZE = 0x0BA1
-GL_COLOR_BUFFER_BIT = 0x4000
-GL_DEPTH_BUFFER_BIT = 0x0100
-GL_PROJECTION = 0x1701
-GL_MODELVIEW = 0x1700
-GL_LINES = 0x0001
-GL_TRIANGLES = 0x0004
-GL_POSITION = 0x1203
-GL_DIFFUSE = 0x1201
-GL_AMBIENT = 0x1200
+# Import OpenGL via PyOpenGL — provides ALL fixed-function + modern GL
+from OpenGL.GL import (
+    glEnable, glDisable, glClearColor, glClear, glViewport,
+    glMatrixMode, glLoadIdentity, glFrustum, glMultMatrixf, glTranslatef,
+    glLightfv, glColor3f, glBegin, glEnd, glVertex3f, glNormal3f,
+    glLineWidth,
+    GL_DEPTH_TEST, GL_LEQUAL, GL_LIGHTING, GL_LIGHT0,
+    GL_COLOR_MATERIAL, GL_NORMALIZE,
+    GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT,
+    GL_PROJECTION, GL_MODELVIEW,
+    GL_LINES, GL_TRIANGLES,
+    GL_POSITION, GL_DIFFUSE, GL_AMBIENT,
+    glDepthFunc,
+)
 
 
 class ViewportWidget(QWidget):
@@ -84,19 +74,64 @@ class ViewportWidget(QWidget):
         fmt.setSwapBehavior(QSurfaceFormat.DoubleBuffer)
         QSurfaceFormat.setDefaultFormat(fmt)
 
-        self._gl_window = _ViewportWindow(self)
-        self._gl_window.setFormat(fmt)
-        container = QWidget.createWindowContainer(self._gl_window, self)
-        container.setFocusPolicy(Qt.StrongFocus)
+        # Try to create a real GL window. In headless / no-GPU environments
+        # this can fail and Qt may segfault during cleanup; we offer a
+        # non-GL fallback so the rest of the application still works.
+        self._gl_window = None
+        self._gl_fallback_label = None
+        self._gl_container = None
+        gl_available = self._check_gl_available(fmt)
+        if gl_available:
+            try:
+                self._gl_window = _ViewportWindow(self)
+                self._gl_window.setFormat(fmt)
+                container = QWidget.createWindowContainer(self._gl_window, self)
+                container.setFocusPolicy(Qt.StrongFocus)
+                self._gl_container = container
+            except Exception as e:
+                print(f"[viewport] GL window creation failed: {e}")
+                self._gl_window = None
+                self._gl_container = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(container)
+        if self._gl_container is not None:
+            layout.addWidget(self._gl_container)
+        else:
+            from PySide6.QtWidgets import QLabel
+            self._gl_fallback_label = QLabel(
+                "OpenGL not available.\n"
+                "The C++ kernel and scene graph still work, but the 3D "
+                "viewport requires a GPU or software OpenGL renderer."
+            )
+            self._gl_fallback_label.setAlignment(Qt.AlignCenter)
+            layout.addWidget(self._gl_fallback_label)
         self.setLayout(layout)
 
+    @staticmethod
+    def _check_gl_available(fmt: QSurfaceFormat) -> bool:
+        """Probe whether we can actually create a GL context.
+
+        This avoids the QOpenGLWindow segfault that happens on cleanup
+        when GL context creation fails (common in headless environments).
+        """
+        try:
+            from PySide6.QtGui import QOpenGLContext
+            ctx = QOpenGLContext()
+            ctx.setFormat(fmt)
+            if not ctx.create():
+                print("[viewport] GL context probe failed — using fallback widget")
+                return False
+            return True
+        except Exception as e:
+            print(f"[viewport] GL probe error: {e}")
+            return False
+
     def _request_update(self) -> None:
-        """Trigger a repaint of the GL window."""
-        self._gl_window.requestUpdate()
+        if self._gl_window is not None:
+            self._gl_window.requestUpdate()
+        else:
+            self.update()
 
     # ----- Public API -----
 
@@ -113,8 +148,6 @@ class ViewportWidget(QWidget):
         normals = []
         indices = []
         offset = 0
-        # Use node_count() + node_at() instead of nodes() to avoid
-        # vector copy issues with move-only SceneNode.
         count = self._scene.node_count()
         for i in range(count):
             node = self._scene.node_at(i)
@@ -235,33 +268,71 @@ class _ViewportWindow(QOpenGLWindow):
     def __init__(self, parent_widget: ViewportWidget) -> None:
         super().__init__()
         self._parent = parent_widget
-        self._gl = None
+        self._initialized = False
 
     def initializeGL(self) -> None:
-        self._gl = QOpenGLFunctions()
-        self._gl.initializeOpenGLFunctions()
-        gl = self._gl
-        gl.glEnable(GL_DEPTH_TEST)
-        gl.glEnable(GL_LIGHTING)
-        gl.glEnable(GL_LIGHT0)
-        gl.glEnable(GL_COLOR_MATERIAL)
-        gl.glEnable(GL_NORMALIZE)
+        # Guard against headless / no-GPU environments: if Qt failed to
+        # create a GL context, all PyOpenGL calls would crash. Detect this
+        # early and skip every subsequent paintGL.
+        try:
+            from PySide6.QtGui import QOpenGLContext
+            ctx = QOpenGLContext.currentContext()
+            if ctx is None:
+                print("[viewport] no GL context available — GL rendering disabled")
+                self._initialized = False
+                return
+        except Exception:
+            self._initialized = False
+            return
+        try:
+            glEnable(GL_DEPTH_TEST)
+            glDepthFunc(GL_LEQUAL)
+            glEnable(GL_LIGHTING)
+            glEnable(GL_LIGHT0)
+            glEnable(GL_COLOR_MATERIAL)
+            glEnable(GL_NORMALIZE)
+            self._initialized = True
+        except Exception as e:
+            print(f"[viewport] GL initialization failed: {e}")
+            self._initialized = False
 
     def resizeGL(self, w: int, h: int) -> None:
-        self._parent._cam_aspect = w / max(1, h)
-        if self._gl:
-            self._gl.glViewport(0, 0, w, h)
+        if not self._initialized:
+            return
+        try:
+            self._parent._cam_aspect = w / max(1, h)
+            glViewport(0, 0, w, h)
+        except Exception:
+            pass
 
     def paintGL(self) -> None:
-        if self._gl is None:
+        if not self._initialized:
             return
-        gl = self._gl
-        gl.glClearColor(0.15, 0.15, 0.18, 1.0)
-        gl.glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        # Re-check the context on every paint — in headless environments
+        # the context may become invalid between frames.
+        try:
+            from PySide6.QtGui import QOpenGLContext
+            ctx = QOpenGLContext.currentContext()
+            if ctx is None:
+                return
+        except Exception:
+            return
+        try:
+            self._paint_impl()
+        except Exception as e:
+            # Don't let a GL error crash the whole app — log and skip.
+            # In real desktop usage with a working GPU this never fires.
+            print(f"[viewport] paint error (suppressed): {e}")
+
+    def _paint_impl(self) -> None:
+        """Actual GL painting — wrapped by paintGL for safety."""
+
+        glClearColor(0.15, 0.15, 0.18, 1.0)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
         # Projection
-        gl.glMatrixMode(GL_PROJECTION)
-        gl.glLoadIdentity()
+        glMatrixMode(GL_PROJECTION)
+        glLoadIdentity()
         fov_y = self._parent._cam_fov
         aspect = self._parent._cam_aspect
         near_p = 0.01
@@ -270,11 +341,11 @@ class _ViewportWindow(QOpenGLWindow):
         bottom = -top
         right = top * aspect
         left = -right
-        gl.glFrustum(left, right, bottom, top, near_p, far_p)
+        glFrustum(left, right, bottom, top, near_p, far_p)
 
         # View (look-at)
-        gl.glMatrixMode(GL_MODELVIEW)
-        gl.glLoadIdentity()
+        glMatrixMode(GL_MODELVIEW)
+        glLoadIdentity()
 
         cp = math.cos(self._parent._cam_pitch)
         sp = math.sin(self._parent._cam_pitch)
@@ -306,91 +377,95 @@ class _ViewportWindow(QOpenGLWindow):
         uy = rz * fx - rx * fz
         uz = rx * fy - ry * fx
 
-        m = [
+        m = (GLfloat * 16)(
             rx, ux, -fx, 0,
             ry, uy, -fy, 0,
             rz, uz, -fz, 0,
             0, 0, 0, 1
-        ]
-        gl.glMultMatrixf(m)
-        gl.glTranslatef(-cam_pos[0], -cam_pos[1], -cam_pos[2])
+        )
+        glMultMatrixf(m)
+        glTranslatef(-cam_pos[0], -cam_pos[1], -cam_pos[2])
 
         # Light
-        gl.glLightfv(GL_LIGHT0, GL_POSITION, [0.5, 0.8, 0.3, 0.0])
-        gl.glLightfv(GL_LIGHT0, GL_DIFFUSE, [0.8, 0.8, 0.8, 1.0])
-        gl.glLightfv(GL_LIGHT0, GL_AMBIENT, [0.2, 0.2, 0.2, 1.0])
+        glLightfv(GL_LIGHT0, GL_POSITION, [0.5, 0.8, 0.3, 0.0])
+        glLightfv(GL_LIGHT0, GL_DIFFUSE, [0.8, 0.8, 0.8, 1.0])
+        glLightfv(GL_LIGHT0, GL_AMBIENT, [0.2, 0.2, 0.2, 1.0])
 
         # Grid
         if self._parent._show_grid:
-            self._draw_grid(gl)
+            self._draw_grid()
         # Axes
         if self._parent._show_axes:
-            self._draw_axes(gl)
+            self._draw_axes()
         # Meshes
         if self._parent._mesh_positions is not None and self._parent._mesh_indices is not None:
-            self._draw_meshes(gl)
+            self._draw_meshes()
 
-    def _draw_grid(self, gl) -> None:
-        gl.glDisable(GL_LIGHTING)
-        gl.glColor3f(0.3, 0.3, 0.3)
-        gl.glBegin(GL_LINES)
+    def _draw_grid(self) -> None:
+        glDisable(GL_LIGHTING)
+        glColor3f(0.3, 0.3, 0.3)
+        glBegin(GL_LINES)
         extent = 5.0
         step = 1.0
         i = -extent
         while i <= extent:
-            gl.glVertex3f(i, 0, -extent)
-            gl.glVertex3f(i, 0, extent)
-            gl.glVertex3f(-extent, 0, i)
-            gl.glVertex3f(extent, 0, i)
+            glVertex3f(i, 0, -extent)
+            glVertex3f(i, 0, extent)
+            glVertex3f(-extent, 0, i)
+            glVertex3f(extent, 0, i)
             i += step
-        gl.glEnd()
-        gl.glEnable(GL_LIGHTING)
+        glEnd()
+        glEnable(GL_LIGHTING)
 
-    def _draw_axes(self, gl) -> None:
-        gl.glDisable(GL_LIGHTING)
-        gl.glLineWidth(2.0)
-        gl.glColor3f(1, 0, 0)
-        gl.glBegin(GL_LINES)
-        gl.glVertex3f(0, 0, 0)
-        gl.glVertex3f(2, 0, 0)
-        gl.glEnd()
-        gl.glColor3f(0, 1, 0)
-        gl.glBegin(GL_LINES)
-        gl.glVertex3f(0, 0, 0)
-        gl.glVertex3f(0, 2, 0)
-        gl.glEnd()
-        gl.glColor3f(0, 0, 1)
-        gl.glBegin(GL_LINES)
-        gl.glVertex3f(0, 0, 0)
-        gl.glVertex3f(0, 0, 2)
-        gl.glEnd()
-        gl.glLineWidth(1.0)
-        gl.glEnable(GL_LIGHTING)
+    def _draw_axes(self) -> None:
+        glDisable(GL_LIGHTING)
+        glLineWidth(2.0)
+        glColor3f(1, 0, 0)
+        glBegin(GL_LINES)
+        glVertex3f(0, 0, 0)
+        glVertex3f(2, 0, 0)
+        glEnd()
+        glColor3f(0, 1, 0)
+        glBegin(GL_LINES)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 2, 0)
+        glEnd()
+        glColor3f(0, 0, 1)
+        glBegin(GL_LINES)
+        glVertex3f(0, 0, 0)
+        glVertex3f(0, 0, 2)
+        glEnd()
+        glLineWidth(1.0)
+        glEnable(GL_LIGHTING)
 
-    def _draw_meshes(self, gl) -> None:
+    def _draw_meshes(self) -> None:
         positions = self._parent._mesh_positions
         normals = self._parent._mesh_normals
         indices = self._parent._mesh_indices
         if positions is None or len(positions) == 0:
             return
-        gl.glColor3f(0.7, 0.75, 0.8)
+        glColor3f(0.7, 0.75, 0.8)
         has_normals = normals is not None and len(normals) == len(positions)
         n_tris = len(indices) // 3
         batch_size = min(4096, n_tris)
         for batch_start in range(0, n_tris, batch_size):
             batch_end = min(batch_start + batch_size, n_tris)
-            gl.glBegin(GL_TRIANGLES)
+            glBegin(GL_TRIANGLES)
             for t in range(batch_start, batch_end):
                 i0 = int(indices[t * 3 + 0])
                 i1 = int(indices[t * 3 + 1])
                 i2 = int(indices[t * 3 + 2])
                 if has_normals:
-                    gl.glNormal3f(float(normals[i0][0]), float(normals[i0][1]), float(normals[i0][2]))
-                gl.glVertex3f(float(positions[i0][0]), float(positions[i0][1]), float(positions[i0][2]))
+                    glNormal3f(float(normals[i0][0]), float(normals[i0][1]), float(normals[i0][2]))
+                glVertex3f(float(positions[i0][0]), float(positions[i0][1]), float(positions[i0][2]))
                 if has_normals:
-                    gl.glNormal3f(float(normals[i1][0]), float(normals[i1][1]), float(normals[i1][2]))
-                gl.glVertex3f(float(positions[i1][0]), float(positions[i1][1]), float(positions[i1][2]))
+                    glNormal3f(float(normals[i1][0]), float(normals[i1][1]), float(normals[i1][2]))
+                glVertex3f(float(positions[i1][0]), float(positions[i1][1]), float(positions[i1][2]))
                 if has_normals:
-                    gl.glNormal3f(float(normals[i2][0]), float(normals[i2][1]), float(normals[i2][2]))
-                gl.glVertex3f(float(positions[i2][0]), float(positions[i2][1]), float(positions[i2][2]))
-            gl.glEnd()
+                    glNormal3f(float(normals[i2][0]), float(normals[i2][1]), float(normals[i2][2]))
+                glVertex3f(float(positions[i2][0]), float(positions[i2][1]), float(positions[i2][2]))
+            glEnd()
+
+
+# Need GLfloat for the matrix array
+from ctypes import c_float as GLfloat
