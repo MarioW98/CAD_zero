@@ -117,15 +117,15 @@ void bind_scene(nb::module_& m) {
         .def("description", &viewport::Command::description);
 
     nb::class_<viewport::LambdaCommand, viewport::Command>(cmd_mod, "LambdaCommand")
-        .def(nb::init<std::function<void()>, std::function<void()>, const char*>(),
+        .def(nb::init<std::function<void()>, std::function<void()>, std::string>(),
              nb::arg("execute_fn"), nb::arg("undo_fn"), nb::arg("desc") = "command");
 
     nb::class_<viewport::CommandStack>(cmd_mod, "CommandStack", nb::is_final())
         .def(nb::init<>())
         .def(nb::init<std::size_t>(), nb::arg("max_size"))
         .def("push", [](viewport::CommandStack& cs, std::function<void()> exec_fn,
-                        std::function<void()> undo_fn, const char* desc) {
-            cs.push(std::move(exec_fn), std::move(undo_fn), desc);
+                        std::function<void()> undo_fn, std::string desc) {
+            cs.push(std::move(exec_fn), std::move(undo_fn), std::move(desc));
         }, nb::arg("execute_fn"), nb::arg("undo_fn"), nb::arg("desc") = "command")
         .def("undo", &viewport::CommandStack::undo)
         .def("redo", &viewport::CommandStack::redo)

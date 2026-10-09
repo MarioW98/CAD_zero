@@ -10,6 +10,7 @@
 #include "CAD_0/math/vec.hpp"
 #include "CAD_0/math/interval.hpp"
 
+#include <cmath>
 #include <limits>
 
 namespace CAD_0::math {
@@ -121,6 +122,15 @@ struct Bbox {
                            std::numeric_limits<T>::infinity(),
                            std::numeric_limits<T>::infinity()};
         return b;
+    }
+
+    // True if this bbox is the universe (infinite extent on all axes).
+    // Used by marching_cubes to detect open SDFs (e.g. PlaneSDF) and
+    // skip the winding-fix post-process that only makes sense for
+    // closed (bounded) surfaces.
+    bool is_universe() const noexcept {
+        return std::isinf(min.x) && std::isinf(min.y) && std::isinf(min.z) &&
+               std::isinf(max.x) && std::isinf(max.y) && std::isinf(max.z);
     }
 };
 

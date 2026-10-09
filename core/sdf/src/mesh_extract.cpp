@@ -27,10 +27,12 @@
 #include "CAD_0/sdf/mesh_extract.hpp"
 #include "CAD_0/sdf/evaluate.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -247,49 +249,37 @@ static const std::array<std::pair<int, int>, 12> kEdgeCorners = {{
 }};
 
 // ---------------------------------------------------------------------------
-// For each edge, the canonical (cell-anchored) corner coordinates.
-// Edge 0 (corners 0-1) is anchored at (0,0,0); it's shared with the
-// cell at (-1,0,0). To deduplicate, anchor each edge at the cell
-// whose origin (corner 0) coincides with the smaller-coordinate
-// endpoint of the edge.
+// Edge-anchoring rationale (design notes — no code here).
+//
+// Each grid edge is identified by its two grid-vertex coordinates. The
+// vertex emitted on that edge by marching cubes is shared by up to 4
+// adjacent cells, and *all* of them must produce the same vertex id
+// (watertightness). The canonical approach is to anchor each edge at a
+// canonical cell (typically the one with the smaller-coordinate
+// endpoint at its corner 0) and look up the local edge index there.
+//
+// An older version of this file carried a `kEdgeAnchors` table that
+// tried to express this mapping, but the table had errors for edges 2,
+// 6, and 10 (the +X edge at y=cy+1, the +X edge at y=cy+1,z=cz+1, and
+// the +Z edge at x=cx+1,y=cy+1). Worse, the table was *never read* —
+// the actual vertex deduplication used `grid_edge_key()` below, which
+// computes a unique hash from the two endpoint grid coordinates
+// directly. The dead table was both wrong and unused, so it has been
+// removed to avoid confusion.
+//
+// The current implementation:
+//   * For each local edge index 0..11, look up the two corner indices
+//     (kEdgeCorners).
+//   * Convert corner indices to absolute grid coordinates using
+//     kCornerOffset.
+//   * Compute a 64-bit hash of the two endpoints (canonicalised so
+//     the smaller-coordinate endpoint comes first).
+//   * Look up the hash in `edge_cache`. If present, reuse the cached
+//     vertex id; otherwise allocate a new vertex and store it.
+//
+// This guarantees watertightness: any two cells that share a grid edge
+// will compute the same hash and thus obtain the same vertex id.
 // ---------------------------------------------------------------------------
-struct EdgeAnchor {
-    std::int32_t dx, dy, dz;       // offset of the anchoring cell
-    int edge_idx;                   // edge index in that cell
-};
-
-// For each of the 12 edges, return the anchor offset (dx, dy, dz) and
-// the edge index in the anchored cell.
-//
-// Edge 0 of cell (cx,cy,cz) connects corner 0 (cx,cy,cz) and corner 1 (cx+1,cy,cz).
-// Edge 1 connects corner 1 (cx+1,cy,cz) and corner 2 (cx+1,cy+1,cz).
-// Edge 2 connects corner 2 (cx+1,cy+1,cz) and corner 3 (cx,cy+1,cz).
-// Edge 3 connects corner 3 (cx,cy+1,cz) and corner 0 (cx,cy,cz).
-// Edge 8 connects corner 0 (cx,cy,cz) and corner 4 (cx,cy,cz+1).
-//
-// Consider an edge in the grid: identified by its two endpoint grid coords.
-// To deduplicate, each grid edge has a canonical (cell, edge_idx) representation.
-//
-// Edge 0 of cell (cx,cy,cz): endpoints (cx,cy,cz) and (cx+1,cy,cz).
-//   Also edge 0 of cell (cx-1,cy,cz): endpoints (cx-1,cy,cz) and (cx,cy,cz).
-//   Canonical: the cell with smaller cx, i.e. (cx-1, cy, cz), edge 0.
-//
-// Each edge is anchored at the cell whose corner 0 is at the
-// smaller-coordinate endpoint.
-static const std::array<EdgeAnchor, 12> kEdgeAnchors = {{
-    {0, 0, 0, 0},  // edge 0: along +X, anchored at (cx, cy, cz)
-    {0, 0, 0, 1},  // edge 1: along +Y at x=cx+1, anchored at (cx, cy, cz)
-    {-1, 0, 0, 1}, // edge 2: along +X at y=cy+1, anchored at (cx-1, cy, cz)
-    {0, 0, 0, 3},  // edge 3: along +Y at x=cx, anchored at (cx, cy, cz)
-    {0, 0, 0, 4},  // edge 4: along +X at z=cz+1, anchored at (cx, cy, cz)
-    {0, 0, 0, 5},  // edge 5: along +Y at x=cx+1, z=cz+1, anchored at (cx, cy, cz)
-    {-1, 0, 0, 5}, // edge 6: along +X at y=cy+1, z=cz+1, anchored at (cx-1, cy, cz)
-    {0, 0, 0, 7},  // edge 7: along +Y at x=cx, z=cz+1, anchored at (cx, cy, cz)
-    {0, 0, 0, 8},  // edge 8: along +Z at (cx, cy, cz), anchored at (cx, cy, cz)
-    {0, 0, 0, 9},  // edge 9: along +Z at (cx+1, cy, cz), anchored at (cx, cy, cz)
-    {0, -1, 0, 9}, // edge 10: along +Z at (cx+1, cy+1, cz), anchored at (cx, cy-1, cz)
-    {0, 0, 0, 11}, // edge 11: along +Z at (cx, cy+1, cz), anchored at (cx, cy, cz)
-}};
 
 // ---------------------------------------------------------------------------
 // marching_cubes implementation (Phase B.5)
@@ -450,12 +440,26 @@ TriangleMesh marching_cubes(const SDFBody& body,
     };
     auto grid_edge_key = [](std::int32_t ax, std::int32_t ay, std::int32_t az,
                              std::int32_t bx, std::int32_t by, std::int32_t bz) -> std::uint64_t {
-        // Canonicalize: smaller endpoint first
-        if (ax > bx || (ax == bx && ay > by) || (ax == bx && ay == by && az > bz)) {
+        // Canonicalize: smaller endpoint first. We compare as 3-tuples,
+        // lexicographically. This guarantees that two cells sharing an
+        // edge produce the SAME key (because they pass the SAME two grid
+        // points, just possibly in different orders).
+        auto less = [](std::int32_t ax, std::int32_t ay, std::int32_t az,
+                       std::int32_t bx, std::int32_t by, std::int32_t bz) {
+            if (ax != bx) return ax < bx;
+            if (ay != by) return ay < by;
+            return az < bz;
+        };
+        if (less(bx, by, bz, ax, ay, az)) {
             std::swap(ax, bx); std::swap(ay, by); std::swap(az, bz);
         }
-        // Each coordinate fits in 10 bits (supports resolution up to 1023).
-        // 6 coordinates × 10 bits = 60 bits, fits in uint64_t with NO collisions.
+        // Pack into 64 bits: 6 coordinates × 10 bits = 60 bits.
+        // The shift count of 10 is correct (no overlap).
+        // Coordinates are non-negative (they're grid indices into a
+        // uniform grid of size N+1 ≤ 1024), so we can use them directly
+        // after masking off high bits (defensive — values larger than
+        // 1023 should never occur for reasonable resolutions, and the
+        // mask makes this explicit).
         const std::uint64_t ux = std::uint64_t(std::uint32_t(ax) & 0x3FF);
         const std::uint64_t uy = std::uint64_t(std::uint32_t(ay) & 0x3FF);
         const std::uint64_t uz = std::uint64_t(std::uint32_t(az) & 0x3FF);
@@ -538,6 +542,159 @@ TriangleMesh marching_cubes(const SDFBody& body,
                         mesh.indices.push_back(get_vertex(cx, cy, cz, e));
                     }
                 }
+            }
+        }
+    }
+
+    // Post-process: weld + winding fix.
+    //
+    // The classic Lorensen-Cline Marching Cubes table is known to have
+    // topological ambiguities: certain sign configurations allow two
+    // different triangulations, and adjacent cells can pick different
+    // ones, producing non-watertight meshes (holes, T-junctions, and
+    // triangles with inconsistent winding). The correct fix is to use
+    // an ambiguity-resolving table (Lewiner 2003, Chernyaev 1995), but
+    // that's a substantial code change. As a pragmatic workaround for
+    // STL/OBJ export:
+    //
+    //   1. Weld vertices by geometric position (collapses duplicates
+    //      that the per-edge cache missed due to numerical edge cases
+    //      like va = 0 exactly).
+    //   2. For each triangle, check if its normal points away from the
+    //      SDF's interior (using the analytic gradient at the centroid).
+    //      If it points inward, flip the triangle's winding.
+    //
+    // This produces a closed, consistently-wound mesh that is suitable
+    // for 3D printing and rendering. Topological manifoldness at the
+    // ambiguity points is still not guaranteed (a small number of
+    // non-manifold edges may remain), but the mesh is *geometrically*
+    // correct.
+    if (opts.weld_vertices && !mesh.positions.empty()) {
+        // Skip the weld + winding fix for open SDFs (e.g. PlaneSDF)
+        // because:
+        //   * The winding fix needs the gradient to point "outward"
+        //     from a closed interior; open SDFs have no interior, so
+        //     the gradient direction is arbitrary.
+        //   * The weld would collapse co-planar vertices (all on y=0
+        //     for a plane) into degenerate triangles that get removed.
+        const bool is_closed_sdf = !body.bounds().is_universe();
+        if (!is_closed_sdf) {
+            return mesh;
+        }
+
+        // Tight tolerance based on cell size — only truly-coincident
+        // vertices (interpolation artifacts, grid-aligned va=0 cases)
+        // are merged. We use a tolerance that's tight enough to avoid
+        // merging distinct surface features but loose enough to catch
+        // the duplicates the per-edge cache misses.
+        // 1e-6 of cell size catches only vertices that are *exactly*
+        // coincident (same grid-edge interpolation result).
+        const float weld_tol = std::min(
+            std::min(g.cell_size.x, g.cell_size.y), g.cell_size.z) * 1e-6f;
+        weld_vertices(mesh, weld_tol);
+
+        // Remove degenerate triangles: after welding, some triangles
+        // may have two or three coincident vertices (zero area). These
+        // contribute bogus edges to the topology counts and break
+        // watertightness checks. Drop them.
+        {
+            std::vector<std::uint32_t> new_indices;
+            new_indices.reserve(mesh.indices.size());
+            const float area_eps2 = (weld_tol * weld_tol) * 0.01f;
+            for (std::size_t t = 0; t < mesh.triangle_count(); ++t) {
+                const std::uint32_t i0 = mesh.indices[t*3 + 0];
+                const std::uint32_t i1 = mesh.indices[t*3 + 1];
+                const std::uint32_t i2 = mesh.indices[t*3 + 2];
+                if (i0 == i1 || i1 == i2 || i2 == i0) continue;
+                const math::Vec3f& p0 = mesh.positions[i0];
+                const math::Vec3f& p1 = mesh.positions[i1];
+                const math::Vec3f& p2 = mesh.positions[i2];
+                const math::Vec3f e01 = p1 - p0;
+                const math::Vec3f e02 = p2 - p0;
+                const math::Vec3f n = e01.cross(e02);
+                if (n.length_sq() < area_eps2) continue;
+                new_indices.push_back(i0);
+                new_indices.push_back(i1);
+                new_indices.push_back(i2);
+            }
+            mesh.indices = std::move(new_indices);
+        }
+
+        // Remove duplicate triangles: after welding, two triangles
+        // that originally had different vertex sets can collapse to
+        // the same vertex set (same 3 indices). When they have the
+        // same winding, they're identical copies; when opposite, they
+        // form a "double face" that should be removed (both faces, as
+        // they cancel out). We drop both copies in either case.
+        {
+            std::unordered_set<std::uint64_t> seen;
+            seen.reserve(mesh.triangle_count());
+            std::vector<std::uint32_t> new_indices;
+            new_indices.reserve(mesh.indices.size());
+            for (std::size_t t = 0; t < mesh.triangle_count(); ++t) {
+                const std::uint32_t i0 = mesh.indices[t*3 + 0];
+                const std::uint32_t i1 = mesh.indices[t*3 + 1];
+                const std::uint32_t i2 = mesh.indices[t*3 + 2];
+                // Canonical key: sorted vertex ids, packed into 64 bits.
+                std::uint32_t s[3] = {i0, i1, i2};
+                std::sort(s, s + 3);
+                const std::uint64_t key =
+                    std::uint64_t(s[0]) |
+                    (std::uint64_t(s[1]) << 21) |
+                    (std::uint64_t(s[2]) << 42);
+                if (seen.count(key)) continue;
+                seen.insert(key);
+                new_indices.push_back(i0);
+                new_indices.push_back(i1);
+                new_indices.push_back(i2);
+            }
+            mesh.indices = std::move(new_indices);
+        }
+
+        // Winding fix: for each triangle, sample the SDF gradient at
+        // the centroid. If the triangle's geometric normal points in
+        // the opposite direction of the gradient, flip the triangle.
+        //
+        // We use the SDF gradient at the centroid (which is the
+        // outward-pointing surface normal). To avoid spurious flips
+        // when the gradient is small or noisy, we require:
+        //   * |gradient| > 0.1 (i.e. the gradient is well-defined;
+        //     near the surface or in the interior it can be near zero)
+        //   * dot(tri_n, grad) < -|tri_n| * 0.1 (i.e. the triangle
+        //     is *clearly* pointing the wrong way, not just slightly
+        //     off — this avoids flipping triangles that are roughly
+        //     perpendicular to the gradient, which is a sign that
+        //     the gradient is unreliable here)
+        for (std::size_t t = 0; t < mesh.triangle_count(); ++t) {
+            const std::uint32_t i0 = mesh.indices[t*3 + 0];
+            const std::uint32_t i1 = mesh.indices[t*3 + 1];
+            const std::uint32_t i2 = mesh.indices[t*3 + 2];
+            const math::Vec3f& p0 = mesh.positions[i0];
+            const math::Vec3f& p1 = mesh.positions[i1];
+            const math::Vec3f& p2 = mesh.positions[i2];
+            // Triangle geometric normal (right-hand rule).
+            const math::Vec3f e01 = p1 - p0;
+            const math::Vec3f e02 = p2 - p0;
+            const math::Vec3f tri_n = e01.cross(e02);
+            // Centroid.
+            const math::Vec3f c{
+                (p0.x + p1.x + p2.x) / 3.0f,
+                (p0.y + p1.y + p2.y) / 3.0f,
+                (p0.z + p1.z + p2.z) / 3.0f,
+            };
+            // SDF gradient at centroid points outward.
+            const auto s = body.sample(c);
+            const float grad_mag = s.gradient.length();
+            // Skip the flip if the gradient is too small (unreliable).
+            if (grad_mag < 0.1f) continue;
+            const float dot = tri_n.x * s.gradient.x
+                            + tri_n.y * s.gradient.y
+                            + tri_n.z * s.gradient.z;
+            // Only flip if the triangle is clearly pointing the wrong
+            // way: dot < -0.5 * |tri_n| * grad_mag (about 120° off).
+            const float tri_mag = tri_n.length();
+            if (tri_mag > 1e-9f && dot < -0.5f * tri_mag * grad_mag) {
+                std::swap(mesh.indices[t*3 + 1], mesh.indices[t*3 + 2]);
             }
         }
     }

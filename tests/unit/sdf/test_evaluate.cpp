@@ -6,6 +6,7 @@
 #include "CAD_0/sdf/transforms.hpp"
 #include "CAD_0/sdf/evaluate.hpp"
 
+#include <string>
 #include <vector>
 
 using namespace CAD_0::sdf;
@@ -108,4 +109,66 @@ TEST_CASE("GpuEvalBackend: stub falls back to CPU") {
     GpuEvalBackend gpu;
     gpu.evaluate(body, std::span<const Vec3f>(pts.data(), pts.size()), out);
     CHECK(out.values[0] == doctest::Approx(-1.0f).epsilon(1e-5f));
+}
+
+// ---------------------------------------------------------------------------
+// Task 3 — GpuEvalBackend link-safety + name() regression tests
+//
+// Previously, GpuEvalBackend::name() was defined inline in the header.
+// This could cause "multiple definition" link errors in TBB/GPU builds
+// where the header is included from multiple TUs. The fix moves the
+// definition out-of-line into evaluate.cpp and makes the name string
+// reflect the actual backend status ("gpu-stub (cpu-fallback)") so
+// callers can detect the fallback at runtime — no silent GPU→CPU
+// degradation (see ADR-0008).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("GpuEvalBackend: name reflects stub status (no silent fallback)") {
+    GpuEvalBackend gpu;
+    const char* n = gpu.name();
+    CHECK(n != nullptr);
+    // The name must contain "stub" (or "fallback") so callers can
+    // detect that this is NOT a real GPU backend.
+    const std::string s(n);
+    CHECK(s.find("stub") != std::string::npos);
+}
+
+TEST_CASE("CpuEvalBackend: name is \"cpu\"") {
+    CpuEvalBackend cpu;
+    CHECK(std::string(cpu.name()) == "cpu");
+}
+
+TEST_CASE("GpuEvalBackend: evaluate matches CpuEvalBackend on the same input") {
+    // The GPU stub falls back to a fresh CpuEvalBackend, so the output
+    // must be identical to a direct CPU evaluation. This guards against
+    // future divergence if someone "optimizes" the stub.
+    auto body = make_sphere(2.0f);
+    std::vector<Vec3f> pts = {{0, 0, 0}, {2, 0, 0}, {3, 0, 0}, {1, 1, 1}};
+    EvalResult out_cpu, out_gpu;
+    CpuEvalBackend cpu;
+    GpuEvalBackend  gpu;
+    cpu.evaluate(body, std::span<const Vec3f>(pts.data(), pts.size()), out_cpu);
+    gpu.evaluate(body, std::span<const Vec3f>(pts.data(), pts.size()), out_gpu);
+    REQUIRE(out_cpu.values.size() == out_gpu.values.size());
+    for (std::size_t i = 0; i < out_cpu.values.size(); ++i) {
+        CHECK(out_gpu.values[i] == doctest::Approx(out_cpu.values[i]).epsilon(1e-5f));
+    }
+}
+
+TEST_CASE("GpuEvalBackend: polymorphic dispatch through EvalBackend base") {
+    // Verify that the EvalBackend abstract base works polymorphically —
+    // the vtable for GpuEvalBackend must be properly emitted in the .cpp
+    // (not inlined in the header), or else this test would fail to link.
+    auto body = make_sphere(1.0f);
+    std::vector<Vec3f> pts = {{0, 0, 0}};
+    EvalResult out;
+
+    EvalBackend* backend = nullptr;
+    GpuEvalBackend gpu;
+    backend = &gpu;
+    backend->evaluate(body, std::span<const Vec3f>(pts.data(), pts.size()), out);
+    CHECK(out.values[0] == doctest::Approx(-1.0f).epsilon(1e-5f));
+
+    // The name() call goes through the vtable.
+    CHECK(std::string(backend->name()).find("stub") != std::string::npos);
 }

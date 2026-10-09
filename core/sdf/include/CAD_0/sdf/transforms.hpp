@@ -83,20 +83,38 @@ private:
     math::Mat4f qmat_;
 };
 
-// Scale — uniform scale. Lipschitz constant stays 1 (scaling preserves
-// direction of gradient, but magnitude scales inversely with scale).
+// Scale — uniform scale.
+//
+// Math: f(x) = scale · g(x / scale)
+//
+// Gradient: ∇f(x) = scale · ∇g(x/scale) · (1/scale) = ∇g(x/scale).
+//   So |∇f| = |∇g| ≤ lipschitz(g). For a unit-Lipschitz SDF g (e.g.
+//   a primitive), this means |∇f| = 1 everywhere — the scaled field is
+//   *also* a unit-Lipschitz SDF.
+//
+// Lipschitz constant: lipschitz(f) = lipschitz(g) (NOT scale · lipschitz(g)).
+//   The previous implementation reported `scale · lipschitz(g)`, which is
+//   wrong for scale > 1 (over-reports) AND wrong for scale < 1 (under-reports
+//   when the child has Lipschitz > 1, but the scaled field is still bounded
+//   by lipschitz(g), not by scale · lipschitz(g)).
+//
+// The gradient and the Lipschitz constant must be coherent: both are
+// bounded by lipschitz(g), not by scale · lipschitz(g).
 class ScaleSDF final : public SDFNode {
 public:
     ScaleSDF(std::unique_ptr<SDFNode> child, float s)
         : child_(std::move(child)), inv_s_(1.0f / s), scale_(s) {}
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {
-        auto s = child_->sample(p * inv_s_);
-        s.value *= scale_;
-        s.gradient = s.gradient;  // magnitude preserved since |∇| ≤ 1
-        return s;
+        auto r = child_->sample(p * inv_s_);
+        // f(x) = scale · g(x/scale). The value scales linearly.
+        r.value *= scale_;
+        // ∇f(x) = ∇g(x/scale) — the gradient is inherited unchanged.
+        // |∇f| = |∇g| ≤ lipschitz(g) = lipschitz(f), so the Lipschitz
+        // invariant is preserved without any modification.
+        return r;
     }
-    float lipschitz()    const noexcept override { return child_->lipschitz() * scale_; }
+    float lipschitz()    const noexcept override { return child_->lipschitz(); }
     math::Bboxf bounds() const noexcept override {
         auto b = child_->bounds();
         return {b.min * scale_, b.max * scale_};

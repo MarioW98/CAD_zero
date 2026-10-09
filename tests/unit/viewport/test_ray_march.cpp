@@ -12,6 +12,7 @@
 #include "CAD_0/viewport/ray_march.hpp"
 #include "CAD_0/viewport/camera.hpp"
 #include "CAD_0/sdf/primitives.hpp"
+#include "CAD_0/sdf/transforms.hpp"
 #include "CAD_0/math/vec.hpp"
 
 #include <cmath>
@@ -196,4 +197,156 @@ TEST_CASE("ray_march: empty SDF body returns hit at distance 0") {
 
     CHECK(r.hit);
     CHECK(r.distance == doctest::Approx(0.0f).epsilon(1e-3f));
+}
+
+// ----------------------------------------------------------------------
+// Lipschitz-aware step scaling (added after the bug fix)
+// ----------------------------------------------------------------------
+TEST_CASE("ray_march: respects body Lipschitz constant") {
+    // The Twist SDF is the canonical example of a non-unit-Lipschitz field:
+    // it reports lipschitz > 1 because the warp can stretch the field.
+    // The marcher must scale its step by 1/lipschitz to avoid overshooting.
+    auto box = make_box({1, 1, 1});
+    auto twisted = sdf_twist(std::move(box), 0.5f);
+    REQUIRE(twisted.lipschitz() > 1.0f);
+
+    RayMarchOptions opts;
+    const Vec3f ro{0, 0, 5};
+    const Vec3f rd{0, 0, -1};
+
+    // Untwisted box: lipschitz = 1, marches with full steps.
+    auto plain = make_box({1, 1, 1});
+    const auto r_plain   = ray_march_sdf(plain,   ro, rd, opts);
+    const auto r_twisted = ray_march_sdf(twisted, ro, rd, opts);
+
+    REQUIRE(r_plain.hit);
+    REQUIRE(r_twisted.hit);
+
+    // Both should hit at the correct world-space distance (≈ 4 from the
+    // box's +Z face).
+    CHECK(r_plain.distance   == doctest::Approx(4.0f).epsilon(1e-3f));
+    CHECK(r_twisted.distance == doctest::Approx(4.0f).epsilon(0.1f));
+
+    // The twisted (L > 1) marcher should take at least as many steps as
+    // the plain (L = 1) marcher, because its steps are scaled down by L.
+    CHECK(r_twisted.steps_taken >= r_plain.steps_taken);
+}
+
+TEST_CASE("ray_march: scaled sphere (lipschitz = 1) hits correctly") {
+    // After the ScaleSDF lipschitz fix, scaling a unit-Lipschitz sphere
+    // produces a field with lipschitz = 1 (NOT scale). The marcher
+    // therefore uses the same step size as for the unscaled sphere.
+    auto sph_small = make_sphere(1.0f);
+    auto sph_large = sdf_scale(make_sphere(1.0f), 2.0f);  // world radius = 2
+    REQUIRE(sph_small.lipschitz() == 1.0f);
+    REQUIRE(sph_large.lipschitz() == 1.0f);  // post-fix: not 2.0
+
+    RayMarchOptions opts;
+    const Vec3f ro{0, 0, 5};
+    const Vec3f rd{0, 0, -1};
+
+    const auto r_small = ray_march_sdf(sph_small, ro, rd, opts);
+    const auto r_large = ray_march_sdf(sph_large, ro, rd, opts);
+
+    REQUIRE(r_small.hit);
+    REQUIRE(r_large.hit);
+
+    // small: distance = 5 - 1 = 4
+    // large: distance = 5 - 2 = 3
+    CHECK(r_small.distance == doctest::Approx(4.0f).epsilon(1e-3f));
+    CHECK(r_large.distance == doctest::Approx(3.0f).epsilon(1e-3f));
+}
+
+TEST_CASE("ray_march: Twist body (lipschitz > 1) still hits correctly") {
+    // A twisted box has lipschitz > 1. Before the fix, the marcher
+    // could overshoot the surface. After the fix, it correctly scales
+    // steps by 1/lipschitz.
+    auto box = make_box({1, 1, 1});
+    auto twisted = sdf_twist(std::move(box), 0.5f);
+    REQUIRE(twisted.lipschitz() > 1.0f);
+
+    RayMarchOptions opts;
+    opts.max_distance = 50.0f;
+    const Vec3f ro{0, 0, 5};
+    const Vec3f rd{0, 0, -1};
+
+    const auto r = ray_march_sdf(twisted, ro, rd, opts);
+    CHECK(r.hit);
+    // The twisted box is still centered at origin with bounds roughly
+    // [-1, 1]³. Hit distance should be near 4.
+    CHECK(r.distance == doctest::Approx(4.0f).epsilon(0.1f));
+}
+
+// ---------------------------------------------------------------------------
+// Task 2 — Lipschitz-safe stepping for sdf_scale(sphere, s) with s < 1
+//
+// The user-reported bug was: ray_march's `t += d` step ignored the
+// field's Lipschitz constant, causing overshoot/perforation in fields
+// with L > 1. Even though ScaleSDF with s < 1 reports L = 1 (the
+// correct bound — see transforms.hpp), this test exercises the case
+// explicitly: a shrunken sphere (radius 0.5) must still be hit at the
+// correct world-space distance, regardless of the scale factor.
+//
+// Parity with GLSL: the sdf_raymarch.frag shader uses `t += d` for its
+// hardcoded `length(p) - 1.0` sphere (L = 1). The CPU marcher uses
+// `t += d / max(L, 1) = d` for L = 1, matching the shader exactly.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ray_march: scaled sphere with s<1 hits at correct distance") {
+    // sphere(r=1) scaled by 0.5 → world radius = 0.5
+    // The ray from (0,0,5) toward -Z should hit at distance 5 - 0.5 = 4.5.
+    auto sph_small = sdf_scale(make_sphere(1.0f), 0.5f);
+    REQUIRE(sph_small.lipschitz() == 1.0f);  // ScaleSDF preserves lipschitz
+
+    RayMarchOptions opts;
+    const Vec3f ro{0, 0, 5};
+    const Vec3f rd{0, 0, -1};
+
+    const auto r = ray_march_sdf(sph_small, ro, rd, opts);
+    REQUIRE(r.hit);
+    CHECK(r.distance == doctest::Approx(4.5f).epsilon(1e-3f));
+    CHECK(r.point.z  == doctest::Approx(0.5f).epsilon(1e-3f));
+    CHECK(r.normal.z == doctest::Approx(1.0f).epsilon(1e-2f));
+}
+
+TEST_CASE("ray_march: scaled sphere with s<1 from the side") {
+    // sphere(r=1) scaled by 0.25 → world radius = 0.25
+    // Ray from (5, 0, 0) toward -X should hit at distance 5 - 0.25 = 4.75.
+    auto sph_tiny = sdf_scale(make_sphere(1.0f), 0.25f);
+    REQUIRE(sph_tiny.lipschitz() == 1.0f);
+
+    RayMarchOptions opts;
+    const Vec3f ro{5, 0, 0};
+    const Vec3f rd{-1, 0, 0};
+
+    const auto r = ray_march_sdf(sph_tiny, ro, rd, opts);
+    REQUIRE(r.hit);
+    CHECK(r.distance == doctest::Approx(4.75f).epsilon(1e-3f));
+    CHECK(r.point.x  == doctest::Approx(0.25f).epsilon(1e-3f));
+    CHECK(r.normal.x == doctest::Approx(1.0f).epsilon(1e-2f));
+}
+
+TEST_CASE("ray_march: scaled sphere CPU matches GLSL shader algorithm") {
+    // The GLSL shader (sdf_raymarch.frag) uses `t += d` for a hardcoded
+    // unit sphere (L = 1). For a unit-Lipschitz field, the CPU marcher's
+    // `t += d / max(L, 1) = t += d` matches exactly. We verify this by
+    // checking that the CPU marcher on a plain unit sphere returns the
+    // same hit distance as the shader would (5 - 1 = 4 from ro=(0,0,5)).
+    auto sph = make_sphere(1.0f);
+    REQUIRE(sph.lipschitz() == 1.0f);
+
+    RayMarchOptions opts;
+    // Match the shader's constants (MAX_STEPS=128, MAX_DIST=100, SURF_DIST=0.0005).
+    opts.max_steps = 128;
+    opts.max_distance = 100.0f;
+    opts.surface_distance = 0.0005f;
+    opts.step_scale = 1.0f;
+
+    const Vec3f ro{0, 0, 5};
+    const Vec3f rd{0, 0, -1};
+
+    const auto r = ray_march_sdf(sph, ro, rd, opts);
+    REQUIRE(r.hit);
+    // The shader would return t = 4.0 here (5 - 1). The CPU must match.
+    CHECK(r.distance == doctest::Approx(4.0f).epsilon(1e-3f));
 }

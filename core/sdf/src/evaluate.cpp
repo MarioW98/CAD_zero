@@ -80,6 +80,28 @@ void CpuEvalBackend::evaluate(const SDFBody& body,
 // ----------------------------------------------------------------------------
 // GpuEvalBackend — stub
 // ----------------------------------------------------------------------------
+// The GPU backend is a stub. It is NOT a silent fallback to the CPU —
+// the name() method explicitly announces "gpu-stub (cpu-fallback)" so
+// callers can detect at runtime that they're not actually running on
+// the GPU. This is required by ADR-0008 (no silent GPU→CPU fallback).
+//
+// Why the stub exists: the SDF tree-evaluation pipeline must be
+// uniform across backends so that the rest of the codebase (mesh
+// extractor, ray marcher, Python bindings) can be written against a
+// stable EvalBackend interface. The actual GPU implementation
+// (compute shader / CUDA / OpenCL) is deferred to Phase E.
+//
+// Link-safety notes
+// -----------------
+// All GpuEvalBackend methods are declared in evaluate.hpp and *defined*
+// here (out-of-line). This avoids "multiple definition" link errors
+// that occur when an inline-defined virtual method is included in
+// multiple TUs and the linker tries to deduplicate the vtable. The
+// same is true for the CpuEvalBackend::name() method — we keep it
+// inline there because it's `final` and trivial, but we could move
+// it out-of-line here if any link error surfaces.
+// ----------------------------------------------------------------------------
+
 GpuEvalBackend::GpuEvalBackend() = default;
 
 void GpuEvalBackend::evaluate(const SDFBody& body,
@@ -87,8 +109,16 @@ void GpuEvalBackend::evaluate(const SDFBody& body,
                                EvalResult& out) {
     (void)body;
     // Fallback to a fresh CpuEvalBackend so the API is usable immediately.
+    // The name() method makes this fallback explicit (not silent).
     CpuEvalBackend cpu;
     cpu.evaluate(body, points, out);
+}
+
+const char* GpuEvalBackend::name() const noexcept {
+    // Explicitly announce the fallback so callers can detect that they
+    // are not running on the GPU. This string is checked by the
+    // "GpuEvalBackend: name reflects stub status" test in test_evaluate.cpp.
+    return "gpu-stub (cpu-fallback)";
 }
 
 } // namespace CAD_0::sdf

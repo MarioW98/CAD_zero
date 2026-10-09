@@ -16,17 +16,17 @@ namespace {
 // A test command that increments/decrements a counter.
 class CounterCommand : public Command {
 public:
-    CounterCommand(int& target, int delta, const char* desc = "counter")
-        : target_(target), delta_(delta), desc_(desc) {}
+    CounterCommand(int& target, int delta, std::string desc = "counter")
+        : target_(target), delta_(delta), desc_(std::move(desc)) {}
 
     void execute() override { target_ += delta_; }
     void undo() override { target_ -= delta_; }
-    const char* description() const override { return desc_; }
+    const std::string& description() const override { return desc_; }
 
 private:
     int& target_;
     int delta_;
-    const char* desc_;
+    std::string desc_;
 };
 
 } // namespace
@@ -141,24 +141,21 @@ TEST_CASE("CommandStack: description exposed for menu") {
     stack.push(std::make_unique<CounterCommand>(counter, 1, "add 1"));
     stack.push(std::make_unique<CounterCommand>(counter, 2, "add 2"));
 
-    const char* desc = stack.next_undo_description();
-    REQUIRE(desc != nullptr);
-    CHECK(std::string(desc) == "add 2");
+    const auto& undo_desc = stack.next_undo_description();
+    CHECK(undo_desc == "add 2");
 
     stack.undo();
-    desc = stack.next_redo_description();
-    REQUIRE(desc != nullptr);
-    CHECK(std::string(desc) == "add 2");
+    const auto& redo_desc = stack.next_redo_description();
+    CHECK(redo_desc == "add 2");
 
-    desc = stack.next_undo_description();
-    REQUIRE(desc != nullptr);
-    CHECK(std::string(desc) == "add 1");
+    const auto& undo_desc2 = stack.next_undo_description();
+    CHECK(undo_desc2 == "add 1");
 }
 
-TEST_CASE("CommandStack: next_undo/redo_description is null when empty") {
+TEST_CASE("CommandStack: next_undo/redo_description is empty string when empty") {
     CommandStack stack;
-    CHECK(stack.next_undo_description() == nullptr);
-    CHECK(stack.next_redo_description() == nullptr);
+    CHECK(stack.next_undo_description().empty());
+    CHECK(stack.next_redo_description().empty());
 }
 
 TEST_CASE("CommandStack: clear empties both stacks") {
@@ -202,7 +199,7 @@ TEST_CASE("CommandStack: lambda command overload") {
     );
     CHECK(value == 42);
     CHECK(stack.can_undo());
-    CHECK(std::string(stack.next_undo_description()) == "set value to 42");
+    CHECK(stack.next_undo_description() == "set value to 42");
 
     stack.undo();
     CHECK(value == 0);

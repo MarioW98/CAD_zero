@@ -57,3 +57,48 @@ TEST_CASE("Translate + Scale composition") {
     CHECK(st.value({12, 0, 0}) == doctest::Approx(0.0f).epsilon(1e-5f));
     CHECK(st.value({0, 0, 0})  == doctest::Approx(8.0f).epsilon(1e-5f));
 }
+
+// ===========================================================================
+// ScaleSDF Lipschitz invariant regression tests (added after the bug fix).
+//
+// Bug: the previous implementation reported lipschitz = scale · child_lipschitz.
+// For a unit-Lipschitz child (e.g. SphereSDF) scaled by s > 1, this gave
+// lipschitz = s, which is wrong. The scaled field f(x) = s · g(x/s) has
+// ∇f(x) = ∇g(x/s), so |∇f| = |∇g| ≤ lipschitz(g). The Lipschitz constant
+// of the scaled field is the same as the child's, NOT scaled.
+// ===========================================================================
+
+TEST_CASE("ScaleSDF: lipschitz is preserved (not multiplied by scale)") {
+    auto sph = make_sphere(1.0f);
+    auto s2  = sdf_scale(make_sphere(1.0f), 2.0f);   // scale > 1
+    auto s05 = sdf_scale(make_sphere(1.0f), 0.5f);   // scale < 1
+    CHECK(sph.lipschitz() == 1.0f);
+    CHECK(s2.lipschitz()  == 1.0f);  // was 2.0f before fix
+    CHECK(s05.lipschitz() == 1.0f);  // was 0.5f before fix (also wrong!)
+}
+
+TEST_CASE("ScaleSDF: gradient magnitude is ≤ 1 (coherent with lipschitz)") {
+    // For a unit-Lipschitz child, the scaled field must also have |∇f| ≤ 1.
+    auto s = sdf_scale(make_sphere(1.0f), 2.0f);
+    const Vec3f pts[] = {
+        {0.0f, 0.0f, 0.0f},    // center
+        {1.0f, 0.0f, 0.0f},    // on the surface
+        {2.0f, 0.0f, 0.0f},    // outside
+        {3.0f, 0.0f, 0.0f},    // far outside
+    };
+    for (const auto& p : pts) {
+        const auto samp = s.sample(p);
+        const float gl = samp.gradient.length();
+        INFO("point:", p.x, p.y, p.z, " |g| =", gl);
+        CHECK(gl <= 1.0f + 1e-5f);
+    }
+}
+
+TEST_CASE("ScaleSDF: scaled sphere value is correct") {
+    // Sanity: the value at the new surface (radius 2) is 0, and the value
+    // at the center is -2 (the new radius, not -1 as for the unscaled sphere).
+    auto s = sdf_scale(make_sphere(1.0f), 2.0f);
+    CHECK(s.value({0, 0, 0}) == doctest::Approx(-2.0f));
+    CHECK(s.value({2, 0, 0}) == doctest::Approx(0.0f).epsilon(1e-5f));
+    CHECK(s.value({3, 0, 0}) == doctest::Approx(1.0f).epsilon(1e-5f));
+}
