@@ -30,3 +30,11 @@ jobs:
 
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
+
+      # Bug 3 regression guard: runs the functional Python suite (Bug 1-5).
+      # Needs only numpy — UI-import checks skip gracefully without PySide6.
+      - name: Python bindings tests
+        run: |
+          python3 -m pip install --user numpy
+          PYTHONPATH=build/${{ matrix.preset }}/python \
+            python3 bindings/python/tests/test_bug_fixes.py

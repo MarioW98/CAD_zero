@@ -134,3 +134,31 @@ cmake --build build
 PYTHONPATH=build/python python -m pytest bindings/python/tests -q
 PYTHONPATH=build/python python -m CAD_0.ui   # app desktop
 ```
+
+---
+
+## Aggiornamento post-push (regressione Bug 3)
+
+**Cosa è successo**: applicando lo zip di correzioni sopra un checkout esistente
+(estrarre → commit → push), i file *modificati* sono stati aggiornati, ma le 6
+**eliminazioni** della UI stale (`bindings/python/CAD_0/ui/`) non si sono
+propagate: i file assenti nello zip sono rimasti sul disco e sono stati
+ricommitati. La UI stale era così tornata nel repository, ancora divergente
+da `app/src/CAD_0/ui` (main_window 260 righe, viewport_widget 391, ecc.).
+
+**Correzione**: `git rm -r bindings/python/CAD_0/ui/` + ri-commit.
+
+**Retegrata di regressione** — la suite funzionale è ora **parte del repo**:
+
+```bash
+PYTHONPATH=build/<preset>/python python3 bindings/python/tests/test_bug_fixes.py
+```
+
+19 controlli su Bug 1-5 (editing parametri, export, lifetime ndarray,
+assenza UI stale + identità byte con `app/src`, dipendenze dichiarate).
+La CI la esegue a ogni build (step "Python bindings tests", richiede solo
+numpy; i controlli UI degradano a skip senza PySide6/PyOpenGL).
+
+**Nota CI**: il filtro branch `branches: [main]` in `ci-linux.yml` è sempre
+stato corretto (un artifact del terminale diagnostico aveva mostrato
+`ain]` — falsa pista, verificato con `od -c` sui byte grezzi).
