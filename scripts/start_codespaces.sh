@@ -27,8 +27,7 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PROJECT_DIR="/home/z/my-project/CAD_0"
 LIBS_DIR="/home/z/my-project/.libs"
 VNC_BIN_DIR="/home/z/my-project/vnc_extract/usr/bin"
 NOVNC_DIR="/home/z/my-project/vnc_extract/usr/share/novnc"
@@ -134,28 +133,30 @@ fi
 
 # CAD_0 build — auto-build if missing
 if [[ ! -d "${PROJECT_DIR}/build/python/CAD_0" ]]; then
-    log "build not found — configuring and building with CMake..."
-    
-    if ! have cmake || ! have ninja; then
-        if have sudo; then
-            log "installing system cmake & ninja..."
-            sudo apt-get install -y cmake ninja-build 2>&1 | tail -3
-        fi
+    log "build not found — running cmake + ninja..."
+    if ! have cmake; then
+        log "installing cmake + ninja via pip..."
+        python3 -m pip install --quiet cmake ninja 2>&1 | tail -3
     fi
-
-    cd "${PROJECT_DIR}"
-    cmake -B build -G Ninja \
+    if ! have ninja; then
+        log "installing ninja via pip..."
+        python3 -m pip install --quiet ninja 2>&1 | tail -3
+    fi
+    # Make sure PySide6 + PyOpenGL are installed (needed for the UI at runtime)
+    python3 -c "import PySide6" 2>/dev/null || python3 -m pip install --quiet PySide6 2>&1 | tail -3
+    python3 -c "import OpenGL" 2>/dev/null || python3 -m pip install --quiet PyOpenGL 2>&1 | tail -3
+    ( cd "${PROJECT_DIR}" && \
+      cmake -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
-        -DCAD_0_BUILD_TESTS=ON \
-        -DCAD_0_BUILD_EXAMPLES=ON \
-        -DPython3_EXECUTABLE="$(which python3)"
-    
-    cmake --build build -j"$(nproc)" || die "cmake build failed"
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DCAD_0_BUILD_PYTHON=ON \
+        -DCAD_0_BUILD_TESTING=OFF \
+        -DCAD_0_BUILD_EXAMPLES=OFF \
+        -DCAD_0_USE_TBB=OFF \
+        -DPython3_EXECUTABLE="$(which python3)" && \
+      cmake --build build ) || die "cmake build failed"
 fi
-
-[[ -d "${PROJECT_DIR}/build/python/CAD_0" ]] || die "build directory invalid or bindings missing in build/python/CAD_0"
-
-log "environment ready."
+[[ -d "${PROJECT_DIR}/build/python/CAD_0" ]] || die "build failed unexpectedly"
 
 # Python deps
 python3 -c "import PySide6, OpenGL, numpy" 2>/dev/null || {

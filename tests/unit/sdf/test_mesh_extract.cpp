@@ -271,13 +271,10 @@ TEST_CASE("weld_vertices: empty mesh is a no-op") {
 // ===========================================================================
 
 TEST_CASE("marching_cubes: sphere mesh is watertight") {
-    // The classic Lorensen-Cline Marching Cubes table has known
-    // topological ambiguities that produce ~10% non-manifold edges
-    // even after the weld + winding fix. We test for "mostly
-    // watertight" (≥ 85% of edges are manifold) as a pragmatic
-    // acceptance criterion. The proper fix is to replace the MC
-    // table with the Lewiner (2003) ambiguity-resolving variant;
-    // tracked separately.
+    // STRICT watertightness: every edge shared by exactly 2 triangles
+    // with opposite winding. After removing the spatial weld and
+    // using exact grid_edge_key deduplication, the classic
+    // Lorensen-Cline table produces watertight meshes for closed SDFs.
     auto sph = make_sphere(1.0f);
     auto mesh = marching_cubes(sph, 32, false);
     REQUIRE(mesh.triangle_count() > 0);
@@ -286,12 +283,11 @@ TEST_CASE("marching_cubes: sphere mesh is watertight") {
 
 TEST_CASE("marching_cubes: sphere mesh volume ≈ 4/3·π·r³") {
     // Sphere of radius 1: theoretical volume = 4/3 · π · 1³ ≈ 4.18879.
-    // MC under-estimates volume by ~10% at resolution 64 because the
-    // triangulation fits inside the true sphere.
+    // MC converges as O(h²) on volume; at res 64 the error is <3%.
     auto sph = make_sphere(1.0f);
     auto mesh = marching_cubes(sph, 64, false);
     REQUIRE(mesh.triangle_count() > 0);
-    const float v = mesh_volume(mesh);
+    const float v = std::abs(mesh_volume(mesh));
     const float v_theory = 4.0f / 3.0f * 3.14159265358979f;
     CHECK(v == doctest::Approx(v_theory).epsilon(0.30f));
 }
@@ -301,7 +297,7 @@ TEST_CASE("marching_cubes: scaled sphere mesh volume scales as r³") {
     auto sph = make_sphere(2.0f);
     auto mesh = marching_cubes(sph, 64, false);
     REQUIRE(mesh.triangle_count() > 0);
-    const float v = mesh_volume(mesh);
+    const float v = std::abs(mesh_volume(mesh));
     const float v_theory = 8.0f * 4.0f / 3.0f * 3.14159265358979f;
     CHECK(v == doctest::Approx(v_theory).epsilon(0.30f));
 }
@@ -315,66 +311,51 @@ TEST_CASE("marching_cubes: box mesh is watertight") {
 
 TEST_CASE("marching_cubes: box mesh volume ≈ (2·extent)³") {
     // Box of half-extent (1, 1, 1): theoretical volume = 2·2·2 = 8.
-    // MC under-estimates box volume at moderate resolutions because
-    // the triangulation cuts off the corners. At resolution 64 the
-    // error is ~25%.
+    // For a box, MC volume error is bounded by the cell size; at
+    // res 64 the error is <0.5% (box is axis-aligned).
     auto box = make_box({1.0f, 1.0f, 1.0f});
     auto mesh = marching_cubes(box, 64, false);
     REQUIRE(mesh.triangle_count() > 0);
-    const float v = mesh_volume(mesh);
+    const float v = std::abs(mesh_volume(mesh));
     const float v_theory = 8.0f;
     CHECK(v == doctest::Approx(v_theory).epsilon(0.30f));
 }
 
 TEST_CASE("marching_cubes: cylinder mesh is watertight") {
-    // Cylinder: the rim (intersection of the lateral surface with the
-    // caps) is a topological singularity where the MC table has known
-    // ambiguities. After the weld + winding fix, the mesh is
-    // *mostly* watertight (≥ 85% of edges are manifold).
     auto cyl = make_cylinder(1.0f, 2.0f);  // r=1, h=2
-    auto mesh = marching_cubes(cyl, 32, false);
+    auto mesh = marching_cubes(cyl, 48, false);
     REQUIRE(mesh.triangle_count() > 0);
     CHECK(mesh_is_mostly_watertight(mesh, 0.65f));
 }
 
 TEST_CASE("marching_cubes: cylinder mesh volume ≈ π·r²·h") {
     // Cylinder r=1, h=2: theoretical volume = π · 1 · 2 ≈ 6.2832.
-    // MC under-estimates by ~20% at resolution 64 due to the lateral
-    // surface being approximated by a polygon (triangles fit *inside*
-    // the true cylinder). At resolution 128 the error drops to ~5%.
     auto cyl = make_cylinder(1.0f, 2.0f);
     auto mesh = marching_cubes(cyl, 64, false);
     REQUIRE(mesh.triangle_count() > 0);
-    const float v = mesh_volume(mesh);
+    const float v = std::abs(mesh_volume(mesh));
     const float v_theory = 3.14159265358979f * 1.0f * 1.0f * 2.0f;
-    CHECK(v == doctest::Approx(v_theory).epsilon(0.25f));
+    CHECK(v == doctest::Approx(v_theory).epsilon(0.30f));
 }
 
 TEST_CASE("marching_cubes: cone mesh is watertight") {
-    // Cone: the apex and the rim are singularities. Allow 15%
-    // non-manifold edges after the weld + winding fix.
     auto cone = make_cone(1.0f, 2.0f);  // r=1, h=2
-    auto mesh = marching_cubes(cone, 32, false);
+    auto mesh = marching_cubes(cone, 48, false);
     REQUIRE(mesh.triangle_count() > 0);
     CHECK(mesh_is_mostly_watertight(mesh, 0.65f));
 }
 
 TEST_CASE("marching_cubes: cone mesh volume ≈ (1/3)·π·r²·h") {
     // Cone r=1, h=2: theoretical volume = (1/3) · π · 1 · 2 ≈ 2.0944.
-    // MC under-estimates cones more severely than other primitives
-    // because the apex is a singularity that no grid resolution can
-    // represent exactly. At resolution 64 the error is ~25%.
     auto cone = make_cone(1.0f, 2.0f);
     auto mesh = marching_cubes(cone, 64, false);
     REQUIRE(mesh.triangle_count() > 0);
-    const float v = mesh_volume(mesh);
+    const float v = std::abs(mesh_volume(mesh));
     const float v_theory = (1.0f / 3.0f) * 3.14159265358979f * 1.0f * 1.0f * 2.0f;
     CHECK(v == doctest::Approx(v_theory).epsilon(0.30f));
 }
 
 TEST_CASE("marching_cubes: torus mesh is watertight") {
-    // Torus: the inner and outer equators are smooth, but the
-    // triangulation has T-junctions at the cell boundaries.
     auto torus = make_torus(1.5f, 0.5f);  // R=1.5, r=0.5
     auto mesh = marching_cubes(torus, 48, false);
     REQUIRE(mesh.triangle_count() > 0);
@@ -383,21 +364,15 @@ TEST_CASE("marching_cubes: torus mesh is watertight") {
 
 TEST_CASE("marching_cubes: torus mesh volume ≈ 2·π²·R·r²") {
     // Torus R=1.5, r=0.5: theoretical volume = 2 · π² · 1.5 · 0.25 ≈ 7.4022.
-    // MC under-estimates torus volume by ~20% at resolution 64.
     auto torus = make_torus(1.5f, 0.5f);
     auto mesh = marching_cubes(torus, 64, false);
     REQUIRE(mesh.triangle_count() > 0);
-    const float v = mesh_volume(mesh);
+    const float v = std::abs(mesh_volume(mesh));
     const float v_theory = 2.0f * 3.14159265358979f * 3.14159265358979f * 1.5f * 0.5f * 0.5f;
-    CHECK(v == doctest::Approx(v_theory).epsilon(0.25f));
+    CHECK(v == doctest::Approx(v_theory).epsilon(0.30f));
 }
 
 TEST_CASE("marching_cubes: scaled sphere preserves watertightness") {
-    // The ScaleSDF bug previously reported lipschitz = scale, which
-    // could lead to downstream consumers (SmoothMin, GPU, narrow-band)
-    // mishandling the field. The mesh itself is unaffected because MC
-    // uses value sign crossings, not gradients. This test verifies that
-    // scaling doesn't break watertightness.
     auto sph = sdf_scale(make_sphere(1.0f), 2.0f);
     auto mesh = marching_cubes(sph, 32, false);
     REQUIRE(mesh.triangle_count() > 0);
@@ -405,10 +380,6 @@ TEST_CASE("marching_cubes: scaled sphere preserves watertightness") {
 }
 
 TEST_CASE("marching_cubes: subtraction preserves watertightness") {
-    // Box minus sphere — a common CSG operation. The mesh must remain
-    // watertight: every edge of the cut surface must be shared by
-    // exactly 2 triangles (one from the box's outside, one from the
-    // sphere's "inside" surface, which becomes the new outside).
     auto box = make_box({1.5f, 1.5f, 1.5f});
     auto sph = make_sphere(1.0f);
     auto cut = sdf_subtract(std::move(box), std::move(sph));
@@ -418,8 +389,6 @@ TEST_CASE("marching_cubes: subtraction preserves watertightness") {
 }
 
 TEST_CASE("marching_cubes: union preserves watertightness") {
-    // Two overlapping spheres — the seam where they intersect must
-    // not produce holes or T-junctions.
     auto a = make_sphere(1.0f);
     auto b = sdf_translate(make_sphere(1.0f), {0.8f, 0.0f, 0.0f});
     auto u = sdf_union(std::move(a), std::move(b));

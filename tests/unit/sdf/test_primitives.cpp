@@ -2,6 +2,9 @@
 #include <doctest/doctest.h>
 
 #include "CAD_0/sdf/primitives.hpp"
+#include "CAD_0/sdf/transforms.hpp"
+
+#include <cmath>
 
 using namespace CAD_0::sdf;
 using namespace CAD_0::math;
@@ -192,4 +195,74 @@ TEST_CASE("ConeSDF: gradient on the lateral surface points outward") {
     CHECK(s.gradient.x == doctest::Approx(2.0f / std::sqrt(5.0f)).epsilon(1e-3f));
     CHECK(s.gradient.y == doctest::Approx(1.0f / std::sqrt(5.0f)).epsilon(1e-3f));
     CHECK(s.gradient.z == doctest::Approx(0.0f).epsilon(1e-3f));
+}
+
+// ===========================================================================
+// Bug 3 — ConeSDF under rotation
+//
+// Rotating cone(r=1, h=2) by rotZ(+90°) puts the cone axis along -X.
+// The solid occupies x ∈ [-2, 0]. Expected values:
+//   f(-1, 0, 0) → local (0, 1, 0) → inside, d ≈ -0.4472 (on axis at mid-height)
+//   f(-2, 0, 0) → local (0, 2, 0) → apex, d = 0
+//   f(-3, 0, 0) → local (0, 3, 0) → past apex, d = +1
+//   f( 0, 0, 0) → local (0, 0, 0) → base center, d = 0
+//   f( 1, 0, 0) → local (0, -1, 0) → below base, d = +1
+// ===========================================================================
+
+TEST_CASE("ConeSDF: rotated cone (rotZ +90°) values at axis points") {
+    auto cone = make_cone(1.0f, 2.0f);
+    // q = Quatf::from_axis_angle({0,0,1}, π/2) rotates +Y to -X.
+    auto q = Quatf::from_axis_angle({0, 0, 1}, 3.14159265358979f / 2.0f);
+    auto rotated = sdf_rotate(cone, q);
+
+    // f(-1, 0, 0): on the cone axis at mid-height → inside.
+    // Local (0, 1, 0) is inside the cone: d = -0.5·cos θ = -0.5 · 2/√5 ≈ -0.4472.
+    CHECK(rotated.value({-1.0f, 0.0f, 0.0f}) == doctest::Approx(-0.4472f).epsilon(0.05f));
+
+    // f(-2, 0, 0): apex → d = 0.
+    CHECK(rotated.value({-2.0f, 0.0f, 0.0f}) == doctest::Approx(0.0f).epsilon(1e-3f));
+
+    // f(-3, 0, 0): past apex → d = +1.
+    CHECK(rotated.value({-3.0f, 0.0f, 0.0f}) == doctest::Approx(1.0f).epsilon(1e-3f));
+
+    // f(0, 0, 0): base center → d = 0.
+    CHECK(rotated.value({0.0f, 0.0f, 0.0f}) == doctest::Approx(0.0f).epsilon(1e-3f));
+
+    // f(1, 0, 0): below base → d = +1.
+    CHECK(rotated.value({1.0f, 0.0f, 0.0f}) == doctest::Approx(1.0f).epsilon(1e-3f));
+}
+
+TEST_CASE("ConeSDF: rotated cone gradient magnitude ≤ 1 (Lipschitz)") {
+    auto cone = make_cone(1.0f, 2.0f);
+    auto q = Quatf::from_axis_angle({0, 0, 1}, 3.14159265358979f / 2.0f);
+    auto rotated = sdf_rotate(cone, q);
+
+    // Sample at several points along the rotated axis.
+    const Vec3f pts[] = {
+        {-1.0f, 0.0f, 0.0f},   // inside
+        {-1.5f, 0.0f, 0.0f},   // near apex
+        {-2.0f, 0.0f, 0.0f},   // apex
+        {-0.5f, 0.0f, 0.0f},   // near base
+        {-1.0f, 0.5f, 0.0f},   // off-axis, inside
+    };
+    for (const auto& p : pts) {
+        const auto s = rotated.sample(p);
+        const float gl = s.gradient.length();
+        INFO("point:", p.x, p.y, p.z, " |g| =", gl);
+        CHECK(gl <= 1.0f + 1e-4f);
+    }
+}
+
+TEST_CASE("ConeSDF: rotated cone + translate") {
+    auto cone = make_cone(1.0f, 2.0f);
+    auto q = Quatf::from_axis_angle({0, 0, 1}, 3.14159265358979f / 2.0f);
+    auto rotated = sdf_rotate(cone, q);
+    auto moved = sdf_translate(rotated, {5.0f, 0.0f, 0.0f});
+
+    // The rotated cone had apex at (-2, 0, 0). After +5 translate, apex at (3, 0, 0).
+    CHECK(moved.value({3.0f, 0.0f, 0.0f}) == doctest::Approx(0.0f).epsilon(1e-3f));
+    // The rotated cone had base center at (0, 0, 0). After +5, at (5, 0, 0).
+    CHECK(moved.value({5.0f, 0.0f, 0.0f}) == doctest::Approx(0.0f).epsilon(1e-3f));
+    // Inside point (4, 0, 0) was at (-1, 0, 0) before translate → inside.
+    CHECK(moved.value({4.0f, 0.0f, 0.0f}) < 0.0f);
 }

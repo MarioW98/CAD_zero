@@ -159,7 +159,9 @@ TEST_CASE("SmoothMin: lipschitz() is a valid upper bound for k>0") {
     auto smin = sdf_smooth_union(std::move(a), std::move(b), 0.5f);
 
     const float L = smin.lipschitz();
-    CHECK(L == doctest::Approx(2.0f).epsilon(1e-5f));
+    // After the fix, lipschitz() = 2.5 · max(L_a, L_b) = 2.5 (see
+    // operators.hpp derivation). The previous value 2.0 was wrong.
+    CHECK(L == doctest::Approx(2.5f).epsilon(1e-5f));
 
     // Sample |∇f| via central differences on a 21×7×7 grid centered
     // on the blend region (1.5, 0, 0).
@@ -229,4 +231,161 @@ TEST_CASE("SmoothMin: value at blend midpoint matches IQ formula") {
     auto b = sdf_translate(make_sphere(1.0f), {3.0f, 0.0f, 0.0f});
     auto smin = sdf_smooth_union(std::move(a), std::move(b), 0.5f);
     CHECK(smin.value({1.5f, 0.0f, 0.0f}) == doctest::Approx(0.46875f).epsilon(1e-5f));
+}
+
+// ===========================================================================
+// Bug 1 — SmoothMinSDF analytic-vs-FD gradient coherence
+//
+// The previous implementation returned ∇v = (1-h)∇a + h∇b, omitting the
+// (5/8)·(∇b-∇a)·(2h-1) term that comes from the chain rule through h.
+// The comment claiming "(1-2h) cancels exactly" was FALSE.
+//
+// This test samples the field on a fine grid (step ≤ 0.01) inside the
+// blend band, computes |∇v| via central finite differences, and asserts
+// that the analytic gradient returned by sample() agrees with the FD
+// gradient to within a tight tolerance. The previous implementation
+// fails this test in the blend band (where 2h-1 ≠ 0).
+// ===========================================================================
+
+TEST_CASE("SmoothMin: analytic gradient agrees with finite-difference gradient") {
+    // Two unit spheres offset by 0.8 along X; blend band is around (0.4, 0, 0).
+    const float k = 0.5f;
+    auto a = make_sphere(1.0f);
+    auto b = sdf_translate(make_sphere(1.0f), {0.8f, 0.0f, 0.0f});
+    auto smin = sdf_smooth_union(std::move(a), std::move(b), k);
+
+    const float h_step = 1e-4f;   // FD step
+    float max_diff = 0.0f;        // max ||∇analytic - ∇FD||
+    float max_grad = 0.0f;        // max |∇| (FD)
+    Vec3f worst_p{0, 0, 0};
+    Vec3f worst_ga{0, 0, 0};
+    Vec3f worst_gfd{0, 0, 0};
+
+    // Dense grid centered on the blend region (0.4, 0, 0), step 0.01.
+    for (int i = 0; i <= 80; ++i) {
+        for (int j = 0; j <= 20; ++j) {
+            for (int kk = 0; kk <= 20; ++kk) {
+                const float x = 0.4f + (static_cast<float>(i - 40) * 0.01f);
+                const float y = (static_cast<float>(j - 10) * 0.01f);
+                const float z = (static_cast<float>(kk - 10) * 0.01f);
+                const Vec3f p{x, y, z};
+
+                // Skip points where the field is far from the blend band
+                // (where h is clamped and the test is trivially true).
+                const float va = smin.value(p);
+                if (std::abs(va) > 2.0f * k) continue;
+
+                // Skip points near the blend-band BOUNDARY (|b-a| ≈ k).
+                // At the boundary the field has a kink (gradient is
+                // discontinuous: ∇h transitions from (0.5/k)·(∇b-∇a) to 0),
+                // so FD averages across the discontinuity and won't match
+                // the analytic gradient. We exclude a margin of 0.05·k
+                // around the boundary.
+                auto sa = make_sphere(1.0f);
+                auto sb = sdf_translate(make_sphere(1.0f), {0.8f, 0.0f, 0.0f});
+                const float diff = std::abs(sb.value(p) - sa.value(p));
+                if (diff > 0.95f * k) continue;
+
+                // Finite-difference gradient (central differences).
+                const Vec3f gfd{
+                    (smin.value(p + Vec3f{ h_step, 0, 0}) -
+                     smin.value(p + Vec3f{-h_step, 0, 0})) * (0.5f / h_step),
+                    (smin.value(p + Vec3f{0,  h_step, 0}) -
+                     smin.value(p + Vec3f{0, -h_step, 0})) * (0.5f / h_step),
+                    (smin.value(p + Vec3f{0, 0,  h_step}) -
+                     smin.value(p + Vec3f{0, 0, -h_step})) * (0.5f / h_step),
+                };
+
+                // Analytic gradient from sample().
+                const auto s = smin.sample(p);
+                const Vec3f ga = s.gradient;
+
+                const float diff_g = (ga - gfd).length();
+                if (diff_g > max_diff) {
+                    max_diff = diff_g;
+                    worst_p = p;
+                    worst_ga = ga;
+                    worst_gfd = gfd;
+                }
+                const float gfd_len = gfd.length();
+                if (gfd_len > max_grad) max_grad = gfd_len;
+            }
+        }
+    }
+    INFO("max ||∇analytic - ∇FD|| =", max_diff,
+         " max |∇FD| =", max_grad,
+         " worst p =", worst_p.x, worst_p.y, worst_p.z,
+         " ∇analytic =", worst_ga.x, worst_ga.y, worst_ga.z,
+         " ∇FD =", worst_gfd.x, worst_gfd.y, worst_gfd.z);
+    // Tight tolerance: the analytic gradient must agree with FD to
+    // within 0.05 (5% of unit gradient) in the interior of the blend band.
+    CHECK(max_diff <= 0.05f);
+}
+
+TEST_CASE("SmoothMin: lipschitz bound holds for k in {0.1, 0.5, 1.0} and offsets {0.5k, k, 2k}") {
+    // For each (k, offset) pair, sample the field on a dense grid and
+    // verify max|∇v| (FD) ≤ declared L + ε.
+    struct TestCase { float k; float offset; };
+    const TestCase cases[] = {
+        {0.1f, 0.05f}, {0.1f, 0.10f}, {0.1f, 0.20f},
+        {0.5f, 0.25f}, {0.5f, 0.50f}, {0.5f, 1.00f},
+        {1.0f, 0.50f}, {1.0f, 1.00f}, {1.0f, 2.00f},
+    };
+
+    const float h_step = 1e-4f;
+    for (const auto& tc : cases) {
+        auto a = make_sphere(1.0f);
+        auto b = sdf_translate(make_sphere(1.0f), {tc.offset, 0.0f, 0.0f});
+        auto smin = sdf_smooth_union(std::move(a), std::move(b), tc.k);
+
+        const float L = smin.lipschitz();
+        float max_grad = 0.0f;
+        // Grid centered on the blend midpoint.
+        const float cx = tc.offset * 0.5f;
+        // Use a grid proportional to k (so we always sample inside the
+        // blend band). 41×11×11 = 4961 points.
+        for (int i = 0; i <= 40; ++i) {
+            for (int j = 0; j <= 10; ++j) {
+                for (int kk = 0; kk <= 10; ++kk) {
+                    const float x = cx + (static_cast<float>(i - 20) * (tc.k * 0.05f));
+                    const float y = (static_cast<float>(j - 5) * (tc.k * 0.05f));
+                    const float z = (static_cast<float>(kk - 5) * (tc.k * 0.05f));
+                    const Vec3f p{x, y, z};
+                    const Vec3f gfd{
+                        (smin.value(p + Vec3f{ h_step, 0, 0}) -
+                         smin.value(p + Vec3f{-h_step, 0, 0})) * (0.5f / h_step),
+                        (smin.value(p + Vec3f{0,  h_step, 0}) -
+                         smin.value(p + Vec3f{0, -h_step, 0})) * (0.5f / h_step),
+                        (smin.value(p + Vec3f{0, 0,  h_step}) -
+                         smin.value(p + Vec3f{0, 0, -h_step})) * (0.5f / h_step),
+                    };
+                    const float gl = gfd.length();
+                    if (gl > max_grad) max_grad = gl;
+                }
+            }
+        }
+        INFO("k =", tc.k, " offset =", tc.offset,
+             " L =", L, " max|∇FD| =", max_grad);
+        CHECK(max_grad <= L + 1e-3f);  // small ε for FD noise
+    }
+}
+
+TEST_CASE("SmoothMin: UnionSDF and SubtractionSDF propagate Lipschitz correctly") {
+    // Verify that Union and Subtraction report max(L_a, L_b) — they
+    // pick one of the two children's gradients, so the result's
+    // Lipschitz is the max of the children's.
+    auto sph = make_sphere(1.0f);
+    CHECK(sph.lipschitz() == 1.0f);
+
+    auto twisted = sdf_twist(make_box({1, 1, 1}), 0.5f);
+    CHECK(twisted.lipschitz() > 1.0f);  // Twist increases L
+
+    auto u = sdf_union(make_sphere(1.0f), sdf_twist(make_box({1, 1, 1}), 0.5f));
+    CHECK(u.lipschitz() == doctest::Approx(twisted.lipschitz()).epsilon(1e-5f));
+
+    auto sub = sdf_subtract(make_sphere(1.0f), sdf_twist(make_box({1, 1, 1}), 0.5f));
+    CHECK(sub.lipschitz() == doctest::Approx(twisted.lipschitz()).epsilon(1e-5f));
+
+    auto inter = sdf_intersect(make_sphere(1.0f), sdf_twist(make_box({1, 1, 1}), 0.5f));
+    CHECK(inter.lipschitz() == doctest::Approx(twisted.lipschitz()).epsilon(1e-5f));
 }

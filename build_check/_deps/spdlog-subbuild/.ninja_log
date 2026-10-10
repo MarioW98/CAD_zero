@@ -1,0 +1,21 @@
+# ninja log v7
+0	5	1791473573587590208	spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-mkdir	6de4f6661f504b8f
+0	5	1791473573587590208	/home/z/my-project/CAD_0/build_check/_deps/spdlog-subbuild/spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-mkdir	6de4f6661f504b8f
+6	5199	1791473578780602997	spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-download	21067eced671aa25
+6	5199	1791473578780602997	/home/z/my-project/CAD_0/build_check/_deps/spdlog-subbuild/spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-download	21067eced671aa25
+5199	5206	1791473578781602999	spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-update	5f137b720acf51a7
+5199	5206	1791473578781602999	/home/z/my-project/CAD_0/build_check/_deps/spdlog-subbuild/spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-update	5f137b720acf51a7
+5206	5211	1791473578792603027	spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-patch	6bfab59742818207
+5206	5211	1791473578792603027	/home/z/my-project/CAD_0/build_check/_deps/spdlog-subbuild/spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-patch	6bfab59742818207
+5211	5216	1791473578797603039	spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-configure	bd8534e6e3a37f6d
+5211	5216	1791473578797603039	/home/z/my-project/CAD_0/build_check/_deps/spdlog-subbuild/spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-configure	bd8534e6e3a37f6d
+5216	5221	1791473578802603051	spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-build	1962b5d9d65528ad
+5216	5221	1791473578802603051	/home/z/my-project/CAD_0/build_check/_deps/spdlog-subbuild/spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-build	1962b5d9d65528ad
+5221	5225	1791473578807603064	spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-install	bf9bfcc79154b99f
+5221	5225	1791473578807603064	/home/z/my-project/CAD_0/build_check/_deps/spdlog-subbuild/spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-install	bf9bfcc79154b99f
+5225	5230	1791473578812603076	spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-test	9380f002fda4216d
+5225	5230	1791473578812603076	/home/z/my-project/CAD_0/build_check/_deps/spdlog-subbuild/spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-test	9380f002fda4216d
+5230	5237	1791473578819603094	CMakeFiles/spdlog-populate-complete	7bbd3b76465f5592
+5230	5237	1791473578819603094	spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-done	7bbd3b76465f5592
+5230	5237	1791473578819603094	/home/z/my-project/CAD_0/build_check/_deps/spdlog-subbuild/CMakeFiles/spdlog-populate-complete	7bbd3b76465f5592
+5230	5237	1791473578819603094	/home/z/my-project/CAD_0/build_check/_deps/spdlog-subbuild/spdlog-populate-prefix/src/spdlog-populate-stamp/spdlog-populate-done	7bbd3b76465f5592

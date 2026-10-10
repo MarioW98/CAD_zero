@@ -309,12 +309,23 @@ public:
         const float d_rim  = std::sqrt(wx * wx + wy * wy);
         const float d_apex = std::sqrt(rho * rho + (y - h_) * (y - h_));
 
-        // Lateral contribution (signed when foot is on segment, else unsigned).
+        // Lateral contribution.
+        // When the perpendicular foot falls outside the segment [rim, apex],
+        // we need to decide whether to use the unsigned distance to the
+        // endpoint (rim/apex) or the signed distance to the infinite
+        // lateral line (ww). The rule:
+        //   - If ww < 0 (inside the lateral half-space), use ww (signed,
+        //     negative) — the point is "inside" the lateral, and the
+        //     finite-segment correction doesn't make it "outside".
+        //   - If ww >= 0 (outside the lateral), use the unsigned distance
+        //     to the closest endpoint (rim or apex) — the point is
+        //     genuinely outside the solid, and the closest surface
+        //     element is the endpoint.
         float d_lat;
         if (dd < 0.0f) {
-            d_lat = d_rim;
+            d_lat = (ww < 0.0f) ? ww : d_rim;
         } else if (dd > edge_len_) {
-            d_lat = d_apex;
+            d_lat = (ww < 0.0f) ? ww : d_apex;
         } else {
             d_lat = ww;
         }

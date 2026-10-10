@@ -1,0 +1,15 @@
+# ninja log v7
+2	275	1791473584105616146	core/math/CMakeFiles/CAD_0_math.dir/src/predicate.cpp.o	fdffa8c88447ea75
+2	668	1791473584105616146	core/math/CMakeFiles/CAD_0_math.dir/src/tolerance.cpp.o	d2a32944b2fdab97
+669	705	1791473584772617793	lib/libCAD_0_math.a	1e8ece66e6c7e79c
+2	1317	1791473584105616146	core/geometry/CMakeFiles/CAD_0_geometry.dir/src/shape.cpp.o	7f4d57debdd384cf
+1317	1351	1791473585420619395	lib/libCAD_0_geometry.a	9b8baef865aa9609
+276	1638	1791473584379616823	core/sdf/CMakeFiles/CAD_0_sdf.dir/src/evaluate.cpp.o	9d29bd840656a759
+1351	2639	1791473585454619479	core/io/CMakeFiles/CAD_0_io.dir/src/stl.cpp.o	19ae3700dea0f4e0
+705	2656	1791473584809617885	core/sdf/CMakeFiles/CAD_0_sdf.dir/src/mesh_extract.cpp.o	440d3596b84734e3
+2656	2662	1791473586759622703	lib/libCAD_0_sdf.a	75068d4b2541b534
+1638	2738	1791473585741620188	core/io/CMakeFiles/CAD_0_io.dir/src/obj.cpp.o	987d4d10e5141574
+2639	4066	1791473586742622661	core/io/CMakeFiles/CAD_0_io.dir/src/threemf.cpp.o	45d94e9790a5a393
+4066	4071	1791473588169626185	lib/libCAD_0_io.a	d78c9c38b8870956
+2662	4656	1791473586765622718	examples/CMakeFiles/example_sphere_to_stl.dir/cpp/sphere_to_stl.cpp.o	91fe578ade513bda
+4656	4702	1791473588759627641	bin/example_sphere_to_stl	9a279552301af590

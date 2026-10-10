@@ -189,38 +189,68 @@ private:
 };
 
 // --- Smooth union (polynomial) -------------------------------------------
-// Ref: Inigo Quilez — "smooth minimum"
-//   smin(a, b, k) = a + (b - a) · h - k · h · (1 - h) / 4
-//   where h = clamp(0.5 + 0.5 · (b - a) / k, 0, 1)
+// Ref: Inigo Quilez — "smooth minimum" (polynomial form, k>0)
 //
-// k=0 → hard min (degenerate to UnionSDF).
+//   h = clamp(0.5 + 0.5·(b - a)/k, 0, 1)
+//   v = a + (b - a)·h - k·h·(1 - h)·0.25
 //
-// Lipschitz analysis
-// ------------------
-// The output f(p) depends on the values a(p), b(p) AND on the gradients
-// ∇a, ∇b through `h`. Differentiating in p (chain rule):
+// k = 0 → hard min (degenerate to UnionSDF).
 //
-//   ∇f = (1 - h) · ∇a + h · ∇b + (df/dh) · (∇h)
+// Gradient derivation (chain rule, p-dependence comes through a(p),
+// b(p), and h(p) = clamp(0.5 + 0.5·(b-a)/k, 0, 1))
+// ------------------------------------------------------------------------
+// For 0 < h < 1 (the smooth-interior region, i.e. |b - a| < k):
 //
-// where ∇h = (0.5/k) · (∇b - ∇a) in the interior (0 < h < 1) and 0
-// outside the blend band. The (df/dh) term is bounded, but the (0.5/k)
-// factor makes the gradient contribution scale with 1/k for small k.
-// Empirically, for two unit spheres blended with k=0.5, the maximum
-// measured |∇f| is ~1.80 (see test_operators.cpp:
-// "SmoothMin: lipschitz() is a valid upper bound for k>0").
+//   ∇v = (1 - h)·∇a + h·∇b + (df/dh)·∇h
 //
-// We use the conservative bound
-//     L = max(L_a, L_b) + 1.0   (when k > 0)
-// which is provably valid for any k > 0 because:
-//   * |∇f| ≤ max(L_a, L_b) · ((1-h) + h) + |df/dh| · (0.5/k) · 2·max(L_a, L_b)
-//          ≤ max(L_a, L_b) + (k/4) · (0.5/k) · 2 · max(L_a, L_b)
-//          ≤ max(L_a, L_b) · (1 + 0.25)
-//   * Adding +1.0 instead of +0.25 is a safety margin for composite
-//     children whose actual Lipschitz may transiently exceed the
-//     declared value (e.g. TwistSDF reports a conservative L).
+// where (df/dh) is the partial derivative of v with respect to h,
+// holding a, b fixed:
 //
-// A tighter bound could be derived analytically, but the conservative
-// form is robust against future regressions.
+//   df/dh = (b - a) - k·(1 - 2h)/4
+//
+// and the gradient of h itself:
+//
+//   ∇h = (0.5/k)·(∇b - ∇a)
+//
+// Substituting u = (b - a)/k = 2·(h - 0.5) (so 2h - 1 = u):
+//
+//   ∇v = (1 - h)·∇a + h·∇b
+//        + (0.5/k)·(∇b - ∇a)·(k·u - k·(1 - 2h)/4)
+//        = (1 - h)·∇a + h·∇b
+//          + 0.5·(∇b - ∇a)·(u - (1 - 2h)/4)
+//
+// Now 2h - 1 = u, so 1 - 2h = -u, so (u - (1 - 2h)/4) = u·(1 + 1/4) = (5/4)·u.
+// And u = 2h - 1, so:
+//
+//   ∇v = (1 - h)·∇a + h·∇b + (5/8)·(2h - 1)·(∇b - ∇a)
+//
+// For h = 0 or h = 1 (the clamped region, |b - a| ≥ k), ∇h = 0 and:
+//   v = b (when h = 1, i.e. b ≤ a) → ∇v = ∇b
+//   v = a (when h = 0, i.e. a ≤ b) → ∇v = ∇a
+//
+// Lipschitz bound
+// --------------
+// In the smooth-interior region:
+//
+//   |∇v| ≤ (1-h)·|∇a| + h·|∇b| + (5/8)·|2h-1|·|∇b - ∇a|
+//        ≤ max(L_a, L_b)·((1-h) + h) + (5/8)·1·(L_a + L_b)
+//        ≤ max(L_a, L_b) + (5/4)·max(L_a, L_b)
+//        = (9/4)·max(L_a, L_b) ≈ 2.25·max(L_a, L_b)
+//
+// In the clamped region |∇v| = |∇a| or |∇b| ≤ max(L_a, L_b).
+//
+// Therefore the k-independent Lipschitz upper bound is:
+//
+//   L = 2.25·max(L_a, L_b)
+//
+// We round up to 2.5·max(L_a, L_b) for safety against numerical noise
+// in the FD-vs-analytic comparison, and against composite children
+// whose actual Lipschitz may transiently exceed the declared value
+// (e.g. TwistSDF reports a conservative L).
+//
+// Note: this is k-independent because the (1/k) factor in ∇h is
+// exactly cancelled by the (k) factor in (df/dh): the blend band
+// shrinks as k → 0 but its slope stays bounded.
 class SmoothMinSDF final : public SDFNode {
 public:
     SmoothMinSDF(std::unique_ptr<SDFNode> a, std::unique_ptr<SDFNode> b, float k)
@@ -238,42 +268,33 @@ public:
             if (gl > 1e-9f) r.gradient = r.gradient * (1.0f / gl);
             return r;
         }
-        const float h = std::clamp(0.5f + 0.5f * (sb.value - sa.value) / k_, 0.0f, 1.0f);
-        const float v = sa.value + (sb.value - sa.value) * h
-                      - k_ * h * (1.0f - h) * 0.25f;
-        // ∇f = (1 - h) · ∇a + h · ∇b  (the (1-2h) term cancels exactly
-        // with the derivative of the k·h·(1-h)/4 correction; see the
-        // analysis in the class comment).
-        math::Vec3f g = sa.gradient * (1.0f - h) + sb.gradient * h;
-        // Defensive clamp: the smooth-min formula above is *analytically*
-        // unit-Lipschitz when the inputs are unit-Lipschitz, but a
-        // child's gradient might transiently exceed 1 (e.g. TwistSDF
-        // reports L > 1). Clamp |g| to the declared Lipschitz constant
-        // so the returned sample is always self-consistent.
-        const float L = lipschitz();
-        const float gl = g.length();
-        if (gl > L && gl > 1e-9f) {
-            g = g * (L / gl);
-        }
+        const float diff = sb.value - sa.value;
+        const float h = std::clamp(0.5f + 0.5f * diff / k_, 0.0f, 1.0f);
+        const float v = sa.value + diff * h - k_ * h * (1.0f - h) * 0.25f;
+        // Full chain-rule gradient:
+        //   ∇v = (1 - h)·∇a + h·∇b + (5/8)·(2h - 1)·(∇b - ∇a)
+        // for 0 < h < 1, and ∇v = ∇a or ∇b in the clamped region.
+        // The clamped branches fall out automatically because (2h - 1)
+        // is ±1 at h = 0 or h = 1 but (5/8)·(±1)·(∇b - ∇a) is the
+        // (linear extrapolation) contribution; we must NOT add it in
+        // the clamped region. Use a coefficient that vanishes at the
+        // clamp boundaries.
+        const float chain_coeff = (h > 0.0f && h < 1.0f)
+            ? (5.0f / 8.0f) * (2.0f * h - 1.0f)
+            : 0.0f;
+        const math::Vec3f ga = sa.gradient;
+        const math::Vec3f gb = sb.gradient;
+        math::Vec3f g = ga * (1.0f - h) + gb * h + (gb - ga) * chain_coeff;
         return SDFSample{v, g};
     }
 
     float lipschitz() const noexcept override {
-        // The smooth-min blend interpolates between ∇a and ∇b, but also
-        // includes a (0.5/k)·(∇b - ∇a) term whose magnitude is unbounded
-        // as k → 0. Empirically (see test_operators.cpp:
-        // "SmoothMin: lipschitz() is a valid upper bound for k>0") the
-        // measured maximum |∇f| for two unit-Lipschitz spheres blended
-        // with k=0.5 is ~1.80. We use a conservative bound of
-        //   L = max(L_a, L_b) + 1.0
-        // which is a valid upper bound for any k > 0 (and degrades
-        // gracefully to max(L_a, L_b) when k = 0).
-        //
-        // This is intentionally conservative — a tighter bound could
-        // be derived analytically, but the conservative form is
-        // robust against future regressions and against composite
-        // children whose Lipschitz may transiently exceed 1.
-        return std::max(a_->lipschitz(), b_->lipschitz()) + (k_ > 0.0f ? 1.0f : 0.0f);
+        // (9/4)·max(L_a, L_b) ≤ 2.5·max(L_a, L_b). See derivation above.
+        // k-independent: the (1/k) in ∇h cancels with the (k) in (df/dh).
+        // For k = 0 the field degenerates to hard min, so the Lipschitz
+        // is just max(L_a, L_b).
+        if (k_ <= 0.0f) return std::max(a_->lipschitz(), b_->lipschitz());
+        return 2.5f * std::max(a_->lipschitz(), b_->lipschitz());
     }
 
     math::Bboxf bounds() const noexcept override {
