@@ -392,13 +392,33 @@ class MainWindow(QMainWindow):
         )
         if not path or not self._has_kernel:
             return
-        # Export first visible mesh
+        # Ensure the chosen format's extension is present — Qt does not
+        # append it on every platform, and CAD_0.io.export() infers the
+        # format from the extension.
+        from pathlib import Path as _Path
+        if _Path(path).suffix.lower() not in (".stl", ".obj", ".3mf"):
+            path = f"{path}.{format_name}"
+        # Import the io wrapper module explicitly (Bug fix: `CAD_0.io` is a
+        # lazily-imported Python wrapper; without this, `self._cpp.io`
+        # raised AttributeError).
+        try:
+            import CAD_0.io as cad_io
+        except ImportError:
+            self._status.showMessage("Export failed: CAD_0.io not importable", 3000)
+            return
+        # Export the first visible mesh with actual geometry.
+        # (Bug fix: the original condition was inverted — it skipped valid
+        # meshes and only tried to export null/hidden/empty nodes, so
+        # every export ended in "No mesh to export".)
         for i in range(self._scene.node_count()):
             node = self._scene.node_at(i)
-            if node is None or not node.visible or node.cached_mesh.vertex_count() == 0:
-                self._cpp.io.export(path, node.cached_mesh)
-                self._status.showMessage(f"Exported: {path}", 3000)
-                return
+            if node is None or not node.visible:
+                continue
+            if node.cached_mesh.vertex_count() == 0:
+                continue
+            cad_io.export(path, node.cached_mesh)
+            self._status.showMessage(f"Exported: {path}", 3000)
+            return
         self._status.showMessage("No mesh to export", 3000)
 
     def on_toggle_grid(self, checked: bool) -> None:

@@ -366,12 +366,31 @@ class MainWindow(QMainWindow):
         )
         if not path or not self._has_kernel:
             return
-        # Export first visible mesh
-        for node in self._scene.nodes():
-            if node.visible and node.cached_mesh.vertex_count() > 0:
-                self._cpp.io.export(path, node.cached_mesh)
-                self._status.showMessage(f"Exported: {path}", 3000)
-                return
+        # Ensure the chosen format's extension is present — Qt does not
+        # append it on every platform, and CAD_0.io.export() infers the
+        # format from the extension.
+        from pathlib import Path as _Path
+        if _Path(path).suffix.lower() not in (".stl", ".obj", ".3mf"):
+            path = f"{path}.{format_name}"
+        # Import the io wrapper module explicitly (mirrors the app/src UI).
+        try:
+            import CAD_0.io as cad_io
+        except ImportError:
+            self._status.showMessage("Export failed: CAD_0.io not importable", 3000)
+            return
+        # Export the first visible mesh with actual geometry.
+        # (Bug fix: the original loop called self._scene.nodes(), a method
+        # that does not exist in the C++ bindings — use the index-based
+        # node_count()/node_at() API instead.)
+        for i in range(self._scene.node_count()):
+            node = self._scene.node_at(i)
+            if node is None or not node.visible:
+                continue
+            if node.cached_mesh.vertex_count() == 0:
+                continue
+            cad_io.export(path, node.cached_mesh)
+            self._status.showMessage(f"Exported: {path}", 3000)
+            return
         self._status.showMessage("No mesh to export", 3000)
 
     def on_toggle_grid(self, checked: bool) -> None:

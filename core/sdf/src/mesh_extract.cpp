@@ -26,6 +26,7 @@
 //
 #include "CAD_0/sdf/mesh_extract.hpp"
 #include "CAD_0/sdf/evaluate.hpp"
+#include "mc33_process.hpp"
 
 #include <algorithm>
 #include <array>
@@ -712,21 +713,21 @@ Grid evaluate_grid(const SDFBody& body, const math::Bboxf& bounds,
 // t and 1-t, which are mathematically equal but can differ in the last
 // ULP, yielding two distinct vertices on one physical edge.
 math::Vec3f interp_edge_abs(const Grid& g,
-                             std::int32_t ax, std::int32_t ay, std::int32_t az,
-                             std::int32_t bx, std::int32_t by, std::int32_t bz) {
+                             std::int32_t ax_p, std::int32_t ay_p, std::int32_t az_p,
+                             std::int32_t bx_p, std::int32_t by_p, std::int32_t bz_p) {
     // Canonicalize: A < B lexicographically.
-    auto less = [](std::int32_t ax, std::int32_t ay, std::int32_t az,
-                   std::int32_t bx, std::int32_t by, std::int32_t bz) {
-        if (ax != bx) return ax < bx;
-        if (ay != by) return ay < by;
-        return az < bz;
+    auto less = [](std::int32_t a_x, std::int32_t a_y, std::int32_t a_z,
+                   std::int32_t b_x, std::int32_t b_y, std::int32_t b_z) {
+        if (a_x != b_x) return a_x < b_x;
+        if (a_y != b_y) return a_y < b_y;
+        return a_z < b_z;
     };
-    if (!less(ax, ay, az, bx, by, bz)) {
-        std::swap(ax, bx); std::swap(ay, by); std::swap(az, bz);
+    if (!less(ax_p, ay_p, az_p, bx_p, by_p, bz_p)) {
+        std::swap(ax_p, bx_p); std::swap(ay_p, by_p); std::swap(az_p, bz_p);
     }
 
-    const std::size_t ia = g.idx(ax, ay, az);
-    const std::size_t ib = g.idx(bx, by, bz);
+    const std::size_t ia = g.idx(ax_p, ay_p, az_p);
+    const std::size_t ib = g.idx(bx_p, by_p, bz_p);
     const float fA = g.field[ia];
     const float fB = g.field[ib];
 
@@ -745,21 +746,21 @@ math::Vec3f interp_edge_abs(const Grid& g,
 }
 
 math::Vec3f interp_gradient_abs(const Grid& g,
-                                  std::int32_t ax, std::int32_t ay, std::int32_t az,
-                                  std::int32_t bx, std::int32_t by, std::int32_t bz) {
+                                  std::int32_t ax_p, std::int32_t ay_p, std::int32_t az_p,
+                                  std::int32_t bx_p, std::int32_t by_p, std::int32_t bz_p) {
     // Canonicalize: A < B lexicographically (same as interp_edge_abs).
-    auto less = [](std::int32_t ax, std::int32_t ay, std::int32_t az,
-                   std::int32_t bx, std::int32_t by, std::int32_t bz) {
-        if (ax != bx) return ax < bx;
-        if (ay != by) return ay < by;
-        return az < bz;
+    auto less = [](std::int32_t a_x, std::int32_t a_y, std::int32_t a_z,
+                   std::int32_t b_x, std::int32_t b_y, std::int32_t b_z) {
+        if (a_x != b_x) return a_x < b_x;
+        if (a_y != b_y) return a_y < b_y;
+        return a_z < b_z;
     };
-    if (!less(ax, ay, az, bx, by, bz)) {
-        std::swap(ax, bx); std::swap(ay, by); std::swap(az, bz);
+    if (!less(ax_p, ay_p, az_p, bx_p, by_p, bz_p)) {
+        std::swap(ax_p, bx_p); std::swap(ay_p, by_p); std::swap(az_p, bz_p);
     }
 
-    const std::size_t ia = g.idx(ax, ay, az);
-    const std::size_t ib = g.idx(bx, by, bz);
+    const std::size_t ia = g.idx(ax_p, ay_p, az_p);
+    const std::size_t ib = g.idx(bx_p, by_p, bz_p);
     const float fA = g.field[ia];
     const float fB = g.field[ib];
 
@@ -772,39 +773,6 @@ math::Vec3f interp_gradient_abs(const Grid& g,
     const float nl = n.length();
     if (nl > 1e-9f) n = n * (1.0f / nl);
     return n;
-}
-
-// Legacy wrappers (kept for compatibility, not used by get_vertex).
-math::Vec3f interp_edge(const Grid& g,
-                        std::uint32_t cx, std::uint32_t cy, std::uint32_t cz,
-                        int ca, int cb) {
-    static const std::int8_t kCornerOffset[8][3] = {
-        {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0},
-        {0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1},
-    };
-    const std::int32_t ax = cx + kCornerOffset[ca][0];
-    const std::int32_t ay = cy + kCornerOffset[ca][1];
-    const std::int32_t az = cz + kCornerOffset[ca][2];
-    const std::int32_t bx = cx + kCornerOffset[cb][0];
-    const std::int32_t by = cy + kCornerOffset[cb][1];
-    const std::int32_t bz = cz + kCornerOffset[cb][2];
-    return interp_edge_abs(g, ax, ay, az, bx, by, bz);
-}
-
-math::Vec3f interp_gradient(const Grid& g,
-                             std::uint32_t cx, std::uint32_t cy, std::uint32_t cz,
-                             int ca, int cb) {
-    static const std::int8_t kCornerOffset[8][3] = {
-        {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0},
-        {0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1},
-    };
-    const std::int32_t ax = cx + kCornerOffset[ca][0];
-    const std::int32_t ay = cy + kCornerOffset[ca][1];
-    const std::int32_t az = cz + kCornerOffset[ca][2];
-    const std::int32_t bx = cx + kCornerOffset[cb][0];
-    const std::int32_t by = cy + kCornerOffset[cb][1];
-    const std::int32_t bz = cz + kCornerOffset[cb][2];
-    return interp_gradient_abs(g, ax, ay, az, bx, by, bz);
 }
 
 } // namespace
@@ -847,11 +815,11 @@ TriangleMesh marching_cubes(const SDFBody& body,
         //
         // Note: parameter names end in _in to avoid shadowing the
         // outer-scope ax/ay/az/bx/by/bz used by get_vertex below.
-        auto less = [](std::int32_t ax, std::int32_t ay, std::int32_t az,
-                       std::int32_t bx, std::int32_t by, std::int32_t bz) {
-            if (ax != bx) return ax < bx;
-            if (ay != by) return ay < by;
-            return az < bz;
+        auto less = [](std::int32_t a_x, std::int32_t a_y, std::int32_t a_z,
+                       std::int32_t b_x, std::int32_t b_y, std::int32_t b_z) {
+            if (a_x != b_x) return a_x < b_x;
+            if (a_y != b_y) return a_y < b_y;
+            return a_z < b_z;
         };
         if (less(bx_in, by_in, bz_in, ax_in, ay_in, az_in)) {
             std::swap(ax_in, bx_in); std::swap(ay_in, by_in); std::swap(az_in, bz_in);
@@ -1010,32 +978,52 @@ TriangleMesh marching_cubes(const SDFBody& body,
                 // Reference: Durst, "Additional Reference to Marching
                 // Cubes", 1988; Nielson & Hamann, "The Asymptotic
                 // Decider", 1991.
-                // Asymptotic decider — DISABLED.
+                // MC33 (Chernyaev 1995) cube processing.
+                // Uses the full MC33 case dispatch with asymptotic decider
+                // (face-center test) and interior test to resolve all
+                // topological ambiguities. This produces watertight meshes
+                // for closed SDFs — every edge is shared by exactly 2
+                // triangles with opposite winding.
                 //
-                // The face-center test was implemented multiple times
-                // but consistently produces WORSE results (more
-                // non-manifold edges, larger volume error) because
-                // the complement entries in the 256-entry table have
-                // INVERTED winding. Flipping cube_index bits selects
-                // a different table entry with inconsistent winding,
-                // causing adjacent cells to disagree.
-                //
-                // The correct fix requires the MC33 (Chernyaev 1995)
-                // table with SEPARATE entries for each ambiguous
-                // configuration — not the complement approach.
-                // This is tracked as a future task.
-                //
-                // Current approach: canonicalized interp_edge_abs
-                // (eliminates ULP differences), exact position cache
-                // (eliminates shared-grid-point duplicates), degen+dup
-                // triangle removal, and global winding fix.
+                // Reference: Chernyaev 1995, Lewiner et al. 2003.
+                {
+                    const float cube_vals[8] = {v0, v1, v2, v3, v4, v5, v6, v7};
+                    auto pr = mc33::process_cube(cube_vals, cube_index);
 
-                const std::int8_t* tri = kTriangleTable[cube_index];
-                for (int i = 0; i < 16; i += 3) {
-                    if (tri[i] < 0) break;
-                    for (int j = 0; j < 3; ++j) {
-                        const int e = tri[i + j];
-                        mesh.indices.push_back(get_vertex(cx, cy, cz, e));
+                    // If the MC33 result needs a v12 (cube-center vertex),
+                    // create it at the cube center.
+                    std::uint32_t v12_id = 0xFFFFFFFFu;
+                    if (pr.needs_v12) {
+                        // Place v12 at the cube center: (cx+0.5, cy+0.5, cz+0.5).
+                        const float cx_f = static_cast<float>(cx) + 0.5f;
+                        const float cy_f = static_cast<float>(cy) + 0.5f;
+                        const float cz_f = static_cast<float>(cz) + 0.5f;
+                        const float wx = bounds.min.x + extent.x * (cx_f / float(opts.resolution));
+                        const float wy = bounds.min.y + extent.y * (cy_f / float(opts.resolution));
+                        const float wz = bounds.min.z + extent.z * (cz_f / float(opts.resolution));
+                        math::Vec3f v12_pos{wx, wy, wz};
+                        math::Vec3f v12_nrm;
+                        if (opts.compute_normals) {
+                            v12_nrm = body.sample(v12_pos).gradient;
+                            const float nl = v12_nrm.length();
+                            if (nl > 1e-9f) v12_nrm = v12_nrm * (1.0f / nl);
+                        }
+                        v12_id = static_cast<std::uint32_t>(mesh.positions.size());
+                        mesh.positions.push_back(v12_pos);
+                        if (opts.compute_normals) mesh.normals.push_back(v12_nrm);
+                    }
+
+                    // Emit triangles.
+                    for (int t = 0; t < pr.num_tris; ++t) {
+                        for (int j = 0; j < 3; ++j) {
+                            const int e = pr.edges[t * 3 + j];
+                            if (e == 12) {
+                                // v12 vertex
+                                mesh.indices.push_back(v12_id);
+                            } else {
+                                mesh.indices.push_back(get_vertex(cx, cy, cz, e));
+                            }
+                        }
                     }
                 }
             }

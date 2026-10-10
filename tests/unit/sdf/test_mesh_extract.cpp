@@ -278,7 +278,7 @@ TEST_CASE("marching_cubes: sphere mesh is watertight") {
     auto sph = make_sphere(1.0f);
     auto mesh = marching_cubes(sph, 32, false);
     REQUIRE(mesh.triangle_count() > 0);
-    CHECK(mesh_is_mostly_watertight(mesh, 0.65f));
+    CHECK(mesh_is_watertight(mesh));
 }
 
 TEST_CASE("marching_cubes: sphere mesh volume ≈ 4/3·π·r³") {
@@ -289,7 +289,7 @@ TEST_CASE("marching_cubes: sphere mesh volume ≈ 4/3·π·r³") {
     REQUIRE(mesh.triangle_count() > 0);
     const float v = std::abs(mesh_volume(mesh));
     const float v_theory = 4.0f / 3.0f * 3.14159265358979f;
-    CHECK(v == doctest::Approx(v_theory).epsilon(0.30f));
+    CHECK(v == doctest::Approx(v_theory).epsilon(0.05f));
 }
 
 TEST_CASE("marching_cubes: scaled sphere mesh volume scales as r³") {
@@ -299,14 +299,14 @@ TEST_CASE("marching_cubes: scaled sphere mesh volume scales as r³") {
     REQUIRE(mesh.triangle_count() > 0);
     const float v = std::abs(mesh_volume(mesh));
     const float v_theory = 8.0f * 4.0f / 3.0f * 3.14159265358979f;
-    CHECK(v == doctest::Approx(v_theory).epsilon(0.30f));
+    CHECK(v == doctest::Approx(v_theory).epsilon(0.05f));
 }
 
 TEST_CASE("marching_cubes: box mesh is watertight") {
     auto box = make_box({1.0f, 1.0f, 1.0f});
     auto mesh = marching_cubes(box, 32, false);
     REQUIRE(mesh.triangle_count() > 0);
-    CHECK(mesh_is_mostly_watertight(mesh, 0.65f));
+    CHECK(mesh_is_watertight(mesh));
 }
 
 TEST_CASE("marching_cubes: box mesh volume ≈ (2·extent)³") {
@@ -318,14 +318,14 @@ TEST_CASE("marching_cubes: box mesh volume ≈ (2·extent)³") {
     REQUIRE(mesh.triangle_count() > 0);
     const float v = std::abs(mesh_volume(mesh));
     const float v_theory = 8.0f;
-    CHECK(v == doctest::Approx(v_theory).epsilon(0.30f));
+    CHECK(v == doctest::Approx(v_theory).epsilon(0.05f));
 }
 
 TEST_CASE("marching_cubes: cylinder mesh is watertight") {
     auto cyl = make_cylinder(1.0f, 2.0f);  // r=1, h=2
     auto mesh = marching_cubes(cyl, 48, false);
     REQUIRE(mesh.triangle_count() > 0);
-    CHECK(mesh_is_mostly_watertight(mesh, 0.65f));
+    CHECK(mesh_is_watertight(mesh));
 }
 
 TEST_CASE("marching_cubes: cylinder mesh volume ≈ π·r²·h") {
@@ -335,14 +335,14 @@ TEST_CASE("marching_cubes: cylinder mesh volume ≈ π·r²·h") {
     REQUIRE(mesh.triangle_count() > 0);
     const float v = std::abs(mesh_volume(mesh));
     const float v_theory = 3.14159265358979f * 1.0f * 1.0f * 2.0f;
-    CHECK(v == doctest::Approx(v_theory).epsilon(0.30f));
+    CHECK(v == doctest::Approx(v_theory).epsilon(0.05f));
 }
 
 TEST_CASE("marching_cubes: cone mesh is watertight") {
     auto cone = make_cone(1.0f, 2.0f);  // r=1, h=2
     auto mesh = marching_cubes(cone, 48, false);
     REQUIRE(mesh.triangle_count() > 0);
-    CHECK(mesh_is_mostly_watertight(mesh, 0.65f));
+    CHECK(mesh_is_watertight(mesh));
 }
 
 TEST_CASE("marching_cubes: cone mesh volume ≈ (1/3)·π·r²·h") {
@@ -352,14 +352,14 @@ TEST_CASE("marching_cubes: cone mesh volume ≈ (1/3)·π·r²·h") {
     REQUIRE(mesh.triangle_count() > 0);
     const float v = std::abs(mesh_volume(mesh));
     const float v_theory = (1.0f / 3.0f) * 3.14159265358979f * 1.0f * 1.0f * 2.0f;
-    CHECK(v == doctest::Approx(v_theory).epsilon(0.30f));
+    CHECK(v == doctest::Approx(v_theory).epsilon(0.05f));
 }
 
 TEST_CASE("marching_cubes: torus mesh is watertight") {
     auto torus = make_torus(1.5f, 0.5f);  // R=1.5, r=0.5
     auto mesh = marching_cubes(torus, 48, false);
     REQUIRE(mesh.triangle_count() > 0);
-    CHECK(mesh_is_mostly_watertight(mesh, 0.65f));
+    CHECK(mesh_is_watertight(mesh));
 }
 
 TEST_CASE("marching_cubes: torus mesh volume ≈ 2·π²·R·r²") {
@@ -369,14 +369,14 @@ TEST_CASE("marching_cubes: torus mesh volume ≈ 2·π²·R·r²") {
     REQUIRE(mesh.triangle_count() > 0);
     const float v = std::abs(mesh_volume(mesh));
     const float v_theory = 2.0f * 3.14159265358979f * 3.14159265358979f * 1.5f * 0.5f * 0.5f;
-    CHECK(v == doctest::Approx(v_theory).epsilon(0.30f));
+    CHECK(v == doctest::Approx(v_theory).epsilon(0.05f));
 }
 
 TEST_CASE("marching_cubes: scaled sphere preserves watertightness") {
     auto sph = sdf_scale(make_sphere(1.0f), 2.0f);
     auto mesh = marching_cubes(sph, 32, false);
     REQUIRE(mesh.triangle_count() > 0);
-    CHECK(mesh_is_mostly_watertight(mesh, 0.65f));
+    CHECK(mesh_is_watertight(mesh));
 }
 
 TEST_CASE("marching_cubes: subtraction preserves watertightness") {
@@ -385,7 +385,7 @@ TEST_CASE("marching_cubes: subtraction preserves watertightness") {
     auto cut = sdf_subtract(std::move(box), std::move(sph));
     auto mesh = marching_cubes(cut, 48, false);
     REQUIRE(mesh.triangle_count() > 0);
-    CHECK(mesh_is_mostly_watertight(mesh, 0.65f));
+    CHECK(mesh_is_watertight(mesh));
 }
 
 TEST_CASE("marching_cubes: union preserves watertightness") {
@@ -394,5 +394,5 @@ TEST_CASE("marching_cubes: union preserves watertightness") {
     auto u = sdf_union(std::move(a), std::move(b));
     auto mesh = marching_cubes(u, 48, false);
     REQUIRE(mesh.triangle_count() > 0);
-    CHECK(mesh_is_mostly_watertight(mesh, 0.65f));
+    CHECK(mesh_is_watertight(mesh));
 }

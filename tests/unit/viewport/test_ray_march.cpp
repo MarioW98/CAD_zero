@@ -12,6 +12,7 @@
 #include "CAD_0/viewport/ray_march.hpp"
 #include "CAD_0/viewport/camera.hpp"
 #include "CAD_0/sdf/primitives.hpp"
+#include "CAD_0/sdf/operators.hpp"
 #include "CAD_0/sdf/transforms.hpp"
 #include "CAD_0/math/vec.hpp"
 
@@ -349,4 +350,111 @@ TEST_CASE("ray_march: scaled sphere CPU matches GLSL shader algorithm") {
     REQUIRE(r.hit);
     // The shader would return t = 4.0 here (5 - 1). The CPU must match.
     CHECK(r.distance == doctest::Approx(4.0f).epsilon(1e-3f));
+}
+
+// ---------------------------------------------------------------------------
+// TASK 4 — CPU/GPU ray-march parity test
+//
+// The GLSL shader (sdf_raymarch.frag) uses `t += d` with escape check
+// BEFORE the SDF evaluation. The CPU marcher uses `t += d / max(L, 1)`
+// with escape check AFTER advancing. For L=1 SDFs, both compute the same
+// step (`d`) and the same escape behavior.
+//
+// This test reimplements the GLSL loop in C++ and compares its hit
+// distance against the CPU ray_march_sdf for sphere, box, and union.
+// ---------------------------------------------------------------------------
+
+// Tiny CPU reimplementation of the GLSL ray_march loop.
+static float glsl_ray_march(auto& scene_sdf, const Vec3f& ro, const Vec3f& rd,
+                             int max_steps = 128, float max_dist = 100.0f,
+                             float surf_dist = 0.0005f) {
+    float t = 0.0f;
+    for (int i = 0; i < max_steps; ++i) {
+        if (t > max_dist) return -1.0f;  // escape check FIRST (matches shader)
+        Vec3f p = ro + rd * t;
+        float d = scene_sdf(p);
+        if (d < surf_dist) return t;     // hit
+        t += d;                           // step = d (L=1 for primitives)
+    }
+    return -1.0f;
+}
+
+TEST_CASE("ray_march: CPU/GPU parity for sphere") {
+    auto sph = make_sphere(1.0f);
+    RayMarchOptions opts;
+    opts.max_steps = 128;
+    opts.max_distance = 100.0f;
+    opts.surface_distance = 0.0005f;
+    opts.step_scale = 1.0f;
+
+    const Vec3f ro{0, 0, 5};
+    const Vec3f rd{0, 0, -1};
+
+    const auto cpu_result = ray_march_sdf(sph, ro, rd, opts);
+    auto glsl_sdf = [&sph](const Vec3f& p) { return sph.value(p); };
+    const float glsl_t = glsl_ray_march(glsl_sdf, ro, rd, 128, 100.0f, 0.0005f);
+
+    REQUIRE(cpu_result.hit);
+    CHECK(glsl_t > 0.0f);
+    CHECK(cpu_result.distance == doctest::Approx(glsl_t).epsilon(1e-3f));
+}
+
+TEST_CASE("ray_march: CPU/GPU parity for box") {
+    auto box = make_box({1, 1, 1});
+    RayMarchOptions opts;
+    opts.max_steps = 128;
+    opts.max_distance = 100.0f;
+    opts.surface_distance = 0.0005f;
+    opts.step_scale = 1.0f;
+
+    const Vec3f ro{5, 0, 0};
+    const Vec3f rd{-1, 0, 0};
+
+    const auto cpu_result = ray_march_sdf(box, ro, rd, opts);
+    auto glsl_sdf = [&box](const Vec3f& p) { return box.value(p); };
+    const float glsl_t = glsl_ray_march(glsl_sdf, ro, rd);
+
+    REQUIRE(cpu_result.hit);
+    CHECK(glsl_t > 0.0f);
+    CHECK(cpu_result.distance == doctest::Approx(glsl_t).epsilon(1e-3f));
+}
+
+TEST_CASE("ray_march: CPU/GPU parity for union of two spheres") {
+    auto a = make_sphere(1.0f);
+    auto b = sdf_translate(make_sphere(1.0f), {2, 0, 0});
+    auto u = sdf_union(std::move(a), std::move(b));
+
+    RayMarchOptions opts;
+    opts.max_steps = 128;
+    opts.max_distance = 100.0f;
+    opts.surface_distance = 0.0005f;
+    opts.step_scale = 1.0f;
+
+    const Vec3f ro{0, 0, 5};
+    const Vec3f rd{0, 0, -1};
+
+    const auto cpu_result = ray_march_sdf(u, ro, rd, opts);
+    auto glsl_sdf = [&u](const Vec3f& p) { return u.value(p); };
+    const float glsl_t = glsl_ray_march(glsl_sdf, ro, rd);
+
+    REQUIRE(cpu_result.hit);
+    CHECK(glsl_t > 0.0f);
+    CHECK(cpu_result.distance == doctest::Approx(glsl_t).epsilon(1e-3f));
+}
+
+TEST_CASE("ray_march: CPU/GPU parity for miss (ray pointing away)") {
+    auto sph = make_sphere(1.0f);
+    RayMarchOptions opts;
+    opts.max_steps = 128;
+    opts.max_distance = 10.0f;  // short max to make miss faster
+
+    const Vec3f ro{0, 0, 5};
+    const Vec3f rd{0, 0, 1};  // pointing away from sphere
+
+    const auto cpu_result = ray_march_sdf(sph, ro, rd, opts);
+    auto glsl_sdf = [&sph](const Vec3f& p) { return sph.value(p); };
+    const float glsl_t = glsl_ray_march(glsl_sdf, ro, rd, 128, 10.0f, 0.0005f);
+
+    CHECK_FALSE(cpu_result.hit);
+    CHECK(glsl_t < 0.0f);  // GLSL returns -1.0 for miss
 }

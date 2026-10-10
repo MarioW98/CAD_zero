@@ -17,6 +17,10 @@ try:
         Shape, ShapeId, FeatureId, DatumCS, Transform,
         Metadata, Representation, Units,
     )
+    # Python-side io wrapper (auto-detect export from file extension).
+    # Bug fix: this import was missing, so `CAD_0.io` (documented in the
+    # README) raised AttributeError after a plain `import CAD_0`.
+    from . import io  # noqa: F401
     _HAS_KERNEL = True
 except ImportError:
     _HAS_KERNEL = False

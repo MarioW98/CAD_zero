@@ -184,208 +184,54 @@ private:
     float r_;
 };
 
+
 // Cone along +Y, base radius `r` at y = 0, apex at y = h.
 //
-// This is the closed-form SDF of a *finite* cone (capped base disk +
-// lateral surface). The formula is the standard one from Inigo Quilez,
-// "distance functions" — finite cone:
+// SDF = max(ww, -y) where:
+//   ww = signed distance to the infinite lateral line (outward positive)
+//   -y = signed distance to the base plane (upward positive)
 //
-//   Let θ be the cone half-angle, sin θ = r/L, cos θ = h/L, where
-//   L = sqrt(r² + h²) is the slant height. The lateral edge runs from
-//   the base rim point q = (r, 0) to the apex q' = (0, h) in the
-//   (ρ, y) plane, where ρ = sqrt(x² + z²).
+// Both ww and -y are 1-Lipschitz, so max(ww, -y) is 1-Lipschitz.
+// The VALUE is C0-continuous everywhere. The gradient has a discontinuity
+// at the rim (sharp geometric edge where the lateral meets the base),
+// but |f(p)-f(q)| <= |p-q| always holds.
 //
-//   For a query point q = (ρ, y):
-//     w  = q - q_base_rim = (ρ - r, y)
-//     // along-edge coordinate (0 at rim, L at apex):
-//     dd = dot(w, edge_dir)        with edge_dir = (-r, h)/L
-//     // outward (signed) distance to the *infinite* lateral line:
-//     //   dot(w, outward_normal)  with outward_normal = (h, r)/L = (cos θ, sin θ)
-//     ww = dot(w, outward_normal) = (ρ - r)·cos θ + y·sin θ
-//
-//   The exact signed distance to the *finite* cone (intersection of the
-//   infinite-line half-space "below the lateral" with the half-space
-//   y ≥ 0) is then:
-//
-//       d = max( ww - clamp(dd, 0, L)·0,   // lateral contribution
-//                -y )                       // base cap contribution
-//
-//   Here `ww` already carries the correct sign (negative inside the
-//   infinite half-space of the lateral, positive outside), and `max(ww, -y)`
-//   is the SDF of the intersection. The clamp(dd, 0, L) term is *not*
-//   needed for the distance itself (the SDF max formulation handles it),
-//   but it IS needed for the gradient computation, to decide whether
-//   the closest point is on the lateral surface, the apex cap, or the
-//   base cap.
-//
-//   The formula above reduces to: d = max(ww, -y). But wait — that's
-//   not quite right either. The lateral "infinite-line half-space" treats
-//   the line as infinite, so points above the apex (along the line's
-//   extension) would still get a "below the line" classification. We
-//   need to clamp the lateral contribution to a signed distance only
-//   when the foot of the perpendicular lies inside the segment.
-//
-//   The correct closed form is:
-//       d_lateral_signed = (dd < 0) ? +length(w)         // before rim
-//                          : (dd > L) ? +length(w)       // past apex
-//                          :           ww                 // on segment
-//   (We use `+length(w)` in the off-segment cases because there is no
-//   "inside" along the off-segment portion — the perpendicular foot is
-//   outside, so the closest point is the rim or apex, and we are by
-//   definition outside the lateral surface in those regions.)
-//
-//   Wait — but if the rim is *inside* the solid (i.e. (ρ < r, y = 0)
-//   is the base interior, which is inside the cone), then `length(w)`
-//   would give a positive distance when it should be negative.
-//
-//   The cleanest fix is to compute the unsigned distance to the rim and
-//   apex, and let the `max(ww, -y)` formulation determine the sign of
-//   the lateral contribution. Specifically:
-//
-//       d_rim   = sqrt((ρ - r)² + y²)            // unsigned
-//       d_apex  = sqrt(ρ² + (y - h)²)            // unsigned
-//       d_lat   = (dd < 0) ? d_rim :
-//                 (dd > L) ? d_apex :
-//                            ww                    // signed (negative inside)
-//
-//   Then the result is:
-//       d = max(d_lat, -y)
-//
-//   This is correct because:
-//     * When the perpendicular foot is on the segment, d_lat = ww
-//       (signed, negative inside) — this dominates -y for points above
-//       the rim.
-//     * When the foot is before the rim (dd < 0), the closest point on
-//       the lateral surface is the rim itself; d_lat = d_rim (always
-//       non-negative). max(d_rim, -y) gives the correct positive
-//       distance to the closest surface element (rim or base cap).
-//     * When the foot is past the apex (dd > L), the closest point is
-//       the apex; d_lat = d_apex (always non-negative). max(d_apex, -y)
-//       gives the correct positive distance.
-//
-//   Gradient: pick the gradient of whichever surface element dominates
-//   the max:
-//     * if d_lat > -y → lateral: outward normal in (ρ, y) plane is
-//       (cos θ, sin θ); in 3D: (cos θ · x/ρ, sin θ, cos θ · z/ρ).
-//       (For points off-segment, the gradient points from the closest
-//       endpoint toward the query; we approximate by the lateral normal
-//       when |ww| > ε and by the radial direction otherwise.)
-//     * if -y > d_lat → base cap: outward normal = (0, -1, 0).
-//
+// This is a CONSERVATIVE SDF: for points past the apex, ww underestimates
+// the true distance to the finite cone. This is safe for ray marching
+// (takes more steps but never overshoots).
 class ConeSDF final : public SDFNode {
 public:
-    ConeSDF(float r, float h) noexcept : r_(r), h_(h) {
-        const float edge_dx = -r_;
-        const float edge_dy =  h_;
-        const float edge_len_sq = edge_dx * edge_dx + edge_dy * edge_dy;
-        const float edge_len = std::sqrt(edge_len_sq);
-        if (edge_len < 1e-9f) {
-            sin_theta_ = 0.0f;
-            cos_theta_ = 1.0f;
-            inv_edge_len_ = 0.0f;
-        } else {
-            sin_theta_ = r_ / edge_len;
-            cos_theta_ = h_ / edge_len;
-            inv_edge_len_ = 1.0f / edge_len;
-        }
-        edge_len_ = edge_len;
-    }
+    ConeSDF(float r, float h) noexcept : r_(r), h_(h) {}
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {
         const float rho = std::sqrt(p.x * p.x + p.z * p.z);
         const float y = p.y;
 
-        // w = (ρ - r, y - 0)
-        const float wx = rho - r_;
-        const float wy = y;
+        // Outward normal of the lateral line: (h, r) / L.
+        const float L = std::sqrt(r_ * r_ + h_ * h_);
+        const float cos_theta = (L > 1e-9f) ? h_ / L : 1.0f;
+        const float sin_theta = (L > 1e-9f) ? r_ / L : 0.0f;
 
-        // Project on edge direction (-r, h)/L → along-edge coordinate.
-        const float dd = (wx * (-r_) + wy * h_) * inv_edge_len_;
+        // Signed distance to the infinite lateral line.
+        // pa = (rho - r, y), outward normal = (cos_theta, sin_theta).
+        // ww = dot(pa, outward_normal).
+        const float ww = (rho - r_) * cos_theta + y * sin_theta;
 
-        // Signed distance to infinite lateral line (outward positive).
-        const float ww = wx * cos_theta_ + wy * sin_theta_;
-
-        // Unsigned distances to rim (r, 0) and apex (0, h).
-        const float d_rim  = std::sqrt(wx * wx + wy * wy);
-        const float d_apex = std::sqrt(rho * rho + (y - h_) * (y - h_));
-
-        // Lateral contribution.
-        // When the perpendicular foot falls outside the segment [rim, apex],
-        // we need to decide whether to use the unsigned distance to the
-        // endpoint (rim/apex) or the signed distance to the infinite
-        // lateral line (ww). The rule:
-        //   - If ww < 0 (inside the lateral half-space), use ww (signed,
-        //     negative) — the point is "inside" the lateral, and the
-        //     finite-segment correction doesn't make it "outside".
-        //   - If ww >= 0 (outside the lateral), use the unsigned distance
-        //     to the closest endpoint (rim or apex) — the point is
-        //     genuinely outside the solid, and the closest surface
-        //     element is the endpoint.
-        float d_lat;
-        if (dd < 0.0f) {
-            d_lat = (ww < 0.0f) ? ww : d_rim;
-        } else if (dd > edge_len_) {
-            d_lat = (ww < 0.0f) ? ww : d_apex;
-        } else {
-            d_lat = ww;
-        }
-
-        // Base cap contribution: signed distance to the y = 0 half-plane
-        // (negative inside i.e. y > 0, positive outside i.e. y < 0).
+        // d = max(ww, -y).
         const float d_base = -y;
+        const float d = std::max(ww, d_base);
 
-        // Final SDF: max of the two contributions (intersection of the
-        // two half-spaces "below lateral" and "above base cap").
-        const float d = std::max(d_lat, d_base);
-
-        // ----- Gradient (normalized, unit length) -----
+        // Gradient.
         math::Vec3f g{};
-        if (d_base >= d_lat) {
-            // Closest to base cap → outward normal points down (-Y).
+        if (d_base >= ww) {
             g = math::Vec3f{0.0f, -1.0f, 0.0f};
-        } else if (dd < 0.0f) {
-            // Closest to rim → gradient from rim toward query.
-            if (d_rim > 1e-9f) {
-                const float inv = 1.0f / d_rim;
-                const float rho_hat_x = (rho > 1e-9f) ? p.x / rho : 0.0f;
-                const float rho_hat_z = (rho > 1e-9f) ? p.z / rho : 0.0f;
-                g = math::Vec3f{wx * inv * rho_hat_x,
-                                wy * inv,
-                                wx * inv * rho_hat_z};
-            } else {
-                // Exactly on the rim: pick the lateral outward normal
-                // (which is also the cap's edge tangent direction).
-                g = math::Vec3f{cos_theta_, sin_theta_, 0.0f};
-            }
-        } else if (dd > edge_len_) {
-            // Closest to apex → gradient from apex toward query.
-            if (d_apex > 1e-9f) {
-                const float inv = 1.0f / d_apex;
-                const float rho_hat_x = (rho > 1e-9f) ? p.x / rho : 0.0f;
-                const float rho_hat_z = (rho > 1e-9f) ? p.z / rho : 0.0f;
-                g = math::Vec3f{rho * inv * rho_hat_x,
-                                (y - h_) * inv,
-                                rho * inv * rho_hat_z};
-            } else {
-                // Exactly at the apex: pick +Y (the cone axis direction
-                // above the apex, which is "outside").
-                g = math::Vec3f{0.0f, 1.0f, 0.0f};
-            }
+        } else if (rho > 1e-9f) {
+            const float inv_rho = 1.0f / rho;
+            g = math::Vec3f{cos_theta * p.x * inv_rho,
+                            sin_theta,
+                            cos_theta * p.z * inv_rho};
         } else {
-            // Closest to lateral surface → outward normal in (ρ, y) plane.
-            // 3D: cos_θ · (x, 0, z)/ρ + sin_θ · (0, 1, 0).
-            if (rho > 1e-9f) {
-                const float inv_rho = 1.0f / rho;
-                g = math::Vec3f{
-                    cos_theta_ * p.x * inv_rho,
-                    sin_theta_,
-                    cos_theta_ * p.z * inv_rho
-                };
-            } else {
-                // On the axis: pick +Y as the outward direction (we are
-                // either inside the cone or above the apex).
-                g = math::Vec3f{0.0f, 1.0f, 0.0f};
-            }
+            g = math::Vec3f{0.0f, sin_theta, 0.0f};
         }
         return SDFSample{d, g};
     }
@@ -401,11 +247,8 @@ public:
 private:
     float r_;
     float h_;
-    float sin_theta_;    // r / sqrt(r² + h²)
-    float cos_theta_;    // h / sqrt(r² + h²)
-    float inv_edge_len_; // 1 / sqrt(r² + h²)
-    float edge_len_;     // sqrt(r² + h²)
 };
+
 
 // Capsule (line + radius) from point a to b.
 class CapsuleSDF final : public SDFNode {

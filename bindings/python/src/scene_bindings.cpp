@@ -30,15 +30,26 @@ void bind_scene(nb::module_& m) {
         .value("NodeVisibilityChanged", scene::SceneChange::NodeVisibilityChanged)
         .value("SceneCleared", scene::SceneChange::SceneCleared);
 
-    // SceneNode — read-only view
+    // SceneNode — readable view; `body` and `mesh_dirty` are writable so the
+    // UI can rebuild a node's SDF interactively (Bug 1 fix: assigning to a
+    // read-only property raised "AttributeError: property of 'SceneNode'
+    // object has no setter" and killed the app during parameter editing).
     nb::class_<scene::SceneNode>(scene_mod, "SceneNode")
         .def_ro("id", &scene::SceneNode::id)
         .def_ro("name", &scene::SceneNode::name)
         .def_ro("visible", &scene::SceneNode::visible)
-        .def_ro("mesh_dirty", &scene::SceneNode::mesh_dirty)
-        .def_prop_ro("body", [](const scene::SceneNode& n) -> const sdf::SDFBody& {
-            return n.body;
-        }, nb::rv_policy::reference_internal)
+        .def_rw("mesh_dirty", &scene::SceneNode::mesh_dirty)
+        .def_prop_rw("body",
+            [](const scene::SceneNode& n) -> const sdf::SDFBody& {
+                return n.body;
+            },
+            [](scene::SceneNode& n, const sdf::SDFBody& b) {
+                // Deep-clone the incoming tree (SDFBody copy ctor clones the
+                // subtree) and flag the cached mesh for re-tessellation.
+                n.body = b;
+                n.mesh_dirty = true;
+            },
+            nb::rv_policy::reference_internal)
         .def_prop_ro("cached_mesh", [](const scene::SceneNode& n) -> const sdf::TriangleMesh& {
             return n.cached_mesh;
         }, nb::rv_policy::reference_internal)

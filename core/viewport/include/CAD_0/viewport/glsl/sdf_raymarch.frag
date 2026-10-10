@@ -2,10 +2,27 @@
 //
 // Fragment shader for SDF ray-marching.
 //
-// For each pixel, computes the world-space ray from the camera through
-// the pixel, then marches the ray through the SDF field until it hits
-// the surface (or escapes to background). Applies simple ambient + diffuse
-// lighting with a single directional light.
+// CPU/GPU Parity Contract
+// ------------------------
+// The CPU ray marcher (core/viewport/src/ray_march.cpp) and this shader
+// MUST produce identical hit distances for the same scene. The parity
+// contract is:
+//
+//   step = d / max(L, 1.0)
+//
+// where d = scene_sdf(p) and L = field.lipschitz(). For unit-Lipschitz
+// SDFs (primitives, ScaleSDF with s ≤ 1), L = 1 and step = d, matching
+// this shader's `t += d`. For L > 1 (TwistSDF, SmoothMin with k > 0),
+// the CPU marcher divides by L; the shader will need the same treatment
+// when it gains L > 1 scene support.
+//
+// The escape check `if (t > MAX_DIST) return -1.0` is placed BEFORE
+// evaluating scene_sdf(p) to avoid unnecessary SDF evaluations when the
+// ray has already escaped. This matches the CPU marcher's behavior.
+//
+// MAX_STEPS, MAX_DIST, and SURF_DIST are exposed as uniforms with
+// defaults matching RayMarchOptions (max_steps=128, max_distance=100.0,
+// surface_distance=0.0005).
 //
 #version 450 core
 
@@ -28,10 +45,11 @@ layout(std140, binding = 1) uniform OptionsBlock {
     vec4 u_colors;   // xyz = mesh_color, w = unused
 };
 
-// Maximum ray-march steps and minimum surface distance.
-const int MAX_STEPS = 128;
-const float MAX_DIST = 100.0;
-const float SURF_DIST = 0.0005;
+// Ray-march uniforms. Defaults match RayMarchOptions in ray_march.hpp.
+// Override at draw time to tune quality/performance.
+layout(location = 10) uniform int   u_max_steps = 128;
+layout(location = 11) uniform float u_max_dist  = 100.0;
+layout(location = 12) uniform float u_surf_dist = 0.0005;
 
 // Scene SDF — a sphere of radius 1 at the origin.
 // In Phase C.6 this will be replaced by a uniform-buffer-driven SDF tree
@@ -46,23 +64,30 @@ float scene_sdf(vec3 p) {
 vec3 calc_normal(vec3 p) {
     const vec2 k = vec2(1.0, -1.0);
     return normalize(
-        k.xyy * scene_sdf(p + k.xyy * SURF_DIST) +
-        k.yyx * scene_sdf(p + k.yyx * SURF_DIST) +
-        k.yxy * scene_sdf(p + k.yxy * SURF_DIST) +
-        k.xxx * scene_sdf(p + k.xxx * SURF_DIST)
+        k.xyy * scene_sdf(p + k.xyy * u_surf_dist) +
+        k.yyx * scene_sdf(p + k.yyx * u_surf_dist) +
+        k.yxy * scene_sdf(p + k.yxy * u_surf_dist) +
+        k.xxx * scene_sdf(p + k.xxx * u_surf_dist)
     );
 }
 
 // Ray-march from `ro` (ray origin) in direction `rd` (normalized).
 // Returns the distance to the surface, or -1.0 if no hit.
+//
+// CPU/GPU parity: for L=1 SDFs, step = d (same as CPU's d/max(L,1)).
+// The escape check is BEFORE the SDF evaluation to avoid wasted work.
 float ray_march(vec3 ro, vec3 rd) {
     float t = 0.0;  // distance traveled
-    for (int i = 0; i < MAX_STEPS; i++) {
+    for (int i = 0; i < u_max_steps; i++) {
+        // Escape check FIRST — don't evaluate SDF if we're already past
+        // the max distance. This matches the CPU marcher's behavior:
+        // t += d * effective_scale; if (t > max_distance) break;
+        if (t > u_max_dist) return -1.0;
+
         vec3 p = ro + rd * t;
         float d = scene_sdf(p);
-        if (d < SURF_DIST) return t;     // hit
-        if (t > MAX_DIST) return -1.0;   // escaped
-        t += d;                           // step by signed distance
+        if (d < u_surf_dist) return t;     // hit
+        t += d;                            // step = d / max(L, 1) = d for L=1
     }
     return -1.0;
 }
