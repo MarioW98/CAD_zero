@@ -27,10 +27,26 @@ set -euo pipefail
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-PROJECT_DIR="/home/z/my-project/CAD_0"
-LIBS_DIR="/home/z/my-project/.libs"
-VNC_BIN_DIR="/home/z/my-project/vnc_extract/usr/bin"
-NOVNC_DIR="/home/z/my-project/vnc_extract/usr/share/novnc"
+# Bug 5 fix: paths used to be hardcoded to /home/z/my-project/ (the original
+# sandbox layout), which broke everywhere else. They are now derived from the
+# script's own location — so the script works from any checkout — and each
+# one can be overridden with an environment variable.
+#
+# Expected layouts (both work):
+#   * Repo checkout:   <root>/scripts/start_codespaces.sh   — .libs/ and
+#     vnc_extract/ simply don't exist next to it; the apt/system fallbacks
+#     kick in (requires sudo, as on GitHub Codespaces).
+#   * Bundle layout:   <bundle>/CAD_0/scripts/start_codespaces.sh with
+#     <bundle>/.libs/ and <bundle>/vnc_extract/ as siblings — the staged
+#     libs and extracted VNC tools are used automatically, no sudo needed.
+#
+# Overrides: CAD_0_PROJECT_DIR, CAD_0_LIBS_DIR, CAD_0_VNC_EXTRACT_DIR
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="${CAD_0_PROJECT_DIR:-$(dirname "${SCRIPT_DIR}")}"
+LIBS_DIR="${CAD_0_LIBS_DIR:-${PROJECT_DIR}/../.libs}"
+VNC_EXTRACT_DIR="${CAD_0_VNC_EXTRACT_DIR:-${PROJECT_DIR}/../vnc_extract}"
+VNC_BIN_DIR="${VNC_EXTRACT_DIR}/usr/bin"
+NOVNC_FALLBACK_DIR="${VNC_EXTRACT_DIR}/usr/share/novnc"
 
 DISPLAY_NUM=99
 SCREEN_W=1280
@@ -119,7 +135,7 @@ if [[ ! -f "/usr/share/novnc/vnc.html" ]]; then
 fi
 NOVNC_DIR="/usr/share/novnc"
 if [[ ! -f "${NOVNC_DIR}/vnc.html" ]]; then
-    NOVNC_DIR="/home/z/my-project/vnc_extract/usr/share/novnc"
+    NOVNC_DIR="${NOVNC_FALLBACK_DIR}"
 fi
 [[ -f "${NOVNC_DIR}/vnc.html" ]] || die "noVNC web client not found"
 

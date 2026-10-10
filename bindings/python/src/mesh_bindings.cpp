@@ -37,12 +37,23 @@ void bind_mesh(nb::module_& m) {
     nb::module_& sdf_mod = m;
 
     // TriangleMesh — return as numpy arrays + counts.
+    //
+    // Bug 4 fix (lifetime safety): the ndarray views used to be created with
+    // an empty `nb::handle()` owner — numpy arrays kept pointing at the C++
+    // vectors WITHOUT keeping the TriangleMesh alive:
+    //
+    //     arr = scene.node_at(0).cached_mesh.positions
+    //     del scene          # C++ mesh freed -> arr dangles (use-after-free)
+    //
+    // `nb::find(&mesh)` returns the Python wrapper of the mesh the property
+    // was called on, so the ndarray holds a reference to it and the C++
+    // memory stays alive as long as the numpy array exists.
     nb::class_<sdf::TriangleMesh>(sdf_mod, "TriangleMesh")
         .def_prop_ro("positions", [](const sdf::TriangleMesh& mesh) {
             return nb::ndarray<nb::numpy, float, nb::ndim<2>>(
                 const_cast<float*>(reinterpret_cast<const float*>(mesh.positions.data())),
                 {mesh.positions.size(), std::size_t(3)},
-                nb::handle());
+                nb::find(&mesh));
         })
         .def_prop_ro("normals", [](const sdf::TriangleMesh& mesh) {
             if (mesh.normals.empty()) {
@@ -51,13 +62,13 @@ void bind_mesh(nb::module_& m) {
             return nb::ndarray<nb::numpy, float, nb::ndim<2>>(
                 const_cast<float*>(reinterpret_cast<const float*>(mesh.normals.data())),
                 {mesh.normals.size(), std::size_t(3)},
-                nb::handle());
+                nb::find(&mesh));
         })
         .def_prop_ro("indices", [](const sdf::TriangleMesh& mesh) {
             return nb::ndarray<nb::numpy, std::uint32_t, nb::ndim<1>>(
                 const_cast<std::uint32_t*>(mesh.indices.data()),
                 {mesh.indices.size()},
-                nb::handle());
+                nb::find(&mesh));
         })
         .def("vertex_count",   &sdf::TriangleMesh::vertex_count)
         .def("triangle_count", &sdf::TriangleMesh::triangle_count);
@@ -84,13 +95,15 @@ void bind_mesh(nb::module_& m) {
         },
         nb::arg("body"), nb::arg("bounds"), nb::arg("opts"));
 
-    // weld_vertices(mesh, tolerance)
+    // weld_vertices(mesh, tolerance) — returns the number of vertices
+    // after welding (std::size_t). Bug 4 cleanup: the binding carried a
+    // leftover `rv_policy::reference_internal`, which is meaningless for an
+    // arithmetic return type (likely a leftover from a mesh-returning API).
     sdf_mod.def("weld_vertices",
         [](sdf::TriangleMesh& mesh, float tolerance) {
             return sdf::weld_vertices(mesh, tolerance);
         },
-        nb::arg("mesh"), nb::arg("tolerance"),
-        nb::rv_policy::reference_internal);
+        nb::arg("mesh"), nb::arg("tolerance"));
 }
 
 // IO bindings — exported to a separate io submodule.

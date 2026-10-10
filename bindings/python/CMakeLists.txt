@@ -74,7 +74,13 @@ install(TARGETS _CAD_0 LIBRARY DESTINATION CAD_0)
 # 1. Copy the bindings/python/CAD_0/ package (kernel API: sdf, io, viewer, etc.)
 # 2. Copy the app/src/CAD_0/ui/ directory (PySide6 UI)
 # 3. Copy the compiled extension _CAD_0.so
-# 4. Merge __init__.py to include both kernel and UI imports
+# 4. Overwrite __init__.py with the app version (kernel + UI imports)
+#
+# Note (Bug 3 fix): bindings/python/CAD_0/ui/ used to hold a stale, divergent
+# copy of the UI (pre-10/09 version, no PyOpenGL viewport, buggy export
+# logic). It was dead code — always overwritten by this very copy step — but
+# editing it had no effect, which made bug hunting needlessly confusing.
+# The single source of truth for the UI is now app/src/CAD_0/ui/.
 add_custom_target(CAD_0_python_copy ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/CAD_0

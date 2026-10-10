@@ -71,8 +71,24 @@ def test_viewport_widget_parses() -> None:
     assert "_ViewportWindow" in class_names
 
 
+def _pyside6_available() -> bool:
+    """True if PySide6 is actually importable in this interpreter.
+
+    Bug-fix note: the old skipif used `"PySide6" not in sys.modules`, which
+    only checks whether something *already imported* PySide6 before test
+    collection — so the test silently skipped on every machine where it
+    could actually have run. Checking with find_spec() makes the test do
+    what its docstring promises.
+    """
+    try:
+        import importlib.util
+        return importlib.util.find_spec("PySide6") is not None
+    except ImportError:
+        return False
+
+
 @pytest.mark.skipif(
-    "PySide6" not in sys.modules,
+    not _pyside6_available(),
     reason="PySide6 not installed",
 )
 def test_ui_modules_import_with_pyside6() -> None:

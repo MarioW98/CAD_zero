@@ -120,6 +120,14 @@ void bind_scene(nb::module_& m) {
     // CommandStack is move-only (contains vector<unique_ptr<Command>>),
     // so we use nb::is_final to prevent nanobind from trying to generate
     // a copy constructor.
+    //
+    // Bug 4 note: next_undo_description()/next_redo_description() return
+    // `const std::string&` pointing at a string owned by the Command
+    // inside the stack. They used to be bound with `rv_policy::reference`,
+    // which does NOT tie the lifetime to the stack — safe today only
+    // because nanobind's std::string caster copies the characters into an
+    // immutable Python str. The (misleading) policy is removed; the copy
+    // semantics are what we actually want.
     auto cmd_mod = m.def_submodule("commands", "Undo/redo command stack");
 
     nb::class_<viewport::Command>(cmd_mod, "Command")
@@ -144,10 +152,8 @@ void bind_scene(nb::module_& m) {
         .def("can_redo", &viewport::CommandStack::can_redo)
         .def("undo_count", &viewport::CommandStack::undo_count)
         .def("redo_count", &viewport::CommandStack::redo_count)
-        .def("next_undo_description", &viewport::CommandStack::next_undo_description,
-             nb::rv_policy::reference)
-        .def("next_redo_description", &viewport::CommandStack::next_redo_description,
-             nb::rv_policy::reference)
+        .def("next_undo_description", &viewport::CommandStack::next_undo_description)
+        .def("next_redo_description", &viewport::CommandStack::next_redo_description)
         .def("clear", &viewport::CommandStack::clear)
         .def("max_size", &viewport::CommandStack::max_size)
         .def("set_max_size", &viewport::CommandStack::set_max_size);
