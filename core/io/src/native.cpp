@@ -196,8 +196,18 @@ const JsonValue& require_field(const JsonValue& v, const char* field) {
     return *f;
 }
 
-std::unique_ptr<sdf::SDFNode> deserialize_node_impl(const JsonValue& v) {
+std::unique_ptr<sdf::SDFNode> deserialize_node_impl(const JsonValue& v, int depth) {
     using namespace sdf;
+    // Depth guard: reject runaway SDF nesting with an explicit error
+    // naming the limit BEFORE the recursion can overflow the stack.
+    // (The JSON parser independently caps nesting at 256; this check
+    // fires first for trees between the two limits and also protects
+    // the public deserialize_node() on programmatically built JSON.)
+    if (depth > kMaxSDFNestingDepth)
+        throw std::runtime_error(
+            "native format: SDF tree too deeply nested (max " +
+            std::to_string(kMaxSDFNestingDepth) + " levels) — a legitimate "
+            "SDF tree is far shallower; the file is likely corrupt or hostile");
     if (!v.is_object()) type_error("object for SDF node", v);
     const JsonValue* op_v = v.find("op");
     if (!op_v || !op_v->is_string())
@@ -237,37 +247,37 @@ std::unique_ptr<sdf::SDFNode> deserialize_node_impl(const JsonValue& v) {
         std::vector<std::unique_ptr<SDFNode>> cs;
         cs.reserve(children.as_array().size());
         for (const auto& c : children.as_array())
-            cs.push_back(deserialize_node_impl(c));
+            cs.push_back(deserialize_node_impl(c, depth + 1));
         return std::make_unique<UnionSDF>(std::move(cs));
     }
     if (op == "intersect")
         return std::make_unique<IntersectionSDF>(
-            deserialize_node_impl(require_field(v, "a")),
-            deserialize_node_impl(require_field(v, "b")));
+            deserialize_node_impl(require_field(v, "a"), depth + 1),
+            deserialize_node_impl(require_field(v, "b"), depth + 1));
     if (op == "subtract")
         return std::make_unique<SubtractionSDF>(
-            deserialize_node_impl(require_field(v, "a")),
-            deserialize_node_impl(require_field(v, "b")));
+            deserialize_node_impl(require_field(v, "a"), depth + 1),
+            deserialize_node_impl(require_field(v, "b"), depth + 1));
     if (op == "smooth_min")
         return std::make_unique<SmoothMinSDF>(
-            deserialize_node_impl(require_field(v, "a")),
-            deserialize_node(require_field(v, "b")),
+            deserialize_node_impl(require_field(v, "a"), depth + 1),
+            deserialize_node_impl(require_field(v, "b"), depth + 1),
             static_cast<float>(require_number(require_field(v, "k"), "k")));
     if (op == "translate")
         return std::make_unique<TranslateSDF>(
-            deserialize_node_impl(require_field(v, "child")),
+            deserialize_node_impl(require_field(v, "child"), depth + 1),
             json_to_vec3(require_field(v, "offset"), "offset"));
     if (op == "rotate")
         return std::make_unique<RotateSDF>(
-            deserialize_node_impl(require_field(v, "child")),
+            deserialize_node_impl(require_field(v, "child"), depth + 1),
             json_to_quat(require_field(v, "q"), "q"));
     if (op == "scale")
         return std::make_unique<ScaleSDF>(
-            deserialize_node_impl(require_field(v, "child")),
+            deserialize_node_impl(require_field(v, "child"), depth + 1),
             static_cast<float>(require_number(require_field(v, "s"), "s")));
     if (op == "twist")
         return std::make_unique<TwistSDF>(
-            deserialize_node_impl(require_field(v, "child")),
+            deserialize_node_impl(require_field(v, "child"), depth + 1),
             static_cast<float>(require_number(require_field(v, "k"), "k")));
 
     throw std::runtime_error("native format: unknown SDF op \"" + op + "\" "
@@ -426,7 +436,7 @@ json::JsonValue serialize_node(const sdf::SDFNode& node) {
 }
 
 std::unique_ptr<sdf::SDFNode> deserialize_node(const json::JsonValue& v) {
-    return deserialize_node_impl(v);
+    return deserialize_node_impl(v, 0);
 }
 
 std::string serialize_document(const scene::Scene& s, const NativeCamera& cam) {
@@ -550,7 +560,7 @@ ParsedDocument parse_document(std::string_view text) {
         // above; unknown tags deliberately leave the node non-parametric.
         node.factory = make_builder_factory(node.builder);
 
-        node.body = sdf::SDFBody(deserialize_node_impl(node_v.at("body")));
+        node.body = sdf::SDFBody(deserialize_node_impl(node_v.at("body"), 0));
         doc.nodes.push_back(std::move(node));
     }
 

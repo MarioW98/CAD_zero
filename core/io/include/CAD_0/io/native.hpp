@@ -21,10 +21,10 @@
 // A failed parse leaves the scene untouched (strong exception guarantee).
 //
 // Explicit errors: unknown SDF ops, missing fields, version mismatches
-// without a registered migrator, and malformed JSON all throw
-// std::runtime_error with a descriptive message — surfaced to the user
-// (ADR-0007: "surfaces unsupported features rather than silently
-// dropping them").
+// without a registered migrator, malformed JSON, and excessively nested
+// input (JSON or SDF tree) all throw std::runtime_error with a
+// descriptive message — surfaced to the user (ADR-0007: "surfaces
+// unsupported features rather than silently dropping them").
 //
 // Atomic save: the file is written to `<path>.tmp`, flushed, and renamed
 // over the target — a crash mid-save never destroys the previous file.
@@ -91,6 +91,17 @@ struct NativeCamera {
 
 // ---- Serialization ---------------------------------------------------------
 
+// Maximum SDF tree nesting accepted when deserializing a document. Trees
+// deeper than this are rejected with an explicit "too deeply nested"
+// error: deserialization is recursive, so unbounded depth would risk a
+// stack overflow on corrupt or hostile files. Legitimate SDF trees are
+// shallow (the canonical composite is ~6 levels; even heavy modeling
+// rarely exceeds a few dozen) — 128 leaves generous headroom while
+// staying far below the JSON parser's kMaxNestingDepth (256), so the
+// SDF-layer error fires first (with the domain-specific message) for
+// trees between the two limits.
+inline constexpr int kMaxSDFNestingDepth = 128;
+
 // Serialize one SDF tree node (recursive; the root of a body's tree).
 // Every node carries an "op" name; deserialization dispatches on it and
 // fails explicitly on unknown ops.
@@ -115,7 +126,8 @@ struct ParsedDocument {
 };
 ParsedDocument parse_document(std::string_view text);
 
-// Rebuild a single SDF tree from JSON. Unknown "op" → explicit error.
+// Rebuild a single SDF tree from JSON. Unknown "op" → explicit error;
+// trees nested deeper than kMaxSDFNestingDepth → explicit error.
 std::unique_ptr<sdf::SDFNode> deserialize_node(const json::JsonValue& v);
 
 // Stage 2 — commit: clears the scene and installs the parsed nodes with

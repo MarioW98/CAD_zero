@@ -28,6 +28,7 @@
 #include <vector>
 
 namespace native = CAD_0::io::native;
+namespace json = CAD_0::io::json;
 using namespace CAD_0;
 
 // ---- helpers ----------------------------------------------------------------
@@ -594,6 +595,143 @@ TEST_CASE("post-load param edit: unknown builder tag loads but is non-parametric
     // Body + params still round-trip (re-serialization is stable).
     CHECK(serialized_radius(n->body) == 1.5f);
     CHECK(n->params.at("radius") == scene::ParamValue{3.0f});
+}
+
+// ---- depth limits (stack-overflow hardening) ---------------------------------
+//
+// Diagnostic: both the JSON parser (Parser::parse_value ->
+// parse_object/parse_array) and the SDF deserializer
+// (deserialize_node_impl) were recursive with NO depth guard. A hostile
+// or corrupt .CAD_0 file with ~100k nested arrays recursed that deep and
+// stack-overflowed (SIGSEGV) before ANY error handling could run. The
+// tests below pin the contract:
+//   * JSON nesting above kMaxNestingDepth (256) is an explicit
+//     std::runtime_error naming the limit — never a crash;
+//   * SDF trees above kMaxSDFNestingDepth (128) throw with a message
+//     that names the maximum depth (legitimate trees are far shallower);
+//   * legitimately deep trees (50 translate/scale levels) still load and
+//     round-trip bit-identically — the guard must not break real files.
+
+namespace {
+
+// A chain of `n` translate wrappers around a sphere leaf, as JSON text.
+std::string translate_chain(int n) {
+    std::string body;
+    for (int i = 0; i < n; ++i)
+        body += "{\"op\":\"translate\",\"offset\":[0,0,0],\"child\":";
+    body += "{\"op\":\"sphere\",\"radius\":1.0}";
+    for (int i = 0; i < n; ++i)
+        body += "}";
+    return body;
+}
+
+// A full .CAD_0 document whose single node's body is `body_json`.
+std::string document_with_body(const std::string& body_json) {
+    return "{\"format\":\"CAD_0 native\",\"version\":\"0.1.0\",\"scene\":"
+           "{\"next_id\":2,\"nodes\":[{\"id\":1,\"body\":" +
+           body_json + "}]}}";
+}
+
+// "[" * n + "0" + "]" * n — n nested arrays around a number.
+std::string nested_arrays(std::size_t n) {
+    std::string s(n, '[');
+    s += '0';
+    s.append(n, ']');
+    return s;
+}
+
+} // namespace
+
+TEST_CASE("depth limit: 100k nested arrays is an explicit error, not a crash") {
+    // The hostile-input case from the bug report. Before the guard this
+    // crashed the process (stack overflow) — now it must throw.
+    CHECK_THROWS_WITH_AS(
+        json::JsonValue::parse(nested_arrays(100000)),
+        doctest::Contains("too deeply nested (max 256"), std::runtime_error);
+}
+
+TEST_CASE("depth limit: JSON nesting boundary is exactly 256") {
+    // 256 nested arrays parse fine (innermost value sits at depth 256)
+    // and re-serialize — the writer's recursion is bounded by the same
+    // tree the parser accepted.
+    const auto v = json::JsonValue::parse(nested_arrays(256));
+    CHECK(v.is_array());
+    CHECK(!v.dump(false).empty());
+
+    // 257 → explicit error naming the limit.
+    CHECK_THROWS_WITH_AS(
+        json::JsonValue::parse(nested_arrays(257)),
+        doctest::Contains("too deeply nested (max 256"), std::runtime_error);
+
+    // Objects count as nesting too (same guard must fire).
+    std::string nested_obj;
+    for (int i = 0; i < 257; ++i) nested_obj += "{\"a\":";
+    nested_obj += '1';
+    for (int i = 0; i < 257; ++i) nested_obj += '}';
+    CHECK_THROWS_WITH_AS(
+        json::JsonValue::parse(nested_obj),
+        doctest::Contains("too deeply nested (max 256"), std::runtime_error);
+}
+
+TEST_CASE("depth limit: SDF tree beyond 128 levels is an explicit error") {
+    // 200 translate wrappers: JSON depth ~204 (under the 256 JSON guard,
+    // so the SDF-layer limit is what must fire) but 200 SDF levels.
+    const std::string doc = document_with_body(translate_chain(200));
+    CHECK_THROWS_WITH_AS(
+        native::parse_document(doc),
+        doctest::Contains("too deeply nested (max 128"), std::runtime_error);
+}
+
+TEST_CASE("depth limit: SDF boundary is exactly 128 levels") {
+    // 128 wrappers + leaf (leaf at depth 128): loads.
+    const auto doc = native::parse_document(document_with_body(translate_chain(128)));
+    CHECK(doc.nodes.size() == 1);
+    REQUIRE(doc.nodes.front().body.root() != nullptr);
+
+    // 129 wrappers (leaf at depth 129): explicit error.
+    CHECK_THROWS_WITH_AS(
+        native::parse_document(document_with_body(translate_chain(129))),
+        doctest::Contains("too deeply nested (max 128"), std::runtime_error);
+}
+
+TEST_CASE("depth limit: legitimately deep tree (50 translate/scale) loads and round-trips") {
+    // Deeper than any real project but far inside the limits: the guard
+    // must not break legitimate files. Alternating translate/scale, built
+    // exactly the way the kernel API composes trees.
+    sdf::SDFBody body = sdf::make_sphere(1.0f);
+    for (int i = 0; i < 50; ++i) {
+        const float fi = static_cast<float>(i);
+        if (i % 2 == 0)
+            body = sdf::sdf_translate(std::move(body),
+                                      math::Vec3f{0.01f * fi, 0.0f, 0.0f});
+        else
+            body = sdf::sdf_scale(std::move(body), 1.0f + 0.001f * fi);
+    }
+
+    scene::Scene s;
+    {
+        scene::SceneNode n;
+        n.id = 1;
+        n.name = "deep";
+        n.body = body;
+        s.restore_node(std::move(n));
+    }
+    s.set_next_id(2);
+
+    const std::string text = native::serialize_document(s, native::NativeCamera{});
+
+    scene::Scene loaded;
+    native::install_document(loaded, native::parse_document(text));
+    REQUIRE(loaded.size() == 1);
+
+    // Bit-identical SDF evaluation after the round-trip.
+    CHECK(sample_grid(loaded.node_at(0)->body, 5) == sample_grid(s.node_at(0)->body, 5));
+
+    // The loaded deep tree is still usable at the kernel level
+    // (re-tessellation walks the whole 50-level tree).
+    loaded.update_meshes(8);
+    CHECK(loaded.get_node_mut(1)->mesh_dirty == false);
+    CHECK(!loaded.get_node_mut(1)->cached_mesh.positions.empty());
 }
 
 } // TEST_SUITE

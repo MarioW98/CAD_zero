@@ -308,3 +308,66 @@ def test_no_builder_tag_node_is_non_parametric_after_load():
     assert node.body.value(p) == before  # body untouched
     assert node.mesh_dirty is False      # no spurious re-tessellation
     assert dict(node.params) == {"radius": 3.0}
+
+
+# ---- depth limits (stack-overflow hardening) ----------------------------------
+#
+# Diagnostic: the JSON parser and the SDF deserializer were recursive with
+# no depth guard — a hostile .CAD_0 file with ~100k nested arrays crashed
+# the whole process (stack overflow) before any error handling could run.
+# These tests pin the contract through the same CAD_0.io.load API the
+# desktop app uses: explicit RuntimeError naming the limit, scene left
+# untouched (transactional load), and legitimate deep trees still load.
+
+
+def test_json_100k_nested_arrays_raises_not_crashes():
+    # The hostile-input case: must raise RuntimeError, never segfault
+    # the Python process. (Before the guard this test crashed pytest.)
+    path = Path(tempfile.mkdtemp(prefix="cad0_deep_")) / "hostile.CAD_0"
+    path.write_text("[" * 100_000 + "1" + "]" * 100_000)
+
+    target = scene_mod.Scene()
+    target.add_node("keepme", sdf_mod.sphere(1.0))
+    with pytest.raises(RuntimeError, match="too deeply nested"):
+        CAD_0.io.load(path, target)
+    assert target.size() == 1  # transactional: scene untouched
+
+
+def test_sdf_tree_over_limit_raises_explicit_max_depth():
+    # 200 translate wrappers: JSON depth ~204 (under the JSON guard) but
+    # 200 SDF levels — the SDF-layer limit must fire with the limit in
+    # the message.
+    body = '{"op":"translate","offset":[0,0,0],"child":' * 200 + \
+           '{"op":"sphere","radius":1.0}' + "}" * 200
+    path = Path(tempfile.mkdtemp(prefix="cad0_deep2_")) / "deep.CAD_0"
+    path.write_text(
+        '{"format": "CAD_0 native", "version": "0.1.0", '
+        f'"scene": {{"next_id": 2, "nodes": [{{"id": 1, "body": {body}}}]}}}}'
+    )
+    with pytest.raises(RuntimeError, match=r"too deeply nested \(max 128"):
+        CAD_0.io.load(path, scene_mod.Scene())
+
+
+def test_legitimate_deep_tree_loads_and_evaluates_bit_exact():
+    # 50 alternating translate/scale levels: deep for a real project, far
+    # inside the limits — the guards must not break legitimate files.
+    body = sdf_mod.sphere(1.0)
+    for i in range(50):
+        if i % 2 == 0:
+            body = sdf_mod.translate(body, CAD_0.math.Vec3f(0.01 * i, 0, 0))
+        else:
+            body = sdf_mod.scale(body, 1.0 + 0.001 * i)
+    scene = scene_mod.Scene()
+    scene.add_node("deep", body)
+    path = Path(tempfile.mkdtemp(prefix="cad0_deep3_")) / "legit.CAD_0"
+    CAD_0.io.save(path, scene)
+
+    loaded = scene_mod.Scene()
+    CAD_0.io.load(path, loaded)
+    loaded.update_meshes(16)
+    node = loaded.node_at(0)
+    assert node.mesh_dirty is False
+    assert len(node.cached_mesh.positions) > 0
+
+    for p in (CAD_0.math.Vec3f(0, 0, 0), CAD_0.math.Vec3f(0.9, -0.2, 0.4)):
+        assert node.body.value(p) == body.value(p)

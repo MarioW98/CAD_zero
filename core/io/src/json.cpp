@@ -279,13 +279,18 @@ void Parser::parse_literal(std::string_view word) {
     }
 }
 
-JsonValue Parser::parse_value() {
+JsonValue Parser::parse_value(int depth) {
+    // Depth guard: reject runaway nesting with an explicit error BEFORE
+    // the recursion can overflow the stack (fail() reports line/column).
+    if (depth > kMaxNestingDepth)
+        fail("too deeply nested (max " + std::to_string(kMaxNestingDepth) +
+             " levels)");
     skip_whitespace();
     if (at_end()) fail("unexpected end of input");
     const char c = peek();
     switch (c) {
-    case '{': return parse_object();
-    case '[': return parse_array();
+    case '{': return parse_object(depth);
+    case '[': return parse_array(depth);
     case '"': return JsonValue(parse_string());
     case 't': {
         parse_literal("true");
@@ -305,7 +310,7 @@ JsonValue Parser::parse_value() {
     }
 }
 
-JsonValue Parser::parse_object() {
+JsonValue Parser::parse_object(int depth) {
     expect('{');
     JsonObject obj;
     skip_whitespace();
@@ -315,7 +320,7 @@ JsonValue Parser::parse_object() {
         std::string key = parse_string();
         skip_whitespace();
         expect(':');
-        JsonValue value = parse_value();
+        JsonValue value = parse_value(depth + 1);
         obj.emplace_back(std::move(key), std::move(value));
         skip_whitespace();
         if (at_end()) fail("unterminated object");
@@ -326,13 +331,13 @@ JsonValue Parser::parse_object() {
     return JsonValue(std::move(obj));
 }
 
-JsonValue Parser::parse_array() {
+JsonValue Parser::parse_array(int depth) {
     expect('[');
     JsonArray arr;
     skip_whitespace();
     if (!at_end() && peek() == ']') { advance(); return JsonValue(std::move(arr)); }
     while (true) {
-        arr.push_back(parse_value());
+        arr.push_back(parse_value(depth + 1));
         skip_whitespace();
         if (at_end()) fail("unterminated array");
         const char c = advance();
@@ -343,7 +348,7 @@ JsonValue Parser::parse_array() {
 }
 
 JsonValue Parser::parse_document() {
-    JsonValue root = parse_value();
+    JsonValue root = parse_value(0);
     skip_whitespace();
     if (!at_end())
         fail("trailing content after document");

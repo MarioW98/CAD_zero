@@ -122,6 +122,16 @@ private:
 
 // ---- Parser (recursive descent, strict JSON) -------------------------------
 // Exposed for tests and for the native layer's migration entry point.
+
+// Maximum container nesting (objects/arrays) accepted by the parser.
+// Input nested deeper than this is rejected with an explicit "too deeply
+// nested" error instead of recursing on: the parser is recursive descent,
+// so an unbounded ~100k-deep file would stack-overflow (SIGSEGV) before
+// any error handling could run. 256 is far above any legitimate .CAD_0
+// document (typical depth: < 15) while leaving orders of magnitude of
+// stack headroom. Format-neutral: this bounds the PARSER, not the format.
+inline constexpr int kMaxNestingDepth = 256;
+
 class Parser {
 public:
     explicit Parser(std::string_view text) : text_(text) {}
@@ -140,9 +150,11 @@ private:
     void skip_whitespace();
     void expect(char c);
 
-    JsonValue parse_value();
-    JsonValue parse_object();
-    JsonValue parse_array();
+    // `depth` is the nesting level of the value being parsed (root = 0);
+    // parse_value rejects depth > kMaxNestingDepth with an explicit error.
+    JsonValue parse_value(int depth);
+    JsonValue parse_object(int depth);
+    JsonValue parse_array(int depth);
     std::string parse_string();
     double parse_number();
     void parse_literal(std::string_view word); // consume exact word, throw on mismatch
