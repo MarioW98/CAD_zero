@@ -19,6 +19,7 @@ set(CAD_0_TEST_SOURCES
     unit/io/test_stl.cpp
     unit/io/test_obj.cpp
     unit/io/test_threemf.cpp
+    unit/io/test_native.cpp
     unit/viewport/test_camera.cpp
     unit/viewport/test_command_stack.cpp
     unit/viewport/test_selection.cpp
@@ -71,6 +72,10 @@ endif()
 # Other test files just include <doctest/doctest.h> without the macro.
 set_source_files_properties(main.cpp PROPERTIES COMPILE_DEFINITIONS
     "DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN")
+
+# Source dir for golden files (tests/golden/) and other test assets.
+target_compile_definitions(CAD_0_tests PRIVATE
+    CAD_0_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # Register tests with CTest — manual registration since doctest_discover_tests
 # requires the doctest CMake module which isn't always available via CPM.

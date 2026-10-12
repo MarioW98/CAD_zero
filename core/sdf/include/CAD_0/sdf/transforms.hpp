@@ -37,6 +37,10 @@ public:
         return std::make_unique<TranslateSDF>(child_->clone(), offset_);
     }
 
+    // Native-format serialization accessors.
+    const SDFNode* wrapped() const noexcept { return child_.get(); }
+    const math::Vec3f& offset() const noexcept { return offset_; }
+
 private:
     std::unique_ptr<SDFNode> child_;
     math::Vec3f offset_;
@@ -75,6 +79,10 @@ public:
     std::unique_ptr<SDFNode> clone() const override {
         return std::make_unique<RotateSDF>(child_->clone(), q_);
     }
+
+    // Native-format serialization accessors.
+    const SDFNode* wrapped() const noexcept { return child_.get(); }
+    const math::Quatf& quat() const noexcept { return q_; }
 
 private:
     std::unique_ptr<SDFNode> child_;
@@ -126,6 +134,10 @@ public:
         return std::make_unique<ScaleSDF>(child_->clone(), scale_);
     }
 
+    // Native-format serialization accessors.
+    const SDFNode* wrapped() const noexcept { return child_.get(); }
+    float scale() const noexcept { return scale_; }
+
 private:
     std::unique_ptr<SDFNode> child_;
     float inv_s_;
@@ -169,6 +181,10 @@ public:
     std::unique_ptr<SDFNode> clone() const override {
         return std::make_unique<TwistSDF>(child_->clone(), k_);
     }
+
+    // Native-format serialization accessors.
+    const SDFNode* wrapped() const noexcept { return child_.get(); }
+    float twist_k() const noexcept { return k_; }
 
 private:
     std::unique_ptr<SDFNode> child_;

@@ -1,0 +1,116 @@
+{
+  "format": "CAD_0 native",
+  "version": "0.1.0",
+  "scene": {
+    "next_id": 1e+01,
+    "nodes": [
+      {
+        "id": 7,
+        "name": "Primary sphere",
+        "visible": true,
+        "transform": {
+          "translation": [
+            0.25,
+            -1,
+            0.5
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "scale": 1
+        },
+        "builder": "sphere",
+        "params": {
+          "radius": 1.5
+        },
+        "body": {
+          "op": "sphere",
+          "radius": 1.5
+        }
+      },
+      {
+        "id": 9,
+        "name": "Composite",
+        "visible": false,
+        "transform": {
+          "translation": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0,
+            0
+          ],
+          "scale": 1
+        },
+        "body": {
+          "op": "scale",
+          "s": 1.25,
+          "child": {
+            "op": "twist",
+            "k": 0.05,
+            "child": {
+              "op": "smooth_min",
+              "a": {
+                "op": "union",
+                "children": [
+                  {
+                    "op": "subtract",
+                    "a": {
+                      "op": "box",
+                      "extent": [
+                        1,
+                        1,
+                        1
+                      ]
+                    },
+                    "b": {
+                      "op": "cylinder",
+                      "radius": 0.5,
+                      "height": 2
+                    }
+                  },
+                  {
+                    "op": "translate",
+                    "offset": [
+                      2,
+                      0,
+                      0
+                    ],
+                    "child": {
+                      "op": "torus",
+                      "R": 1,
+                      "r": 0.3
+                    }
+                  }
+                ]
+              },
+              "b": {
+                "op": "sphere",
+                "radius": 0.4
+              },
+              "k": 0.15
+            }
+          }
+        }
+      }
+    ]
+  },
+  "camera": {
+    "target": [
+      0.5,
+      0.25,
+      -0.75
+    ],
+    "distance": 8.25,
+    "yaw": 0.625,
+    "pitch": -0.125,
+    "fov_deg": 55
+  }
+}

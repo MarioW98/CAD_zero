@@ -21,6 +21,8 @@
 
 #include "CAD_0/sdf/field.hpp"
 #include "CAD_0/sdf/mesh_extract.hpp"
+#include "CAD_0/scene/scene.hpp"
+#include "CAD_0/io/native.hpp"
 #include "CAD_0/io/stl.hpp"
 #include "CAD_0/io/obj.hpp"
 #include "CAD_0/io/threemf.hpp"
@@ -30,6 +32,7 @@
 
 namespace nb = nanobind;
 using namespace CAD_0;
+namespace native = CAD_0::io::native;
 
 void bind_mesh(nb::module_& m) {
     // TriangleMesh and marching_cubes are exposed on the SDF submodule
@@ -106,6 +109,47 @@ void bind_mesh(nb::module_& m) {
         nb::arg("mesh"), nb::arg("tolerance"));
 }
 
+// ---- Native-format camera helpers (dict <-> NativeCamera) -------------------
+// Must be called with the GIL held (they touch Python objects).
+
+static native::NativeCamera native_camera_from_dict(const nb::dict& d) {
+    native::NativeCamera cam{};
+    auto get_number = [&](const char* key, float& out) {
+        if (!d.contains(key))
+            throw std::runtime_error(std::string("save_native: camera dict is "
+                                                 "missing key '") + key + "'");
+        const double v = nb::cast<double>(d[key]);
+        out = static_cast<float>(v);
+    };
+    if (!d.contains("target"))
+        throw std::runtime_error("save_native: camera dict is missing key 'target'");
+    nb::object tgt = d["target"];
+    if (!nb::isinstance<nb::tuple>(tgt) && !PySequence_Check(tgt.ptr()))
+        throw std::runtime_error("save_native: camera 'target' must be a 3-sequence");
+    if (nb::len(tgt) != 3)
+        throw std::runtime_error("save_native: camera 'target' must have 3 elements");
+    cam.target = math::Vec3f{
+        static_cast<float>(nb::cast<double>(tgt[0])),
+        static_cast<float>(nb::cast<double>(tgt[1])),
+        static_cast<float>(nb::cast<double>(tgt[2])),
+    };
+    get_number("distance", cam.distance);
+    get_number("yaw", cam.yaw);
+    get_number("pitch", cam.pitch);
+    get_number("fov_deg", cam.fov_deg);
+    return cam;
+}
+
+static nb::dict native_camera_to_dict(const native::NativeCamera& cam) {
+    nb::dict out;
+    out["target"] = nb::make_tuple(cam.target.x, cam.target.y, cam.target.z);
+    out["distance"] = cam.distance;
+    out["yaw"] = cam.yaw;
+    out["pitch"] = cam.pitch;
+    out["fov_deg"] = cam.fov_deg;
+    return out;
+}
+
 // IO bindings — exported to a separate io submodule.
 void bind_io(nb::module_& m) {
     auto io_mod = m.def_submodule("io", "Mesh export (STL / OBJ / 3MF)");
@@ -138,4 +182,62 @@ void bind_io(nb::module_& m) {
         },
         nb::arg("path"), nb::arg("mesh"),
         nb::arg("name") = "CAD_0", nb::arg("application") = "CAD_0");
+
+    // ---- Native project format (.CAD_0, ADR-0007) --------------------------
+    //
+    // save_native(path, scene, camera=None)
+    //   Serializes scene + camera to the native JSON format and writes it
+    //   ATOMICALLY (<path>.tmp + rename). Raises RuntimeError with an
+    //   explicit message on failure; the previous file is untouched.
+    //
+    // load_native(path, scene)
+    //   Transactional load: the document is fully parsed and validated
+    //   FIRST (with the GIL released), and the scene is only mutated if
+    //   everything succeeded — a failed load leaves the scene untouched.
+    //   NodeAdded/SceneCleared callbacks fire during install (GIL held).
+    //   Returns the saved camera as a dict:
+    //     {"target": (x, y, z), "distance": d, "yaw": y, "pitch": p,
+    //      "fov_deg": f}
+    //
+    // The camera dict mirrors the desktop app's orbit camera; fov is in
+    // degrees. Do NOT mutate the scene from other Python threads while a
+    // save is in flight (the GIL is released for the C++ write).
+
+    io_mod.attr("NATIVE_VERSION") = "0.1.0";
+
+    io_mod.def("save_native",
+        [](const std::string& path, const scene::Scene& s, nb::object camera) {
+            // Convert the camera dict with the GIL held, then release it
+            // for the pure-C++ serialize + atomic write.
+            native::NativeCamera cam{};
+            if (!camera.is_none()) {
+                if (!nb::isinstance<nb::dict>(camera))
+                    throw std::runtime_error(
+                        "save_native: 'camera' must be a dict or None");
+                const nb::dict d = nb::cast<nb::dict>(camera);
+                cam = native_camera_from_dict(d);
+            }
+            nb::gil_scoped_release release;
+            native::save_file(path, s, cam);
+        },
+        nb::arg("path"), nb::arg("scene"), nb::arg("camera") = nb::none());
+
+    io_mod.def("load_native",
+        [](const std::string& path, scene::Scene& s) {
+            native::NativeCamera cam;
+            {
+                // Phase 1 — parse + validate (pure C++, GIL released).
+                // Throws with an explicit message on any error; the
+                // scene is NOT touched in that case.
+                nb::gil_scoped_release release;
+                native::ParsedDocument doc = native::load_file(path);
+                cam = doc.camera;
+                // Phase 2 — re-acquire the GIL and commit (callbacks may
+                // call back into Python here, so the GIL must be held).
+                nb::gil_scoped_acquire acquire;
+                native::install_document(s, std::move(doc));
+            }
+            return native_camera_to_dict(cam);
+        },
+        nb::arg("path"), nb::arg("scene"));
 }

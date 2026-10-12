@@ -148,6 +148,10 @@ public:
     }
     std::unique_ptr<SDFNode> clone() const override { return std::make_unique<CylinderSDF>(*this); }
 
+    // Native-format serialization accessors.
+    float radius() const noexcept { return radius_; }
+    float height() const noexcept { return half_height_ * 2.0f; } // full height, as constructed
+
 private:
     float radius_;
     float half_height_;
@@ -178,6 +182,10 @@ public:
         return "torus(R=" + std::to_string(R_) + ",r=" + std::to_string(r_) + ")";
     }
     std::unique_ptr<SDFNode> clone() const override { return std::make_unique<TorusSDF>(*this); }
+
+    // Native-format serialization accessors.
+    float major_radius() const noexcept { return R_; }
+    float minor_radius() const noexcept { return r_; }
 
 private:
     float R_;
@@ -244,6 +252,10 @@ public:
     }
     std::unique_ptr<SDFNode> clone() const override { return std::make_unique<ConeSDF>(*this); }
 
+    // Native-format serialization accessors.
+    float base_radius() const noexcept { return r_; }
+    float height() const noexcept { return h_; }
+
 private:
     float r_;
     float h_;
@@ -283,6 +295,11 @@ public:
         return "capsule(r=" + std::to_string(r_) + ")";
     }
     std::unique_ptr<SDFNode> clone() const override { return std::make_unique<CapsuleSDF>(*this); }
+
+    // Native-format serialization accessors.
+    const math::Vec3f& point_a() const noexcept { return a_; }
+    const math::Vec3f& point_b() const noexcept { return b_; }
+    float radius() const noexcept { return r_; }
 
 private:
     math::Vec3f a_;

@@ -205,6 +205,36 @@ class ViewportWidget(QWidget):
             self._cam_pitch = 0.3
         self._request_update()
 
+    # ----- Project persistence (native .CAD_0 format) -----------------------
+
+    def camera_state(self) -> dict:
+        """Current camera as a dict for CAD_0.io.save()."""
+        return {
+            "target": tuple(self._cam_target),
+            "distance": self._cam_distance,
+            "yaw": self._cam_yaw,
+            "pitch": self._cam_pitch,
+            "fov_deg": self._cam_fov,
+        }
+
+    def apply_camera_state(self, cam: dict) -> None:
+        """Restore the camera from a dict produced by CAD_0.io.load()."""
+        try:
+            target = tuple(cam.get("target", (0.0, 0.0, 0.0)))
+            self.set_camera_target(
+                float(target[0]), float(target[1]), float(target[2]))
+            self.set_camera_distance(float(cam.get("distance", 5.0)))
+            self.set_camera_yaw_pitch(
+                float(cam.get("yaw", 0.0)), float(cam.get("pitch", 0.3)))
+            fov = float(cam.get("fov_deg", 45.0))
+            if 10.0 <= fov <= 120.0:
+                self._cam_fov = fov
+        except (TypeError, ValueError, IndexError):
+            # Malformed camera block: keep the current camera (the shapes
+            # are still valid — camera is a convenience, not geometry).
+            pass
+        self._request_update()
+
     def set_show_grid(self, show: bool) -> None:
         self._show_grid = show
         self._request_update()

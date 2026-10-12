@@ -106,6 +106,18 @@ print(result.values[:8])
 # Mesh extraction + export.
 mesh = CAD_0.sdf.marching_cubes(blended, resolution=64)
 CAD_0.io.export('output.stl', mesh)  # auto-detects format from extension
+
+# Native project format — save the whole scene (+ camera) atomically.
+scene = CAD_0.scene.Scene()
+scene.add_node("part", blended)
+CAD_0.io.save("project.CAD_0", scene,
+              camera={"target": (0, 0, 0), "distance": 8.0,
+                      "yaw": 0.5, "pitch": 0.3, "fov_deg": 45.0})
+
+# Transactional load: a corrupted or newer-version file raises with an
+# explicit message and leaves the target scene untouched.
+scene2 = CAD_0.scene.Scene()
+cam = CAD_0.io.load("project.CAD_0", scene2)
 ```
 
 ### Use the kernel from C++
@@ -132,6 +144,21 @@ int main() {
 ```
 
 ---
+
+### Save and open projects in the desktop app
+
+The File menu now has **Open…**, **Save** and **Save As** (`Ctrl+O`,
+`Ctrl+S`, `Ctrl+Shift+S`). Projects are stored in the native `.CAD_0`
+format (JSON, version `0.1.0` — see ADR-0007): the SDF feature tree,
+node parameters, transforms, visibility and the viewport camera all
+round-trip bit-exactly, so re-opened projects keep editing metadata.
+
+- **Atomic save** — writes `<file>.tmp` then renames; a crash never
+  destroys the previous file.
+- **Transactional load** — the document is fully validated before the
+  scene is touched; a corrupted file raises an explicit error.
+- **Dirty tracking** — any scene change flags the project; closing
+  prompts to save (Yes/No/Cancel). Undo history is reset on open.
 
 ## Repository layout
 

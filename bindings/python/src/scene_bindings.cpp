@@ -56,7 +56,35 @@ void bind_scene(nb::module_& m) {
         .def("rebuild_body", &scene::SceneNode::rebuild_body)
         .def("set_param", [](scene::SceneNode& n, const std::string& key, float v) {
             n.set_param(key, v);
-        }, nb::arg("key"), nb::arg("value"));
+        }, nb::arg("key"), nb::arg("value"))
+        // Builder tag + params — the editing metadata persisted by the
+        // native format (ADR-0007). `builder` names the registered
+        // NodeBuilder (e.g. "sphere"); `params` round-trips through
+        // save/load so the property panel keeps working after a reopen.
+        .def_rw("builder", &scene::SceneNode::builder)
+        .def_prop_ro("params", [](const scene::SceneNode& n) {
+            nb::dict out;
+            for (const auto& [key, value] : n.params) {
+                if (auto* f = std::get_if<float>(&value)) out[key.c_str()] = *f;
+                else if (auto* s = std::get_if<std::string>(&value)) out[key.c_str()] = *s;
+                else if (auto* b = std::get_if<bool>(&value)) out[key.c_str()] = *b;
+            }
+            return out;
+        })
+        .def("set_params", [](scene::SceneNode& n, const nb::dict& d) {
+            for (auto [k, v] : d) {
+                const std::string key = nb::cast<std::string>(k);
+                if (nb::isinstance<nb::float_>(v) || nb::isinstance<nb::int_>(v))
+                    n.params[key] = static_cast<float>(nb::cast<double>(v));
+                else if (nb::isinstance<nb::str>(v))
+                    n.params[key] = nb::cast<std::string>(v);
+                else if (nb::isinstance<nb::bool_>(v))
+                    n.params[key] = nb::cast<bool>(v);
+                else
+                    throw std::runtime_error("param \"" + key +
+                                             "\" must be number, string or bool");
+            }
+        }, nb::arg("params"));
 
     // Scene
     nb::class_<scene::Scene>(scene_mod, "Scene")
@@ -81,7 +109,28 @@ void bind_scene(nb::module_& m) {
         .def("node_count", &scene::Scene::node_count)
         .def("node_at", [](scene::Scene& s, std::size_t i) -> scene::SceneNode* {
             return s.node_at(i);
-        }, nb::arg("index"), nb::rv_policy::reference_internal);
+        }, nb::arg("index"), nb::rv_policy::reference_internal)
+        // ---- change notifications + native-format hooks ----
+        //
+        // set_change_callback(cb) installs a callable Scene(cb_kind, node_id).
+        // All Scene mutations fire it (NodeAdded/NodeRemoved/NodeModified/
+        // NodeVisibilityChanged/SceneCleared) — the UI uses it for its
+        // dirty flag. Pass None to detach (done on window close to break
+        // the Python↔C++ reference cycle).
+        //
+        // NOTE on thread-safety: callbacks fire from C++ while the GIL is
+        // held (all Scene methods are invoked with it held; the native
+        // loader re-acquires it before installing nodes), so calling back
+        // into Python here is safe.
+        .def("set_change_callback",
+             [](scene::Scene& s, std::function<void(scene::SceneChange, std::uint32_t)> cb) {
+                 // Passing None (accepted via .none()) yields an empty
+                 // std::function — i.e. detach. This breaks the Python↔C++
+                 // reference cycle when the window closes.
+                 s.set_change_callback(std::move(cb));
+             },
+             nb::arg("callback").none())
+        .def("next_id", &scene::Scene::next_id);
 
     // OrbitCamera — bind to Python so the viewport widget can use it
     auto cam_mod = m.def_submodule("camera", "Camera system");

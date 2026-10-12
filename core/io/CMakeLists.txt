@@ -4,12 +4,16 @@ set(CAD_0_IO_HEADERS
     include/CAD_0/io/stl.hpp
     include/CAD_0/io/obj.hpp
     include/CAD_0/io/threemf.hpp
+    include/CAD_0/io/json.hpp
+    include/CAD_0/io/native.hpp
 )
 
 set(CAD_0_IO_SOURCES
     src/stl.cpp
     src/obj.cpp
     src/threemf.cpp
+    src/json.cpp
+    src/native.cpp
 )
 
 add_library(CAD_0_io STATIC ${CAD_0_IO_SOURCES} ${CAD_0_IO_HEADERS})
@@ -17,6 +21,7 @@ add_library(CAD_0_io STATIC ${CAD_0_IO_SOURCES} ${CAD_0_IO_HEADERS})
 target_include_directories(CAD_0_io
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/core/scene/include
     PRIVATE
         ${CMAKE_BINARY_DIR}/include
         ${CMAKE_SOURCE_DIR}/core/math/include
@@ -28,6 +33,7 @@ target_link_libraries(CAD_0_io
     PUBLIC
         CAD_0_sdf
         CAD_0_math
+        CAD_0_geometry
 )
 
 target_compile_features(CAD_0_io PUBLIC cxx_std_20)

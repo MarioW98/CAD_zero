@@ -72,6 +72,18 @@ class MainWindow(QMainWindow):
         self._node_params = {}  # node_id → {param_name: value}
         self._node_types = {}   # node_id → "sphere"|"box"|"cylinder"|"torus"
 
+        # Project persistence (native .CAD_0 format, ADR-0007).
+        self._current_path: Optional[str] = None  # loaded/saved project path
+        self._dirty = False                        # unsaved-changes flag
+        self._loading = False                      # suppress dirty during load
+
+        # Dirty tracking via SceneChange notifications: every scene mutation
+        # (add/remove/param/visibility/clear) fires the C++ callback and
+        # flags the project as modified. The callback is detached in
+        # closeEvent() to break the Python↔C++ reference cycle.
+        if self._has_kernel:
+            self._scene.set_change_callback(self._on_scene_change)
+
         self._setup_central_widget()
         self._setup_dock_widgets()
         self._setup_menus()
@@ -121,6 +133,21 @@ class MainWindow(QMainWindow):
         new_action.setShortcut(QKeySequence.New)
         new_action.triggered.connect(self.on_new)
         file_menu.addAction(new_action)
+
+        open_action = QAction("&Open...", self)
+        open_action.setShortcut(QKeySequence.Open)
+        open_action.triggered.connect(self.on_open)
+        file_menu.addAction(open_action)
+
+        save_action = QAction("&Save", self)
+        save_action.setShortcut(QKeySequence.Save)
+        save_action.triggered.connect(self.on_save)
+        file_menu.addAction(save_action)
+
+        save_as_action = QAction("Save &As...", self)
+        save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        save_as_action.triggered.connect(self.on_save_as)
+        file_menu.addAction(save_as_action)
 
         file_menu.addSeparator()
 
@@ -228,14 +255,209 @@ class MainWindow(QMainWindow):
     # ----- Slots -----
 
     def on_new(self) -> None:
+        if not self._confirm_discard():
+            return
         if self._scene is not None:
             self._scene.clear()
         self._node_params.clear()
         self._node_types.clear()
         self._feature_tree.clear()
         self._property_panel.clear()
+        self._current_path = None
+        self._dirty = False
+        self._update_window_title()
         self._refresh_viewport()
         self._status.showMessage("New scene", 3000)
+
+    # ----- Project persistence (native .CAD_0 format, ADR-0007) -------------
+
+    def _on_scene_change(self, change, node_id) -> None:
+        """SceneChange callback — flags the project as modified."""
+        if self._loading:
+            return
+        self._mark_modified()
+
+    def _mark_modified(self) -> None:
+        if not self._dirty:
+            self._dirty = True
+            self._update_window_title()
+
+    def _update_window_title(self) -> None:
+        title = "CAD_0 — Phase C+ Desktop"
+        if self._current_path:
+            from pathlib import Path as _P
+            name = _P(self._current_path).name
+        else:
+            name = "Untitled"
+        self.setWindowTitle(f"{name}{' *' if self._dirty else ''} — {title}")
+
+    def _confirm_discard(self) -> bool:
+        """Ask the user what to do with unsaved changes. False = cancel."""
+        if not self._dirty:
+            return True
+        ret = QMessageBox.question(
+            self, "Unsaved changes",
+            "The project has unsaved changes.\nSave them before continuing?",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save)
+        if ret == QMessageBox.Save:
+            self.on_save()
+            return not self._dirty  # save was cancelled/failed
+        return ret == QMessageBox.Discard
+
+    def on_open(self) -> None:
+        """Open a .CAD_0 project (transactional: the current scene is only
+        replaced after the file parses cleanly)."""
+        if not self._has_kernel:
+            QMessageBox.warning(self, "No kernel", "C++ kernel not available.")
+            return
+        if not self._confirm_discard():
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open Project", "",
+            "CAD_0 Project (*.CAD_0);;All Files (*)")
+        if not path:
+            return
+        import CAD_0
+        import CAD_0.io as cad_io
+        # Transactional load: parse into a fresh scene; only on success do
+        # we swap it in. A corrupted/incompatible file raises RuntimeError
+        # with an explicit message and leaves everything untouched.
+        temp_scene = CAD_0.scene.Scene()
+        try:
+            cam = cad_io.load(path, temp_scene)
+        except (RuntimeError, ValueError, OSError) as exc:
+            QMessageBox.critical(
+                self, "Cannot open project",
+                f"Failed to open:\n{path}\n\n{exc}")
+            return
+        # Commit: swap scene + viewport, reset undo history (commands from
+        # the previous document are meaningless now), rebuild the UI.
+        if self._scene is not None:
+            self._scene.set_change_callback(None)  # detach old callback
+        self._scene = temp_scene
+        self._scene.set_change_callback(self._on_scene_change)
+        self._command_stack = CAD_0.commands.CommandStack(1000)
+        self._viewport.set_scene(self._scene)
+        self._rebuild_ui_from_scene()
+        if cam:
+            self._viewport.apply_camera_state(cam)
+        self._current_path = path
+        self._dirty = False
+        self._update_window_title()
+        self._status.showMessage(f"Opened {path} ({self._scene.size()} shapes)", 5000)
+
+    def on_save(self) -> None:
+        if not self._has_kernel:
+            QMessageBox.warning(self, "No kernel", "C++ kernel not available.")
+            return
+        if not self._current_path:
+            self.on_save_as()
+            return
+        self._do_save(self._current_path)
+
+    def on_save_as(self) -> None:
+        if not self._has_kernel:
+            QMessageBox.warning(self, "No kernel", "C++ kernel not available.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Project As", self._current_path or "untitled.CAD_0",
+            "CAD_0 Project (*.CAD_0);;All Files (*)")
+        if not path:
+            return
+        if not path.lower().endswith(".cad_0"):
+            path += ".CAD_0"
+        self._current_path = path
+        self._do_save(path)
+
+    def _do_save(self, path: str) -> None:
+        import CAD_0.io as cad_io
+        try:
+            # Atomic: C++ writes <path>.tmp then renames — a crash never
+            # destroys the previous file. Camera state is persisted too.
+            cad_io.save(path, self._scene, self._viewport.camera_state())
+        except (RuntimeError, OSError) as exc:
+            QMessageBox.critical(
+                self, "Cannot save project",
+                f"Failed to save:\n{path}\n\n{exc}")
+            return
+        self._dirty = False
+        self._update_window_title()
+        self._status.showMessage(f"Saved {path}", 4000)
+
+    def _rebuild_ui_from_scene(self) -> None:
+        """Rebuild feature tree + editing metadata from the (new) scene."""
+        self._node_params.clear()
+        self._node_types.clear()
+        self._feature_tree.clear()
+        self._property_panel.clear()
+        self._selected_node_id = None
+        if self._scene is None:
+            return
+        for i in range(self._scene.node_count()):
+            node = self._scene.node_at(i)
+            if node is None:
+                continue
+            item = QTreeWidgetItem([node.name, "SDF"])
+            item.setData(0, Qt.UserRole, node.id)
+            self._feature_tree.addTopLevelItem(item)
+            # Editing metadata survives the round-trip via the C++ node's
+            # `builder` tag + `params` map (persisted by the native format).
+            if node.builder:
+                self._node_types[node.id] = node.builder
+                params = dict(node.params)
+                if params:
+                    self._node_params[node.id] = params
+                else:
+                    self._make_default_params(node.builder, node.id)
+            else:
+                self._make_default_params(self._node_type_from_body(node), node.id)
+        self._refresh_viewport()
+
+    def _make_default_params(self, shape_type: Optional[str], node_id: int) -> None:
+        """Populate default params for a node we know how to edit."""
+        if not shape_type:
+            return
+        self._node_types[node_id] = shape_type
+        if shape_type == "sphere":
+            self._node_params[node_id] = {"radius": 1.0}
+        elif shape_type == "box":
+            self._node_params[node_id] = {"extent_x": 0.5, "extent_y": 0.5, "extent_z": 0.5}
+        elif shape_type == "cylinder":
+            self._node_params[node_id] = {"radius": 0.5, "height": 2.0}
+        elif shape_type == "torus":
+            self._node_params[node_id] = {"major_radius": 1.0, "minor_radius": 0.3}
+
+    def _node_type_from_body(self, node) -> Optional[str]:
+        """Best-effort shape type for a node without a builder tag."""
+        if node.builder:
+            return node.builder
+        return None
+
+    def closeEvent(self, event) -> None:
+        """Prompt for unsaved changes, then detach the scene callback."""
+        if self._dirty:
+            ret = QMessageBox.question(
+                self, "Unsaved changes",
+                "The project has unsaved changes.\nSave before closing?",
+                QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+                QMessageBox.Save)
+            if ret == QMessageBox.Save:
+                self.on_save()
+                if self._dirty:  # save was cancelled
+                    event.ignore()
+                    return
+            elif ret == QMessageBox.Cancel:
+                event.ignore()
+                return
+        # Break the Python↔C++ reference cycle (scene holds our bound
+        # method; we hold the scene).
+        if self._scene is not None:
+            try:
+                self._scene.set_change_callback(None)
+            except RuntimeError:
+                pass
+        event.accept()
 
     def _add_shape_to_scene(self, name: str, body) -> None:
         """Add an SDF body to the scene and update the UI."""
@@ -292,6 +514,12 @@ class MainWindow(QMainWindow):
         def execute():
             body = self._make_body(shape_type, params)
             nid = self._scene.add_node(name, body)
+            # Persist the editing metadata on the C++ node too, so the
+            # native save format round-trips it (ADR-0007 builder tag).
+            node = self._scene.get_node(nid)
+            if node is not None:
+                node.builder = shape_type
+                node.set_params({k: float(v) for k, v in params.items()})
             self._node_params[nid] = dict(params)
             self._node_types[nid] = shape_type
             item = QTreeWidgetItem([name, "SDF"])
@@ -378,6 +606,12 @@ class MainWindow(QMainWindow):
         if node:
             node.body = body
             node.mesh_dirty = True
+            # Keep the C++ node's params in sync so the native save format
+            # captures the edited values (round-trips through save/load).
+            if shape_type:
+                node.builder = shape_type
+                node.set_params(
+                    {k: float(v) for k, v in params.items()})
             self._refresh_viewport()
 
     def _on_export(self, format_name: str) -> None:
@@ -600,6 +834,9 @@ class MainWindow(QMainWindow):
         def execute():
             self._node_params[node_id][name] = value
             self._rebuild_node(node_id)
+            # node.body assignment bypasses Scene-level notifications, so
+            # the dirty flag is marked here explicitly.
+            self._mark_modified()
 
         def undo():
             self._node_params[node_id][name] = old_value

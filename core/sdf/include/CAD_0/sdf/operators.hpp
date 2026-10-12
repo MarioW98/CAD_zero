@@ -34,6 +34,12 @@ public:
         if (b) children_.push_back(std::move(b));
     }
 
+    // N-ary construction (used by native-format deserialization to rebuild
+    // a flattened union exactly as it was saved; min-union is associative
+    // so this is semantically identical to folding pairs).
+    explicit UnionSDF(std::vector<std::unique_ptr<SDFNode>> children)
+        : children_(std::move(children)) {}
+
     SDFSample sample(const math::Vec3f& p) const noexcept override {
         if (children_.empty()) return SDFSample{1e30f, {}};
         auto r = children_[0]->sample(p);
@@ -75,10 +81,11 @@ public:
         std::vector<std::unique_ptr<SDFNode>> cs;
         cs.reserve(children_.size());
         for (const auto& c : children_) cs.push_back(c->clone());
-        auto out = std::make_unique<UnionSDF>(nullptr, nullptr);
-        out->children_ = std::move(cs);
-        return out;
+        return std::make_unique<UnionSDF>(std::move(cs)); // deep copy via N-ary ctor
     }
+
+    // Native-format serialization accessors.
+    const std::vector<std::unique_ptr<SDFNode>>& children() const noexcept { return children_; }
 
 private:
     std::vector<std::unique_ptr<SDFNode>> children_;
@@ -123,6 +130,10 @@ public:
     std::unique_ptr<SDFNode> clone() const override {
         return std::make_unique<IntersectionSDF>(a_->clone(), b_->clone());
     }
+
+    // Native-format serialization accessors.
+    const SDFNode* child_a() const noexcept { return a_.get(); }
+    const SDFNode* child_b() const noexcept { return b_.get(); }
 
 private:
     std::unique_ptr<SDFNode> a_;
@@ -182,6 +193,10 @@ public:
     std::unique_ptr<SDFNode> clone() const override {
         return std::make_unique<SubtractionSDF>(a_->clone(), b_->clone());
     }
+
+    // Native-format serialization accessors.
+    const SDFNode* child_a() const noexcept { return a_.get(); }
+    const SDFNode* child_b() const noexcept { return b_.get(); }
 
 private:
     std::unique_ptr<SDFNode> a_;
@@ -309,6 +324,11 @@ public:
     std::unique_ptr<SDFNode> clone() const override {
         return std::make_unique<SmoothMinSDF>(a_->clone(), b_->clone(), k_);
     }
+
+    // Native-format serialization accessors.
+    const SDFNode* child_a() const noexcept { return a_.get(); }
+    const SDFNode* child_b() const noexcept { return b_.get(); }
+    float blend_k() const noexcept { return k_; }
 
 private:
     std::unique_ptr<SDFNode> a_, b_;

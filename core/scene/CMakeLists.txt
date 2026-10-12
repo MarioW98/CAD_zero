@@ -14,7 +14,9 @@ target_link_libraries(CAD_0_scene INTERFACE
     CAD_0_math
     CAD_0_geometry
     CAD_0_sdf
-    CAD_0_io
+    # NOTE: scene is header-only and does NOT include io headers. The old
+    # CAD_0_io link here was vestigial and created a dependency cycle with
+    # io/native.cpp (which serializes scenes) — removed.
 )
 
 target_compile_features(CAD_0_scene INTERFACE cxx_std_20)

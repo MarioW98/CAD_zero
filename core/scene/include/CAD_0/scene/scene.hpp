@@ -43,6 +43,12 @@ struct SceneNode {
     ShapeFactory factory;
     std::map<std::string, ParamValue> params;
 
+    // Name of the registered NodeBuilder that created this node (e.g.
+    // "sphere"), persisted by the native format so a saved project
+    // round-trips its editing metadata. Empty for non-parametric nodes.
+    // See ADR-0007 / io/native.hpp.
+    std::string builder;
+
     // Rebuild the SDF body from the factory + current params.
     void rebuild_body() {
         if (factory) {
@@ -149,6 +155,30 @@ public:
     const std::vector<SceneNode>& nodes() const noexcept { return nodes_; }
     std::size_t size() const noexcept { return nodes_.size(); }
     bool empty() const noexcept { return nodes_.empty(); }
+
+    // ---- Deserialization support (ADR-0007 / native format) ----
+
+    // Install a fully-formed node during deserialization, keeping its
+    // original id. next_id_ is bumped past the restored id. Fires a
+    // NodeAdded notification like add_node() so the UI stays in sync.
+    void restore_node(SceneNode node) {
+        const std::uint32_t id = node.id;
+        nodes_.push_back(std::move(node));
+        if (next_id_ <= id) next_id_ = id + 1;
+        notify(SceneChange::NodeAdded, id);
+    }
+
+    // Next id that add_node() will hand out. Persisted by the native
+    // format so ids keep growing monotonically across save/load.
+    std::uint32_t next_id() const noexcept { return next_id_; }
+
+    // Set the next id (post-load). Clamped so it never collides with an
+    // existing node id.
+    void set_next_id(std::uint32_t next) {
+        for (const auto& n : nodes_)
+            if (next <= n.id) next = n.id + 1;
+        next_id_ = next;
+    }
 
     // Index-based access (for Python bindings — avoids vector copy issues
     // since SceneNode contains move-only SDFBody).
