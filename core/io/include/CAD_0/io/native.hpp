@@ -106,7 +106,10 @@ std::string serialize_document(const scene::Scene& s, const NativeCamera& cam);
 // touches a Scene; throws std::runtime_error with explicit messages.
 struct ParsedDocument {
     NativeVersion version{};
-    std::vector<scene::SceneNode> nodes; // fully formed (id, body, transform, params, builder)
+    // Fully formed (id, body, transform, params, builder) — and, for
+    // nodes with a recognized builder tag, a re-wired parametric factory
+    // so post-load editing rebuilds the body (set_param semantics).
+    std::vector<scene::SceneNode> nodes;
     std::uint32_t next_id{1};
     NativeCamera camera{};
 };

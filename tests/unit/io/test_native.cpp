@@ -367,4 +367,233 @@ TEST_CASE("json writer: deterministic, insertion-ordered output") {
     CHECK(back == f);
 }
 
+// ---- post-load parametric editing (factory re-wiring) -----------------------
+//
+// Diagnostic for the suspected bug: SceneNode::factory is a std::function
+// and cannot be serialized. After a load it was EMPTY, so set_node_param()
+// on a loaded node updated `params` but silently did NOT rebuild the body
+// (rebuild_body() no-ops without a factory) and did not re-flag
+// mesh_dirty. The UI hides this by rebuilding bodies in Python, but the
+// kernel contract is that set_param rebuilds the body — the UI is a
+// client of the kernel, not the only place editing may work.
+//
+// The fix re-wires a parametric ShapeFactory on every loaded node that
+// carries a recognized `builder` tag (sphere/box/cylinder/torus — the
+// same tags + param names the UI persists). These tests pin the contract:
+//   * a loaded node with a known builder tag is fully editable;
+//   * a node without a builder tag (or an unknown one) stays
+//     non-parametric: it still loads and round-trips its body, but
+//     set_param only updates the stored params.
+//
+// The source scenes below are built exactly the way the desktop app
+// builds them (add_node + builder tag + params, no factory) so the saved
+// file is byte-identical to a real user project.
+
+namespace {
+
+// Radius of a sphere body, read back through the JSON serializer.
+float serialized_radius(const sdf::SDFBody& body) {
+    const auto v = native::serialize_node(*body.root());
+    return static_cast<float>(v.at("radius").as_number());
+}
+
+} // namespace
+
+TEST_CASE("post-load param edit: set_node_param rebuilds body + flags mesh_dirty") {
+    // Scene as the app saves it: builder tag + params, factory never set.
+    scene::Scene s;
+    {
+        scene::SceneNode n;
+        n.id = 4;
+        n.name = "Sphere";
+        n.builder = "sphere";
+        n.params = {{"radius", 1.5f}};
+        n.body = sdf::make_sphere(1.5f);
+        s.restore_node(std::move(n));
+    }
+    s.set_next_id(5);
+
+    std::filesystem::path tmp_dir = std::filesystem::temp_directory_path();
+    tmp_dir /= "cad0_test_native_edit";
+    std::filesystem::create_directories(tmp_dir);
+    const std::filesystem::path path = tmp_dir / "sphere.CAD_0";
+    native::save_file(path, s, native::NativeCamera{});
+
+    scene::Scene loaded;
+    native::install_document(loaded, native::load_file(path));
+
+    scene::SceneNode* n = loaded.get_node_mut(4);
+    REQUIRE(n != nullptr);
+
+    // The viewport consumes the post-load dirty flag on first paint.
+    loaded.update_meshes(8);
+    REQUIRE(n->mesh_dirty == false);
+
+    const auto before = sample_grid(n->body, 7);
+    REQUIRE(serialized_radius(n->body) == 1.5f);
+
+    // The kernel-level edit the property panel relies on conceptually.
+    loaded.set_node_param(4, "radius", 3.0f);
+
+    // (a) params were updated...
+    CHECK(n->params.at("radius") == scene::ParamValue{3.0f});
+    // (b) the BODY was rebuilt from them (the actual bug)...
+    const auto after = sample_grid(n->body, 7);
+    CHECK(before != after);
+    CHECK(serialized_radius(n->body) == 3.0f);
+    const auto expected = sample_grid(sdf::make_sphere(3.0f), 7);
+    CHECK(after == expected); // bit-identical to a fresh sphere(3.0)
+    // (c) ...and re-tessellation was flagged.
+    CHECK(n->mesh_dirty == true);
+
+    // The edit persists across another save/load cycle.
+    native::save_file(path, loaded, native::NativeCamera{});
+    scene::Scene reloaded;
+    native::install_document(reloaded, native::load_file(path));
+    CHECK(reloaded.get_node(4)->params.at("radius") == scene::ParamValue{3.0f});
+    CHECK(serialized_radius(reloaded.get_node(4)->body) == 3.0f);
+
+    std::error_code ec;
+    std::filesystem::remove_all(tmp_dir, ec);
+}
+
+TEST_CASE("post-load param edit: every UI builder tag re-wires its factory") {
+    struct EditCase {
+        const char* builder;
+        std::map<std::string, scene::ParamValue> params;
+        std::string edit_key;
+        float edit_value;
+        sdf::SDFBody before;
+        sdf::SDFBody expected_after;
+    };
+
+    std::vector<EditCase> cases;
+    cases.push_back({"sphere", {{"radius", 1.5f}}, "radius", 3.0f,
+                     sdf::make_sphere(1.5f), sdf::make_sphere(3.0f)});
+    cases.push_back({"box", {{"extent_x", 0.5f}, {"extent_y", 0.5f}, {"extent_z", 0.5f}},
+                     "extent_y", 1.25f,
+                     sdf::make_box(math::Vec3f{0.5f, 0.5f, 0.5f}),
+                     sdf::make_box(math::Vec3f{0.5f, 1.25f, 0.5f})});
+    cases.push_back({"cylinder", {{"radius", 0.5f}, {"height", 2.0f}},
+                     "height", 4.0f,
+                     sdf::make_cylinder(0.5f, 2.0f),
+                     sdf::make_cylinder(0.5f, 4.0f)});
+    cases.push_back({"torus", {{"major_radius", 1.0f}, {"minor_radius", 0.3f}},
+                     "major_radius", 2.0f,
+                     sdf::make_torus(1.0f, 0.3f),
+                     sdf::make_torus(2.0f, 0.3f)});
+
+    std::filesystem::path tmp_dir = std::filesystem::temp_directory_path();
+    tmp_dir /= "cad0_test_native_edit_all";
+    std::filesystem::create_directories(tmp_dir);
+
+    for (const auto& c : cases) {
+        CAPTURE(c.builder);
+
+        scene::Scene s;
+        {
+            scene::SceneNode n;
+            n.id = 1;
+            n.name = c.builder;
+            n.builder = c.builder;
+            n.params = c.params;
+            n.body = c.before;
+            s.restore_node(std::move(n));
+        }
+        s.set_next_id(2);
+
+        const std::filesystem::path path = tmp_dir / (std::string(c.builder) + ".CAD_0");
+        native::save_file(path, s, native::NativeCamera{});
+
+        scene::Scene loaded;
+        native::install_document(loaded, native::load_file(path));
+        loaded.update_meshes(8); // consume the post-load dirty flag
+        scene::SceneNode* n = loaded.get_node_mut(1);
+        REQUIRE(n != nullptr);
+        REQUIRE(n->mesh_dirty == false);
+
+        loaded.set_node_param(1, c.edit_key, c.edit_value);
+
+        // Body rebuilt to exactly the expected primitive.
+        const auto got = sample_grid(n->body, 7);
+        const auto want = sample_grid(c.expected_after, 7);
+        CHECK(got == want);
+        CHECK(sample_grid(c.before, 7) != got);
+        CHECK(n->mesh_dirty == true);
+    }
+
+    std::error_code ec;
+    std::filesystem::remove_all(tmp_dir, ec);
+}
+
+TEST_CASE("post-load param edit: nodes without a builder tag stay non-parametric") {
+    // A composite body (no builder tag) — set_param updates the stored
+    // params only; the body and the tessellation state are untouched.
+    scene::Scene s;
+    {
+        scene::SceneNode n;
+        n.id = 2;
+        n.name = "Composite";
+        n.body = sdf::sdf_subtract(sdf::make_box(math::Vec3f{1.0f, 1.0f, 1.0f}),
+                                   sdf::make_sphere(0.75f));
+        s.restore_node(std::move(n));
+    }
+    s.set_next_id(3);
+
+    std::filesystem::path tmp_dir = std::filesystem::temp_directory_path();
+    tmp_dir /= "cad0_test_native_edit_composite";
+    std::filesystem::create_directories(tmp_dir);
+    const std::filesystem::path path = tmp_dir / "composite.CAD_0";
+    native::save_file(path, s, native::NativeCamera{});
+
+    scene::Scene loaded;
+    native::install_document(loaded, native::load_file(path));
+    loaded.update_meshes(8);
+    scene::SceneNode* n = loaded.get_node_mut(2);
+    REQUIRE(n != nullptr);
+    REQUIRE(n->mesh_dirty == false);
+
+    const auto before = sample_grid(n->body, 7);
+
+    loaded.set_node_param(2, "radius", 3.0f); // no factory → params only
+
+    CHECK(n->params.at("radius") == scene::ParamValue{3.0f});
+    CHECK(sample_grid(n->body, 7) == before); // body untouched
+    CHECK(n->mesh_dirty == false);            // no spurious re-tessellation
+
+    std::error_code ec;
+    std::filesystem::remove_all(tmp_dir, ec);
+}
+
+TEST_CASE("post-load param edit: unknown builder tag loads but is non-parametric") {
+    // A file written by a newer CAD_0 with a builder this build does not
+    // know: PATCH-compatible per ADR-0007 — the body still round-trips,
+    // the node is simply not parametrically editable.
+    const std::string doc = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.1.0",
+      "scene": { "next_id": 2, "nodes": [ {
+        "id": 1, "name": "FromTheFuture", "builder": "metaball",
+        "params": { "radius": 1.5 },
+        "body": { "op": "sphere", "radius": 1.5 }
+      } ] }
+    })JSON";
+
+    scene::Scene loaded;
+    native::install_document(loaded, native::parse_document(doc));
+    loaded.update_meshes(8);
+    scene::SceneNode* n = loaded.get_node_mut(1);
+    REQUIRE(n != nullptr);
+    REQUIRE(n->mesh_dirty == false);
+    const auto before = sample_grid(n->body, 7);
+
+    loaded.set_node_param(1, "radius", 3.0f);
+
+    CHECK(sample_grid(n->body, 7) == before); // no factory, no rebuild
+    CHECK(n->mesh_dirty == false);
+    // Body + params still round-trip (re-serialization is stable).
+    CHECK(serialized_radius(n->body) == 1.5f);
+    CHECK(n->params.at("radius") == scene::ParamValue{3.0f});
+}
+
 } // TEST_SUITE

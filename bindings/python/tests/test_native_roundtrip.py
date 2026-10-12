@@ -183,3 +183,128 @@ def test_scene_change_callback_roundtrip():
     scene.set_change_callback(None)
     scene.add_node("y", sdf_mod.sphere(1.0))
     assert len(events) == 1
+
+
+# ---- post-load parametric editing (factory re-wiring) ------------------------
+#
+# Diagnostic for the suspected bug: after load, SceneNode::factory was empty
+# (a std::function cannot be serialized), so Scene.set_node_param() updated
+# the stored params but silently did NOT rebuild the body nor flag
+# mesh_dirty. The desktop UI hides this by rebuilding bodies in Python
+# (main_window._rebuild_node) — the tests below pin BOTH paths so the
+# kernel contract and the UI path stay correct.
+
+
+def _save_ui_shaped_project(path) -> int:
+    """Save a project exactly the way the desktop app does: add_node +
+    builder tag + params (no factory — the UI never sets one)."""
+    scene = scene_mod.Scene()
+    nid = scene.add_node("part", sdf_mod.sphere(1.5))
+    node = scene.get_node(nid)
+    node.builder = "sphere"
+    node.set_params({"radius": 1.5})
+    CAD_0.io.save(path, scene)
+    return nid
+
+
+def test_kernel_param_edit_after_load():
+    # FAILS without the factory re-wiring fix in the native loader.
+    path = Path(tempfile.mkdtemp(prefix="cad0_edit_")) / "proj.CAD_0"
+    nid = _save_ui_shaped_project(path)
+
+    loaded = scene_mod.Scene()
+    CAD_0.io.load(path, loaded)
+
+    # The viewport consumes the post-load dirty flag on first paint.
+    loaded.update_meshes(16)
+    node = loaded.node_at(0)
+    assert node.mesh_dirty is False
+
+    # Kernel-level edit (what Scene.set_node_param documents).
+    loaded.set_node_param(nid, "radius", 3.0)
+
+    assert node.mesh_dirty is True  # re-tessellation flagged
+    assert dict(node.params) == {"radius": 3.0}
+    # Body rebuilt bit-exactly from the new params.
+    expected = sdf_mod.sphere(3.0)
+    for p in (CAD_0.math.Vec3f(0, 0, 0), CAD_0.math.Vec3f(1.4, -0.2, 0.7),
+              CAD_0.math.Vec3f(-1.5, 1.5, 1.5)):
+        assert node.body.value(p) == expected.value(p)
+    assert node.body.bounds().max.x == pytest.approx(3.0)
+
+    # The re-tessellated mesh actually follows the edit.
+    loaded.update_meshes(16)
+    assert node.cached_mesh.vertex_count() > 0
+    # Every vertex of sphere(3) mesh lies inside the radius-3 ball.
+    import numpy as np
+    assert float(np.abs(node.cached_mesh.positions).max()) <= 3.0 + 1e-3
+    assert float(np.abs(node.cached_mesh.positions).max()) > 2.0  # grew vs r=1.5
+
+
+def test_kernel_param_edit_survives_resave():
+    path = Path(tempfile.mkdtemp(prefix="cad0_edit2_")) / "proj.CAD_0"
+    nid = _save_ui_shaped_project(path)
+
+    loaded = scene_mod.Scene()
+    CAD_0.io.load(path, loaded)
+    loaded.set_node_param(nid, "radius", 3.0)
+    CAD_0.io.save(path, loaded)
+
+    again = scene_mod.Scene()
+    CAD_0.io.load(path, again)
+    node = again.node_at(0)
+    assert dict(node.params) == {"radius": 3.0}
+    expected = sdf_mod.sphere(3.0)
+    p = CAD_0.math.Vec3f(0.7, -0.3, 0.9)
+    assert node.body.value(p) == expected.value(p)
+
+
+def test_ui_path_param_edit_after_load():
+    # The exact API sequence main_window._rebuild_node() uses — the UI
+    # compensation path. Must keep working alongside the kernel fix.
+    path = Path(tempfile.mkdtemp(prefix="cad0_edit3_")) / "proj.CAD_0"
+    nid = _save_ui_shaped_project(path)
+
+    loaded = scene_mod.Scene()
+    CAD_0.io.load(path, loaded)
+    loaded.update_meshes(16)
+    node = loaded.node_at(0)
+    assert node.mesh_dirty is False
+
+    # UI editing path: rebuild in Python, assign, sync metadata.
+    node.body = sdf_mod.sphere(3.0)  # binding setter flags mesh_dirty
+    node.mesh_dirty = True
+    node.builder = "sphere"
+    node.set_params({"radius": 3.0})
+
+    assert node.mesh_dirty is True
+    loaded.update_meshes(16)
+    assert node.cached_mesh.vertex_count() > 0
+    expected = sdf_mod.sphere(3.0)
+    p = CAD_0.math.Vec3f(1.4, -0.2, 0.7)
+    assert node.body.value(p) == expected.value(p)
+
+
+def test_no_builder_tag_node_is_non_parametric_after_load():
+    # Composite body (no builder tag): loads + round-trips, but
+    # set_node_param updates the stored params only.
+    body = sdf_mod.subtract(sdf_mod.box(CAD_0.math.Vec3f(1, 1, 1)),
+                            sdf_mod.sphere(0.75))
+    scene = scene_mod.Scene()
+    scene.add_node("composite", body)
+    path = Path(tempfile.mkdtemp(prefix="cad0_edit4_")) / "c.CAD_0"
+    CAD_0.io.save(path, scene)
+
+    loaded = scene_mod.Scene()
+    CAD_0.io.load(path, loaded)
+    loaded.update_meshes(16)
+    node = loaded.node_at(0)
+    assert node.mesh_dirty is False
+
+    p = CAD_0.math.Vec3f(0.5, 0.5, 0.5)
+    before = node.body.value(p)
+    loaded.set_node_param(1, "radius", 3.0)
+
+    assert node.body.value(p) == before  # body untouched
+    assert node.mesh_dirty is False      # no spurious re-tessellation
+    assert dict(node.params) == {"radius": 3.0}
