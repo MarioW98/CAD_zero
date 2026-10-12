@@ -8,6 +8,7 @@
 #include <nanobind/stl/unique_ptr.h>
 
 #include "CAD_0/scene/scene.hpp"
+#include "CAD_0/scene/builders.hpp"
 #include "CAD_0/viewport/camera.hpp"
 #include "CAD_0/viewport/command_stack.hpp"
 #include "CAD_0/sdf/primitives.hpp"
@@ -85,6 +86,79 @@ void bind_scene(nb::module_& m) {
                                              "\" must be number, string or bool");
             }
         }, nb::arg("params"));
+
+    // ---- Parametric builder registry (single source of truth) -----------
+    //
+    // core/scene/builders.hpp defines the builders (tags, param schemas,
+    // defaults, body construction) ONCE; these bindings expose the
+    // registry so the desktop UI consumes only the kernel API:
+    //   builder_tags()   -> ["sphere", "box", ...] (Create-menu order)
+    //   builder_specs()  -> [{"tag", "display_name", "params": {name: default}}]
+    //   default_params(tag) -> {name: default}   (RuntimeError on unknown tag)
+    //   make_body(tag, params) -> SDFBody        (RuntimeError on unknown tag;
+    //                                              missing keys fall back to
+    //                                              the table defaults)
+    //   has_builder(tag) -> bool
+    // The unknown-tag contract is deliberately different from the load
+    // path: loading a file with an unknown builder tag stays tolerant
+    // (non-parametric but loadable, ADR-0007 PATCH compatibility), while
+    // asking the registry to BUILD one is a programming error and fails
+    // loudly on both sides.
+    scene_mod.def("builder_tags", []() {
+        nb::list out;
+        for (const auto& tag : scene::builder_tags()) out.append(tag);
+        return out;
+    });
+
+    scene_mod.def("builder_specs", []() {
+        nb::list out;
+        for (const auto& spec : scene::builder_registry()) {
+            nb::dict d;
+            d["tag"] = spec.tag;
+            d["display_name"] = spec.display_name;
+            nb::dict params;
+            for (const auto& p : spec.params) params[p.name.c_str()] = p.default_value;
+            d["params"] = params;
+            out.append(d);
+        }
+        return out;
+    });
+
+    scene_mod.def("default_params", [](const std::string& tag) {
+        nb::dict out;
+        for (const auto& [key, value] : scene::default_params(tag)) {
+            if (auto* f = std::get_if<float>(&value)) out[key.c_str()] = *f;
+            else if (auto* s = std::get_if<std::string>(&value)) out[key.c_str()] = *s;
+            else if (auto* b = std::get_if<bool>(&value)) out[key.c_str()] = *b;
+        }
+        return out;
+    }, nb::arg("tag"),
+       "Default parameters for a registered builder. Raises RuntimeError "
+       "for an unknown tag.");
+
+    scene_mod.def("make_body", [](const std::string& tag, const nb::dict& params) {
+        std::map<std::string, scene::ParamValue> p;
+        for (auto [k, v] : params) {
+            const std::string key = nb::cast<std::string>(k);
+            if (nb::isinstance<nb::float_>(v) || nb::isinstance<nb::int_>(v))
+                p[key] = static_cast<float>(nb::cast<double>(v));
+            else if (nb::isinstance<nb::str>(v))
+                p[key] = nb::cast<std::string>(v);
+            else if (nb::isinstance<nb::bool_>(v))
+                p[key] = nb::cast<bool>(v);
+            else
+                throw std::runtime_error("param \"" + key +
+                                         "\" must be number, string or bool");
+        }
+        return scene::make_body(tag, p); // throws for an unknown tag
+    }, nb::arg("tag"), nb::arg("params"),
+       "Build an SDFBody from a builder tag + params dict. Missing keys "
+       "fall back to the registry defaults. Raises RuntimeError for an "
+       "unknown tag.");
+
+    scene_mod.def("has_builder", [](const std::string& tag) {
+        return scene::find_builder(tag) != nullptr;
+    }, nb::arg("tag"));
 
     // Scene
     nb::class_<scene::Scene>(scene_mod, "Scene")

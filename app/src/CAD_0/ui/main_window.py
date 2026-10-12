@@ -171,23 +171,19 @@ class MainWindow(QMainWindow):
         file_menu.addAction(quit_action)
 
         # ----- Create menu -----
+        # Registry-driven: the actions come from the kernel's builder
+        # registry (CAD_0.scene.builder_specs — single source of truth),
+        # so adding a builder in C++ automatically shows up here. Without
+        # the kernel the menu stays empty (a warning is already shown).
         create_menu = self.menuBar().addMenu("&Create")
-
-        create_sphere = QAction("Create &Sphere", self)
-        create_sphere.triggered.connect(self.on_create_sphere)
-        create_menu.addAction(create_sphere)
-
-        create_box = QAction("Create &Box", self)
-        create_box.triggered.connect(self.on_create_box)
-        create_menu.addAction(create_box)
-
-        create_cylinder = QAction("Create &Cylinder", self)
-        create_cylinder.triggered.connect(self.on_create_cylinder)
-        create_menu.addAction(create_cylinder)
-
-        create_torus = QAction("Create &Torus", self)
-        create_torus.triggered.connect(self.on_create_torus)
-        create_menu.addAction(create_torus)
+        if self._has_kernel:
+            import CAD_0
+            for builder_spec in CAD_0.scene.builder_specs():
+                tag = builder_spec["tag"]
+                action = QAction(f"Create &{builder_spec['display_name']}", self)
+                action.triggered.connect(
+                    lambda checked, t=tag: self._create_registered(t))
+                create_menu.addAction(action)
 
         # ----- Edit menu -----
         edit_menu = self.menuBar().addMenu("&Edit")
@@ -415,18 +411,23 @@ class MainWindow(QMainWindow):
         self._refresh_viewport()
 
     def _make_default_params(self, shape_type: Optional[str], node_id: int) -> None:
-        """Populate default params for a node we know how to edit."""
+        """Populate default params for a node we know how to edit.
+
+        The parameter table lives in the kernel's builder registry
+        (CAD_0.scene.default_params — the single source of truth; the UI
+        keeps NO hardcoded copy). An unknown builder tag degrades to a
+        non-parametric node, mirroring the kernel's tolerant load
+        contract (ADR-0007 PATCH compatibility).
+        """
+        import CAD_0
         if not shape_type:
             return
         self._node_types[node_id] = shape_type
-        if shape_type == "sphere":
-            self._node_params[node_id] = {"radius": 1.0}
-        elif shape_type == "box":
-            self._node_params[node_id] = {"extent_x": 0.5, "extent_y": 0.5, "extent_z": 0.5}
-        elif shape_type == "cylinder":
-            self._node_params[node_id] = {"radius": 0.5, "height": 2.0}
-        elif shape_type == "torus":
-            self._node_params[node_id] = {"major_radius": 1.0, "minor_radius": 0.3}
+        try:
+            self._node_params[node_id] = dict(
+                CAD_0.scene.default_params(shape_type))
+        except RuntimeError:
+            pass  # unknown builder tag: loadable, just not parametric
 
     def _node_type_from_body(self, node) -> Optional[str]:
         """Best-effort shape type for a node without a builder tag."""
@@ -477,28 +478,33 @@ class MainWindow(QMainWindow):
         self._viewport._refresh_meshes()
 
     def _make_body(self, shape_type: str, params: dict):
-        """Build an SDF body from a shape_type + params dict."""
+        """Build an SDF body from a shape_type + params dict.
+
+        Delegates to the kernel's builder registry (CAD_0.scene.make_body
+        — the single source of truth). Unknown tags raise RuntimeError
+        with an explicit message naming the tag.
+        """
         import CAD_0
-        if shape_type == "sphere":
-            return CAD_0.sdf.sphere(radius=params.get("radius", 1.0))
-        if shape_type == "box":
-            return CAD_0.sdf.box(CAD_0.math.Vec3f(
-                params.get("extent_x", 0.5),
-                params.get("extent_y", 0.5),
-                params.get("extent_z", 0.5)))
-        if shape_type == "cylinder":
-            return CAD_0.sdf.cylinder(
-                radius=params.get("radius", 0.5),
-                height=params.get("height", 2.0))
-        if shape_type == "torus":
-            return CAD_0.sdf.torus(
-                R=params.get("major_radius", 1.0),
-                r=params.get("minor_radius", 0.3))
-        raise ValueError(f"unknown shape type: {shape_type}")
+        return CAD_0.scene.make_body(
+            shape_type, {k: float(v) for k, v in params.items()})
 
     def _shape_display_name(self, shape_type: str) -> str:
-        return {"sphere": "Sphere", "box": "Box",
-                "cylinder": "Cylinder", "torus": "Torus"}.get(shape_type, shape_type)
+        """UI label for a builder tag, from the kernel registry."""
+        import CAD_0
+        for builder_spec in CAD_0.scene.builder_specs():
+            if builder_spec["tag"] == shape_type:
+                return builder_spec["display_name"]
+        return shape_type
+
+    def _create_registered(self, shape_type: str) -> None:
+        """Create a shape from the kernel registry's default params."""
+        import CAD_0
+        if not self._has_kernel:
+            return
+        params = dict(CAD_0.scene.default_params(shape_type))
+        self._push_create_command(shape_type, params)
+        self._status.showMessage(
+            f"Created {self._shape_display_name(shape_type)}", 3000)
 
     def _push_create_command(self, shape_type: str, params: dict) -> None:
         """Push a fully-functional undoable 'create shape' command.
@@ -550,58 +556,32 @@ class MainWindow(QMainWindow):
             execute()
 
     def on_create_sphere(self) -> None:
-        if not self._has_kernel:
-            return
-        params = {"radius": 1.0}
-        self._push_create_command("sphere", params)
-        self._status.showMessage("Created Sphere", 3000)
+        self._create_registered("sphere")
 
     def on_create_box(self) -> None:
-        if not self._has_kernel:
-            return
-        params = {"extent_x": 0.5, "extent_y": 0.5, "extent_z": 0.5}
-        self._push_create_command("box", params)
-        self._status.showMessage("Created Box", 3000)
+        self._create_registered("box")
 
     def on_create_cylinder(self) -> None:
-        if not self._has_kernel:
-            return
-        params = {"radius": 0.5, "height": 2.0}
-        self._push_create_command("cylinder", params)
-        self._status.showMessage("Created Cylinder", 3000)
+        self._create_registered("cylinder")
 
     def on_create_torus(self) -> None:
-        if not self._has_kernel:
-            return
-        params = {"major_radius": 1.0, "minor_radius": 0.3}
-        self._push_create_command("torus", params)
-        self._status.showMessage("Created Torus", 3000)
+        self._create_registered("torus")
 
     def _rebuild_node(self, node_id: int) -> None:
-        """Rebuild an SDF body from its stored params and type."""
-        import CAD_0
+        """Rebuild an SDF body from its stored params and type.
+
+        The body construction is delegated to the kernel builder registry
+        (single source of truth — see _make_body). Unknown tags leave the
+        node untouched, mirroring the tolerant load contract.
+        """
         if node_id not in self._node_params:
             return
         params = self._node_params[node_id]
         shape_type = self._node_types.get(node_id, "")
-        if shape_type == "sphere":
-            r = params.get("radius", 1.0)
-            body = CAD_0.sdf.sphere(radius=r)
-        elif shape_type == "box":
-            ex = params.get("extent_x", 0.5)
-            ey = params.get("extent_y", 0.5)
-            ez = params.get("extent_z", 0.5)
-            body = CAD_0.sdf.box(CAD_0.math.Vec3f(ex, ey, ez))
-        elif shape_type == "cylinder":
-            r = params.get("radius", 0.5)
-            h = params.get("height", 2.0)
-            body = CAD_0.sdf.cylinder(radius=r, height=h)
-        elif shape_type == "torus":
-            R = params.get("major_radius", 1.0)
-            r = params.get("minor_radius", 0.3)
-            body = CAD_0.sdf.torus(R=R, r=r)
-        else:
-            return
+        try:
+            body = self._make_body(shape_type, params)
+        except RuntimeError:
+            return  # unknown builder tag: not parametrically editable
         node = self._scene.get_node(node_id)
         if node:
             node.body = body
@@ -755,30 +735,17 @@ class MainWindow(QMainWindow):
             self._refresh_viewport()
 
     def _do_re_add_node(self, node_id: int, shape_type: str, params: dict) -> None:
-        """Undo callback: re-add a deleted node."""
-        import CAD_0
-        if shape_type == "sphere":
-            r = params.get("radius", 1.0)
-            body = CAD_0.sdf.sphere(radius=r)
-            name = "Sphere"
-        elif shape_type == "box":
-            body = CAD_0.sdf.box(CAD_0.math.Vec3f(
-                params.get("extent_x", 0.5),
-                params.get("extent_y", 0.5),
-                params.get("extent_z", 0.5)))
-            name = "Box"
-        elif shape_type == "cylinder":
-            body = CAD_0.sdf.cylinder(
-                radius=params.get("radius", 0.5),
-                height=params.get("height", 2.0))
-            name = "Cylinder"
-        elif shape_type == "torus":
-            body = CAD_0.sdf.torus(
-                R=params.get("major_radius", 1.0),
-                r=params.get("minor_radius", 0.3))
-            name = "Torus"
-        else:
-            return
+        """Undo callback: re-add a deleted node.
+
+        Body construction + display name come from the kernel builder
+        registry (single source of truth — see _make_body). An unknown
+        builder tag cannot be re-created: the undo is a no-op.
+        """
+        try:
+            body = self._make_body(shape_type, params)
+        except RuntimeError:
+            return  # unknown builder tag: nothing to re-create
+        name = self._shape_display_name(shape_type)
         # Re-add with the same ID (best effort — Scene assigns new IDs)
         new_id = self._scene.add_node(name, body)
         self._node_params[new_id] = params

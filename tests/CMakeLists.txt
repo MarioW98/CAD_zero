@@ -20,6 +20,7 @@ set(CAD_0_TEST_SOURCES
     unit/io/test_obj.cpp
     unit/io/test_threemf.cpp
     unit/io/test_native.cpp
+    unit/scene/test_builders.cpp
     unit/viewport/test_camera.cpp
     unit/viewport/test_command_stack.cpp
     unit/viewport/test_selection.cpp

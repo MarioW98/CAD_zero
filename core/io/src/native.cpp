@@ -5,6 +5,7 @@
 //
 #include "CAD_0/io/native.hpp"
 
+#include "CAD_0/scene/builders.hpp"
 #include "CAD_0/sdf/operators.hpp"
 #include "CAD_0/sdf/primitives.hpp"
 #include "CAD_0/sdf/transforms.hpp"
@@ -334,59 +335,23 @@ std::map<std::string, scene::ParamValue> json_to_params(const JsonValue& v) {
     return out;
 }
 
-// ---- Parametric builder registry (post-load factory re-wiring) --------------
+// ---- Parametric builder registry consumption ------------------------------
 //
-// SceneNode::factory is a std::function and cannot be serialized: after a
-// load it would be empty, which made Scene::set_node_param() a silent
-// no-op on the body (params update, the body does not rebuild, mesh_dirty
-// is not re-flagged — rebuild_body() returns early without a factory).
-// The desktop UI hides this by rebuilding bodies in Python, but the UI is
-// a client of the kernel: editing must work through the kernel API too.
+// The builders themselves (tags, parameter schemas, defaults, body
+// construction) live in ONE place: core/scene/builders.hpp
+// (scene::builder_registry — the single source of truth, also exposed to
+// Python via the scene bindings so the desktop UI consumes only it).
+// This file is a pure CONSUMER: after a load it re-wires each parsed
+// node's factory from the persisted `builder` tag so post-load editing
+// works through the kernel API.
 //
-// Fix: re-wire a factory on every parsed node whose `builder` tag matches
-// one of the parametric builders the app registers. The tag + param names
-// are exactly what the native format already persists (no format change):
-//   sphere   : radius
-//   box      : extent_x, extent_y, extent_z
-//   cylinder : radius, height
-//   torus    : major_radius, minor_radius
-// Defaults mirror the UI's (main_window._make_body). Unknown or missing
-// builder tags stay non-parametric: the body itself is fully serialized,
-// so such a file still opens and round-trips — the tag is editing
-// metadata, not scene data (ADR-0007 PATCH compatibility: unknown fields
-// degrade gracefully rather than failing the load).
-
-float param_float(const std::map<std::string, scene::ParamValue>& params,
-                  const char* key, float fallback) {
-    if (auto it = params.find(key); it != params.end())
-        if (const auto* f = std::get_if<float>(&it->second)) return *f;
-    return fallback;
-}
-
-scene::ShapeFactory make_builder_factory(const std::string& builder) {
-    if (builder == "sphere")
-        return [](const std::map<std::string, scene::ParamValue>& p) {
-            return sdf::make_sphere(param_float(p, "radius", 1.0f));
-        };
-    if (builder == "box")
-        return [](const std::map<std::string, scene::ParamValue>& p) {
-            return sdf::make_box(math::Vec3f{
-                param_float(p, "extent_x", 0.5f),
-                param_float(p, "extent_y", 0.5f),
-                param_float(p, "extent_z", 0.5f)});
-        };
-    if (builder == "cylinder")
-        return [](const std::map<std::string, scene::ParamValue>& p) {
-            return sdf::make_cylinder(param_float(p, "radius", 0.5f),
-                                      param_float(p, "height", 2.0f));
-        };
-    if (builder == "torus")
-        return [](const std::map<std::string, scene::ParamValue>& p) {
-            return sdf::make_torus(param_float(p, "major_radius", 1.0f),
-                                   param_float(p, "minor_radius", 0.3f));
-        };
-    return nullptr; // unknown builder: non-parametric, still fully loadable
-}
+// Unknown or missing builder tags deliberately stay non-parametric: the
+// body itself is fully serialized, so such a file still opens and
+// round-trips — the tag is editing metadata, not scene data (ADR-0007
+// PATCH compatibility: unknown fields degrade gracefully rather than
+// failing the load). The explicit creation API (scene::default_params /
+// scene::make_body) DOES fail loudly on unknown tags — the tolerant and
+// strict contracts are deliberately distinct.
 
 JsonValue camera_to_json(const NativeCamera& cam) {
     return JsonValue(JsonObject{})
@@ -556,9 +521,11 @@ ParsedDocument parse_document(std::string_view text) {
 
         // Re-wire the parametric factory from the persisted builder tag so
         // post-load editing works through the kernel API (set_node_param
-        // rebuilds the body and flags mesh_dirty). See make_builder_factory
-        // above; unknown tags deliberately leave the node non-parametric.
-        node.factory = make_builder_factory(node.builder);
+        // rebuilds the body and flags mesh_dirty). The builders themselves
+        // live in scene/builders.hpp (single source); unknown tags
+        // deliberately leave the node non-parametric (tolerant load path).
+        if (const scene::BuilderSpec* spec = scene::find_builder(node.builder))
+            node.factory = spec->factory();
 
         node.body = sdf::SDFBody(deserialize_node_impl(node_v.at("body"), 0));
         doc.nodes.push_back(std::move(node));

@@ -2,6 +2,7 @@
 
 set(CAD_0_SCENE_HEADERS
     include/CAD_0/scene/scene.hpp
+    include/CAD_0/scene/builders.hpp
 )
 
 add_library(CAD_0_scene INTERFACE ${CAD_0_SCENE_HEADERS})
