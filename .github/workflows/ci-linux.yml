@@ -49,22 +49,25 @@ jobs:
           PYTHONPATH=build/${{ matrix.preset }}/python \
             python3 -m pytest bindings/python/tests -q
 
-      # UI navigation smoke test (BUG 1 invisible menubar + BUG 2 dead
-      # viewport navigation): the camera-steering assertions need a real
-      # GL context, which the offscreen QPA creates through EGL — and
-      # Mesa can only open EGL with a display around, so the run happens
-      # under Xvfb exactly like the Codespaces app (see CODESPACES.md).
+      # UI smoke tests (BUG 1 invisible menubar + BUG 2 dead viewport
+      # navigation + maximized startup): the camera-steering assertions
+      # need a real GL context, which the offscreen QPA creates through
+      # EGL — and Mesa can only open EGL with a display around, so the
+      # run happens under Xvfb exactly like the Codespaces app (see
+      # CODESPACES.md). The startup test shows a real window (in its own
+      # subprocess, exiting via os._exit before Qt/GL teardown).
       # Fresh pytest process on purpose: the combined run above reuses a
       # QApplication created on the "minimal" platform, which has no GL
       # and would make these tests skip.
-      - name: UI navigation smoke test (GL)
+      - name: UI smoke tests (GL)
         if: matrix.preset != 'linux-gcc-debug'
         run: |
           Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -ac &
           export DISPLAY=:99
           export QT_QPA_PLATFORM=offscreen
           PYTHONPATH=build/${{ matrix.preset }}/python \
-            python3 -m pytest bindings/python/tests/test_ui_navigation.py -v
+            python3 -m pytest bindings/python/tests/test_ui_navigation.py \
+              bindings/python/tests/test_ui_startup.py -v
 
       # Python package (CAD_0 module: nanobind bindings + UI) from every
       # matrix job. Low retention to keep storage costs down.

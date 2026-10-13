@@ -218,6 +218,15 @@ log "fluxbox pid=$(cat /tmp/cad0_fluxbox.pid)"
 # -----------------------------------------------------------------------------
 log "starting CAD_0 desktop app..."
 cd "${PROJECT_DIR}"
+
+# Keep the pure-Python UI the app runs in sync with the source tree. The
+# CMake build only installs app/src/CAD_0/ui -> build/python/CAD_0/ui when
+# build/python does not exist yet (the auto-build block above), so without
+# this sync every UI-only edit stays invisible until a full re-build — the
+# reason recent pure-Python UI fixes appeared "not to show up". rsync right
+# before the launch makes the refreshed UI the one actually executed.
+rsync -a "${PROJECT_DIR}/app/src/CAD_0/ui/" "${PROJECT_DIR}/build/python/CAD_0/ui/"
+
 DISPLAY="${DISPLAY}" \
 PYTHONPATH="${PROJECT_DIR}/build/python" \
 LIBGL_ALWAYS_SOFTWARE=1 \

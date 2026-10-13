@@ -34,7 +34,19 @@ class MainWindow(QMainWindow):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("CAD_0 — Phase C+ Desktop")
-        self.resize(1280, 800)
+        # Startup geometry policy: NO fixed size. The old resize(1280, 800)
+        # matched the Xvfb/Codespace screen exactly, so once fluxbox added
+        # its title bar + borders the top of the window (title bar AND menu
+        # bar) landed off-screen. main() now shows the window maximized,
+        # which fills the WM's available geometry on every screen. The
+        # fallback below only covers the edge case of a platform that
+        # reports no usable screen at all (e.g. offscreen QPA without a
+        # screen): such a window is deliberately SMALLER than any common
+        # screen — never exactly screen-sized, which is how the original
+        # bug was born.
+        screen = self.screen()
+        if screen is None or not screen.availableGeometry().isValid():
+            self.resize(1200, 720)
 
         # Try to import the C++ kernel
         try:
@@ -1031,7 +1043,14 @@ def main() -> None:
     app.setOrganizationName("CAD_0")
 
     window = MainWindow()
-    window.show()
+    # Programmatic equivalent of clicking the maximize button: Qt asks the
+    # window manager to maximize within the available geometry, so the
+    # window fills the screen MINUS decorations/taskbar on every platform
+    # (Xvfb 1280x800 + fluxbox, Codespaces, desktop Linux, Windows) with
+    # no hardcoded dimensions. On a platform that ignores the request the
+    # window simply keeps its layout size hint — never a screen-sized
+    # fixed size — so the title/menu bars can never be pushed off-screen.
+    window.showMaximized()
     sys.exit(app.exec())
 
 

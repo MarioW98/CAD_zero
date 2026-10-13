@@ -75,6 +75,19 @@ synthetic mouse/wheel events delivered to the embedded GL window steer
 the camera at the first movement, that short clicks still pick, and
 that the no-GL fallback stays usable.
 
+`bindings/python/tests/test_ui_startup.py` is the startup smoke test
+for the maximized-window fix of the same day (the window used to open
+at a fixed 1280x800 — exactly the 1280x800 Xvfb screen — so fluxbox's
+title bar pushed the top of the window off-screen). It pins the policy
+in source (no fixed screen-sized resize; a 1200x720 fallback only when
+Qt reports no usable screen; `main()` calls `showMaximized()`, the
+programmatic maximize button) and runs the REAL `main()` in a fresh
+subprocess under the offscreen QPA: the window must construct, show
+and paint without exceptions while the menu bar still carries
+File/Create/Edit/View. The launcher is covered too: the pure-Python UI
+is rsynced into `build/python/CAD_0/ui/` before every launch, so UI
+edits are always the ones actually executed.
+
 The camera-steering assertions need a real GL context: the offscreen
 Qt platform creates it through EGL, and Mesa only opens EGL with a
 display around. In a Codespace (Xvfb already running via the launcher):
@@ -83,19 +96,22 @@ display around. In a Codespace (Xvfb already running via the launcher):
 export DISPLAY=:99
 export QT_QPA_PLATFORM=offscreen
 PYTHONPATH=build/linux-gcc-release/python \
-  python3 -m pytest bindings/python/tests/test_ui_navigation.py -v
+  python3 -m pytest bindings/python/tests/test_ui_navigation.py \
+    bindings/python/tests/test_ui_startup.py -v
 ```
 
 On a desktop Linux with a GPU, the same command works as-is. On a
 machine without any GL (no `libEGL`/Mesa), the GL-dependent tests skip
-with an explicit reason — the menu-bar and fallback checks still run.
-CI runs the same module under its own Xvfb (see
-`.github/workflows/ci-linux.yml`, step "UI navigation smoke test (GL)").
+with an explicit reason — the menu-bar, startup and fallback checks
+still run. CI runs the same modules under its own Xvfb (see
+`.github/workflows/ci-linux.yml`, step "UI smoke tests (GL)").
 
 Known unrelated residual: quitting a process whose GL window has
 actually been shown and painted segfaults at interpreter exit (Qt/GL
-tear-down, pre-existing, visible only at shutdown; the smoke tests
-deliberately never `show()` the window).
+tear-down, pre-existing, visible only at shutdown; the in-process
+smoke tests deliberately never `show()` the window, and the startup
+test shows one only inside a subprocess that exits through
+`os._exit(0)` before Qt/GL teardown).
 
 ## Troubleshooting
 
