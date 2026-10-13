@@ -84,6 +84,14 @@ class MainWindow(QMainWindow):
         self._node_params = {}  # node_id → {param_name: value}
         self._node_types = {}   # node_id → "sphere"|"box"|"cylinder"|"torus"
 
+        # Currently selected node id (None = nothing selected).
+        # Explicitly initialized here so the attribute exists from
+        # construction on: readers use plain attribute access (no
+        # defensive getattr), at any point of the widget's life. The
+        # value is kept in sync by _on_tree_selection_changed() and
+        # reset by _rebuild_ui_from_scene()/_clear_selection().
+        self._selected_node_id: Optional[int] = None
+
         # Project persistence (native .CAD_0 format, ADR-0007).
         self._current_path: Optional[str] = None  # loaded/saved project path
         self._dirty = False                        # unsaved-changes flag
@@ -859,19 +867,47 @@ class MainWindow(QMainWindow):
             "<p>License: Apache-2.0</p>"
         )
 
+    def _clear_selection(self) -> None:
+        """Clear the current selection, whatever its origin.
+
+        Used when the user clicks empty space in the viewport: if a
+        node is selected, the feature-tree row, the 3D highlight and
+        the property panel are all reset — the same visible effect as
+        Ctrl-clicking the selected tree row. No-op when nothing is
+        selected (no spurious signals, no panel flicker).
+        """
+        if self._selected_node_id is None:
+            return
+        self._selected_node_id = None
+        # clearSelection() fires itemSelectionChanged, which routes
+        # through _on_tree_selection_changed() (empty selection →
+        # viewport highlight + property panel cleared). The explicit
+        # calls below are a safety net for the impossible-but-defensive
+        # case where the tree selection and _selected_node_id disagree.
+        self._feature_tree.clearSelection()
+        self._viewport.set_selection(None)
+        self._property_panel.clear()
+
     def _on_tree_selection_changed(self) -> None:
         items = self._feature_tree.selectedItems()
         if not items:
+            # Single source of truth: every deselection (tree click,
+            # Ctrl-click, viewport empty click, programmatic clear)
+            # lands here — the MainWindow-side id must be reset too,
+            # not only the viewport highlight and the panel.
+            self._selected_node_id = None
             self._viewport.set_selection(None)
             self._property_panel.clear()
             return
         item = items[0]
         node_id = item.data(0, Qt.UserRole)
         if node_id is None:
+            self._selected_node_id = None
             self._viewport.set_selection(None)
             return
         node = self._scene.get_node(node_id)
         if node is None:
+            self._selected_node_id = None
             self._viewport.set_selection(None)
             return
         # 3D highlight follows every selection change, whatever its
@@ -914,7 +950,7 @@ class MainWindow(QMainWindow):
 
     def _on_parameter_changed(self, name: str, value) -> None:
         """Called when the user edits a parameter in the property panel."""
-        node_id = getattr(self, '_selected_node_id', None)
+        node_id = self._selected_node_id
         if node_id is None or node_id not in self._node_params:
             return
         try:
@@ -1074,6 +1110,11 @@ class MainWindow(QMainWindow):
                     self._feature_tree.setCurrentItem(item)
                     break
             self._status.showMessage(f"Selected node {best_node}", 2000)
+        else:
+            # The ray hit nothing: a click on empty space deselects
+            # whatever is selected (mirrors every major CAD tool —
+            # clicking the void is how you drop a selection).
+            self._clear_selection()
 
 
 def main() -> None:

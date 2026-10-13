@@ -45,6 +45,7 @@ In the Codespace, port 6080 is auto-forwarded. To get a public HTTPS URL:
 | Middle-drag | Pan |
 | Wheel | Zoom |
 | Click on shape | Select it |
+| Click on empty space | Deselect (clears tree row, 3D highlight and property panel) |
 
 ## Menu actions
 
@@ -84,7 +85,10 @@ directly — no GL needed — and cover the ray/AABB math, the wide-aspect
 geometry (a maximized window is never square), the selection feedback
 plumbing (tree + property panel + viewport highlight state, including
 mesh-kind nodes picked against their own vertex AABB), and the
-miss-on-empty-space case. The BRIDGE tests synthesize real QMouseEvents
+empty-space click behavior (a miss deselects whatever is selected —
+tree row, 3D highlight and property panel, exactly like Ctrl-clicking
+the selected tree row — and is a silent no-op when nothing is
+selected). The BRIDGE tests synthesize real QMouseEvents
 on a standalone, never-shown `_ViewportWindow`, so the pixel-to-NDC
 mapping, the <5px short-click threshold and the left-button-only rule
 are verified in any environment. The full GL embed path stays covered

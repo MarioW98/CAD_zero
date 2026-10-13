@@ -198,6 +198,74 @@ def test_far_offcenter_click_with_wide_aspect_misses(main_window):
         + _scene_probe(w))
 
 
+def test_empty_space_click_deselects_current_selection(main_window):
+    """Clicking where there is NO object clears the current selection.
+
+    A center click selects the sphere (tree row + 3D highlight +
+    property panel); a click on empty space must then deselect it,
+    exactly like Ctrl-clicking the selected tree row: no tree
+    selection, no 3D highlight, "No selection" in the property panel.
+    With the default camera (fov 45, aspect 1.0, pitch 0.3) the ray
+    through NDC (0.9, 0.9) misses the [-1, 1]^3 sphere box entirely
+    (its y-slab is only reachable at t < 0, behind the camera).
+    """
+    w = main_window
+    assert w._has_kernel
+
+    w._create_registered("sphere")
+    node_id = w._scene.node_at(0).id
+    w._viewport.clicked.emit(0.0, 0.0)
+    # The click selected: all three feedback places agree.
+    assert w._feature_tree.selectedItems() != []
+    assert w._viewport._selected_node_id == node_id
+    assert w._property_panel._current_node_name is not None
+
+    # Click on empty space -> deselect everywhere.
+    w._viewport.clicked.emit(0.9, 0.9)
+
+    assert w._feature_tree.selectedItems() == [], (
+        "click on empty space must clear the tree selection\n"
+        + _scene_probe(w))
+    assert w._selected_node_id is None, (
+        "click on empty space must reset _selected_node_id")
+    assert w._viewport._selected_node_id is None, (
+        "click on empty space must clear the 3D highlight")
+    assert w._property_panel._current_node_name is None, (
+        "click on empty space must clear the property panel")
+    assert w._property_panel._header.text() == "No selection"
+
+
+def test_empty_space_click_without_selection_is_noop(main_window):
+    """Clicking empty space with nothing selected changes nothing.
+
+    No selection was ever made; the miss must be a silent no-op: no
+    crash, no phantom selection, scene untouched.
+    """
+    w = main_window
+    assert w._has_kernel
+
+    w._create_registered("sphere")
+    w._viewport.clicked.emit(0.9, 0.9)
+
+    assert w._feature_tree.selectedItems() == []
+    assert w._selected_node_id is None
+    assert w._viewport._selected_node_id is None
+    assert w._scene.size() == 1
+
+
+def test_selected_node_id_initialized_in_constructor(main_window):
+    """MainWindow._selected_node_id exists from construction.
+
+    Regression guard: the attribute used to be assigned only in
+    _rebuild_ui_from_scene()/_on_tree_selection_changed() and read
+    elsewhere with a defensive getattr(). It now has one explicit
+    initialization in __init__ (None = nothing selected), so plain
+    attribute access is safe at any point of the widget's life.
+    """
+    w = main_window
+    assert w._selected_node_id is None
+
+
 def test_imported_mesh_node_is_clickable(main_window, tmp_path):
     """Mesh-kind nodes (imported STL/OBJ) are first-class pickables.
 
