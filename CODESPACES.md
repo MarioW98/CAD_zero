@@ -75,6 +75,21 @@ synthetic mouse/wheel events delivered to the embedded GL window steer
 the camera at the first movement, that short clicks still pick, and
 that the no-GL fallback stays usable.
 
+`bindings/python/tests/test_ui_picking.py` is the headless regression
+suite for the "Click on shape | Select it" picking feature (fixed on
+2026-10-14: a click selected the node in the tree but had NO visible
+effect in the 3D viewport, and imported mesh-kind nodes were skipped
+entirely). The HANDLER tests emit the wrapper's ``clicked(ndc)`` signal
+directly — no GL needed — and cover the ray/AABB math, the wide-aspect
+geometry (a maximized window is never square), the selection feedback
+plumbing (tree + property panel + viewport highlight state, including
+mesh-kind nodes picked against their own vertex AABB), and the
+miss-on-empty-space case. The BRIDGE tests synthesize real QMouseEvents
+on a standalone, never-shown `_ViewportWindow`, so the pixel-to-NDC
+mapping, the <5px short-click threshold and the left-button-only rule
+are verified in any environment. The full GL embed path stays covered
+by `test_ui_navigation.py::test_short_click_still_picks`.
+
 `bindings/python/tests/test_ui_startup.py` is the startup smoke test
 for the maximized-window fix of the same day (the window used to open
 at a fixed 1280x800 — exactly the 1280x800 Xvfb screen — so fluxbox's
@@ -97,6 +112,7 @@ export DISPLAY=:99
 export QT_QPA_PLATFORM=offscreen
 PYTHONPATH=build/linux-gcc-release/python \
   python3 -m pytest bindings/python/tests/test_ui_navigation.py \
+    bindings/python/tests/test_ui_picking.py \
     bindings/python/tests/test_ui_startup.py -v
 ```
 

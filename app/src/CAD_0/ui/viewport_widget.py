@@ -67,6 +67,12 @@ class ViewportWidget(QWidget):
         self._mesh_positions = None
         self._mesh_normals = None
         self._mesh_indices = None
+        # Selection highlight state: node id -> (first tri, last tri) in
+        # the concatenated index buffer, plus the currently selected id.
+        # Populated by _refresh_meshes so _draw_meshes can repaint just
+        # the selected node's triangles in the highlight color.
+        self._node_ranges = {}
+        self._selected_node_id = None
 
     def _setup_ui(self) -> None:
         fmt = QSurfaceFormat()
@@ -150,6 +156,8 @@ class ViewportWidget(QWidget):
         normals = []
         indices = []
         offset = 0
+        tri_offset = 0
+        node_ranges = {}
         count = self._scene.node_count()
         for i in range(count):
             node = self._scene.node_at(i)
@@ -160,6 +168,9 @@ class ViewportWidget(QWidget):
             idx = node.cached_mesh.indices
             if pos is None or len(pos) == 0 or idx is None or len(idx) == 0:
                 continue
+            n_tris = len(idx) // 3
+            node_ranges[node.id] = (tri_offset, tri_offset + n_tris)
+            tri_offset += n_tris
             positions.append(pos)
             if nor is not None and len(nor) == len(pos):
                 normals.append(nor)
@@ -167,6 +178,7 @@ class ViewportWidget(QWidget):
                 normals.append(np.zeros_like(pos))
             indices.append(idx + offset)
             offset += len(pos)
+        self._node_ranges = node_ranges
         if positions:
             self._mesh_positions = np.concatenate(positions)
             self._mesh_normals = np.concatenate(normals)
@@ -240,6 +252,18 @@ class ViewportWidget(QWidget):
     def set_show_grid(self, show: bool) -> None:
         self._show_grid = show
         self._request_update()
+
+    def set_selection(self, node_id) -> None:
+        """Highlight ``node_id`` in the 3D viewport (None = none).
+
+        Selection feedback: MainWindow calls this whenever the feature
+        tree selection changes (from a click OR from the tree itself) so
+        the picked shape is visibly highlighted in 3D, not just in the
+        tree/panel. Unknown ids (deleted nodes) simply draw nothing.
+        """
+        if self._selected_node_id != node_id:
+            self._selected_node_id = node_id
+            self._request_update()
 
     def set_show_axes(self, show: bool) -> None:
         self._show_axes = show
@@ -525,9 +549,30 @@ class _ViewportWindow(QOpenGLWindow):
         glColor3f(0.7, 0.75, 0.8)
         has_normals = normals is not None and len(normals) == len(positions)
         n_tris = len(indices) // 3
+        self._draw_tri_range(positions, normals, indices,
+                             has_normals, 0, n_tris)
+        # Selection highlight (visible feedback for "Click on shape |
+        # Select it"): repaint ONLY the selected node's triangles in
+        # amber, on top of the base pass. Same geometry, so the depth
+        # test (LEQUAL) lets the repaint win exactly where the shape is
+        # visible — no z-fighting, no halo.
+        sel = self._parent._selected_node_id
+        if sel is not None:
+            rng = self._parent._node_ranges.get(sel)
+            if rng is not None and rng[1] > rng[0]:
+                glColor3f(1.0, 0.62, 0.10)
+                self._draw_tri_range(positions, normals, indices,
+                                     has_normals, rng[0], rng[1])
+
+    @staticmethod
+    def _draw_tri_range(positions, normals, indices, has_normals,
+                        tri_start: int, tri_end: int) -> None:
+        n_tris = tri_end - tri_start
+        if n_tris <= 0:
+            return
         batch_size = min(4096, n_tris)
-        for batch_start in range(0, n_tris, batch_size):
-            batch_end = min(batch_start + batch_size, n_tris)
+        for batch_start in range(tri_start, tri_end, batch_size):
+            batch_end = min(batch_start + batch_size, tri_end)
             glBegin(GL_TRIANGLES)
             for t in range(batch_start, batch_end):
                 i0 = int(indices[t * 3 + 0])

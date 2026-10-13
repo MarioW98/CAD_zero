@@ -862,15 +862,21 @@ class MainWindow(QMainWindow):
     def _on_tree_selection_changed(self) -> None:
         items = self._feature_tree.selectedItems()
         if not items:
+            self._viewport.set_selection(None)
             self._property_panel.clear()
             return
         item = items[0]
         node_id = item.data(0, Qt.UserRole)
         if node_id is None:
+            self._viewport.set_selection(None)
             return
         node = self._scene.get_node(node_id)
         if node is None:
+            self._viewport.set_selection(None)
             return
+        # 3D highlight follows every selection change, whatever its
+        # origin (viewport click, tree click, programmatic set).
+        self._viewport.set_selection(node_id)
         self._selected_node_id = node_id
         if node.kind == "mesh":
             # Imported geometry: read-only info (nothing parametric to
@@ -940,6 +946,42 @@ class MainWindow(QMainWindow):
             self._node_params[node_id][name] = old_value
             self._rebuild_node(node_id)
 
+    def _node_pick_bounds(self, node):
+        """World-space AABB used by viewport picking, as ((x,y,z) min,
+        (x,y,z) max) — or None when the node has no pickable geometry.
+
+        SDF nodes read the kernel's body bounds; mesh-kind nodes
+        (imported STL/OBJ) have no SDF body, so their bounds come from
+        the mesh's own vertex positions (cached tessellation first, the
+        raw payload as fallback).
+        """
+        if node.kind != "mesh":
+            b = node.body.bounds()
+            return ((b.min.x, b.min.y, b.min.z),
+                    (b.max.x, b.max.y, b.max.z))
+        try:
+            import numpy as _np
+            pos = None
+            for cand in (getattr(node, "cached_mesh", None),
+                         getattr(node, "mesh", None)):
+                if cand is None:
+                    continue
+                cand_pos = getattr(cand, "positions", None)
+                if cand_pos is not None and len(cand_pos) > 0:
+                    pos = cand_pos
+                    break
+            if pos is None:
+                return None
+            arr = _np.asarray(pos, dtype=float)
+            if arr.ndim != 2 or arr.shape[0] == 0:
+                return None
+            lo = arr.min(axis=0)
+            hi = arr.max(axis=0)
+            return ((float(lo[0]), float(lo[1]), float(lo[2])),
+                    (float(hi[0]), float(hi[1]), float(hi[2])))
+        except (ImportError, ValueError, TypeError):
+            return None
+
     def _on_viewport_click(self, ndc_x: float, ndc_y: float) -> None:
         """Picking: select the closest visible node in the viewport."""
         if not self._scene or self._scene.empty():
@@ -984,36 +1026,35 @@ class MainWindow(QMainWindow):
         rl = math.sqrt(ray_dir[0]**2 + ray_dir[1]**2 + ray_dir[2]**2)
         ray_dir = (ray_dir[0]/rl, ray_dir[1]/rl, ray_dir[2]/rl)
 
-        # Ray-bbox intersection for each visible node
+        # Ray-bbox intersection for each visible node. Mesh-kind nodes
+        # (imported STL/OBJ) have no SDF body: their pick bounds come from
+        # the mesh's own vertex positions (see _node_pick_bounds), so a
+        # click on imported geometry selects it like any SDF shape.
         best_node = None
         best_t = float('inf')
         for i in range(self._scene.node_count()):
             node = self._scene.node_at(i)
             if node is None or not node.visible:
                 continue
-            # Mesh-kind nodes have no SDF body: their default bounds are
-            # the empty box (+inf/-inf), whose slab test degenerates and
-            # would swallow EVERY click. Picking stays an SDF-node
-            # feature; mesh nodes are selected from the feature tree.
-            if node.kind == "mesh":
+            pick = self._node_pick_bounds(node)
+            if pick is None:
                 continue
-            b = node.body.bounds()
+            bmin, bmax = pick
             # Simple slab-based ray-AABB test
             tmin = -float('inf')
             tmax = float('inf')
             hit = True
-            for i in range(3):
-                o = [cam_pos[0], cam_pos[1], cam_pos[2]][i]
-                d = ray_dir[i]
-                bmin = [b.min.x, b.min.y, b.min.z][i]
-                bmax = [b.max.x, b.max.y, b.max.z][i]
+            for axis in range(3):
+                o = [cam_pos[0], cam_pos[1], cam_pos[2]][axis]
+                d = ray_dir[axis]
+                lo, hi = bmin[axis], bmax[axis]
                 if abs(d) < 1e-9:
-                    if o < bmin or o > bmax:
+                    if o < lo or o > hi:
                         hit = False
                         break
                 else:
-                    t1 = (bmin - o) / d
-                    t2 = (bmax - o) / d
+                    t1 = (lo - o) / d
+                    t2 = (hi - o) / d
                     if t1 > t2:
                         t1, t2 = t2, t1
                     tmin = max(tmin, t1)
