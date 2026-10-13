@@ -45,9 +45,11 @@ target_include_directories(CAD_0_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/core/viewport/include
     ${CMAKE_SOURCE_DIR}/core/scene/include
     ${CMAKE_SOURCE_DIR}/core/bridge/include
-    ${CMAKE_SOURCE_DIR}/third_party/robust_predicates
     ${CMAKE_BINARY_DIR}/include
 )
+# FASE B: vendored Shewchuk predicates — SYSTEM (same as CAD_0_math).
+target_include_directories(CAD_0_tests SYSTEM PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/robust_predicates)
 
 target_link_libraries(CAD_0_tests PRIVATE
     CAD_0_math
@@ -61,9 +63,17 @@ target_link_libraries(CAD_0_tests PRIVATE
 )
 
 # doctest is fetched via CPM. If CPM exposes the doctest target, link it.
+# FASE B (warning bonifica): doctest is third-party — its headers are
+# consumed as SYSTEM (-isystem) so its diagnostics can never surface
+# (nor break -Werror) in first-party test TUs.
 if(TARGET doctest)
     target_link_libraries(CAD_0_tests PRIVATE doctest)
-    target_include_directories(CAD_0_tests PRIVATE
+    get_target_property(CAD_0_DOCTEST_INC doctest INTERFACE_INCLUDE_DIRECTORIES)
+    if(CAD_0_DOCTEST_INC)
+        set_target_properties(doctest PROPERTIES
+            INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${CAD_0_DOCTEST_INC}")
+    endif()
+    target_include_directories(CAD_0_tests SYSTEM PRIVATE
         $<TARGET_PROPERTY:doctest,INTERFACE_INCLUDE_DIRECTORIES>)
 elseif(TARGET doctest::doctest)
     target_link_libraries(CAD_0_tests PRIVATE doctest::doctest)
@@ -81,5 +91,11 @@ target_compile_definitions(CAD_0_tests PRIVATE
 # Register tests with CTest — manual registration since doctest_discover_tests
 # requires the doctest CMake module which isn't always available via CPM.
 add_test(NAME CAD_0_tests COMMAND CAD_0_tests)
+
+# FASE C: the kernel test suite compiles every kernel header, so it gets
+# -Werror exactly like the kernel targets themselves (see
+# core/CMakeLists.txt for the full scope rationale). GNU/Clang only.
+target_compile_options(CAD_0_tests PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Werror>)
 
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${CAD_0_TEST_SOURCES})

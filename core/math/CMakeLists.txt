@@ -24,10 +24,16 @@ add_library(CAD_0_math STATIC ${CAD_0_MATH_SOURCES} ${CAD_0_MATH_HEADERS})
 target_include_directories(CAD_0_math
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/third_party/robust_predicates
     PRIVATE
         ${CMAKE_BINARY_DIR}/include
 )
+
+# FASE B (warning bonifica): Shewchuk's robust predicates are vendored
+# third-party code (public domain). SYSTEM marking: diagnostics from
+# inside its headers never surface (and never break -Werror) on
+# first-party targets. Include resolution order is unchanged.
+target_include_directories(CAD_0_math SYSTEM PUBLIC
+    ${CMAKE_SOURCE_DIR}/third_party/robust_predicates)
 
 target_compile_features(CAD_0_math PUBLIC cxx_std_20)
 

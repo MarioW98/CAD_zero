@@ -43,6 +43,24 @@ if(TARGET nanobind-static)
     )
 endif()
 
+# FASE B (warning bonifica): nanobind's own headers trip compiler
+# diagnostics when our binding TUs instantiate them — GCC 14 emits
+# -Wshadow on its setter/getter ctors (parameter `value` vs member) and
+# -Wpedantic on the zero-size array in func_data_prelim; clang 14 emits
+# -Wnested-anon-types (type-slot unions) and -Wzero-length-array.
+# That is third-party code, not ours to fix: the include directories
+# nanobind-static exports are marked SYSTEM so consumers (our _CAD_0 TUs)
+# see them as -isystem. Include resolution order and the compiled code
+# are unchanged. nanobind-static's own compilation is unaffected
+# (INTERFACE properties only apply to linking consumers).
+if(TARGET nanobind-static)
+    get_target_property(CAD_0_NB_INC nanobind-static INTERFACE_INCLUDE_DIRECTORIES)
+    if(CAD_0_NB_INC)
+        set_target_properties(nanobind-static PROPERTIES
+            INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${CAD_0_NB_INC}")
+    endif()
+endif()
+
 target_link_libraries(_CAD_0 PRIVATE
     CAD_0_math
     CAD_0_geometry

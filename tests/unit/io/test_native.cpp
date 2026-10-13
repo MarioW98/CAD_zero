@@ -99,9 +99,12 @@ std::vector<float> sample_grid(const sdf::SDFBody& body, int n) {
     for (int i = 0; i < n; ++i)
         for (int j = 0; j < n; ++j)
             for (int k = 0; k < n; ++k) {
-                const math::Vec3f p{-1.5f + 3.0f * i / (n - 1),
-                                    -1.5f + 3.0f * j / (n - 1),
-                                    -1.5f + 3.0f * k / (n - 1)};
+                const math::Vec3f p{-1.5f + 3.0f * static_cast<float>(i) /
+                                        static_cast<float>(n - 1),
+                                    -1.5f + 3.0f * static_cast<float>(j) /
+                                        static_cast<float>(n - 1),
+                                    -1.5f + 3.0f * static_cast<float>(k) /
+                                        static_cast<float>(n - 1)};
                 out.push_back(body.value(p));
             }
     return out;

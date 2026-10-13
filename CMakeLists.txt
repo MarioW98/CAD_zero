@@ -129,6 +129,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         -Wno-unused-parameter
         -Wconversion -Wno-sign-conversion
     )
+    # -Werror is deliberately NOT global: it is applied only to the kernel
+    # targets and their test suite — see core/CMakeLists.txt (FASE C of the
+    # warning bonifica, docs/audits/2026-10-13-warning-audit.md).
     if(CAD_0_SANITIZE)
         add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
         add_link_options(-fsanitize=address,undefined)

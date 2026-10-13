@@ -31,6 +31,18 @@ target_link_libraries(CAD_0_sdf
         xsimd
 )
 
+# FASE B (warning bonifica): xsimd's internal SIMD shims emit clang
+# conversion diagnostics (-Wshorten-64-to-32, -Wfloat-conversion) inside
+# their own headers when CAD_0_sdf TUs instantiate them. Third-party code:
+# mark its interface include directories SYSTEM so diagnostics from
+# inside xsimd do not surface in first-party builds. Include resolution
+# and the compiled code are unchanged (only -I becomes -isystem).
+get_target_property(CAD_0_XSIMD_INC xsimd INTERFACE_INCLUDE_DIRECTORIES)
+if(CAD_0_XSIMD_INC)
+    set_target_properties(xsimd PROPERTIES
+        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${CAD_0_XSIMD_INC}")
+endif()
+
 # Link TBB when enabled. TBB::tbb is an imported target created by
 # oneTBB's CMake config. We check both names for robustness.
 if(CAD_0_USE_TBB)

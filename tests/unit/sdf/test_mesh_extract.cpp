@@ -59,40 +59,6 @@ static bool mesh_is_watertight(const TriangleMesh& mesh) {
     return true;
 }
 
-// Relaxed watertightness check: allow up to `tolerance_fraction` of edges
-// to be non-manifold (T-junctions from MC ambiguity resolution). The
-// classic Lorensen-Cline table produces ~50% non-manifold edges due to
-// ambiguity resolution issues — the mesh is geometrically correct
-// (volumes are right, normals point outward) but topologically has
-// many T-junctions. The proper fix is to replace the MC table with
-// the Lewiner 2003 ambiguity-resolving variant — tracked separately.
-// Default tolerance: 60% (pragmatic acceptance for STL/OBJ export).
-static bool mesh_is_mostly_watertight(const TriangleMesh& mesh,
-                                       float tolerance_fraction = 0.60f) {
-    if (mesh.triangle_count() == 0) return false;
-    std::unordered_map<EdgeKey, std::pair<int,int>, EdgeKeyHash> counts;
-    counts.reserve(mesh.triangle_count() * 3);
-    for (std::size_t t = 0; t < mesh.triangle_count(); ++t) {
-        const std::uint32_t i0 = mesh.indices[t*3 + 0];
-        const std::uint32_t i1 = mesh.indices[t*3 + 1];
-        const std::uint32_t i2 = mesh.indices[t*3 + 2];
-        const std::uint32_t e[3][2] = {{i0, i1}, {i1, i2}, {i2, i0}};
-        for (int k = 0; k < 3; ++k) {
-            const std::uint32_t a = e[k][0];
-            const std::uint32_t b = e[k][1];
-            const EdgeKey key{std::min(a, b), std::max(a, b)};
-            auto& slot = counts[key];
-            if (a < b) slot.first  += 1;
-            else       slot.second += 1;
-        }
-    }
-    std::size_t non_manifold = 0;
-    for (const auto& [k, v] : counts) {
-        if (v.first != 1 || v.second != 1) ++non_manifold;
-    }
-    return non_manifold <= static_cast<std::size_t>(static_cast<float>(counts.size()) * tolerance_fraction);
-}
-
 // ---------------------------------------------------------------------------
 // Volume via signed tetrahedra: V = (1/6) · Σ (a · (b × c)) for each
 // triangle (a, b, c). Assumes the mesh is closed and consistently

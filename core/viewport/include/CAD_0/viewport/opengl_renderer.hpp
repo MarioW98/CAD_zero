@@ -40,22 +40,25 @@ public:
     const char* name() const noexcept override { return "opengl-4.5"; }
 
 private:
-    bool initialized_{false};
-    int width_{0};
-    int height_{0};
+    // [[maybe_unused]]: these members are used only in opengl_renderer.cpp;
+    // clang's per-TU -Wunused-private-field fires in the other TUs of
+    // CAD_0_viewport that include this header without touching them.
+    [[maybe_unused]] bool initialized_{false};
+    [[maybe_unused]] int width_{0};
+    [[maybe_unused]] int height_{0};
 
     // VAO for the full-screen triangle used by the SDF ray-march shader.
-    unsigned int empty_vao_{0};
+    [[maybe_unused]] unsigned int empty_vao_{0};
 
     // Shader program for SDF ray-marching.
-    unsigned int raymarch_program_{0};
+    [[maybe_unused]] unsigned int raymarch_program_{0};
 
     // Uniform buffer objects (UBOs) for camera + options.
-    unsigned int camera_ubo_{0};
-    unsigned int options_ubo_{0};
+    [[maybe_unused]] unsigned int camera_ubo_{0};
+    [[maybe_unused]] unsigned int options_ubo_{0};
 
     // Simple shader for tessellated meshes (B-Rep + mesh extraction output).
-    unsigned int mesh_program_{0};
+    [[maybe_unused]] unsigned int mesh_program_{0};
 
     FrameStats last_stats_{};
 };
