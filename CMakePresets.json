@@ -98,6 +98,8 @@
           "output": { "outputOnFailure": true } },
         { "name": "linux-gcc-release", "configurePreset": "linux-gcc-release",
           "output": { "outputOnFailure": true } },
+        { "name": "linux-clang",       "configurePreset": "linux-clang",
+          "output": { "outputOnFailure": true } },
         { "name": "linux-python",      "configurePreset": "linux-python",
           "output": { "outputOnFailure": true } }
     ]
