@@ -11,6 +11,8 @@
 //   * CAD_0.io.export_stl_ascii(...)
 //   * CAD_0.io.export_obj(...)
 //   * CAD_0.io.export_3mf(...)
+//   * CAD_0.io.load_stl(...)          — STL import (binary + ASCII)
+//   * CAD_0.io.load_obj(...)          — OBJ import (welded, fan n-gons)
 //
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
@@ -29,6 +31,8 @@
 
 #include "CAD_0/math/vec.hpp"
 #include "CAD_0/math/bbox.hpp"
+
+#include <stdexcept>
 
 namespace nb = nanobind;
 using namespace CAD_0;
@@ -183,6 +187,25 @@ void bind_io(nb::module_& m) {
         nb::arg("path"), nb::arg("mesh"),
         nb::arg("name") = "CAD_0", nb::arg("application") = "CAD_0");
 
+    // ---- Mesh import (STL / OBJ loaders, FASE 1/2) ------------------------
+    //
+    // load_stl(path) / load_obj(path) -> sdf.TriangleMesh
+    //   Hand-written loaders (no new deps): auto-detected binary/ASCII STL,
+    //   OBJ with v/vn/vt/f, negative indices, n-gon fans. Vertices are
+    //   welded (ADR-0016, idempotent). Raise RuntimeError with the path
+    //   (and line number for text formats) on any corruption — never a
+    //   silent partial load. Combine with scene.add_node(name, mesh) to
+    //   place the result as a first-class "mesh"-kind node.
+    io_mod.def("load_stl", [](const std::string& path) {
+            return io::load_stl(path);
+        },
+        nb::arg("path"));
+
+    io_mod.def("load_obj", [](const std::string& path) {
+            return io::load_obj(path);
+        },
+        nb::arg("path"));
+
     // ---- Native project format (.CAD_0, ADR-0007) --------------------------
     //
     // save_native(path, scene, camera=None)
@@ -203,7 +226,13 @@ void bind_io(nb::module_& m) {
     // degrees. Do NOT mutate the scene from other Python threads while a
     // save is in flight (the GIL is released for the C++ write).
 
-    io_mod.attr("NATIVE_VERSION") = "0.1.0";
+    // io_mod.attr("NATIVE_VERSION") mirrors native::kNativeVersion
+    // ("MAJOR.MINOR.PATCH") — built from the C++ constant, never
+    // hardcoded, so a version bump cannot leave the Python side stale.
+    io_mod.attr("NATIVE_VERSION") =
+        std::to_string(native::kNativeVersion.major) + "." +
+        std::to_string(native::kNativeVersion.minor) + "." +
+        std::to_string(native::kNativeVersion.patch);
 
     io_mod.def("save_native",
         [](const std::string& path, const scene::Scene& s, nb::object camera) {

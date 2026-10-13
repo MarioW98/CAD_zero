@@ -10,8 +10,12 @@
 #include "CAD_0/sdf/primitives.hpp"
 #include "CAD_0/sdf/transforms.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <limits>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -29,7 +33,7 @@ using json::JsonValue;
 
 namespace {
 
-// ---- Migrator registry (Phase A: empty per ADR-0007) -----------------------
+// ---- Migrator registry (ADR-0007a: first real entry 0.1.0 -> 0.2.0) -----
 
 struct MigratorKey {
     NativeVersion from, to;
@@ -44,9 +48,22 @@ struct MigratorKey {
 };
 
 std::map<MigratorKey, Migrator>& migrator_registry() {
-    static std::map<MigratorKey, Migrator> registry; // empty in Phase A
+    static std::map<MigratorKey, Migrator> registry;
     return registry;
 }
+
+// The 0.1.0 -> 0.2.0 migrator (ADR-0007a): a deliberate no-op. v0.1.0
+// documents carry no blob payloads, and a missing "meshes" member
+// already parses as "no meshes" (the same tolerance PATCH files rely
+// on). The entry exists so the upgrade path is explicit, registered and
+// exercised by the frozen v0.1.0 golden file on every CI run.
+const bool kMigrator0102Registered [[maybe_unused]] = [] {
+    register_migrator(NativeVersion{0, 1, 0}, NativeVersion{0, 2, 0},
+                      [](json::JsonValue&) {
+                          // no-op by design — see ADR-0007a.
+                      });
+    return true;
+}();
 
 std::string version_to_string(const NativeVersion& v) {
     return std::to_string(v.major) + "." + std::to_string(v.minor) + "." +
@@ -105,6 +122,155 @@ JsonValue quat_to_json(const math::Quatf& q) {
         JsonValue(static_cast<double>(q.y)),
         JsonValue(static_cast<double>(q.z)),
     });
+}
+
+// ---- Mesh blob headers (ADR-0007a) -----------------------------------------
+
+// The blob id of a scene node's mesh: stable across save/load because
+// node ids round-trip exactly (deterministic, no extra state).
+std::string mesh_blob_id(const scene::SceneNode& node) {
+    return "mesh" + std::to_string(node.id);
+}
+
+// The document's full mesh library, in "meshes" array order: every
+// Mesh-kind scene node (node order) followed by the caller's extra
+// entries (e.g. the unattached meshes of a previously loaded document,
+// preserved for byte-identical re-serialization). Duplicate ids are an
+// explicit error — a reference would be ambiguous.
+std::vector<DocumentMesh> collect_document_meshes(
+    const scene::Scene& s, const std::vector<DocumentMesh>& extra_meshes) {
+    std::vector<DocumentMesh> meshes;
+    meshes.reserve(extra_meshes.size());
+    for (const auto& node : s.nodes())
+        if (node.kind == scene::NodeKind::Mesh)
+            meshes.push_back(DocumentMesh{mesh_blob_id(node), node.mesh});
+    for (const auto& dm : extra_meshes)
+        meshes.push_back(dm);
+
+    for (std::size_t i = 0; i < meshes.size(); ++i)
+        for (std::size_t j = i + 1; j < meshes.size(); ++j)
+            if (meshes[i].id == meshes[j].id)
+                throw std::runtime_error(
+                    "native format: duplicate mesh blob id \"" + meshes[i].id +
+                    "\" (a mesh node and an extra library entry, or two "
+                    "entries, share the same id — references would be "
+                    "ambiguous)");
+    return meshes;
+}
+
+// Header record for one mesh blob, as it appears in the JSON "meshes"
+// array. Internal: parse_document uses it to locate and validate the
+// payload inside the blob section before decoding.
+struct MeshHeaderRecord {
+    std::string id;
+    std::string encoding;
+    std::size_t offset{0};
+    std::size_t size{0};
+    std::size_t vertex_count{0};
+    std::size_t triangle_count{0};
+    bool has_normals{false};
+};
+
+// Non-negative, integral double -> size_t. The JSON parser stores every
+// number as double; header fields are counts/offsets and must be exact.
+std::size_t require_count(const JsonValue& v, const std::string& blob_id,
+                          const char* field) {
+    if (!v.is_number())
+        type_error(std::string("number for mesh blob field \"") + field + "\"", v);
+    const double d = v.as_number();
+    if (!(d >= 0.0) || d != std::floor(d) ||
+        d > static_cast<double>(std::numeric_limits<std::uint32_t>::max()))
+        throw std::runtime_error(
+            "native format: mesh blob \"" + blob_id + "\": field \"" + field +
+            "\" must be a non-negative integer (got " + std::to_string(d) + ")");
+    return static_cast<std::size_t>(d);
+}
+
+// Parse + validate the JSON "meshes" array into header records. Strict:
+// unknown encodings, duplicate ids and non-integer counts are explicit
+// errors (ADR-0007/0007a — surface, never silently drop).
+std::vector<MeshHeaderRecord> parse_mesh_headers(const JsonValue& meshes_v) {
+    if (!meshes_v.is_array())
+        type_error("array for \"meshes\"", meshes_v);
+
+    std::vector<MeshHeaderRecord> records;
+    records.reserve(meshes_v.as_array().size());
+    for (const auto& entry : meshes_v.as_array()) {
+        if (!entry.is_object())
+            type_error("object for \"meshes\" entry", entry);
+
+        MeshHeaderRecord r;
+        if (const JsonValue* id_v = entry.find("id")) {
+            if (!id_v->is_string())
+                type_error("string for mesh blob \"id\"", *id_v);
+            r.id = id_v->as_string();
+        } else {
+            throw std::runtime_error(
+                "native format: \"meshes\" entry is missing required field \"id\"");
+        }
+        if (r.id.empty())
+            throw std::runtime_error(
+                "native format: mesh blob id must be a non-empty string");
+
+        if (const JsonValue* enc = entry.find("encoding")) {
+            if (!enc->is_string())
+                type_error("string for mesh blob \"encoding\"", *enc);
+            r.encoding = enc->as_string();
+        } else {
+            throw std::runtime_error(
+                "native format: mesh blob \"" + r.id +
+                "\" is missing required field \"encoding\"");
+        }
+        if (r.encoding != "raw")
+            throw std::runtime_error(
+                "native format: mesh blob \"" + r.id + "\" uses unsupported "
+                "encoding \"" + r.encoding + "\" (this build reads \"raw\"; "
+                "zstd arrives with a future version bump — ADR-0007a)");
+
+        r.offset = require_count(entry.at("offset"), r.id, "offset");
+        r.size = require_count(entry.at("size"), r.id, "size");
+        r.vertex_count =
+            require_count(entry.at("vertex_count"), r.id, "vertex_count");
+        r.triangle_count =
+            require_count(entry.at("triangle_count"), r.id, "triangle_count");
+        if (const JsonValue* hn = entry.find("has_normals")) {
+            if (!hn->is_bool())
+                type_error("bool for mesh blob \"has_normals\"", *hn);
+            r.has_normals = hn->as_bool();
+        }
+
+        for (const auto& prev : records)
+            if (prev.id == r.id)
+                throw std::runtime_error(
+                    "native format: duplicate mesh blob id \"" + r.id + "\"");
+        records.push_back(std::move(r));
+    }
+    return records;
+}
+
+// Decode every mesh from the blob section according to its header.
+// Validates offset/size against the section and leaves a clear error
+// trail naming the blob id (transactional: throws before any scene use).
+std::vector<DocumentMesh> decode_meshes(
+    const std::vector<MeshHeaderRecord>& records,
+    std::string_view blob_section) {
+    std::vector<DocumentMesh> meshes;
+    meshes.reserve(records.size());
+    for (const auto& r : records) {
+        if (r.offset > blob_section.size() ||
+            r.size > blob_section.size() - r.offset)
+            throw std::runtime_error(
+                "native format: mesh blob \"" + r.id + "\" extends beyond the "
+                "blob section (offset " + std::to_string(r.offset) + ", size " +
+                std::to_string(r.size) + ", section is " +
+                std::to_string(blob_section.size()) + " bytes)");
+        const auto payload =
+            blob_section.substr(r.offset, r.size);
+        meshes.push_back(DocumentMesh{
+            r.id, decode_blob_raw(payload, r.id, r.vertex_count,
+                                  r.triangle_count, r.has_normals)});
+    }
+    return meshes;
 }
 
 // ---- SDF tree serialization -------------------------------------------------
@@ -404,7 +570,14 @@ std::unique_ptr<sdf::SDFNode> deserialize_node(const json::JsonValue& v) {
     return deserialize_node_impl(v, 0);
 }
 
-std::string serialize_document(const scene::Scene& s, const NativeCamera& cam) {
+std::string serialize_document(const scene::Scene& s, const NativeCamera& cam,
+                               const std::vector<DocumentMesh>& extra_meshes) {
+    // Full document mesh library (ADR-0007a): Mesh-kind nodes' payloads
+    // (node order, ids "mesh<node id>") + the caller's extra entries.
+    // collect_document_meshes() validates id uniqueness.
+    const std::vector<DocumentMesh> meshes =
+        collect_document_meshes(s, extra_meshes);
+
     JsonObject scene_json;
     scene_json.emplace_back("next_id", JsonValue(static_cast<double>(s.next_id())));
 
@@ -416,11 +589,20 @@ std::string serialize_document(const scene::Scene& s, const NativeCamera& cam) {
         n.emplace_back("name", JsonValue(node.name));
         n.emplace_back("visible", JsonValue(node.visible));
         n.emplace_back("transform", transform_to_json(node.transform));
-        if (!node.builder.empty())
-            n.emplace_back("builder", JsonValue(node.builder));
-        if (!node.params.empty())
-            n.emplace_back("params", params_to_json(node.params));
-        n.emplace_back("body", serialize_node_impl(*node.body.root()));
+        if (node.kind == scene::NodeKind::Mesh) {
+            // A Mesh node IS its geometry: kind + blob reference, no
+            // builder/params/body (ADR-0002 honest dispatch — an imported
+            // mesh is never faked as an SDF).
+            n.emplace_back("kind", JsonValue("mesh"));
+            n.emplace_back("mesh", JsonValue(JsonObject{})
+                                      .set("blob", JsonValue(mesh_blob_id(node))));
+        } else {
+            if (!node.builder.empty())
+                n.emplace_back("builder", JsonValue(node.builder));
+            if (!node.params.empty())
+                n.emplace_back("params", params_to_json(node.params));
+            n.emplace_back("body", serialize_node_impl(*node.body.root()));
+        }
         nodes.push_back(JsonValue(std::move(n)));
     }
     scene_json.emplace_back("nodes", JsonValue(std::move(nodes)));
@@ -430,10 +612,40 @@ std::string serialize_document(const scene::Scene& s, const NativeCamera& cam) {
     doc.as_object().emplace_back("version", JsonValue(version_to_string(kNativeVersion)));
     doc.as_object().emplace_back("scene", JsonValue(std::move(scene_json)));
     doc.as_object().emplace_back("camera", camera_to_json(cam));
+
+    // ADR-0007a: the top-level "meshes" blob-header array. Omitted when
+    // empty — a mesh-free v0.2.0 document differs from its v0.1.0
+    // counterpart ONLY in the version string. Offsets are relative to the
+    // start of the blob section and are assigned in array order (the
+    // writer packs payloads back-to-back in the same order).
+    if (!meshes.empty()) {
+        JsonArray mesh_headers;
+        mesh_headers.reserve(meshes.size());
+        std::size_t offset = 0;
+        for (const auto& dm : meshes) {
+            const bool has_normals = !dm.mesh.normals.empty();
+            const std::size_t size =
+                raw_blob_size(dm.mesh.positions.size(),
+                              dm.mesh.triangle_count(), has_normals);
+            mesh_headers.push_back(JsonValue(JsonObject{})
+                .set("id", JsonValue(dm.id))
+                .set("encoding", JsonValue("raw"))
+                .set("offset", JsonValue(static_cast<double>(offset)))
+                .set("size", JsonValue(static_cast<double>(size)))
+                .set("vertex_count",
+                     JsonValue(static_cast<double>(dm.mesh.positions.size())))
+                .set("triangle_count",
+                     JsonValue(static_cast<double>(dm.mesh.triangle_count())))
+                .set("has_normals", JsonValue(has_normals)));
+            offset += size;
+        }
+        doc.as_object().emplace_back("meshes", JsonValue(std::move(mesh_headers)));
+    }
     return doc.dump(true);
 }
 
-ParsedDocument parse_document(std::string_view text) {
+ParsedDocument parse_document(std::string_view text,
+                               std::string_view blob_section) {
     JsonValue root = json::JsonValue::parse(text);
 
     if (!root.is_object())
@@ -455,9 +667,14 @@ ParsedDocument parse_document(std::string_view text) {
     const NativeVersion file_version = parse_version(version_v.as_string());
 
     if (!file_version.same_major_minor(kNativeVersion)) {
-        // MAJOR or MINOR mismatch → migrator chain.
+        // MAJOR or MINOR mismatch → migrator chain. The lookup key
+        // normalizes the file's PATCH to zero: a migrator registered from
+        // (M.m.0) upgrades EVERY M.m.x — PATCH differences are compatible
+        // in both directions (ADR-0007), so 0.1.3 opens with the 0.1.0 →
+        // 0.2.0 migrator. Migrators run forward (upgrade) only.
+        const NativeVersion from_minor{file_version.major, file_version.minor, 0};
         const auto& registry = migrator_registry();
-        const MigratorKey key{file_version, kNativeVersion};
+        const MigratorKey key{from_minor, kNativeVersion};
         const auto it = registry.find(key);
         if (it == registry.end()) {
             throw std::runtime_error(
@@ -470,6 +687,18 @@ ParsedDocument parse_document(std::string_view text) {
         it->second(root);
     }
     // PATCH differences are forward/backward compatible (ADR-0007).
+
+    // Mesh blob library (ADR-0007a; optional) — parsed and decoded BEFORE
+    // the nodes so Mesh-kind nodes can wire their payload inline. The
+    // header array is validated in every mode; the payload decode needs
+    // the blob section, which only load_file can supply.
+    std::vector<DocumentMesh> mesh_library;
+    if (const JsonValue* meshes_v = root.find("meshes")) {
+        const std::vector<MeshHeaderRecord> records =
+            parse_mesh_headers(*meshes_v);
+        if (!records.empty())
+            mesh_library = decode_meshes(records, blob_section);
+    }
 
     const JsonValue& scene_v = root.at("scene");
     if (!scene_v.is_object())
@@ -494,13 +723,50 @@ ParsedDocument parse_document(std::string_view text) {
 
         scene::SceneNode node;
         node.id = static_cast<std::uint32_t>(require_number(node_v.at("id"), "id"));
-        node.mesh_dirty = true; // always re-tessellate after load (no cached blobs in Phase A)
+
+        // Node kind (FASE 2): absent -> Sdf (v0.1.0/v0.2.0 SDF nodes stay
+        // byte-identical); "mesh" -> an imported-geometry node; anything
+        // else is an explicit error (honest dispatch, ADR-0002).
+        std::string mesh_ref; // blob id for Mesh-kind nodes
+        if (const JsonValue* kind_v = node_v.find("kind")) {
+            if (!kind_v->is_string())
+                type_error("string for node \"kind\"", *kind_v);
+            const std::string kind = kind_v->as_string();
+            if (kind == "mesh") {
+                node.kind = scene::NodeKind::Mesh;
+                const JsonValue& mesh_v = node_v.at("mesh");
+                if (!mesh_v.is_object())
+                    type_error("object for node \"mesh\"", mesh_v);
+                const JsonValue& blob_v = mesh_v.at("blob");
+                if (!blob_v.is_string())
+                    type_error("string for node \"mesh\" \"blob\"", blob_v);
+                mesh_ref = blob_v.as_string();
+                if (mesh_ref.empty())
+                    throw std::runtime_error(
+                        "native format: node " + std::to_string(node.id) +
+                        " has an empty mesh blob reference");
+            } else {
+                throw std::runtime_error(
+                    "native format: unknown node \"kind\" \"" + kind +
+                    "\" (this build reads Sdf nodes and \"mesh\" nodes; the "
+                    "file was likely written by a newer CAD_0 version)");
+            }
+        }
+
+        if (node.kind == scene::NodeKind::Sdf) {
+            node.mesh_dirty = true; // re-tessellate SDF caches after load
+        } else {
+            node.mesh_dirty = false; // the Mesh payload IS final — never
+                                     // re-tessellated (update_meshes skips)
+        }
 
         if (const JsonValue* name = node_v.find("name")) {
             if (!name->is_string()) type_error("string for node \"name\"", *name);
             node.name = name->as_string();
         } else {
-            node.name = "Shape_" + std::to_string(node.id);
+            node.name = node.kind == scene::NodeKind::Mesh
+                            ? "Mesh_" + std::to_string(node.id)
+                            : "Shape_" + std::to_string(node.id);
         }
 
         if (const JsonValue* vis = node_v.find("visible")) {
@@ -510,6 +776,33 @@ ParsedDocument parse_document(std::string_view text) {
 
         if (const JsonValue* tr = node_v.find("transform"))
             node.transform = json_to_transform(*tr);
+
+        if (node.kind == scene::NodeKind::Mesh) {
+            // No builder/params/body for an imported mesh (ADR-0002):
+            // those fields belong to the SDF representation. Surprising
+            // leftovers on a mesh node are surfaced, not ignored.
+            for (const char* leftover : {"builder", "params", "body"})
+                if (node_v.find(leftover))
+                    throw std::runtime_error(
+                        std::string("native format: node ") +
+                        std::to_string(node.id) + " is a \"mesh\" node but "
+                        "carries an SDF-only field \"" + leftover + "\" — "
+                        "the two representations never mix");
+            // Wire the payload from the decoded library (references are
+            // validated HERE — transactional, before any scene use).
+            const auto entry = std::find_if(
+                mesh_library.begin(), mesh_library.end(),
+                [&](const DocumentMesh& dm) { return dm.id == mesh_ref; });
+            if (entry == mesh_library.end())
+                throw std::runtime_error(
+                    "native format: node " + std::to_string(node.id) +
+                    " references mesh blob \"" + mesh_ref +
+                    "\" which is not declared in the document's \"meshes\" "
+                    "array (missing or truncated blob section?)");
+            node.mesh = entry->mesh;
+            doc.nodes.push_back(std::move(node));
+            continue;
+        }
 
         if (const JsonValue* builder = node_v.find("builder")) {
             if (!builder->is_string()) type_error("string for node \"builder\"", *builder);
@@ -535,7 +828,31 @@ ParsedDocument parse_document(std::string_view text) {
     if (const JsonValue* cam = root.find("camera"))
         doc.camera = json_to_camera(*cam);
 
+    // The full decoded library travels with the document: referenced
+    // entries back the scene nodes; unreferenced entries (e.g. the
+    // golden file's) survive for byte-identical re-serialization.
+    doc.meshes = std::move(mesh_library);
+
     return doc;
+}
+
+ParsedDocument parse_document(std::string_view text) {
+    // JSON-only entry point. A document that carries mesh blobs is
+    // rejected explicitly: the geometry lives in the file's blob section,
+    // not in the text — silently returning header-only meshes (empty
+    // geometry) would be a data-loss footgun (ADR-0007a).
+    {
+        const JsonValue root = json::JsonValue::parse(text);
+        if (const JsonValue* meshes_v = root.find("meshes");
+            meshes_v && meshes_v->is_array() && !meshes_v->as_array().empty())
+            throw std::runtime_error(
+                "native format: document carries " +
+                std::to_string(meshes_v->as_array().size()) +
+                " mesh blob(s); the geometry lives in the file's blob "
+                "section, not in the JSON text — use load_file() "
+                "(ADR-0007a)");
+    }
+    return parse_document(text, {});
 }
 
 void install_document(scene::Scene& s, ParsedDocument&& doc) {
@@ -543,11 +860,30 @@ void install_document(scene::Scene& s, ParsedDocument&& doc) {
     for (auto& node : doc.nodes)
         s.restore_node(std::move(node));
     s.set_next_id(doc.next_id);
+    // NOTE (ADR-0007a): doc.meshes — the decoded mesh library — is NOT
+    // consumed here in the format layer. The scene layer wires
+    // "mesh"-kind nodes to these entries by blob id (see the import
+    // feature); callers that need the meshes keep the ParsedDocument.
 }
 
 void save_file(const std::filesystem::path& path,
-               const scene::Scene& s, const NativeCamera& cam) {
-    const std::string text = serialize_document(s, cam);
+               const scene::Scene& s, const NativeCamera& cam,
+               const std::vector<DocumentMesh>& extra_meshes) {
+    // Two blocks, one file (ADR-0007a): the JSON document (structure +
+    // blob headers) and the blob section (payloads, packed back-to-back
+    // in "meshes" array order). collect_document_meshes(s, extra) is the
+    // single source of that order — serialize_document performs the
+    // SAME collect for its headers, so the JSON offsets and this loop
+    // agree by construction (both start from the scene + the SAME extra
+    // entries; passing the already-collected list here would double the
+    // scene entries and trip the duplicate-id guard).
+    const std::vector<DocumentMesh> meshes =
+        collect_document_meshes(s, extra_meshes);
+    const std::string json_text = serialize_document(s, cam, extra_meshes);
+    std::string blob_section;
+    for (const auto& dm : meshes)
+        blob_section += encode_blob_raw(dm.mesh);
+    const std::string file = build_container(json_text, blob_section);
 
     const std::filesystem::path tmp = path.string() + ".tmp";
     {
@@ -555,7 +891,7 @@ void save_file(const std::filesystem::path& path,
         if (!out)
             throw std::runtime_error("native format: cannot open \"" + tmp.string() +
                                      "\" for writing");
-        out.write(text.data(), static_cast<std::streamsize>(text.size()));
+        out.write(file.data(), static_cast<std::streamsize>(file.size()));
         out.flush();
         if (!out) {
             out.close();
@@ -591,7 +927,30 @@ ParsedDocument load_file(const std::filesystem::path& path) {
     ss << in.rdbuf();
     if (in.bad())
         throw std::runtime_error("native format: I/O error reading \"" + path.string() + "\"");
-    return parse_document(ss.str());
+    const std::string bytes = ss.str();
+
+    // Framing auto-detection (ADR-0007a), checked BEFORE any parsing:
+    //   1. CAD0BLOB magic -> v0.2.0 binary container;
+    //   2. leading '{'   -> legacy v0.1.0 pure-JSON (migrator path);
+    //   3. anything else -> explicit "not a CAD_0 document" error.
+    if (has_container_magic(bytes)) {
+        const ContainerParts parts = split_container(bytes);
+        return parse_document(parts.json_text, parts.blob_section);
+    }
+    if (!bytes.empty() && bytes.front() == '{')
+        return parse_document(bytes); // legacy pure-JSON v0.1.0
+
+    std::string first_byte = "<none: empty file>";
+    if (!bytes.empty()) {
+        char buf[8];
+        std::snprintf(buf, sizeof(buf), "0x%02X",
+                      static_cast<unsigned>(static_cast<unsigned char>(bytes.front())));
+        first_byte = buf;
+    }
+    throw std::runtime_error(
+        "native format: cannot open \"" + path.string() +
+        "\": not a CAD_0 native document — expected the CAD0BLOB container "
+        "or a legacy JSON document (first byte is " + first_byte + ")");
 }
 
 } // namespace CAD_0::io::native

@@ -151,6 +151,16 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        import_stl = QAction("Import &STL...", self)
+        import_stl.triggered.connect(lambda checked: self._on_import("stl"))
+        file_menu.addAction(import_stl)
+
+        import_obj = QAction("Import &OBJ...", self)
+        import_obj.triggered.connect(lambda checked: self._on_import("obj"))
+        file_menu.addAction(import_obj)
+
+        file_menu.addSeparator()
+
         export_stl = QAction("Export &STL...", self)
         export_stl.triggered.connect(lambda: self._on_export("stl"))
         file_menu.addAction(export_stl)
@@ -394,9 +404,13 @@ class MainWindow(QMainWindow):
             node = self._scene.node_at(i)
             if node is None:
                 continue
-            item = QTreeWidgetItem([node.name, "SDF"])
+            type_label = "Mesh" if node.kind == "mesh" else "SDF"
+            item = QTreeWidgetItem([node.name, type_label])
             item.setData(0, Qt.UserRole, node.id)
             self._feature_tree.addTopLevelItem(item)
+            if node.kind == "mesh":
+                # Imported geometry: no editing metadata, no defaults.
+                continue
             # Editing metadata survives the round-trip via the C++ node's
             # `builder` tag + `params` map (persisted by the native format).
             if node.builder:
@@ -594,6 +608,60 @@ class MainWindow(QMainWindow):
                     {k: float(v) for k, v in params.items()})
             self._refresh_viewport()
 
+    def _on_import(self, format_name: str) -> None:
+        """Import an STL/OBJ file as a first-class mesh scene node.
+
+        The kernel loader (CAD_0.io.load_stl / load_obj) welds the
+        vertices; the status bar reports the post-welding counts. The
+        node is NOT undoable (importing copies potentially megabytes of
+        geometry into an undo command; the command stack is reset on
+        open anyway) — delete re-adds nothing parametric for meshes.
+        """
+        if not self._has_kernel:
+            QMessageBox.warning(self, "No kernel", "C++ kernel not available.")
+            return
+        filters = {
+            "stl": "STL Mesh (*.stl);;All Files (*)",
+            "obj": "Wavefront OBJ (*.obj);;All Files (*)",
+        }
+        path, _ = QFileDialog.getOpenFileName(
+            self, f"Import {format_name.upper()}", "", filters[format_name])
+        if not path:
+            return
+        self._import_mesh(path, format_name)
+
+    def _import_mesh(self, path: str, format_name: str) -> bool:
+        """Load `path` and add it as a mesh node (dialog-free core —
+        also the test entry point). Returns True on success."""
+        import CAD_0.io as cad_io
+        from pathlib import Path as _Path
+        try:
+            loader = cad_io.load_stl if format_name == "stl" else cad_io.load_obj
+            mesh = loader(path)
+        except (RuntimeError, ValueError, OSError) as exc:
+            QMessageBox.critical(
+                self, "Cannot import file",
+                f"Failed to import:\n{path}\n\n{exc}")
+            return False
+        # Node name from the filename (stem); ids stay numeric.
+        name = _Path(path).stem or "imported"
+        node_id = self._scene.add_node(name, mesh)
+        node = self._scene.get_node(node_id)
+        if node is None:  # defensive: add_node just returned it
+            return False
+        vcount = node.mesh.vertex_count()
+        tcount = node.mesh.triangle_count()
+        item = QTreeWidgetItem([name, "Mesh"])
+        item.setData(0, Qt.UserRole, node_id)
+        self._feature_tree.addTopLevelItem(item)
+        self._refresh_viewport()
+        # Post-welding counts (the loader welds: an STL's per-triangle
+        # duplicates are merged back before the mesh lands here).
+        self._status.showMessage(
+            f"Imported {name}: {vcount} vertices, {tcount} triangles (welded)",
+            5000)
+        return True
+
     def _on_export(self, format_name: str) -> None:
         extensions = {
             "stl": "STL Mesh (*.stl)",
@@ -777,6 +845,13 @@ class MainWindow(QMainWindow):
         node = self._scene.get_node(node_id)
         if node is None:
             return
+        self._selected_node_id = node_id
+        if node.kind == "mesh":
+            # Imported geometry: read-only info (nothing parametric to
+            # edit — the mesh is data, not a recipe).
+            self._property_panel.set_readonly_fields(
+                node.name, self._mesh_info_fields(node))
+            return
         # Show the node's parameters in the property panel.
         params = self._node_params.get(node_id, {})
         # Convert to dict[str, float|str|bool] for PropertyPanel
@@ -784,8 +859,26 @@ class MainWindow(QMainWindow):
         for k, v in params.items():
             display_params[k] = float(v) if isinstance(v, (int, float)) else str(v)
         self._property_panel.set_parameters(node.name, display_params)
-        # Store the selected node_id for the parameter_changed callback
-        self._selected_node_id = node_id
+
+    @staticmethod
+    def _mesh_info_fields(node) -> dict:
+        """Read-only property-panel fields for a mesh-kind node."""
+        mesh = node.mesh
+        fields = {
+            "Type": "Imported mesh",
+            "Vertices": str(mesh.vertex_count()),
+            "Triangles": str(mesh.triangle_count()),
+        }
+        try:
+            import numpy as _np
+            pos = _np.asarray(mesh.positions)
+            if pos.size:
+                lo, hi = pos.min(axis=0), pos.max(axis=0)
+                fields["Bounds min"] = f"({lo[0]:.3f}, {lo[1]:.3f}, {lo[2]:.3f})"
+                fields["Bounds max"] = f"({hi[0]:.3f}, {hi[1]:.3f}, {hi[2]:.3f})"
+        except (ImportError, ValueError):
+            pass  # numpy missing / empty positions: counts still shown
+        return fields
 
     def _on_parameter_changed(self, name: str, value) -> None:
         """Called when the user edits a parameter in the property panel."""

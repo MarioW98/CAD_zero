@@ -6,14 +6,18 @@ set(CAD_0_IO_HEADERS
     include/CAD_0/io/threemf.hpp
     include/CAD_0/io/json.hpp
     include/CAD_0/io/native.hpp
+    include/CAD_0/io/native_blob.hpp
 )
 
 set(CAD_0_IO_SOURCES
     src/stl.cpp
+    src/stl_load.cpp
     src/obj.cpp
+    src/obj_load.cpp
     src/threemf.cpp
     src/json.cpp
     src/native.cpp
+    src/native_blob.cpp
 )
 
 add_library(CAD_0_io STATIC ${CAD_0_IO_SOURCES} ${CAD_0_IO_HEADERS})

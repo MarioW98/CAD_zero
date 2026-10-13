@@ -1,11 +1,16 @@
 // tests/unit/io/test_native.cpp
 //
-// Native project format (.CAD_0, ADR-0007) — unit tests.
+// Native project format (.CAD_0, ADR-0007 + ADR-0007a) — unit tests.
 //
 // Coverage per the feature plan:
 //   * round-trip: SDF evaluation is BIT-IDENTICAL after save/load
-//   * golden file: a checked-in v0.1.0 document must parse and
-//     re-serialize byte-identically (CI drift detector)
+//   * golden v0.1.0 (frozen legacy fixture): loads through the
+//     0.1.0 -> 0.2.0 migrator; SDF values bit-identical
+//   * golden v0.2.0: container + one embedded mesh; re-serialization is
+//     byte-identical (CI drift detector)
+//   * container framing: magic/legacy detection, length validation,
+//     truncation errors
+//   * "raw" blob codec: bit-exact round-trips (incl. -0.0/denormals)
 //   * ID round-trip: node ids and next_id survive a cycle exactly
 //   * explicit errors: corrupted JSON, unknown ops, missing fields,
 //     version mismatches without a migrator — all throw with messages,
@@ -16,11 +21,13 @@
 
 #include "CAD_0/io/json.hpp"
 #include "CAD_0/io/native.hpp"
+#include "CAD_0/io/native_blob.hpp"
 #include "CAD_0/sdf/operators.hpp"
 #include "CAD_0/sdf/primitives.hpp"
 #include "CAD_0/sdf/transforms.hpp"
 
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -117,6 +124,36 @@ std::filesystem::path golden_path() {
            "native_v0_1_0.CAD_0";
 }
 
+std::filesystem::path golden_v2_path() {
+    // The v0.2.0 golden: ADR-0007a container with one embedded mesh.
+    return std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
+           "native_v0_2_0.CAD_0";
+}
+
+// The embedded mesh of the v0.2.0 golden: a regular octahedron — 6
+// vertices, 8 triangles, deterministic to the last bit. Normals are the
+// positions themselves (every vertex is a unit vector).
+sdf::TriangleMesh make_golden_mesh() {
+    sdf::TriangleMesh m;
+    m.positions = {
+        math::Vec3f{ 1.0f,  0.0f,  0.0f}, math::Vec3f{-1.0f,  0.0f,  0.0f},
+        math::Vec3f{ 0.0f,  1.0f,  0.0f}, math::Vec3f{ 0.0f, -1.0f,  0.0f},
+        math::Vec3f{ 0.0f,  0.0f,  1.0f}, math::Vec3f{ 0.0f,  0.0f, -1.0f},
+    };
+    m.normals = m.positions;
+    m.indices = {
+        0, 2, 4,  2, 1, 4,  1, 3, 4,  3, 0, 4,  // +Z hemisphere
+        0, 3, 5,  2, 0, 5,  1, 2, 5,  3, 1, 5,  // -Z hemisphere
+    };
+    return m;
+}
+
+std::vector<native::DocumentMesh> make_golden_meshes() {
+    std::vector<native::DocumentMesh> out;
+    out.push_back(native::DocumentMesh{"mesh_1", make_golden_mesh()});
+    return out;
+}
+
 std::string read_file(const std::filesystem::path& p) {
     std::ifstream in(p, std::ios::binary);
     std::ostringstream ss;
@@ -130,13 +167,14 @@ std::string read_file(const std::filesystem::path& p) {
 
 TEST_SUITE("io native format") {
 
-TEST_CASE("version constant + empty migrator chain (ADR-0007 Phase A)") {
+TEST_CASE("version constant + migrator chain (ADR-0007/0007a)") {
     CHECK(native::kNativeVersion.major == 0);
-    CHECK(native::kNativeVersion.minor == 1);
+    CHECK(native::kNativeVersion.minor == 2);
     CHECK(native::kNativeVersion.patch == 0);
-    CHECK(native::migrator_count() == 0);
+    // The first real migrator: 0.1.0 -> 0.2.0 (no-op by design, ADR-0007a).
+    CHECK(native::migrator_count() == 1);
 
-    const auto v = native::parse_version("0.1.0");
+    const auto v = native::parse_version("0.2.0");
     CHECK(v == native::kNativeVersion);
 
     CHECK_THROWS_WITH_AS(native::parse_version("0.1"),
@@ -216,40 +254,339 @@ TEST_CASE("round-trip: node metadata (id, next_id, name, visible, builder, param
     CHECK(loaded.node_at(1)->builder.empty());
 }
 
-TEST_CASE("golden file: parses and re-serializes byte-identically") {
-    const std::string fresh = native::serialize_document(
-        make_canonical_scene(), make_canonical_camera());
-
-    // Regeneration mode (maintainer-only, never active in CI):
-    //   CAD_0_GENERATE_GOLDEN=1 ./CAD_0_tests
-    // rewrites the checked-in golden file after an INTENTIONAL format
-    // change (which requires a companion ADR per ADR-0007).
-    if (const char* env = std::getenv("CAD_0_GENERATE_GOLDEN");
-        env && std::string_view(env) == "1") {
-        std::filesystem::create_directories(golden_path().parent_path());
-        std::ofstream out(golden_path(), std::ios::binary | std::ios::trunc);
-        out << fresh;
-        out.close();
-        MESSAGE("golden file (re)written: ", golden_path().string());
-        return;
-    }
-
+TEST_CASE("golden v0.1.0 (frozen legacy fixture): loads through the migrator") {
+    // The v0.1.0 golden is FROZEN HISTORY (ADR-0007a): a pure-JSON
+    // document written before the binary container existed. It must never
+    // be regenerated — its whole purpose is exercising the 0.1.0 -> 0.2.0
+    // migrator on every CI run. There is deliberately NO regen path here.
     const std::filesystem::path gp = golden_path();
-    const std::string missing =
-        "golden file missing: " + gp.string() +
-        " (regenerate with CAD_0_GENERATE_GOLDEN=1)";
+    const std::string missing = "golden file missing: " + gp.string();
     REQUIRE_MESSAGE(std::filesystem::exists(gp), missing);
 
     const std::string golden = read_file(gp);
 
-    // (a) The canonical scene serializes to exactly the golden content.
-    CHECK(fresh == golden);
+    // Legacy framing sanity: the fixture must still start with '{'.
+    // (If this ever fails someone regenerated it as a container —
+    // the legacy detection path would silently stop being tested.)
+    REQUIRE(!golden.empty());
+    CHECK(golden.front() == '{');
 
-    // (b) Parsing the golden and re-serializing is idempotent (format
-    // stability — the drift detector for future changes).
+    // The migrator path: version 0.1.0 != 0.2.0 -> registry lookup ->
+    // registered no-op migrator -> parse proceeds.
     scene::Scene s;
-    native::install_document(s, native::parse_document(golden));
-    CHECK(native::serialize_document(s, make_canonical_camera()) == golden);
+    const native::ParsedDocument doc = native::parse_document(golden);
+    native::ParsedDocument doc_copy = doc;
+    native::install_document(s, std::move(doc_copy));
+    REQUIRE(s.node_count() == 2);
+
+    // SDF evaluation is bit-identical to the canonical scene (the migrator
+    // and the container bump did not perturb a single float).
+    CHECK(sample_grid(s.node_at(0)->body, 7) ==
+          sample_grid(make_canonical_scene().node_at(0)->body, 7));
+    CHECK(sample_grid(s.node_at(1)->body, 9) ==
+          sample_grid(make_canonical_scene().node_at(1)->body, 9));
+
+    // Metadata survived the upgrade.
+    CHECK(s.node_at(0)->id == 7);
+    CHECK(s.node_at(1)->id == 9);
+    CHECK(s.next_id() == 10);
+    CHECK(s.node_at(0)->name == "Primary sphere");
+    CHECK(s.node_at(0)->builder == "sphere");
+    CHECK(s.node_at(0)->params.at("radius") == scene::ParamValue{1.5f});
+    CHECK(s.node_at(1)->visible == false);
+
+    // No meshes in a v0.1.0 document.
+    CHECK(doc.meshes.empty());
+}
+
+TEST_CASE("golden v0.2.0: container + embedded mesh, re-serialization byte-identical") {
+    // Regeneration mode (maintainer-only, never active in CI):
+    //   CAD_0_GENERATE_GOLDEN=1 ./CAD_0_tests
+    // rewrites the v0.2.0 golden after an INTENTIONAL format change
+    // (which requires a companion ADR per ADR-0007/0007a). The v0.1.0
+    // golden is frozen and is NEVER rewritten by this path.
+    if (const char* env = std::getenv("CAD_0_GENERATE_GOLDEN");
+        env && std::string_view(env) == "1") {
+        std::filesystem::create_directories(golden_v2_path().parent_path());
+        native::save_file(golden_v2_path(), make_canonical_scene(),
+                          make_canonical_camera(), make_golden_meshes());
+        MESSAGE("golden file (re)written: ", golden_v2_path().string());
+        return;
+    }
+
+    const std::filesystem::path gp = golden_v2_path();
+    const std::string missing =
+        "golden file missing: " + gp.string() +
+        " (regenerate with CAD_0_GENERATE_GOLDEN=1)";
+    REQUIRE_MESSAGE(std::filesystem::exists(gp), missing);
+    const std::string golden = read_file(gp);
+
+    // (a) The canonical scene + mesh serializes to exactly the golden
+    // bytes (fresh container == checked-in container).
+    const std::filesystem::path tmp =
+        std::filesystem::temp_directory_path() / "cad0_golden_v2_check.CAD_0";
+    native::save_file(tmp, make_canonical_scene(),
+                      make_canonical_camera(), make_golden_meshes());
+    CHECK(read_file(tmp) == golden);
+    std::filesystem::remove(tmp);
+
+    // (b) Load the golden: framing, nodes and mesh all decode; SDF values
+    // are bit-identical; the mesh is exactly the octahedron we wrote.
+    const native::ParsedDocument doc = native::load_file(gp);
+    REQUIRE(doc.meshes.size() == 1);
+    CHECK(doc.meshes[0].id == "mesh_1");
+    const sdf::TriangleMesh& gm = doc.meshes[0].mesh;
+    const sdf::TriangleMesh& want = make_golden_mesh();
+    REQUIRE(gm.positions.size() == 6);
+    REQUIRE(gm.triangle_count() == 8);
+    CHECK(gm.positions == want.positions);   // bit-exact vectors
+    CHECK(gm.normals == want.normals);
+    CHECK(gm.indices == want.indices);
+
+    scene::Scene s;
+    native::ParsedDocument doc_copy = doc;
+    native::install_document(s, std::move(doc_copy));
+    CHECK(sample_grid(s.node_at(0)->body, 7) ==
+          sample_grid(make_canonical_scene().node_at(0)->body, 7));
+
+    // (c) Re-serialize the loaded document: byte-identical (the drift
+    // detector — blob offsets, JSON determinism, endian-stable encoding).
+    native::save_file(tmp, s, doc.camera, doc.meshes);
+    CHECK(read_file(tmp) == golden);
+    std::filesystem::remove(tmp);
+}
+
+TEST_CASE("container: magic + legacy detection, explicit error on foreign files") {
+    const std::string json_text =
+        native::serialize_document(make_canonical_scene(), {});
+    const std::string container = native::build_container(json_text, {});
+
+    // Magic detection.
+    CHECK(native::has_container_magic(container));
+    CHECK(!native::has_container_magic(json_text)); // legacy JSON
+    CHECK(!native::has_container_magic(""));        // too short
+
+    // Round-trip through the codec level.
+    const native::ContainerParts parts = native::split_container(container);
+    CHECK(parts.json_text == json_text);
+    CHECK(parts.blob_section.empty());
+
+    // Legacy JSON (starts with '{') parses through the text entry point.
+    CHECK_NOTHROW(native::parse_document(json_text));
+
+    // Foreign binary fed as text fails at the JSON parse with the usual
+    // line/column diagnostic (framing detection is load_file's job and
+    // is covered by the save/load test below).
+    const std::string foreign = "PK\x03\x04garbage";
+    CHECK_THROWS_WITH_AS(native::parse_document(foreign, {}),
+        doctest::Contains("parse error at line"), std::runtime_error);
+}
+
+TEST_CASE("container: truncation and length mismatch are explicit errors") {
+    const std::string json_text =
+        native::serialize_document(make_canonical_scene(), {});
+    const std::string container =
+        native::build_container(json_text, "12345678");
+
+    // Chopping bytes off the end -> truncation error.
+    const std::string truncated = container.substr(0, container.size() - 4);
+    CHECK_THROWS_WITH_AS(native::split_container(truncated),
+        doctest::Contains("do not add up"), std::runtime_error);
+
+    // Corrupting json_len (+100) -> the declared total no longer matches.
+    std::string bad = container;
+    bad[11] = static_cast<char>(bad[11] + 100); // high byte of json_len
+    CHECK_THROWS_WITH_AS(native::split_container(bad),
+        doctest::Contains("do not add up"), std::runtime_error);
+
+    // Frame shorter than the 16-byte header.
+    CHECK_THROWS_WITH_AS(native::split_container("CAD0BLOB"),
+        doctest::Contains("truncated"), std::runtime_error);
+
+    // Wrong magic with full length.
+    std::string wrong_magic = container;
+    wrong_magic[0] = 'X';
+    CHECK_THROWS_WITH_AS(native::split_container(wrong_magic),
+        doctest::Contains("bad magic"), std::runtime_error);
+}
+
+TEST_CASE("blob codec: raw encoding round-trips bit-exactly") {
+    sdf::TriangleMesh m;
+    m.positions = {
+        math::Vec3f{-0.0f, 1.5f, -2.25f},
+        math::Vec3f{ 1e-40f, 3.14159f, 1e30f},   // denormal, pi, huge
+        math::Vec3f{ 0.0f, 0.0f, 0.0f},
+    };
+    m.indices = {0, 1, 2, 1, 2, 0};
+    m.normals = {
+        math::Vec3f{ 0.0f, 1.0f, 0.0f},
+        math::Vec3f{ 1.0f, 0.0f, -0.0f},
+        math::Vec3f{ 0.0f, 0.0f, 1.0f},
+    };
+
+    const std::string blob = native::encode_blob_raw(m);
+    CHECK(blob.size() == native::raw_blob_size(3, 2, true));
+
+    // Bit-level spot check: normals[1].z is -0.0 (sign bit set) — sits at
+    // blob offset 36 (positions) + 12 (normal 0) + 8 (x,y of normal 1).
+    // Little-endian: 00 00 00 80.
+    CHECK(static_cast<unsigned char>(blob[36 + 12 + 8 + 3]) == 0x80);
+
+    const sdf::TriangleMesh back =
+        native::decode_blob_raw(blob, "codec_test", 3, 2, true);
+    CHECK(back.positions == m.positions); // -0.0 and denormals preserved
+    CHECK(back.normals == m.normals);
+    CHECK(back.indices == m.indices);
+
+    // Without normals.
+    sdf::TriangleMesh no_n = m;
+    no_n.normals.clear();
+    const sdf::TriangleMesh back2 =
+        native::decode_blob_raw(native::encode_blob_raw(no_n),
+                                "codec_test", 3, 2, false);
+    CHECK(back2.normals.empty());
+    CHECK(back2.positions == m.positions);
+
+    // Empty mesh.
+    const sdf::TriangleMesh empty =
+        native::decode_blob_raw("", "codec_test", 0, 0, false);
+    CHECK(empty.positions.empty());
+    CHECK(empty.indices.empty());
+
+    // Size/count mismatch and out-of-range indices are explicit errors.
+    CHECK_THROWS_WITH_AS(native::decode_blob_raw(blob, "bad", 3, 2, false),
+        doctest::Contains("payload size mismatch"), std::runtime_error);
+    CHECK_THROWS_WITH_AS(
+        native::decode_blob_raw(
+            std::string(3 * 12 + 3 * 12, '\0') +
+                std::string(12, '\xAB'), "bad", 3, 1, true),
+        doctest::Contains("out of range"), std::runtime_error);
+}
+
+TEST_CASE("meshes: JSON header validation and blob section slicing") {
+    // One triangle: 3 positions (36 bytes) + 3 uint32 indices (12 bytes).
+    const std::string header_ok = R"JSON({
+      "format": "CAD_0 native", "version": "0.2.0",
+      "scene": { "next_id": 1, "nodes": [] },
+      "meshes": [ { "id": "mesh_1", "encoding": "raw",
+                    "offset": 0, "size": 48, "vertex_count": 3,
+                    "triangle_count": 1, "has_normals": false } ]
+    })JSON";
+
+    // Blob content is zeros — valid: three (0,0,0) vertices and the
+    // triangle (0,0,0). The point of this test is header validation and
+    // section slicing, not geometry.
+    const std::string blob(3 * 12 + 3 * 4, '\0');
+
+    const native::ParsedDocument doc = native::parse_document(header_ok, blob);
+    REQUIRE(doc.meshes.size() == 1);
+    CHECK(doc.meshes[0].id == "mesh_1");
+    CHECK(doc.meshes[0].mesh.vertex_count() == 3);
+    CHECK(doc.meshes[0].mesh.triangle_count() == 1);
+
+    // A blob section too short for the declared offset/size.
+    const std::string short_blob(10, '\0');
+    CHECK_THROWS_WITH_AS(native::parse_document(header_ok, short_blob),
+        doctest::Contains("beyond the blob section"), std::runtime_error);
+
+    // Unsupported encoding (zstd is deferred — ADR-0003/0007a).
+    const std::string header_zstd = R"JSON({
+      "format": "CAD_0 native", "version": "0.2.0",
+      "scene": { "next_id": 1, "nodes": [] },
+      "meshes": [ { "id": "m", "encoding": "zstd",
+                    "offset": 0, "size": 10, "vertex_count": 0,
+                    "triangle_count": 0 } ]
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(header_zstd, std::string(10, '\0')),
+        doctest::Contains("zstd"), std::runtime_error);
+
+    // Duplicate ids.
+    const std::string header_dup = R"JSON({
+      "format": "CAD_0 native", "version": "0.2.0",
+      "scene": { "next_id": 1, "nodes": [] },
+      "meshes": [ { "id": "m", "encoding": "raw", "offset": 0, "size": 0,
+                    "vertex_count": 0, "triangle_count": 0 },
+                  { "id": "m", "encoding": "raw", "offset": 0, "size": 0,
+                    "vertex_count": 0, "triangle_count": 0 } ]
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(header_dup, ""),
+        doctest::Contains("duplicate mesh blob id"), std::runtime_error);
+
+    // Non-integer counts.
+    const std::string header_frac = R"JSON({
+      "format": "CAD_0 native", "version": "0.2.0",
+      "scene": { "next_id": 1, "nodes": [] },
+      "meshes": [ { "id": "m", "encoding": "raw", "offset": 0.5, "size": 0,
+                    "vertex_count": 0, "triangle_count": 0 } ]
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(header_frac, ""),
+        doctest::Contains("non-negative integer"), std::runtime_error);
+}
+
+TEST_CASE("meshes: text-only entry point rejects documents carrying blobs") {
+    const std::string text = R"JSON({
+      "format": "CAD_0 native", "version": "0.2.0",
+      "scene": { "next_id": 1, "nodes": [] },
+      "meshes": [ { "id": "mesh_1", "encoding": "raw", "offset": 0,
+                    "size": 0, "vertex_count": 0, "triangle_count": 0 } ]
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(text),
+        doctest::Contains("use load_file()"), std::runtime_error);
+}
+
+TEST_CASE("save/load: file round-trip through the container, legacy via load_file") {
+    std::filesystem::path tmp_dir = std::filesystem::temp_directory_path();
+    const std::filesystem::path f =
+        tmp_dir / "cad0_fase0_container.CAD_0";
+    const std::filesystem::path legacy =
+        tmp_dir / "cad0_fase0_legacy.CAD_0";
+
+    // SDF-only scene: blob section empty, magic present.
+    native::save_file(f, make_canonical_scene(), make_canonical_camera());
+    const std::string bytes = read_file(f);
+    REQUIRE(bytes.size() >= native::kContainerHeaderSize);
+    CHECK(std::memcmp(bytes.data(), native::kContainerMagic.data(),
+                      native::kContainerMagic.size()) == 0);
+    const native::ContainerParts parts = native::split_container(bytes);
+    CHECK(parts.blob_section.empty());
+
+    // File-level round-trip: bit-identical SDF values.
+    const native::ParsedDocument doc = native::load_file(f);
+    scene::Scene s;
+    native::ParsedDocument doc_copy = doc;
+    native::install_document(s, std::move(doc_copy));
+    CHECK(sample_grid(s.node_at(0)->body, 7) ==
+          sample_grid(make_canonical_scene().node_at(0)->body, 7));
+    CHECK(doc.meshes.empty());
+
+    // A legacy pure-JSON file (written by hand as v0.1.0) loads through
+    // load_file's framing detection + the migrator.
+    {
+        std::ofstream out(legacy, std::ios::binary | std::ios::trunc);
+        out << R"JSON({
+          "format": "CAD_0 native", "version": "0.1.0",
+          "scene": { "next_id": 2, "nodes": [ { "id": 1,
+            "body": { "op": "sphere", "radius": 1.25 } } ] }
+        })JSON";
+    }
+    const native::ParsedDocument legacy_doc = native::load_file(legacy);
+    REQUIRE(legacy_doc.nodes.size() == 1);
+    CHECK(legacy_doc.version == native::parse_version("0.1.0"));
+    CHECK(legacy_doc.nodes[0].body.value(math::Vec3f{0.0f, 0.0f, 0.0f}) ==
+          doctest::Approx(-1.25f));
+
+    // A foreign binary file fails the framing check.
+    const std::filesystem::path foreign = tmp_dir / "cad0_fase0_foreign.bin";
+    {
+        std::ofstream out(foreign, std::ios::binary | std::ios::trunc);
+        out << "PK\x03\x04 not a CAD_0 file";
+    }
+    CHECK_THROWS_WITH_AS(native::load_file(foreign),
+        doctest::Contains("not a CAD_0 native document"), std::runtime_error);
+
+    std::filesystem::remove(f);
+    std::filesystem::remove(legacy);
+    std::filesystem::remove(foreign);
 }
 
 TEST_CASE("corruption: malformed JSON reports line/column; scene untouched") {
@@ -738,3 +1075,182 @@ TEST_CASE("depth limit: legitimately deep tree (50 translate/scale) loads and ro
 }
 
 } // TEST_SUITE
+
+// ---- Mesh nodes in the native format (FASE 2) --------------------------------
+
+TEST_CASE("mixed scene: save -> load preserves mesh, SDF values and ids") {
+    scene::Scene s;
+    s.restore_node([] {
+        scene::SceneNode n;
+        n.id = 7;
+        n.name = "Primary sphere";
+        n.builder = "sphere";
+        n.params = {{"radius", 1.5f}};
+        n.transform.translation = math::Vec3f{0.25f, -1.0f, 0.5f};
+        n.transform.scale = 1.0f;
+        n.body = sdf::make_sphere(1.5f);
+        return n;
+    }());
+    {
+        scene::SceneNode n;
+        n.id = 11;
+        n.name = "imported_octa";
+        n.kind = scene::NodeKind::Mesh;
+        n.mesh = make_golden_mesh();
+        n.mesh_dirty = false;
+        n.transform.translation = math::Vec3f{5.0f, 0.0f, 0.0f};
+        s.restore_node(std::move(n));
+    }
+    s.set_next_id(12);
+
+    const std::filesystem::path f =
+        std::filesystem::temp_directory_path() / "cad0_fase2_mixed.CAD_0";
+    native::save_file(f, s, make_canonical_camera());
+
+    // ---- load back
+    const native::ParsedDocument doc = native::load_file(f);
+    REQUIRE(doc.nodes.size() == 2);
+    REQUIRE(doc.meshes.size() == 1);
+    CHECK(doc.meshes[0].id == "mesh11"); // "mesh" + node id
+
+    const scene::SceneNode& m = doc.nodes[1];
+    REQUIRE(m.kind == scene::NodeKind::Mesh);
+    // Mesh identical: counts...
+    CHECK(m.mesh.vertex_count() == 6);
+    CHECK(m.mesh.triangle_count() == 8);
+    // ...and exact geometry (positions, normals, indices).
+    const sdf::TriangleMesh& want = make_golden_mesh();
+    CHECK(m.mesh.positions == want.positions);
+    CHECK(m.mesh.normals == want.normals);
+    CHECK(m.mesh.indices == want.indices);
+    // ...and a position checksum (sum of all components).
+    double sum = 0.0;
+    for (const auto& p : m.mesh.positions) sum += p.x + p.y + p.z;
+    CHECK(sum == doctest::Approx(0.0)); // octahedron: symmetric
+
+    // Bounds dispatch by kind (mesh positions).
+    scene::Scene loaded;
+    native::ParsedDocument doc_copy = doc;
+    native::install_document(loaded, std::move(doc_copy));
+    math::Bboxf mb;
+    for (const auto& p : loaded.get_node(11)->mesh.positions) mb.expand(p);
+    CHECK(mb.min.x == doctest::Approx(-1.0f));
+    CHECK(mb.max.x == doctest::Approx(1.0f));
+    // Scene bounds: the sphere (r=1.5) dominates the octahedron (r=1).
+    CHECK(loaded.bounds().max.x == doctest::Approx(1.5f));
+
+    // SDF nodes stay BIT-IDENTICAL.
+    CHECK(sample_grid(loaded.get_node(7)->body, 7) ==
+          sample_grid(s.get_node(7)->body, 7));
+    CHECK(loaded.get_node(7)->builder == "sphere");
+    CHECK(loaded.get_node(7)->params.at("radius") == scene::ParamValue{1.5f});
+
+    // Ids round-trip exactly.
+    CHECK(loaded.get_node(7)->id == 7);
+    CHECK(loaded.get_node(11)->id == 11);
+    CHECK(loaded.next_id() == 12);
+
+    // update_meshes never re-tessellates the mesh node.
+    loaded.update_meshes(48);
+    CHECK(loaded.get_node(11)->mesh.positions == want.positions);
+    CHECK(loaded.get_node(11)->mesh_dirty == false);
+
+    // Re-save: byte-identical (stable blob ids from node ids).
+    const std::filesystem::path f2 =
+        std::filesystem::temp_directory_path() / "cad0_fase2_mixed2.CAD_0";
+    native::save_file(f2, loaded, doc.camera);
+    CHECK(read_file(f2) == read_file(f));
+
+    std::filesystem::remove(f);
+    std::filesystem::remove(f2);
+}
+
+TEST_CASE("mesh nodes: transactional load on corrupted blob section") {
+    // Build a valid mixed-scene file, then corrupt the blob section
+    // (declare a mesh header whose payload would decode garbage — the
+    // index guard fires) and check the scene stays untouched.
+    scene::Scene s;
+    {
+        scene::SceneNode n;
+        n.id = 3;
+        n.name = "octa";
+        n.kind = scene::NodeKind::Mesh;
+        n.mesh = make_golden_mesh();
+        n.mesh_dirty = false;
+        s.restore_node(std::move(n));
+    }
+    const std::filesystem::path f =
+        std::filesystem::temp_directory_path() / "cad0_fase2_corrupt.CAD_0";
+    native::save_file(f, s, {});
+
+    // Corrupt: flip bytes inside the blob section (the last 12 bytes are
+    // one triangle's indices -> out-of-range after the flip).
+    std::string bytes = read_file(f);
+    for (std::size_t i = bytes.size() - 12; i < bytes.size(); ++i)
+        bytes[i] = static_cast<char>(0x7F);
+    const std::filesystem::path bad =
+        std::filesystem::temp_directory_path() / "cad0_fase2_bad.CAD_0";
+    {
+        std::ofstream out(bad, std::ios::binary | std::ios::trunc);
+        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    }
+
+    scene::Scene target;
+    target.add_node("keepme", sdf::make_sphere(1.0f));
+    const std::size_t before = target.size();
+    CHECK_THROWS_WITH_AS(native::load_file(bad),
+        doctest::Contains("out of range"), std::runtime_error);
+    CHECK(target.size() == before); // transactional: untouched
+
+    // Truncated blob section (chop the whole file mid-blob): the frame
+    // length check fires first, still explicit, still untouched.
+    std::string chopped = read_file(f).substr(0, read_file(f).size() - 40);
+    const std::filesystem::path trunc =
+        std::filesystem::temp_directory_path() / "cad0_fase2_trunc.CAD_0";
+    {
+        std::ofstream out(trunc, std::ios::binary | std::ios::trunc);
+        out.write(chopped.data(), static_cast<std::streamsize>(chopped.size()));
+    }
+    CHECK_THROWS_WITH_AS(native::load_file(trunc),
+        doctest::Contains("truncated or corrupt"), std::runtime_error);
+    CHECK(target.size() == before);
+
+    // A mesh node referencing a blob that is not declared -> explicit
+    // error naming the missing reference (hand-crafted document).
+    const std::string dangling = R"JSON({
+      "format": "CAD_0 native", "version": "0.2.0",
+      "scene": { "next_id": 4, "nodes": [ { "id": 3, "kind": "mesh",
+        "mesh": { "blob": "mesh999" } } ] },
+      "meshes": [ { "id": "mesh3", "encoding": "raw", "offset": 0,
+                    "size": 0, "vertex_count": 0, "triangle_count": 0 } ]
+    })JSON";
+    std::string blob_section(1, '\0');
+    CHECK_THROWS_WITH_AS(native::parse_document(dangling, blob_section),
+        doctest::Contains("references mesh blob \"mesh999\""), std::runtime_error);
+
+    std::filesystem::remove(f);
+    std::filesystem::remove(bad);
+    std::filesystem::remove(trunc);
+}
+
+TEST_CASE("mesh nodes: kind dispatch is strict (unknown kinds, SDF leftovers)") {
+    // Unknown kind.
+    const std::string unknown = R"JSON({
+      "format": "CAD_0 native", "version": "0.2.0",
+      "scene": { "next_id": 2, "nodes": [ { "id": 1, "kind": "voxel" } ] }
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(unknown, {}),
+        doctest::Contains("unknown node \"kind\" \"voxel\""), std::runtime_error);
+
+    // A "mesh" node carrying an SDF-only field: surfaced, never ignored.
+    const std::string mixed = R"JSON({
+      "format": "CAD_0 native", "version": "0.2.0",
+      "scene": { "next_id": 2, "nodes": [ { "id": 1, "kind": "mesh",
+        "mesh": { "blob": "mesh1" },
+        "body": { "op": "sphere", "radius": 1.0 } } ] },
+      "meshes": [ { "id": "mesh1", "encoding": "raw", "offset": 0,
+                    "size": 0, "vertex_count": 0, "triangle_count": 0 } ]
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(mixed, ""),
+        doctest::Contains("SDF-only field \"body\""), std::runtime_error);
+}

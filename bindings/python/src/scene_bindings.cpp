@@ -39,20 +39,42 @@ void bind_scene(nb::module_& m) {
         .def_ro("id", &scene::SceneNode::id)
         .def_ro("name", &scene::SceneNode::name)
         .def_ro("visible", &scene::SceneNode::visible)
+        // Node kind (ADR-0002 honest dispatch): "sdf" or "mesh".
+        // Python code that assumes an SDF body MUST check this first —
+        // a Mesh node has no body to evaluate, no params, no factory.
+        .def_prop_ro("kind", [](const scene::SceneNode& n) {
+            return n.kind == scene::NodeKind::Mesh ? "mesh" : "sdf";
+        })
+        // Mesh-kind payload: THE geometry (imported STL/OBJ).
+        .def_prop_ro("mesh", [](const scene::SceneNode& n) -> const sdf::TriangleMesh& {
+            return n.mesh;
+        }, nb::rv_policy::reference_internal)
         .def_rw("mesh_dirty", &scene::SceneNode::mesh_dirty)
         .def_prop_rw("body",
             [](const scene::SceneNode& n) -> const sdf::SDFBody& {
                 return n.body;
             },
             [](scene::SceneNode& n, const sdf::SDFBody& b) {
+                // Sdf-kind only: assigning an SDF body to a Mesh node is
+                // a category error (the node would claim BOTH
+                // representations — exactly the ambiguity ADR-0002
+                // forbids). Fail loudly instead of corrupting the node.
+                if (n.kind == scene::NodeKind::Mesh)
+                    throw std::runtime_error(
+                        "SceneNode.body: cannot assign an SDF body to a "
+                        "\"mesh\"-kind node — the node's geometry is its "
+                        "imported TriangleMesh payload (ADR-0002)");
                 // Deep-clone the incoming tree (SDFBody copy ctor clones the
                 // subtree) and flag the cached mesh for re-tessellation.
                 n.body = b;
                 n.mesh_dirty = true;
             },
             nb::rv_policy::reference_internal)
+        // The mesh every consumer (viewport, export) sees: the
+        // tessellation cache for Sdf nodes, THE geometry for Mesh
+        // nodes (display_mesh() dispatch — see scene.hpp).
         .def_prop_ro("cached_mesh", [](const scene::SceneNode& n) -> const sdf::TriangleMesh& {
-            return n.cached_mesh;
+            return n.display_mesh();
         }, nb::rv_policy::reference_internal)
         .def("rebuild_body", &scene::SceneNode::rebuild_body)
         .def("set_param", [](scene::SceneNode& n, const std::string& key, float v) {
@@ -166,6 +188,13 @@ void bind_scene(nb::module_& m) {
         .def("add_node", [](scene::Scene& s, const std::string& name, sdf::SDFBody body) {
             return s.add_node(name, std::move(body));
         }, nb::arg("name"), nb::arg("body"))
+        // Imported-mesh node: kind = "mesh", geometry = the payload
+        // (welded by the loader). No body/factory/params — see
+        // SceneNode.kind (ADR-0002).
+        .def("add_node", [](scene::Scene& s, const std::string& name,
+                            sdf::TriangleMesh mesh) {
+            return s.add_node(name, std::move(mesh));
+        }, nb::arg("name"), nb::arg("mesh"))
         .def("remove_node", &scene::Scene::remove_node, nb::arg("id"))
         .def("get_node", [](scene::Scene& s, std::uint32_t id) -> scene::SceneNode* {
             return s.get_node_mut(id);

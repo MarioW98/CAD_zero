@@ -149,9 +149,12 @@ int main() {
 
 The File menu now has **Open…**, **Save** and **Save As** (`Ctrl+O`,
 `Ctrl+S`, `Ctrl+Shift+S`). Projects are stored in the native `.CAD_0`
-format (JSON, version `0.1.0` — see ADR-0007): the SDF feature tree,
-node parameters, transforms, visibility and the viewport camera all
-round-trip bit-exactly, so re-opened projects keep editing metadata.
+format (version `0.2.0` — see ADR-0007 and ADR-0007a): a binary
+container (`CAD0BLOB` magic) wrapping the JSON feature tree and a blob
+section that carries imported mesh geometry bit-exactly. Node
+parameters, transforms, visibility and the viewport camera all
+round-trip bit-exactly, so re-opened projects keep editing metadata;
+legacy v0.1.0 pure-JSON files keep opening through the migrator chain.
 
 - **Atomic save** — writes `<file>.tmp` then renames; a crash never
   destroys the previous file.
@@ -196,6 +199,7 @@ See `docs/architecture/overview.md` for the full layout and design rationale.
 | [0005](docs/adr/0005-persistent-naming-early.md) | **Persistent naming by genealogy + subshape tracing (NOT geometric signature)** |
 | [0006](docs/adr/0006-ui-primary-pyside6.md) | PySide6 (Python) is the primary UI; Qt6 C++ removed |
 | [0007](docs/adr/0007-native-format-versioning.md) | Native format with explicit versioning + migration chain |
+| [0007a](docs/adr/0007a-binary-blob-container.md) | Binary blob container for embedded meshes (v0.2.0, "raw" encoding; zstd deferred) |
 | [0008](docs/adr/0008-simd-abstraction.md) | xsimd as SIMD abstraction; GPU backend stubbed from Phase A |
 | [0009](docs/adr/0009-threading-model.md) | oneTBB + RAII GIL guard |
 | [0010](docs/adr/0010-step-scope-mvp.md) | STEP MVP scope: AP203 ed. 2, analytic-only |

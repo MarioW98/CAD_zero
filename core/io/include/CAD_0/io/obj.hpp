@@ -24,4 +24,34 @@ bool export_obj(const std::string& path,
                 const CAD_0::sdf::TriangleMesh& mesh,
                 std::string_view name = "CAD_0");
 
+// ---- Import (OBJ loader) ----------------------------------------------------
+//
+// Load a triangle mesh from a Wavefront OBJ file.
+//
+// Supported: vertex positions (v), vertex normals (vn), faces (f) with
+// corner formats v, v/vt, v//vn, v/vt/vn — negative indices (relative,
+// OBJ 1-based) resolved per array; n-gons triangulated as a FAN
+// (c0, ci, ci+1). Texture coordinates (vt) are PARSED and discarded:
+// CAD_0 has no UV support (see the export note above); their indices are
+// still validated and still resolve for relative indexing.
+//
+// Organizational statements (o, g, s, usemtl, mtllib, comments) are
+// skipped — they carry no geometry. Any other keyword (curv, surf, vp,
+// ...) is an EXPLICIT error: those files carry geometry we cannot
+// represent, and silently dropping it would corrupt the import.
+//
+// OBJ indices are shared, so the mesh is assembled position-indexed
+// (positions in v-declaration order) and then passed through
+// sdf::weld_vertices (ADR-0016) like the STL loader — on a well-formed
+// OBJ the weld is an idempotent no-op (the guarantee is tested); on
+// files with duplicate v declarations it deduplicates them. Normals are
+// stored per position, first reference wins (OBJ allows a position to
+// be referenced with different vn per corner; CAD_0's mesh model has
+// one normal per vertex).
+//
+// Errors: std::runtime_error with the path and line number on I/O
+// failure, out-of-range/zero indices, faces with fewer than 3 corners,
+// malformed numbers, or unsupported keywords — explicit, never partial.
+CAD_0::sdf::TriangleMesh load_obj(const std::string& path);
+
 } // namespace CAD_0::io

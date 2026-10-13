@@ -74,6 +74,25 @@ class PropertyPanel(QWidget):
             editor = self._make_editor(name, value)
             self._form.addRow(label, editor)
 
+    def set_readonly_fields(self, node_name: str, fields: dict[str, str]) -> None:
+        """Display read-only informational fields (no editors).
+
+        Used for "mesh"-kind nodes (imported STL/OBJ geometry): the
+        property panel shows counts and bounds — there is nothing
+        parametric to edit (the geometry is data, not a recipe).
+        """
+        self._current_node_name = node_name
+        self._header.setText(node_name)
+
+        while self._form.rowCount() > 0:
+            self._form.removeRow(0)
+
+        for name, value in fields.items():
+            label = QLabel(name)
+            text = QLabel(str(value))
+            text.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self._form.addRow(label, text)
+
     def clear(self) -> None:
         self._current_node_name = None
         self._header.setText("No selection")

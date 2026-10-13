@@ -1,20 +1,27 @@
 // core/io/include/CAD_0/io/native.hpp
 //
-// Native project format (.CAD_0) — implements ADR-0007.
+// Native project format (.CAD_0) — implements ADR-0007 + ADR-0007a.
 //
-// Format (v0.1.0, Phase A):
+// Format (v0.2.0):
+//   * A binary container (ADR-0007a, codec in native_blob.hpp):
+//     [magic "CAD0BLOB" | json_len u32 LE | blob_len u32 LE] + JSON block
+//     + blob section. Files starting with '{' are legacy v0.1.0 pure-JSON
+//     documents and load through the 0.1.0 -> 0.2.0 migrator.
 //   * JSON for structure (in-house parser, see json.hpp — ADR-0003 forbids
 //     new third-party deps without a companion ADR).
+//   * Bulk data (imported mesh geometry) lives in the blob section as
+//     "raw" blobs: float32/uint32, little-endian, bit-exact round-trips
+//     (ADR-0014). The JSON carries one header per blob (id, offset, size,
+//     counts, encoding) in the top-level "meshes" array — see ADR-0007a
+//     for the honest MINOR-bump semantics (new readers open old files;
+//     writers always write the current version).
 //   * MAJOR.MINOR.PATCH `version` field with the semantics of ADR-0007:
 //       - PATCH bumps are forward-compatible: old readers open new files
 //         (unknown fields are ignored).
-//       - MINOR bumps are backward-compatible: old readers open new files
-//         with feature flags defaulted.
+//       - MINOR bumps run the Migrator chain (upgrade-only).
 //       - MAJOR bumps are incompatible: handled by a Migrator chain.
-//   * No binary blob in Phase A: the scene is fully parametric (SDF trees +
-//     params), so cached meshes are re-tessellated on load rather than
-//     persisted. zstd blobs arrive with embedded meshes/voxels (ADR-0007)
-//     and will require a companion ADR.
+//   * zstd blob compression is deferred (ADR-0003, no new deps); the
+//     "encoding" field in the blob header makes it a future clean bump.
 //
 // Transactional load: parse_document() validates and builds every node
 // WITHOUT touching the scene; install_document() only then commits.
@@ -32,6 +39,7 @@
 #pragma once
 
 #include "CAD_0/io/json.hpp"
+#include "CAD_0/io/native_blob.hpp"
 #include "CAD_0/math/vec.hpp"
 #include "CAD_0/scene/scene.hpp"
 #include "CAD_0/sdf/field.hpp"
@@ -60,18 +68,20 @@ struct NativeVersion {
     }
 };
 
-// The version this build reads and writes. Phase A: 0.1.0 (ADR-0007).
-inline constexpr NativeVersion kNativeVersion{0, 1, 0};
+// The version this build reads and writes. 0.2.0: binary blob container
+// for imported meshes (ADR-0007a). A migrator upgrades 0.1.0 documents.
+inline constexpr NativeVersion kNativeVersion{0, 2, 0};
 
 // A Migrator transforms a parsed JSON document from `from_version` to
-// `to_version`. Registered in a chain indexed by the version pair; the
-// registry is EMPTY in Phase A (ADR-0007 Consequences) — any file whose
-// MAJOR.MINOR differs from the current version fails with an explicit
-// "no migrator registered" error until migrators are added.
+// `to_version`. Registered in a chain indexed by the version pair. The
+// first real entry is the no-op 0.1.0 -> 0.2.0 upgrade (v0.1.0 documents
+// carry no blobs; a missing "meshes" member parses as "no meshes") —
+// see ADR-0007a. Any file whose MAJOR.MINOR differs from the current
+// version and has no registered migrator fails with an explicit error.
 using Migrator = std::function<void(json::JsonValue&)>;
 
 void register_migrator(NativeVersion from, NativeVersion to, Migrator m);
-std::size_t migrator_count() noexcept; // test hook: 0 in Phase A
+std::size_t migrator_count() noexcept; // test hook: 1 (0.1.0 -> 0.2.0)
 
 // Parse "MAJOR.MINOR.PATCH" (e.g. "0.1.0"). Throws std::runtime_error
 // with an explicit message on malformed input.
@@ -107,24 +117,48 @@ inline constexpr int kMaxSDFNestingDepth = 128;
 // fails explicitly on unknown ops.
 json::JsonValue serialize_node(const sdf::SDFNode& node);
 
-// Serialize a full document (scene + camera) as pretty JSON text.
-std::string serialize_document(const scene::Scene& s, const NativeCamera& cam);
+// A mesh carried in the document's blob section (ADR-0007a). `id` is the
+// stable blob identifier referenced by "mesh"-kind scene nodes (wired in
+// the scene layer); the geometry is the decoded TriangleMesh.
+struct DocumentMesh {
+    std::string id;
+    sdf::TriangleMesh mesh;
+};
+
+// Serialize a full document (scene + camera + mesh library) as pretty
+// JSON text — this is the JSON BLOCK of the container (see save_file for
+// the full binary file). `meshes` emits the top-level "meshes" blob
+// header array (omitted when empty). Deterministic, insertion-ordered —
+// golden-file byte-stability.
+std::string serialize_document(const scene::Scene& s, const NativeCamera& cam,
+                               const std::vector<DocumentMesh>& meshes = {});
 
 // ---- Deserialization (transactional, two stages) ---------------------------
 
 // Stage 1 — pure parse: validates the version (running migrators when
 // registered), parses every node, and builds the full node list. Never
 // touches a Scene; throws std::runtime_error with explicit messages.
+//
+// Mesh blobs: `parse_document(text)` reads the JSON block only; a
+// document that carries mesh blobs is rejected with an explicit "use
+// load_file" error (the geometry lives in the file's blob section, not
+// in the text). `parse_document(text, blob_section)` — the entry point
+// load_file uses — additionally decodes and validates every mesh.
 struct ParsedDocument {
     NativeVersion version{};
     // Fully formed (id, body, transform, params, builder) — and, for
     // nodes with a recognized builder tag, a re-wired parametric factory
     // so post-load editing rebuilds the body (set_param semantics).
     std::vector<scene::SceneNode> nodes;
+    // Mesh library decoded from the blob section (ADR-0007a). The scene
+    // layer wires "mesh"-kind nodes to these entries by id.
+    std::vector<DocumentMesh> meshes;
     std::uint32_t next_id{1};
     NativeCamera camera{};
 };
 ParsedDocument parse_document(std::string_view text);
+ParsedDocument parse_document(std::string_view text,
+                               std::string_view blob_section);
 
 // Rebuild a single SDF tree from JSON. Unknown "op" → explicit error;
 // trees nested deeper than kMaxSDFNestingDepth → explicit error.
@@ -138,14 +172,19 @@ void install_document(scene::Scene& s, ParsedDocument&& doc);
 
 // ---- File-level helpers ----------------------------------------------------
 
-// Atomic save: serialize → write <path>.tmp → flush → rename over path.
-// Throws std::runtime_error (with the path in the message) on I/O failure;
-// the original file is left untouched in that case.
+// Atomic save: serialize -> build the ADR-0007a container -> write
+// <path>.tmp -> flush -> rename over path. `meshes` (optional) carries
+// imported-mesh geometry into the blob section. Throws
+// std::runtime_error (with the path in the message) on I/O failure; the
+// original file is left untouched in that case.
 void save_file(const std::filesystem::path& path,
-               const scene::Scene& s, const NativeCamera& cam);
+               const scene::Scene& s, const NativeCamera& cam,
+               const std::vector<DocumentMesh>& meshes = {});
 
-// Read + parse_document. Throws on missing file, I/O error, or any parse
-// error (explicit message).
+// Read + parse_document. Auto-detects the framing (CAD0BLOB container vs
+// legacy v0.1.0 pure JSON — the latter runs the migrator) and decodes
+// mesh blobs. Throws on missing file, I/O error, or any parse error
+// (explicit message).
 ParsedDocument load_file(const std::filesystem::path& path);
 
 } // namespace CAD_0::io::native

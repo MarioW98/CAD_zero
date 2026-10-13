@@ -56,8 +56,10 @@ def saved_path(scene):
     return path
 
 
-def test_native_version_is_010():
-    assert CAD_0.io.NATIVE_VERSION == "0.1.0"
+def test_native_version_is_020():
+    # 0.2.0: binary blob container (ADR-0007a). The constant is built
+    # from the C++ kNativeVersion, never hardcoded on the Python side.
+    assert CAD_0.io.NATIVE_VERSION == "0.2.0"
 
 
 def test_roundtrip_scene_and_metadata(saved_path):
@@ -134,10 +136,20 @@ def test_ids_and_next_id_roundtrip():
 
 def test_corrupt_json_raises_and_scene_untouched(saved_path, scene):
     target = _make_scene()
-    text = saved_path.read_text()
-    saved_path.write_text(text[: len(text) // 3])  # truncate mid-document
-    with pytest.raises(RuntimeError, match="parse error"):
+    # v0.2.0 container: truncating the FILE now trips the frame length
+    # validation (declared lengths no longer add up) — still an explicit
+    # RuntimeError, and still transactional.
+    data = saved_path.read_bytes()
+    saved_path.write_bytes(data[: len(data) // 3])
+    with pytest.raises(RuntimeError, match="truncated or corrupt"):
         CAD_0.io.load(saved_path, target)
+    assert target.size() == 1  # untouched
+
+    # The legacy pure-JSON parse-error path (framing '{') stays covered.
+    legacy = Path(tempfile.mkdtemp(prefix="cad0_corrupt_")) / "legacy.CAD_0"
+    legacy.write_text('{"format": "CAD_0 native", "version": "0.1.0"')
+    with pytest.raises(RuntimeError, match="parse error"):
+        CAD_0.io.load(legacy, target)
     assert target.size() == 1  # untouched
 
 
@@ -323,8 +335,10 @@ def test_no_builder_tag_node_is_non_parametric_after_load():
 def test_json_100k_nested_arrays_raises_not_crashes():
     # The hostile-input case: must raise RuntimeError, never segfault
     # the Python process. (Before the guard this test crashed pytest.)
+    # The document starts with '{' so it passes the framing check and
+    # reaches the JSON parser's depth guard.
     path = Path(tempfile.mkdtemp(prefix="cad0_deep_")) / "hostile.CAD_0"
-    path.write_text("[" * 100_000 + "1" + "]" * 100_000)
+    path.write_text('{"x":' + "[" * 100_000 + "1" + "]" * 100_000 + "}")
 
     target = scene_mod.Scene()
     target.add_node("keepme", sdf_mod.sphere(1.0))

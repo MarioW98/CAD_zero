@@ -89,6 +89,10 @@ export_obj = _io.export_obj
 export_3mf = _io.export_3mf
 save_native = _io.save_native
 load_native = _io.load_native
+# Mesh import (STL / OBJ) — welded TriangleMesh result; combine with
+# scene.add_node(name, mesh) for a first-class "mesh"-kind scene node.
+load_stl = _io.load_stl
+load_obj = _io.load_obj
 
 
 __all__ = [
@@ -100,6 +104,8 @@ __all__ = [
     "export_stl_ascii",
     "export_obj",
     "export_3mf",
+    "load_stl",
+    "load_obj",
     "save",
     "load",
     "save_native",
