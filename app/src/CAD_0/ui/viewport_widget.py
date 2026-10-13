@@ -52,10 +52,12 @@ class ViewportWidget(QWidget):
         self._cam_fov = 45.0
         self._cam_aspect = 1.0
 
-        # Mouse tracking
-        self._last_mouse_pos: Optional[QPoint] = None
-        self._mouse_button = Qt.MouseButton.NoButton
-        self._drag_distance = 0
+        # NOTE (BUG 2 fix): no mouse-tracking state here. With the GL path
+        # active, mouse/wheel events are delivered to the embedded
+        # _ViewportWindow (see its class docstring) — the wrapper never
+        # receives them, so navigation lives on the window. The camera
+        # state below stays on the wrapper because paintGL() and
+        # MainWindow's picking already read it there.
 
         # Display flags
         self._show_grid = True
@@ -243,13 +245,56 @@ class ViewportWidget(QWidget):
         self._show_axes = show
         self._request_update()
 
-    # ----- Input handlers -----
+    # ----- Input -----
+    #
+    # No mouse/wheel handlers on the wrapper (BUG 2 fix): when the GL
+    # path is active the embedded _ViewportWindow owns all pointer input
+    # (see _ViewportWindow for orbit/pan/zoom and the picking bridge).
+    # In the no-GL fallback path this widget shows a static label; there
+    # is no camera to steer and no scene to pick, so nothing is lost.
+
+
+class _ViewportWindow(QOpenGLWindow):
+    """The actual QOpenGLWindow that renders the scene.
+
+    Event routing (BUG 2 fix): with GL active, this window is embedded
+    via QWidget.createWindowContainer() and the windowing system
+    delivers ALL mouse/wheel events to it — the wrapper ViewportWidget
+    never sees them (that is why navigation was dead while Ctrl+O kept
+    working). Navigation therefore lives HERE, in one place only. The
+    camera state it mutates stays on the wrapper (self._parent._cam_*),
+    exactly where paintGL()/resizeGL() and MainWindow's picking already
+    read it.
+
+    Picking bridge: a short left click (press + release without a real
+    drag) is re-emitted through the WRAPPER's ``clicked(ndc_x, ndc_y)``
+    signal — the same signal MainWindow._on_viewport_click has always
+    been connected to. The wrapper owns the signal because it is the
+    public widget; this window is a private rendering detail the rest
+    of the app never touches directly.
+
+    Focus: the container widget carries StrongFocus; on press we call
+    requestActivate() so the embedded window itself becomes the focus
+    object, and focusOutEvent() drops any in-flight drag so a lost
+    window can never leave a "stuck button".
+    """
+
+    def __init__(self, parent_widget: ViewportWidget) -> None:
+        super().__init__()
+        self._parent = parent_widget
+        self._initialized = False
+        # Navigation state (moved from the wrapper — see class docstring).
+        self._last_mouse_pos: Optional[QPoint] = None
+        self._mouse_button = Qt.MouseButton.NoButton
+        self._drag_distance = 0
+
+    # ----- Navigation (orbit / pan / zoom) -----
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         self._last_mouse_pos = event.position().toPoint()
         self._mouse_button = event.button()
         self._drag_distance = 0
-        self.setFocus()
+        self.requestActivate()
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         if self._last_mouse_pos is None:
@@ -260,19 +305,21 @@ class ViewportWidget(QWidget):
 
         if self._mouse_button == Qt.MouseButton.LeftButton:
             sensitivity = 0.005
-            self._cam_yaw += delta.x() * sensitivity
-            self._cam_pitch -= delta.y() * sensitivity
-            self._cam_pitch = max(-1.5533, min(1.5533, self._cam_pitch))
-            self._request_update()
+            self._parent._cam_yaw += delta.x() * sensitivity
+            self._parent._cam_pitch -= delta.y() * sensitivity
+            self._parent._cam_pitch = max(-1.5533, min(1.5533, self._parent._cam_pitch))
+            self._parent._request_update()
         elif self._mouse_button == Qt.MouseButton.MiddleButton:
-            sensitivity = 0.01 * self._cam_distance
-            tx, ty, tz = self._cam_target
+            sensitivity = 0.01 * self._parent._cam_distance
+            tx, ty, tz = self._parent._cam_target
             tx -= delta.x() * sensitivity
             ty += delta.y() * sensitivity
-            self._cam_target = (tx, ty, tz)
-            self._request_update()
+            self._parent._cam_target = (tx, ty, tz)
+            self._parent._request_update()
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        # Picking bridge (class docstring): short click -> wrapper's
+        # ``clicked`` signal -> MainWindow._on_viewport_click.
         if (self._mouse_button == Qt.MouseButton.LeftButton and
             self._drag_distance < 5 and event.button() == Qt.MouseButton.LeftButton):
             pos = event.position().toPoint()
@@ -280,25 +327,26 @@ class ViewportWidget(QWidget):
             h = max(1, self.height())
             ndc_x = (2.0 * pos.x() / w) - 1.0
             ndc_y = 1.0 - (2.0 * pos.y() / h)
-            self.clicked.emit(ndc_x, ndc_y)
+            self._parent.clicked.emit(ndc_x, ndc_y)
         self._last_mouse_pos = None
         self._mouse_button = Qt.MouseButton.NoButton
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         notches = event.angleDelta().y() / 120.0
         factor = 0.9 if notches > 0 else 1.1
-        self._cam_distance *= factor ** abs(notches)
-        self._cam_distance = max(0.001, min(1e6, self._cam_distance))
-        self._request_update()
+        self._parent._cam_distance *= factor ** abs(notches)
+        self._parent._cam_distance = max(0.001, min(1e6, self._parent._cam_distance))
+        self._parent._request_update()
 
+    # ----- Focus -----
 
-class _ViewportWindow(QOpenGLWindow):
-    """The actual QOpenGLWindow that renders the scene."""
-
-    def __init__(self, parent_widget: ViewportWidget) -> None:
-        super().__init__()
-        self._parent = parent_widget
-        self._initialized = False
+    def focusOutEvent(self, event) -> None:
+        # Losing the window mid-drag (alt-tab, modal dialog) must not
+        # leave a pressed button behind: drop the drag state so the
+        # next press starts from a clean slate.
+        self._last_mouse_pos = None
+        self._mouse_button = Qt.MouseButton.NoButton
+        super().focusOutEvent(event)
 
     def initializeGL(self) -> None:
         # Guard against headless / no-GPU environments: if Qt failed to

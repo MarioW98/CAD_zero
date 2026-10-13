@@ -87,6 +87,20 @@ class MainWindow(QMainWindow):
         self._setup_central_widget()
         self._setup_dock_widgets()
         self._setup_menus()
+        # BUG 1 fix (invisible menubar on non-native WMs): right after the
+        # menus are built, force the bar to live INSIDE the window. On some
+        # Linux desktops Qt delegates the menu bar to the platform's global
+        # menu (a DBus appmenu registrar). Where no registrar exists —
+        # Xvfb + fluxbox inside Codespaces is the reported case — the bar
+        # is never drawn anywhere, yet its actions and shortcuts still
+        # work (Ctrl+O opens files), which is exactly the reported
+        # symptom. setNativeMenuBar(False) keeps the bar in-window on
+        # every platform; desktops that do have a global menu simply opt
+        # out of it (the standard cross-distribution fix). No layout
+        # workaround involved: the toolbar and central widget are
+        # untouched.
+        self.menuBar().setNativeMenuBar(False)
+        self.menuBar().setVisible(True)
         self._setup_toolbar()
         self._setup_statusbar()
         self._connect_signals()
@@ -964,6 +978,12 @@ class MainWindow(QMainWindow):
         for i in range(self._scene.node_count()):
             node = self._scene.node_at(i)
             if node is None or not node.visible:
+                continue
+            # Mesh-kind nodes have no SDF body: their default bounds are
+            # the empty box (+inf/-inf), whose slab test degenerates and
+            # would swallow EVERY click. Picking stays an SDF-node
+            # feature; mesh nodes are selected from the feature tree.
+            if node.kind == "mesh":
                 continue
             b = node.body.bounds()
             # Simple slab-based ray-AABB test

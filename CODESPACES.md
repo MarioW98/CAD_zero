@@ -49,6 +49,7 @@ In the Codespace, port 6080 is auto-forwarded. To get a public HTTPS URL:
 ## Menu actions
 
 - **File → New Scene**: clear the scene
+- **File → Import STL/OBJ**: add an imported mesh node to the scene
 - **File → Export STL/OBJ/3MF**: save the first mesh
 - **Create → Sphere / Box / Cylinder / Torus**: add a primitive
 - **Edit → Undo / Redo (Ctrl+Z / Ctrl+Y)**: undo/redo last action
@@ -63,6 +64,38 @@ In the Codespace, port 6080 is auto-forwarded. To get a public HTTPS URL:
 ```
 
 This kills Xvfb, fluxbox, x11vnc, websockify, and the CAD_0 app.
+
+## UI smoke tests
+
+`bindings/python/tests/test_ui_navigation.py` is the headless regression
+suite for the two UI bugs fixed on 2026-10-13 (invisible menu bar on
+non-native WMs; viewport navigation dead when GL is active). It checks
+that the menu bar is forced in-window with all the key actions, that
+synthetic mouse/wheel events delivered to the embedded GL window steer
+the camera at the first movement, that short clicks still pick, and
+that the no-GL fallback stays usable.
+
+The camera-steering assertions need a real GL context: the offscreen
+Qt platform creates it through EGL, and Mesa only opens EGL with a
+display around. In a Codespace (Xvfb already running via the launcher):
+
+```bash
+export DISPLAY=:99
+export QT_QPA_PLATFORM=offscreen
+PYTHONPATH=build/linux-gcc-release/python \
+  python3 -m pytest bindings/python/tests/test_ui_navigation.py -v
+```
+
+On a desktop Linux with a GPU, the same command works as-is. On a
+machine without any GL (no `libEGL`/Mesa), the GL-dependent tests skip
+with an explicit reason — the menu-bar and fallback checks still run.
+CI runs the same module under its own Xvfb (see
+`.github/workflows/ci-linux.yml`, step "UI navigation smoke test (GL)").
+
+Known unrelated residual: quitting a process whose GL window has
+actually been shown and painted segfaults at interpreter exit (Qt/GL
+tear-down, pre-existing, visible only at shutdown; the smoke tests
+deliberately never `show()` the window).
 
 ## Troubleshooting
 
