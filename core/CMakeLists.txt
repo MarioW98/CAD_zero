@@ -50,12 +50,20 @@ target_link_libraries(CAD_0_core INTERFACE
 #
 # Third-party headers reachable from these TUs are already consumed as
 # SYSTEM includes (FASE B): robust_predicates, xsimd (CAD_0_sdf), Python
-# (Python3::Module already exports -isystem), doctest in tests. No
-# -Wno-error= exceptions are needed with clang 14 / gcc 14. If a
-# compiler-specific false positive shows up later (e.g. the GCC 12+
-# stringop-overflow family documented for oneTBB at the top of the root
-# CMakeLists), add a narrowly scoped and commented -Wno-error= HERE —
-# never a global -Wno-*, and never an exemption from this list.
+# (Python3::Module already exports -isystem), doctest in tests. Verified
+# warning-free with the CI compilers — clang 14 and gcc 11.4
+# (ubuntu-22.04, preset linux-gcc11-ci) — and with gcc 14.2 local: still
+# NO -Wno-error= exceptions. The one gcc-11 false positive found so far
+# ('maybe_unused' attribute ignored on non-static data members, GCC < 12)
+# was fixed by REWRITING the pattern (compiler-gated attribute in
+# opengl_renderer.hpp), not by suppressing the diagnostic — that is the
+# required style for any future case (see the "Contratto di toolchain"
+# section in docs/audits/2026-10-13-warning-audit.md). If a
+# compiler-specific false positive shows up that genuinely cannot be
+# rewritten (documented GCC 12+ stringop-overflow family noted for oneTBB
+# at the top of the root CMakeLists — currently OFF), add a narrowly
+# scoped and commented -Wno-error= HERE — never a global -Wno-*, and
+# never an exemption from this list.
 # ---------------------------------------------------------------------------
 set(CAD_0_KERNEL_WERROR_TARGETS
     CAD_0_math

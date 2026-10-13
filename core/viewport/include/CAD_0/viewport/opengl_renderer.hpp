@@ -16,6 +16,23 @@
 
 namespace CAD_0::viewport {
 
+// [[maybe_unused]] on non-static data members is standard C++17, but
+// GCC 11 — the ubuntu-22.04 CI compiler, see
+// docs/audits/2026-10-13-warning-audit.md ("Toolchain contract") — does
+// not implement it in that position and warns "'maybe_unused' attribute
+// ignored" [-Wattributes], which the FASE C -Werror (core/CMakeLists.txt)
+// turns into a build failure. GCC 12+ honors it; clang needs it to keep
+// -Wunused-private-field quiet in the TUs that include this header
+// without using these members (that diagnostic is clang-only, so where
+// the attribute is absent no warning can fire). Gate the attribute to
+// the compilers that actually understand it — a rewrite, not a
+// suppression: no -Wno-error=, no pragma, -Werror stays as-is.
+#if defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 12)
+#  define CAD_0_NSDM_MAYBE_UNUSED [[maybe_unused]]
+#else
+#  define CAD_0_NSDM_MAYBE_UNUSED
+#endif
+
 // OpenGL 4.5 renderer. Requires a current GL context (created by the
 // PySide6 QWindow before initialize() is called).
 class OpenGLRenderer final : public Renderer {
@@ -40,27 +57,30 @@ public:
     const char* name() const noexcept override { return "opengl-4.5"; }
 
 private:
-    // [[maybe_unused]]: these members are used only in opengl_renderer.cpp;
-    // clang's per-TU -Wunused-private-field fires in the other TUs of
-    // CAD_0_viewport that include this header without touching them.
-    [[maybe_unused]] bool initialized_{false};
-    [[maybe_unused]] int width_{0};
-    [[maybe_unused]] int height_{0};
+    // CAD_0_NSDM_MAYBE_UNUSED (see above): these members are used only
+    // in opengl_renderer.cpp; clang's per-TU -Wunused-private-field fires
+    // in the other TUs of CAD_0_viewport that include this header
+    // without touching them.
+    CAD_0_NSDM_MAYBE_UNUSED bool initialized_{false};
+    CAD_0_NSDM_MAYBE_UNUSED int width_{0};
+    CAD_0_NSDM_MAYBE_UNUSED int height_{0};
 
     // VAO for the full-screen triangle used by the SDF ray-march shader.
-    [[maybe_unused]] unsigned int empty_vao_{0};
+    CAD_0_NSDM_MAYBE_UNUSED unsigned int empty_vao_{0};
 
     // Shader program for SDF ray-marching.
-    [[maybe_unused]] unsigned int raymarch_program_{0};
+    CAD_0_NSDM_MAYBE_UNUSED unsigned int raymarch_program_{0};
 
     // Uniform buffer objects (UBOs) for camera + options.
-    [[maybe_unused]] unsigned int camera_ubo_{0};
-    [[maybe_unused]] unsigned int options_ubo_{0};
+    CAD_0_NSDM_MAYBE_UNUSED unsigned int camera_ubo_{0};
+    CAD_0_NSDM_MAYBE_UNUSED unsigned int options_ubo_{0};
 
     // Simple shader for tessellated meshes (B-Rep + mesh extraction output).
-    [[maybe_unused]] unsigned int mesh_program_{0};
+    CAD_0_NSDM_MAYBE_UNUSED unsigned int mesh_program_{0};
 
     FrameStats last_stats_{};
 };
+
+#undef CAD_0_NSDM_MAYBE_UNUSED
 
 } // namespace CAD_0::viewport

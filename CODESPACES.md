@@ -133,6 +133,30 @@ smoke tests deliberately never `show()` the window, and the startup
 test shows one only inside a subprocess that exits through
 `os._exit(0)` before Qt/GL teardown).
 
+## Toolchain note (CI parity)
+
+The Codespace's default `g++` on ubuntu-22.04 is **11.4 — the same
+compiler the CI matrix uses**. To reproduce a CI-side GCC build
+locally (e.g. before pushing a `-Werror`-sensitive change), build the
+`linux-gcc11-ci` preset (a `linux-gcc-release` clone with
+`g++-11`/`gcc-11` pinned):
+
+```bash
+sudo apt-get install -y g++-11
+cmake --preset linux-gcc11-ci && cmake --build --preset linux-gcc11-ci -- -j2
+ctest --preset linux-gcc11-ci
+```
+
+Rule (the "Toolchain contract" in
+`docs/audits/2026-10-13-warning-audit.md`): every warning-audit /
+`-Werror` change must be verified with the CI compilers — gcc 11.4 and
+clang 14 — before push. Also note: kernel code built with gcc-11 plus
+`import numpy` in the same process needs the libstdc++ global-scope
+promotion that `CAD_0/__init__.py` performs automatically
+(`_promote_libstdcpp_global`) — without it, formatted kernel file
+writes silently fail (loader-level GNU_UNIQUE facet-id issue, see the
+audit for the full diagnosis).
+
 ## Troubleshooting
 
 ### "Could not load the Qt platform plugin 'xcb'"

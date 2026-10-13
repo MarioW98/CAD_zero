@@ -41,6 +41,21 @@
             }
         },
         {
+            "name": "linux-gcc11-ci",
+            "inherits": "base",
+            "generator": "Ninja",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_CXX_COMPILER": "g++-11",
+                "CMAKE_C_COMPILER": "gcc-11"
+            },
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Linux"
+            }
+        },
+        {
             "name": "linux-clang",
             "inherits": "base",
             "generator": "Ninja",
@@ -89,6 +104,7 @@
     "buildPresets": [
         { "name": "linux-gcc-debug",   "configurePreset": "linux-gcc-debug" },
         { "name": "linux-gcc-release", "configurePreset": "linux-gcc-release" },
+        { "name": "linux-gcc11-ci",    "configurePreset": "linux-gcc11-ci" },
         { "name": "linux-clang",       "configurePreset": "linux-clang" },
         { "name": "windows-msvc",      "configurePreset": "windows-msvc" },
         { "name": "linux-python",      "configurePreset": "linux-python" }
@@ -97,6 +113,8 @@
         { "name": "linux-gcc-debug",   "configurePreset": "linux-gcc-debug",
           "output": { "outputOnFailure": true } },
         { "name": "linux-gcc-release", "configurePreset": "linux-gcc-release",
+          "output": { "outputOnFailure": true } },
+        { "name": "linux-gcc11-ci",    "configurePreset": "linux-gcc11-ci",
           "output": { "outputOnFailure": true } },
         { "name": "linux-clang",       "configurePreset": "linux-clang",
           "output": { "outputOnFailure": true } },

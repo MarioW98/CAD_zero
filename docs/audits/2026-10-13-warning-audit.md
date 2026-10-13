@@ -169,3 +169,102 @@ e invariati i test round-trip bit-identici e il golden file
 suite doctest completa + test Python dei bindings verde su tutti i preset.
 Nessun `-Wno-*` globale nuovo; eventuali soppressioni puntuali solo con
 `#pragma diagnostic push/pop` e commento (non previste al momento).
+
+---
+
+# Contratto di toolchain (aggiornamento 2026-10-14)
+
+## La regola
+
+**Ogni audit warning, ogni bonifica e ogni modifica che tocca codice
+sotto `-Werror` (FASE C) DEVE essere verificata con i compilatori della
+CI: gcc 11.4 e clang 14 su ubuntu-22.04** — non solo con i compilatori
+locali (gcc 14.2 / clang 14). È la stessa disciplina già applicata per
+clang dall'audit originale (Caveat 1: "la run CI reale resta la
+verifica finale"): il Caveat diceva la verità e il debito è stato
+pagato. Da oggi la verifica con i compilatori CI è parte del
+protocollo, eseguita PRIMA del push.
+
+Strumento: preset **`linux-gcc11-ci`** (CMakePresets.json) — clone di
+`linux-gcc-release` con `CMAKE_CXX_COMPILER: g++-11` /
+`CMAKE_C_COMPILER: gcc-11` pinnati (+ build/test preset). In locale:
+
+```
+sudo apt-get install -y g++-11
+cmake --preset linux-gcc11-ci && cmake --build --preset linux-gcc11-ci -- -j2
+ctest --preset linux-gcc11-ci
+```
+
+## Incidente CI (post-mortem)
+
+**Sintomo**: CI rossa su TUTTI i job GCC dal commit `d3446c9` (la
+bonifica FASE B di questo audit) allo step Build; clang e gcc 14.2
+locali compilavano puliti. Run di riferimento: 38451503908.
+
+**Riproduzione locale** (FASE 1, test-first): installato g++-11
+11.4.0-1ubuntu1~22.04.3 — lo STESSO binario della CI, estratto
+dall'archivio Ubuntu — e costruito con il preset `linux-gcc11-ci`:
+**8 errori**, tutti
+
+```
+core/viewport/include/CAD_0/viewport/opengl_renderer.hpp:46..61:
+  error: 'maybe_unused' attribute ignored [-Werror=attributes]
+```
+
+**Root cause**: `[[maybe_unused]]` su membri dati non statici è C++17
+standard, ma **GCC < 12 non lo implementa in quella posizione** (lo
+onora da GCC 12; clang da sempre). GCC 11 avvisa
+`[-Wattributes] "attribute ignored"`, FASE C lo promuove a errore. La
+riga 3–10 della tabella (b) — la bonifica pensata per silenziare
+`-Wunused-private-field` di clang — era stata verificata SOLO su
+clang 14 + gcc 14.2: da qui il divario.
+
+**Classificazione**: falso positivo noto di gcc-11, ma riscrivibile —
+pattern riscritto, non soppresso: macro `CAD_0_NSDM_MAYBE_UNUSED`
+(opengl_renderer.hpp) che emette l'attributo SOLO per i compilatori
+che lo capiscono (`__clang__` o `__GNUC__ >= 12`). Dove l'attributo è
+assente nessun warning può scattare (`-Wunused-private-field` è
+diagnostica clang-only). **Nessun `-Wno-error=`, nessun pragma, nessun
+downgrade di -Werror** — le tre vie vietate dalla specifica.
+
+## Secondo bug latente gcc-11 (trovato in regressione, non -Werror)
+
+Con la build gcc-11 la suite pytest falliva su 2 test
+(`test_import_roundtrip.py`): `export_obj` restituiva `False` e
+scriveva file troncati. Diagnosi isolata con probe ctypes compilate
+gcc-11/gcc-14 (nessun CAD_0 coinvolto):
+
+* gcc <= 11 emette gli `id` delle facet `std::locale`
+  (numpunct/num_put/collate…) come simboli vague-linkage
+  STB_GNU_UNIQUE in ogni DSO compilato con quei header; gcc >= 12 no;
+* se il primo libstdc++ del processo arriva tramite catena di
+  dipendenze RTLD_LOCAL (il caso classico: `import numpy` →
+  numpy.libs/openblas/libgfortran → libstdc++.so.6), l'unificazione
+  dei simboli unique tra le copie del DSO gcc-11 e quelle di libstdc++
+  non avviene;
+* a runtime `std::use_facet` lancia `std::bad_cast`, ingoiato dai
+  wrapper di libstdc++ come semplice failbit: OGNI scritta formattata
+  (`<<` int/float) da codice gcc-11 fallisce in silenzio (writer di
+  testo del kernel: export_obj, salvataggio nativo);
+* fix: `CAD_0.__init__` promuove `libstdc++.so.6` nello scope GLOBAL
+  dlopen all'import del package (`_promote_libstdcpp_global`) —
+  verificato efficace sia PRIMA sia DOPO l'import di numpy; fix a
+  livello loader, nessun valore di valutazione cambia (ADR-0014
+  salvo). Su CI ubuntu-22.04 + Codespace (g++ di default = 11.4) questo
+  bug avrebbe rotto export/salvataggio dall'app con numpy caricato.
+
+Regressione dedicata:
+`test_import_roundtrip.py::test_formatted_output_survives_numpy_first_import`
+(sottoprocesso con ordine ostile numpy→CAD_0).
+
+## Il contratto, in forma verificabile
+
+1. Bonifiche/fix: verificate su **gcc 11.4 + clang 14 + gcc 14.2**
+   prima del push (preset `linux-gcc11-ci`, `linux-clang`,
+   `linux-gcc-release`).
+2. CI (`.github/workflows/ci-linux.yml`): step "Compiler versions"
+   stampa `g++ --version` e `clang++ --version` in ogni job; matrice
+   con `fail-fast: false` — un job rosso non cancella gli altri e la
+   diagnosi resta completa.
+3. Nessuna deroga futura: le tre vie vietate restano vietate
+   (`-Wno-*` globali, pragma a tappeto, downgrade di -Werror).

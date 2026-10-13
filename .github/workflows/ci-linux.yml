@@ -9,6 +9,11 @@ jobs:
   build-and-test:
     runs-on: ubuntu-22.04
     strategy:
+      # fail-fast: false — one red job must NOT cancel the others:
+      # the matrix IS the diagnosis tool (a preset-only failure points
+      # at that compiler immediately). See the Toolchain contract in
+      # docs/audits/2026-10-13-warning-audit.md.
+      fail-fast: false
       matrix:
         preset: [linux-gcc-debug, linux-gcc-release, linux-clang]
 
@@ -22,6 +27,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build cmake g++ clang python3 python3-pip python3-venv \
             xvfb libegl1 libgl1-mesa-dri libglx-mesa0
+
+      # Toolchain contract (docs/audits/2026-10-13-warning-audit.md):
+      # print the ACTUAL compilers of this runner in every job — the
+      # warning audit and every -Werror change must be reproduced with
+      # these (ubuntu-22.04 default: g++ 11.4 / clang 14) BEFORE push,
+      # locally via the linux-gcc11-ci preset.
+      - name: Compiler versions
+        run: |
+          g++ --version
+          clang++ --version
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}

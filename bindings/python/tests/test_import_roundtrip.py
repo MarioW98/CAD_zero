@@ -227,3 +227,66 @@ def test_transactional_load_on_corrupt_blob():
         with pytest.raises(RuntimeError, match="truncated or corrupt"):
             cad_io.load(path, target)
         assert target.size() == 1
+
+
+def test_formatted_output_survives_numpy_first_import():
+    """Regression — gcc-11 CI toolchain (diagnosed 2026-10-14).
+
+    gcc <= 11 emits the std::locale facet ``id`` statics as
+    vague-linkage GNU_UNIQUE symbols in every DSO compiled with them.
+    When the first libstdc++ in the process arrives through numpy's
+    RTLD_LOCAL dependency chain (numpy.libs -> openblas/libgfortran ->
+    libstdc++.so.6), the unique-symbol unification with the kernel's
+    facet-id copies never happens: ``use_facet`` then throws
+    std::bad_cast, libstdc++'s formatted-output wrappers swallow it as
+    a plain failbit, and EVERY formatted stream write (``<<`` int /
+    float) from gcc-11-compiled code fails silently — export_obj
+    returned False and wrote truncated files (this is exactly what
+    test_load_obj_shared_indices_noop_weld /
+    test_transactional_load_on_corrupt_blob used to do on the gcc-11
+    build before the fix).
+
+    CAD_0.__init__ now promotes libstdc++.so.6 into the GLOBAL dlopen
+    scope at package import (see _promote_libstdcpp_global in
+    app/src/CAD_0/__init__.py). The in-process order (CAD_0 imported
+    by an earlier test module, numpy at the top of THIS module) is
+    already covered by the rest of this suite; this test covers the
+    OTHER hostile order — numpy imported BEFORE CAD_0 — which can only
+    be built in a fresh subprocess. Loader-scope only: no evaluation
+    values change (ADR-0014 untouched), gcc >= 12 TUs never had the
+    bug (the guard is a harmless no-op there).
+    """
+    import os
+    import subprocess
+    import sys
+    import textwrap
+
+    py_dir = os.path.dirname(os.path.dirname(CAD_0.__file__))
+    code = textwrap.dedent(
+        """
+        import numpy  # FIRST: the hostile import order
+        import CAD_0
+        from CAD_0 import math as m, sdf as s
+        import CAD_0.io as io
+        import sys, tempfile, os
+        body = s.box(m.Vec3f(1.0, 1.0, 1.0))
+        mesh = s.marching_cubes(body, 16, True)
+        assert mesh.triangle_count() > 0
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "box.obj")
+            if not io.export_obj(p, mesh, "box"):
+                raise SystemExit("export_obj FAILED with numpy-first import")
+            with open(p) as f:
+                head = f.read()
+            if "# triangles:" not in head or "\\nv " not in head:
+                raise SystemExit("truncated OBJ output")
+        print("OK")
+        """
+    )
+    env = dict(os.environ, PYTHONPATH=py_dir)
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True,
+        env=env, timeout=120)
+    assert result.returncode == 0, (
+        f"numpy-first subprocess failed:\n{result.stdout}\n{result.stderr}")
+    assert "OK" in result.stdout
