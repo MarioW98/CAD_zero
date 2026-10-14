@@ -267,22 +267,21 @@ TEST_CASE("ADR-0022: is_closed_manifold(tetrahedron) == true") {
     CHECK(is_closed_manifold(*body));
 }
 
-TEST_CASE("ADR-0022: is_closed_manifold(sphere) == false (regression guard)") {
-    // The sphere is represented as a single periodic face with no seam
-    // wire (ADR-0021 §5 / ADR-0022 §5). It must NOT pass the closed-
-    // manifold contract — this is a deliberate regression guard against
-    // silently "fixing" make_sphere into a closed shell without proper
-    // seam wires.
+TEST_CASE("ADR-0022: is_closed_manifold(sphere) == true (seam wire fix, ADR-0023)") {
+    // ADR-0023 §1: make_sphere now has a proper seam wire (2V/1E/1F)
+    // and is a genuine closed manifold. The ADR-0022 regression guard
+    // that expected `false` has been inverted — the root cause (missing
+    // seam wire) is now fixed, not just masked.
     auto body = make_sphere(2.0f);
-    CHECK_FALSE(is_closed_manifold(*body));
+    CHECK(is_closed_manifold(*body));
 }
 
-TEST_CASE("ADR-0022: is_closed_manifold(cylinder) == false (no edges, 3 free faces)") {
-    // Same regression guard as the sphere: the cylinder MVP has 3 faces
-    // but no edges/vertices wired together. is_closed_manifold must
-    // reject it until proper seam wires are added (Phase D step (c)).
+TEST_CASE("ADR-0022: is_closed_manifold(cylinder) == true (seam wire fix, ADR-0023)") {
+    // ADR-0023 §1: make_cylinder now has a proper seam wire (4V/5E/3F)
+    // and is a genuine closed manifold. The ADR-0022 regression guard
+    // that expected `false` has been inverted.
     auto body = make_cylinder(1.0f, 2.0f);
-    CHECK_FALSE(is_closed_manifold(*body));
+    CHECK(is_closed_manifold(*body));
 }
 
 // ---------------------------------------------------------------------------

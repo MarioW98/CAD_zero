@@ -141,18 +141,48 @@ inline std::unique_ptr<BRepBody> make_box(math::Vec3f half_extents) {
     return body;
 }
 
-// Create a sphere B-Rep body (single face, no edges for MVP — just
-// the surface geometry, tessellated later).
+// Create a sphere B-Rep body with a seam wire — ADR-0023 §1.
+//
+// Topology: 2V / 1E / 1F, χ = 2. The single seam edge (a meridian from
+// north pole to south pole) is used twice by the single spherical face:
+// once forward (north→south) and once reversed (south→north). This is
+// a valid closed manifold — the seam edge has 2 co-edges, both on the
+// same face, with opposite orientations.
+//
+// Vertex layout:
+//   v_north  = (0, +R, 0)   (north pole)
+//   v_south  = (0, -R, 0)   (south pole)
+//
+// Edge:
+//   e_seam: v_north → v_south   (the meridian at u=0)
+//
+// Face loop: [e_seam forward, e_seam reversed]
+//
 inline std::unique_ptr<BRepBody> make_sphere(float radius, math::Vec3f center = {}) {
     auto body = std::make_unique<BRepBody>();
     auto& shell = body->solid.shell_mut();
     shell.set_closed(true);
 
-    // A sphere has a single face with a spherical surface. The seam
-    // wire that turns this into a proper closed shell is Phase D step
-    // (b); for now, the Euler characteristic is documented as the
-    // known MVP limitation in ADR-0021 §5.
+    // 2 vertices: north and south poles.
+    body->vertices = {
+        Vertex{center + math::Vec3f{0,  radius, 0}},  // v_north (id 0)
+        Vertex{center + math::Vec3f{0, -radius, 0}},  // v_south (id 1)
+    };
+    for (std::size_t i = 0; i < body->vertices.size(); ++i)
+        body->vertices[i].set_id(static_cast<VertexId>(i));
+
+    // 1 edge: the seam meridian from north to south.
+    body->edges = { Edge{0, 1} };
+    body->edges[0].set_id(0);
+
+    // 1 face: the spherical surface. Its loop uses the seam edge twice
+    // — once forward (north→south) and once reversed (south→north) —
+    // forming a closed loop that bounds the entire spherical surface.
     Face face(std::make_shared<SphereSurface>(radius, center));
+    Loop loop;
+    loop.add_coedge(CoEdge{0, false});  // north → south
+    loop.add_coedge(CoEdge{0, true});   // south → north
+    face.add_loop(std::move(loop));
     face.set_id(0);
     shell.add_face(std::move(face));
 
@@ -160,28 +190,120 @@ inline std::unique_ptr<BRepBody> make_sphere(float radius, math::Vec3f center = 
     return body;
 }
 
-// Create a cylinder B-Rep body (single cylindrical face + 2 planar caps).
+// Create a cylinder B-Rep body with a seam wire — ADR-0023 §1.
+//
+// Topology: 4V / 5E / 3F, χ = 2. The lateral face's loop uses the seam
+// edge twice (forward and reversed), same pattern as the sphere.
+//
+// Vertex layout (radius R, height H, axis along Y, centered at origin):
+//   v_top1 = (+R, +H/2, 0)   v_top2 = (-R, +H/2, 0)
+//   v_bot1 = (+R, -H/2, 0)   v_bot2 = (-R, -H/2, 0)
+//
+// Edges:
+//   0: e_top1  v_top1 → v_top2   (top rim arc, +Z side)
+//   1: e_top2  v_top2 → v_top1   (top rim arc, -Z side)
+//   2: e_bot1  v_bot1 → v_bot2   (bottom rim arc, +Z side)
+//   3: e_bot2  v_bot2 → v_bot1   (bottom rim arc, -Z side)
+//   4: e_seam  v_bot1 → v_top1   (vertical seam at angle 0)
+//
+// Faces:
+//   0: lateral (CylinderSurface)  loop: [e_bot1 rev, e_bot2 rev, e_seam fwd, e_top2 rev, e_top1 rev, e_seam rev]
+//   1: top cap (PlaneSurface, +Y)  loop: [e_top1 fwd, e_top2 fwd]
+//   2: bot cap (PlaneSurface, -Y)  loop: [e_bot1 fwd, e_bot2 fwd]
+//
 inline std::unique_ptr<BRepBody> make_cylinder(float radius, float height) {
     auto body = std::make_unique<BRepBody>();
     auto& shell = body->solid.shell_mut();
     shell.set_closed(true);
 
-    // Lateral face
-    Face lateral(std::make_shared<CylinderSurface>(radius, height));
-    lateral.set_id(0);
-    shell.add_face(std::move(lateral));
+    const float h = height * 0.5f;
+    // 4 vertices: 2 on the top rim, 2 on the bottom rim (seam + antipode).
+    body->vertices = {
+        Vertex{{ radius,  h, 0}},  // v_top1 (id 0)
+        Vertex{{-radius,  h, 0}},  // v_top2 (id 1)
+        Vertex{{ radius, -h, 0}},  // v_bot1 (id 2)
+        Vertex{{-radius, -h, 0}},  // v_bot2 (id 3)
+    };
+    for (std::size_t i = 0; i < body->vertices.size(); ++i)
+        body->vertices[i].set_id(static_cast<VertexId>(i));
 
-    // Bottom cap
-    Face bottom(std::make_shared<PlaneSurface>(
-        math::Vec3f{0, -height * 0.5f, 0}, math::Vec3f{0, -1, 0}));
-    bottom.set_id(1);
-    shell.add_face(std::move(bottom));
+    // 5 edges (see numbering in the header comment).
+    body->edges = {
+        Edge{0, 1},  // e_top1: v_top1 → v_top2
+        Edge{1, 0},  // e_top2: v_top2 → v_top1
+        Edge{2, 3},  // e_bot1: v_bot1 → v_bot2
+        Edge{3, 2},  // e_bot2: v_bot2 → v_bot1
+        Edge{2, 0},  // e_seam: v_bot1 → v_top1
+    };
+    for (std::size_t i = 0; i < body->edges.size(); ++i)
+        body->edges[i].set_id(static_cast<EdgeId>(i));
 
-    // Top cap
-    Face top(std::make_shared<PlaneSurface>(
-        math::Vec3f{0, height * 0.5f, 0}, math::Vec3f{0, 1, 0}));
-    top.set_id(2);
-    shell.add_face(std::move(top));
+    // Helper: append a planar face with a single outer loop.
+    auto add_plane_face = [&shell](
+        math::Vec3f origin, math::Vec3f normal, FaceId id,
+        std::initializer_list<std::pair<EdgeId, bool>> coedges
+    ) {
+        Face face(std::make_shared<PlaneSurface>(origin, normal));
+        Loop loop;
+        for (const auto& [eid, rev] : coedges) {
+            loop.add_coedge(CoEdge{eid, rev});
+        }
+        face.add_loop(std::move(loop));
+        face.set_id(id);
+        shell.add_face(std::move(face));
+    };
+
+    // Face 0: lateral (CylinderSurface).
+    // Loop walks: v_bot1 →(bot1 rev: bot2→bot1? no — bot1 is v_bot1→v_bot2,
+    //   reversed is v_bot2→v_bot1. But we start at v_bot1. So we need
+    //   bot2 rev first? Let me re-derive carefully.
+    //
+    //   Start at v_bot1 (id 2). Walk the lateral boundary:
+    //   - Bottom rim reversed (because the lateral face's bottom edge
+    //     goes opposite to the bottom cap's loop):
+    //       e_bot1 reversed: v_bot2 → v_bot1  (no, that arrives at v_bot1)
+    //       e_bot2 reversed: v_bot1 → v_bot2  (departs v_bot1)
+    //   Hmm, let me just walk and verify closure at the end.
+    //
+    //   Lateral loop (6 co-edges):
+    //     1. e_bot1 reversed:  v_bot2 → v_bot1  (arrive v_bot1)
+    //     2. e_bot2 reversed:  v_bot1 → v_bot2  (depart v_bot1, arrive v_bot2)
+    //   Wait — that's not right. Let me re-derive from scratch.
+    //
+    //   The lateral face boundary, walking CCW from outside (radially
+    //   outward), starting at v_bot1:
+    //     - Go UP along the seam: v_bot1 → v_top1   (e_seam forward)
+    //     - Go along the top rim (reversed relative to top cap):
+    //       v_top1 → v_top2  (e_top2 reversed, because e_top2 is v_top2→v_top1)
+    //       v_top2 → v_top1  (e_top1 reversed, because e_top1 is v_top1→v_top2)
+    //     - Go DOWN along the seam: v_top1 → v_bot1  (e_seam reversed)
+    //     - Go along the bottom rim (reversed relative to bottom cap):
+    //       v_bot1 → v_bot2  (e_bot2 reversed, because e_bot2 is v_bot2→v_bot1)
+    //       v_bot2 → v_bot1  (e_bot1 reversed, because e_bot1 is v_bot1→v_bot2)
+    //   Back at v_bot1. ✓ 6 co-edges.
+    {
+        Face face(std::make_shared<CylinderSurface>(radius, height));
+        Loop loop;
+        loop.add_coedge(CoEdge{4, false});  // e_seam fwd: v_bot1 → v_top1
+        loop.add_coedge(CoEdge{1, true});  // e_top2 rev: v_top1 → v_top2
+        loop.add_coedge(CoEdge{0, true});  // e_top1 rev: v_top2 → v_top1
+        loop.add_coedge(CoEdge{4, true});  // e_seam rev: v_top1 → v_bot1
+        loop.add_coedge(CoEdge{3, true});  // e_bot2 rev: v_bot1 → v_bot2
+        loop.add_coedge(CoEdge{2, true});  // e_bot1 rev: v_bot2 → v_bot1
+        face.add_loop(std::move(loop));
+        face.set_id(0);
+        shell.add_face(std::move(face));
+    }
+
+    // Face 1: top cap (PlaneSurface, +Y normal).
+    // Loop: [e_top1 forward (v_top1→v_top2), e_top2 forward (v_top2→v_top1)]
+    add_plane_face({0, h, 0}, {0, 1, 0}, 1,
+        {{0, false}, {1, false}});
+
+    // Face 2: bottom cap (PlaneSurface, -Y normal).
+    // Loop: [e_bot1 forward (v_bot1→v_bot2), e_bot2 forward (v_bot2→v_bot1)]
+    add_plane_face({0, -h, 0}, {0, -1, 0}, 2,
+        {{2, false}, {3, false}});
 
     link_radial_edges(*body);
     return body;

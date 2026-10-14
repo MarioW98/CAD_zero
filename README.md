@@ -9,7 +9,7 @@ CAD_0 is a from-scratch CAD kernel where **SDF (signed distance fields) and B-Re
 
 The long-term goal is an **open-source CAD system that can stand next to commercial modelers** — built without any third-party CAD kernel (no OpenCascade, no Parasolid, no ACIS — [ADR-0003](docs/adr/0003-third-party-policy.md)), so every geometric decision lives in this repository and can be tested deterministically ([ADR-0014](docs/adr/0014-floating-point-determinism.md)).
 
-> **Status — Phase D step (b) complete.** An interactive desktop app (PySide6) on top of the kernel: parametric shape creation, undo/redo, viewport picking with 3D highlight, STL/OBJ import with vertex welding, STL/OBJ/3MF export, and a versioned native project format (`.CAD_0` v0.2.0) with a migration chain. **Phase D step (a)** landed the B-Rep topology data-structure ADR ([ADR-0021](docs/adr/0021-brep-topology-data-structure.md)): radial-edge entity set, ID scheme, ownership contract, `link_radial_edges()` post-pass, Euler invariant. **Phase D step (b)** adds topology query operators ([ADR-0022](docs/adr/0022-brep-topology-query-operators.md)): `faces_around_edge`, `edges_around_vertex`, `faces_around_vertex`, `opposite_coedge`, `is_closed_manifold`, `wireframe_edges`, `vertex_valence` — plus a `make_tetrahedron` factory as the second canonical closed-solid case. The box and tetrahedron factories now produce consistently oriented shells (every edge has opposite coedge orientations), validated by 23 new doctest cases. Next up: **Phase D step (c)** — analytic surfaces + boolean on convex solids. The CI matrix (GCC 11 debug + release, Clang 14) is green on `main`.
+> **Status — Phase D step (c) complete.** An interactive desktop app (PySide6) on top of the kernel: parametric shape creation, undo/redo, viewport picking with 3D highlight, STL/OBJ import with vertex welding, STL/OBJ/3MF export, and a versioned native project format (`.CAD_0` v0.2.0) with a migration chain. **Phase D steps (a)+(b)** landed the B-Rep topology data structure ([ADR-0021](docs/adr/0021-brep-topology-data-structure.md)) and query operators ([ADR-0022](docs/adr/0022-brep-topology-query-operators.md)). **Phase D step (c)** ([ADR-0023](docs/adr/0023-analytic-seam-wires-and-boolean-intersect.md)) adds seam wires for `make_sphere` (2V/1E/1F) and `make_cylinder` (4V/5E/3F) — both are now genuine closed manifolds — plus `bool_intersect` on convex polyhedra via Sutherland-Hodgman clipping with deterministic grid-snapped vertex welding. `bool_union` and `bool_subtract` are declared but deferred (require polygon subtraction). Next up: **Phase D step (c+)** — `bool_union`/`bool_subtract` via polygon arrangement, or **Phase E** — SDF ↔ B-Rep bridge. The CI matrix (GCC 11 debug + release, Clang 14) is green on `main`.
 
 <!-- TODO(badge GIF): record a 30–60s noVNC demo (create sphere → edit radius →
      pick in viewport → import STL → save/reopen) and embed it here:
@@ -203,7 +203,7 @@ See [docs/architecture/overview.md](docs/architecture/overview.md) for the full 
 | B | SDF kernel, marching cubes, vertex welding | ✅ done |
 | C | Viewport architecture, PySide6 desktop app | ✅ done |
 | C+ | Native format + migrators, STL/OBJ import, picking, CI matrix, toolchain contract | ✅ done |
-| **D** | **Radial-edge B-Rep topology (ADR-0012) — ADR first, then pure-topology MVP** | ▶️ step (a)+(b) done ([ADR-0021](docs/adr/0021-brep-topology-data-structure.md), [ADR-0022](docs/adr/0022-brep-topology-query-operators.md)) |
+| **D** | **Radial-edge B-Rep topology (ADR-0012) — ADR first, then pure-topology MVP** | ▶️ steps (a)+(b)+(c) done ([ADR-0021](docs/adr/0021-brep-topology-data-structure.md), [ADR-0022](docs/adr/0022-brep-topology-query-operators.md), [ADR-0023](docs/adr/0023-analytic-seam-wires-and-boolean-intersect.md)) |
 | E | SDF ↔ B-Rep bridge | planned |
 | F | Modeling: feature history, sketcher | planned |
 | H | STEP AP203 MVP (ADR-0010) | planned |
@@ -235,6 +235,7 @@ See [docs/architecture/overview.md](docs/architecture/overview.md) for the full 
 | [0020](docs/adr/0020-python-bindings-build.md) | Python bindings build configuration |
 | [0021](docs/adr/0021-brep-topology-data-structure.md) | B-Rep topology data structure — radial-edge entity set, ID scheme, ownership, Euler invariant (Phase D step (a)) |
 | [0022](docs/adr/0022-brep-topology-query-operators.md) | B-Rep topology query operators (faces_around_edge, edges_around_vertex, opposite_coedge, is_closed_manifold, wireframe_edges, vertex_valence) + make_tetrahedron (Phase D step (b)) |
+| [0023](docs/adr/0023-analytic-seam-wires-and-boolean-intersect.md) | Analytic seam wires (sphere: 2V/1E/1F, cylinder: 4V/5E/3F — both now closed manifolds) + bool_intersect on convex polyhedra via Sutherland-Hodgman (Phase D step (c)) |
 
 ## Testing, determinism, CI
 

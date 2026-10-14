@@ -6,11 +6,13 @@ set(CAD_0_BREP_HEADERS
     include/CAD_0/brep/curve.hpp
     include/CAD_0/brep/tessellate.hpp
     include/CAD_0/brep/factory.hpp
+    include/CAD_0/brep/boolean.hpp
 )
 
 set(CAD_0_BREP_SOURCES
     src/topology.cpp
     src/tessellate.cpp
+    src/boolean.cpp
 )
 
 add_library(CAD_0_brep STATIC ${CAD_0_BREP_SOURCES} ${CAD_0_BREP_HEADERS})
