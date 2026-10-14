@@ -122,7 +122,60 @@ For each face F_A:
 `outside` fragments. The 2D projection + GH + 3D unprojection pipeline
 handles collinear edges via the `IntersectionType::Overlap` case.
 
-### 6. What is explicitly NOT in this ADR
+### 6. IntersectionTable — single source of truth for interface points
+
+**Problem**: in partial-overlap booleans, the interface ring vertices
+(points where B's face planes intersect A's edges, and vice versa) are
+computed by TWO different FP paths:
+- Part 1: `clip_inside_3d(B, F_A)` — Sutherland-Hodgman clips A's face
+  against B's planes.
+- Part 2: `clip_inside_3d(A, F_B)` — Sutherland-Hodgman clips B's face
+  against A's planes.
+
+Both paths compute the same geometric points (e.g. the point at x=0.3
+where B's boundary clips A), but with ~ULP FP divergence due to
+different operation orders. When the position straddles a grid cell
+boundary (e.g. x=0.3 where 0.3/1e-6 = 299999.9999...), the
+`SnappedKey` differs and welding fails.
+
+**Solution**: `IntersectionTable` pre-computes each interface point
+ONCE. Both Part 1 and Part 2 consume the SAME `Vec3f` instance from
+the table — bit-identical by construction. The welding in
+`assemble_body` degenerates to an identity lookup.
+
+**Architecture**:
+- `SharedVertexPool`: maps `SnappedKey` → canonical `Vec3f`. First
+  insertion wins; subsequent lookups for the same cell return the
+  stored `Vec3f`.
+- `IntersectionTable`: wraps `SharedVertexPool`. `get_or_compute(v0,
+  v1, plane_origin, plane_normal)` computes the edge-plane intersection
+  point ONCE and canonicalizes it through the pool.
+- `clip_polygon_inside`: accepts an optional `IntersectionTable*`.
+  When non-null, intersection points are read from the table instead
+  of computed locally.
+- `clip_inside_3d`: accepts the table and passes it through.
+- `bool_union`/`bool_subtract`: create ONE `IntersectionTable` and
+  pass it to ALL `clip_inside_3d` calls. Both Part 1 and Part 2 share
+  the same table → same `Vec3f` instances.
+- `assemble_body`: canonicalizes all clipped face polygons through a
+  `SharedVertexPool` before welding. Applied uniformly to all boolean
+  ops (behavior-neutral for original vertices, which are already
+  bit-identical from source meshes).
+
+**Why not just increase kWeldGrid?** That would mask the bug, not fix
+it. The root cause is dual-computation of the same geometric point by
+different FP paths. The fix is architectural: compute once, share
+everywhere. kWeldGrid stays at 1e-6.
+
+**Known limitation**: `bool_subtract` does not yet generate "cut faces"
+— the new faces created where B's clipping plane intersects A's
+interior (e.g. the face at x=0.3 when subtracting a shifted box).
+Part 1 discards A's faces that are entirely inside B. Part 2 adds B's
+faces that are inside A as caps with inverted normals. But the face
+at the cut plane is neither — it's a NEW face. Implementing cut-face
+generation is the next step (ADR-0025 v4 TODO).
+
+### 7. What is explicitly NOT in this ADR
 
 - **Symbolic perturbation (SOS)** — too complex for MVP, on-boundary
   classification suffices for the test cases.

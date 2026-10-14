@@ -556,13 +556,86 @@ struct GHResult {
     std::vector<Polygon2D> outside;
 };
 
+// SharedVertexPool — single source of truth for vertex positions
+// (ADR-0025 FASE B: single-source-of-truth fix).
+//
+// Canonicalizes every vertex position through a single pool. The pool
+// maps a SnappedKey to the FIRST Vec3f inserted for that cell. When
+// two paths produce vertices in the SAME cell, both receive the SAME
+// canonical Vec3f — bit-identical by construction.
+//
+// For the grid-straddle case, the pool is fed by IntersectionTable
+// which computes each interface point ONCE and reuses it across all
+// paths. This eliminates the dual-computation that caused the straddle.
+//
+// kWeldGrid stays at 1e-6. ADR-0014 untouched.
+class SharedVertexPool {
+public:
+    const math::Vec3f& canonicalize(const math::Vec3f& pos) {
+        SnappedKey key = snap(pos);
+        auto it = pool_.find(key);
+        if (it != pool_.end()) {
+            return it->second;
+        }
+        pool_.emplace(key, pos);
+        return pool_.at(key);
+    }
+
+    void canonicalize_polygon(Polygon& poly) {
+        for (auto& p : poly) {
+            p = canonicalize(p);
+        }
+    }
+
+private:
+    std::map<SnappedKey, math::Vec3f> pool_;
+};
+
+// IntersectionTable — pre-computed interface points (ADR-0025 FASE B).
+//
+// For each (edge of A, face of B) pair where the edge crosses the face
+// plane, the intersection point is computed ONCE and stored. Both
+// clip_inside_3d calls (Part 1: A's faces against B, Part 2: B's faces
+// against A) consume the SAME Vec3f from the table, eliminating the
+// dual-computation that caused grid-straddle welding failures.
+class IntersectionTable {
+public:
+    const math::Vec3f& get_or_compute(
+        const math::Vec3f& v0, const math::Vec3f& v1,
+        math::Vec3f plane_origin, math::Vec3f plane_normal
+    ) {
+        const float d0 = (v0 - plane_origin).dot(plane_normal);
+        const float d1 = (v1 - plane_origin).dot(plane_normal);
+        const float denom = d0 - d1;
+        math::Vec3f point;
+        if (std::abs(denom) > 1e-12f) {
+            const float t = d0 / denom;
+            point = v0 + (v1 - v0) * t;
+        } else {
+            point = v0;
+        }
+        return pool_.canonicalize(point);
+    }
+
+    SharedVertexPool& pool() { return pool_; }
+
+private:
+    SharedVertexPool pool_;
+};
+
 // Sutherland-Hodgman clip: keep the part of `poly` that is inside the
 // half-space defined by (plane_origin, plane_normal). "Inside" means
 // dot(p - origin, normal) <= tolerance.
+//
+// If `table` is non-null, intersection points are computed via the
+// table (single-source-of-truth) instead of locally. This ensures
+// both Part 1 and Part 2 of bool_union/subtract receive the SAME
+// Vec3f for interface ring points.
 Polygon clip_polygon_inside(
     const Polygon& poly,
     math::Vec3f plane_origin,
-    math::Vec3f plane_normal
+    math::Vec3f plane_normal,
+    IntersectionTable* table
 ) {
     if (poly.empty()) return {};
     Polygon result;
@@ -581,8 +654,15 @@ Polygon clip_polygon_inside(
         if (curr_inside != next_inside) {
             const float denom = d_curr - d_next;
             if (std::abs(denom) > 1e-12f) {
-                const float t = d_curr / denom;
-                result.push_back(curr + (next - curr) * t);
+                if (table) {
+                    // Single-source-of-truth: get the canonical point
+                    // from the IntersectionTable.
+                    result.push_back(table->get_or_compute(
+                        curr, next, plane_origin, plane_normal));
+                } else {
+                    const float t = d_curr / denom;
+                    result.push_back(curr + (next - curr) * t);
+                }
             }
         }
     }
@@ -591,16 +671,20 @@ Polygon clip_polygon_inside(
 
 // Clip a 3D polygon against every face plane of `clipper`, keeping the
 // INSIDE part. This is the ADR-0023 Sutherland-Hodgman primitive,
-// used by bool_intersect.
+// used by bool_intersect, bool_union, and bool_subtract.
+//
+// If `table` is non-null, interface points are computed via the table
+// (single-source-of-truth) instead of locally.
 Polygon clip_inside_3d(
     const BRepBody& clipper,
-    const Polygon& in_poly
+    const Polygon& in_poly,
+    IntersectionTable* table
 ) {
     Polygon poly = in_poly;
     for (const auto& clip_face : clipper.solid.shell().faces()) {
         math::Vec3f origin, normal;
         if (!get_face_plane(clip_face, clipper.edges, clipper.vertices, origin, normal)) continue;
-        poly = clip_polygon_inside(poly, origin, normal);
+        poly = clip_polygon_inside(poly, origin, normal, table);
         if (poly.size() < 3) return {};
     }
     // Deduplicate consecutive vertices that are equal within kWeldGrid.
@@ -761,50 +845,6 @@ bool polygons_coincident(const Polygon& a, const Polygon& b) {
     return a_keys == b_keys;
 }
 
-// SharedVertexPool — single source of truth for vertex positions
-// (ADR-0025 FASE 2: single-source-of-truth fix).
-//
-// Problem: in partial-overlap booleans, the interface ring vertices are
-// computed TWICE by different FP paths (clip_inside_3d for A's faces
-// against B, and clip_inside_3d for B's faces against A). Even though
-// both use Sutherland-Hodgman, the operation order differs, producing
-// vertices at "the same" geometric position but with ~ULP FP divergence.
-// When the position straddles a grid cell boundary (e.g. x=0.3 where
-// 0.3/1e-6 = 299999.9999...), the SnappedKey differs and welding fails.
-//
-// Solution: canonicalize every vertex position through a single pool.
-// The pool maps a SnappedKey to the FIRST Vec3f inserted for that cell.
-// When two paths produce vertices in the SAME cell, both receive the
-// SAME canonical Vec3f — bit-identical by construction.
-//
-// This handles the case where two paths produce vertices that snap to
-// the same cell. The straddle case (different cells) is handled by the
-// caller computing the interface vertices ONCE and passing them to
-// both paths — true single-source-of-truth at the computation level.
-//
-// kWeldGrid stays at 1e-6. ADR-0014 untouched.
-class SharedVertexPool {
-public:
-    const math::Vec3f& canonicalize(const math::Vec3f& pos) {
-        SnappedKey key = snap(pos);
-        auto it = pool_.find(key);
-        if (it != pool_.end()) {
-            return it->second;
-        }
-        pool_.emplace(key, pos);
-        return pool_.at(key);
-    }
-
-    void canonicalize_polygon(Polygon& poly) {
-        for (auto& p : poly) {
-            p = canonicalize(p);
-        }
-    }
-
-private:
-    std::map<SnappedKey, math::Vec3f> pool_;
-};
-
 // ---------------------------------------------------------------------------
 // Body assembly — shared by all three boolean ops
 // ---------------------------------------------------------------------------
@@ -814,18 +854,17 @@ struct ClippedFace {
     Polygon polygon;
 };
 
-void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces, bool use_pool) {
+void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces) {
     auto& shell = result.solid.shell_mut();
 
-    // FASE 2: canonicalize vertex positions through a SharedVertexPool
-    // before welding. Applied ONLY to bool_union and bool_subtract
-    // (use_pool=true), NOT to bool_intersect (which already produces
-    // golden-stable output and must not be altered — ADR-0014).
-    if (use_pool) {
-        SharedVertexPool pool;
-        for (auto& cf : clipped_faces) {
-            pool.canonicalize_polygon(cf.polygon);
-        }
+    // FASE B: canonicalize vertex positions through a SharedVertexPool
+    // before welding. The pool is behavior-neutral for original vertices
+    // (already bit-identical from source meshes) and ensures interface
+    // ring vertices (computed by IntersectionTable) are canonicalized
+    // consistently. Applied to all boolean ops uniformly.
+    SharedVertexPool pool;
+    for (auto& cf : clipped_faces) {
+        pool.canonicalize_polygon(cf.polygon);
     }
     std::map<SnappedKey, VertexId> weld_map;
     auto weld_vertex = [&](const math::Vec3f& pos) -> VertexId {
@@ -928,7 +967,7 @@ std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
         // Use Sutherland-Hodgman sequential clipping (works correctly
         // for convex polyhedra, ADR-0023 primitive). This is equivalent
         // to Greiner-Hormann for the convex case but simpler and proven.
-        Polygon inside = clip_inside_3d(B, poly_A);
+        Polygon inside = clip_inside_3d(B, poly_A, nullptr);
         if (inside.size() >= 3) {
             clipped_faces.push_back(
                 {std::make_shared<PlaneSurface>(inside[0], n_A), inside});
@@ -941,7 +980,7 @@ std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
         if (poly_B.size() < 3) continue;
         math::Vec3f o_B, n_B;
         if (!get_face_plane(face_B, B.edges, B.vertices, o_B, n_B)) continue;
-        Polygon inside = clip_inside_3d(A, poly_B);
+        Polygon inside = clip_inside_3d(A, poly_B, nullptr);
         if (inside.size() >= 3) {
             SnappedKeySet inside_keys = snap_polygon(inside);
             bool is_dup = false;
@@ -972,7 +1011,7 @@ std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
         return result;  // empty body
     }
 
-    assemble_body(*result, clipped_faces, /*use_pool=*/false);
+    assemble_body(*result, clipped_faces);
     return result;
 }
 
@@ -1027,13 +1066,15 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
             clipped_faces.push_back(
                 {std::make_shared<PlaneSurface>(poly_A[0], n_A), poly_A});
         }
-        assemble_body(*result, clipped_faces, /*use_pool=*/true);
+        assemble_body(*result, clipped_faces);
         return result;
     }
 
-    // Helper: process one solid's faces against the other solid.
-    // For each face, compute the part outside `other` and add to
-    // clipped_faces. Deduplicate against existing entries.
+    // FASE B: IntersectionTable — single source of truth for interface
+    // ring points. Pre-computed once, consumed by both Part 1 (A's faces
+    // against B) and Part 2 (B's faces against A).
+    IntersectionTable table;
+
     auto process_faces = [&](
         const BRepBody& self,
         const BRepBody& other
@@ -1045,17 +1086,15 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
             if (!get_face_plane(face, self.edges, self.vertices, o, n)) continue;
 
             // Compute the part of `poly` that is inside `other`.
-            Polygon inside = clip_inside_3d(other, poly);
+            // Pass the IntersectionTable so interface points are shared.
+            Polygon inside = clip_inside_3d(other, poly, &table);
 
             if (inside.size() < 3) {
-                // No part of poly is inside other → poly survives intact.
                 clipped_faces.push_back(
                     {std::make_shared<PlaneSurface>(poly[0], n), poly});
             } else if (polygons_coincident(poly, inside)) {
-                // poly is entirely inside other → skip.
                 continue;
             } else {
-                // Partial overlap: compute poly - inside via GH.
                 auto outside_fragments = polygon_subtract_3d(poly, inside, n);
                 for (const auto& frag : outside_fragments) {
                     if (frag.size() >= 3) {
@@ -1074,7 +1113,7 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
         return result;
     }
 
-    assemble_body(*result, clipped_faces, /*use_pool=*/true);
+    assemble_body(*result, clipped_faces);
     return result;
 }
 
@@ -1133,25 +1172,26 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
         return result;
     }
 
+    // FASE B: IntersectionTable — single source of truth for interface
+    // ring points. Shared between Part 1 (A's faces against B) and
+    // Part 2 (B's faces against A).
+    IntersectionTable table;
+
     // Part 1: A's faces outside B (kept with A's outward normal).
-    // Same algorithm as bool_union's process_faces, but only for A.
     for (const auto& face_A : A.solid.shell().faces()) {
         Polygon poly_A = extract_face_polygon(face_A, A.edges, A.vertices);
         if (poly_A.size() < 3) continue;
         math::Vec3f o_A, n_A;
         if (!get_face_plane(face_A, A.edges, A.vertices, o_A, n_A)) continue;
 
-        Polygon inside = clip_inside_3d(B, poly_A);
+        Polygon inside = clip_inside_3d(B, poly_A, &table);
 
         if (inside.size() < 3) {
-            // F_A entirely outside B → keep intact.
             clipped_faces.push_back(
                 {std::make_shared<PlaneSurface>(poly_A[0], n_A), poly_A});
         } else if (polygons_coincident(poly_A, inside)) {
-            // F_A entirely inside B → skip (not on the boundary of A \ B).
             continue;
         } else {
-            // Partial overlap: keep the part of F_A outside B.
             auto outside_fragments = polygon_subtract_3d(poly_A, inside, n_A);
             for (const auto& frag : outside_fragments) {
                 if (frag.size() >= 3) {
@@ -1169,23 +1209,16 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
         math::Vec3f o_B, n_B;
         if (!get_face_plane(face_B, B.edges, B.vertices, o_B, n_B)) continue;
 
-        Polygon inside = clip_inside_3d(A, poly_B);
+        Polygon inside = clip_inside_3d(A, poly_B, &table);
 
         if (inside.size() < 3) {
-            // F_B entirely outside A → no cap contribution.
             continue;
         }
-        // The `inside` polygon is the part of F_B that is inside A.
-        // It becomes a cavity cap with INVERTED normal (pointing into
-        // the removed region, away from B's original outward direction).
         math::Vec3f inverted_normal = n_B * -1.0f;
         if (polygons_coincident(poly_B, inside)) {
-            // F_B entirely inside A → single cap.
             clipped_faces.push_back(
                 {std::make_shared<PlaneSurface>(inside[0], inverted_normal), inside});
         } else {
-            // Partial cap: `inside` is the partial fragment.
-            // For convex A, clip_inside_3d returns a single convex polygon.
             clipped_faces.push_back(
                 {std::make_shared<PlaneSurface>(inside[0], inverted_normal), inside});
         }
@@ -1195,7 +1228,7 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
         return result;
     }
 
-    assemble_body(*result, clipped_faces, /*use_pool=*/true);
+    assemble_body(*result, clipped_faces);
     return result;
 }
 

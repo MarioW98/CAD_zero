@@ -421,6 +421,52 @@ TEST_CASE("ADR-0022: tetrahedron every edge has opposite coedge orientations") {
     }
 }
 
+TEST_CASE("ADR-0022: is_closed_manifold rejects same-orientation coedge pair (invariant 2 XOR)") {
+    // Two triangular faces with IDENTICAL loops (0→1→2→0).
+    // Every edge has exactly 2 co-edges, but all same-orientation.
+    // V=3, E=3, F=2, χ=3-3+2=2 (χ passes — only XOR catches the duplication).
+    BRepBody body;
+    body.vertices = {
+        Vertex{{0, 0, 0}},   // 0
+        Vertex{{1, 0, 0}},   // 1
+        Vertex{{0, 1, 0}},   // 2
+    };
+    for (std::size_t i = 0; i < body.vertices.size(); ++i)
+        body.vertices[i].set_id(static_cast<VertexId>(i));
+
+    body.edges = {
+        Edge{0, 1},  // 0
+        Edge{1, 2},  // 1
+        Edge{0, 2},  // 2
+    };
+    for (std::size_t i = 0; i < body.edges.size(); ++i)
+        body.edges[i].set_id(static_cast<EdgeId>(i));
+
+    auto& shell = body.solid.shell_mut();
+    shell.set_closed(true);
+
+    auto add_face = [&shell](FaceId id) {
+        Face face(std::make_shared<PlaneSurface>(Vec3f{0, 0, 0}, Vec3f{0, 0, 1}));
+        Loop loop;
+        loop.add_coedge(CoEdge{0, false});  // 0→1 forward
+        loop.add_coedge(CoEdge{1, false});  // 1→2 forward
+        loop.add_coedge(CoEdge{2, true});   // 2→0 reversed (edge 2 is 0→2)
+        face.add_loop(std::move(loop));
+        face.set_id(id);
+        shell.add_face(std::move(face));
+    };
+    add_face(0);
+    add_face(1);
+
+    link_radial_edges(body);
+
+    for (const auto& edge : body.edges) {
+        CHECK(edge.coedges().size() == 2);
+    }
+    CHECK(euler_characteristic(body) == 2);
+    CHECK_FALSE(is_closed_manifold(body));
+}
+
 TEST_CASE("PlaneSurface: evaluate and normal") {
     PlaneSurface plane(Vec3f{0, 0, 0}, Vec3f{0, 1, 0});
     auto p = plane.evaluate(3.0f, 4.0f);

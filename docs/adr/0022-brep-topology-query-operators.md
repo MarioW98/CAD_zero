@@ -161,6 +161,14 @@ Updated in ADR-0025 FASE 3 to enforce 4 invariants:
    single closed shell (topological sphere). A body with χ ≠ 2 is
    either multi-shell or has a topology defect.
 
+**χ-invariance of interface ring duplication**: a duplicated interface
+ring adds +4V and +4E (the ring vertices and edges are counted twice).
+Since χ = V − E + F, the +4V and +4E cancel and χ remains unchanged.
+This means invariant 4 (χ=2) CANNOT detect a duplicated interface
+ring — only invariant 2 (XOR) catches it. This is the structural
+justification for invariant 2: without it, the test suite would pass
+χ=2 on a body with an unwelded interface ring, hiding the bug.
+
 Strict enough to reject:
 - periodic-surface sphere/torus (no seam wire → V=E=0)
 - two faces glued back-to-back (co-edges same orientation → fails XOR)
