@@ -990,8 +990,34 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
 }
 
 // ---------------------------------------------------------------------------
-// bool_subtract — A \ B via centroid classification + normal inversion
+// bool_subtract — A \ B via polygon subtraction + normal inversion
+//                (ADR-0025 v3, mirrors bool_union's architecture)
 // ---------------------------------------------------------------------------
+//
+// Algorithm:
+//   boundary(A \ B) = {parts of A's faces outside B}                 (Part 1)
+//                   ∪ {parts of B's faces inside A, INVERTED normal}  (Part 2)
+//
+// Part 1 (mirrors bool_union):
+//   For each face F_A of A:
+//     1. inside = clip_inside_3d(B, F_A)
+//     2. If inside is empty → F_A entirely outside B → keep intact
+//     3. If inside == F_A → F_A entirely inside B → skip (not on boundary)
+//     4. Otherwise → outside = polygon_subtract_3d(F_A, inside, n_A)
+//        Add outside fragments with A's outward normal.
+//
+// Part 2 (caps with inverted normals):
+//   For each face F_B of B:
+//     1. inside = clip_inside_3d(A, F_B)
+//     2. If inside is empty → F_B entirely outside A → skip (no cap)
+//     3. If inside == F_B → F_B entirely inside A → add as a single
+//        cap face with INVERTED normal
+//     4. Otherwise → add `inside` fragments (the partial cap) with
+//        INVERTED normal. (Note: inside is already a single polygon
+//        from Sutherland-Hodgman sequential clipping; for non-convex
+//        results, polygon_subtract would be needed, but A is convex
+//        so inside is convex and single-piece.)
+//
 std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
     auto validate_planar = [](const BRepBody& body) -> bool {
         for (const auto& face : body.solid.shell().faces()) {
@@ -1012,8 +1038,6 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
     shell.set_closed(true);
 
     std::vector<ClippedFace> clipped_faces;
-    const auto& shell_A = A.solid.shell();
-    const auto& shell_B = B.solid.shell();
 
     // Edge case: A == B → A \ A = empty body.
     if (bodies_identical(A, B)) {
@@ -1021,33 +1045,60 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
     }
 
     // Part 1: A's faces outside B (kept with A's outward normal).
-    for (const auto& face_A : shell_A.faces()) {
+    // Same algorithm as bool_union's process_faces, but only for A.
+    for (const auto& face_A : A.solid.shell().faces()) {
         Polygon poly_A = extract_face_polygon(face_A, A.edges, A.vertices);
         if (poly_A.size() < 3) continue;
         math::Vec3f o_A, n_A;
         if (!get_face_plane(face_A, A.edges, A.vertices, o_A, n_A)) continue;
-        math::Vec3f centroid{0, 0, 0};
-        for (const auto& p : poly_A) centroid = centroid + p;
-        centroid = centroid * (1.0f / static_cast<float>(poly_A.size()));
-        if (!point_inside_convex(B, centroid)) {
+
+        Polygon inside = clip_inside_3d(B, poly_A);
+
+        if (inside.size() < 3) {
+            // F_A entirely outside B → keep intact.
             clipped_faces.push_back(
                 {std::make_shared<PlaneSurface>(poly_A[0], n_A), poly_A});
+        } else if (polygons_coincident(poly_A, inside)) {
+            // F_A entirely inside B → skip (not on the boundary of A \ B).
+            continue;
+        } else {
+            // Partial overlap: keep the part of F_A outside B.
+            auto outside_fragments = polygon_subtract_3d(poly_A, inside, n_A);
+            for (const auto& frag : outside_fragments) {
+                if (frag.size() >= 3) {
+                    clipped_faces.push_back(
+                        {std::make_shared<PlaneSurface>(frag[0], n_A), frag});
+                }
+            }
         }
     }
 
-    // Part 2: B's faces inside A, with INVERTED normal.
-    for (const auto& face_B : shell_B.faces()) {
+    // Part 2: B's faces inside A, with INVERTED normal (the cavity caps).
+    for (const auto& face_B : B.solid.shell().faces()) {
         Polygon poly_B = extract_face_polygon(face_B, B.edges, B.vertices);
         if (poly_B.size() < 3) continue;
         math::Vec3f o_B, n_B;
         if (!get_face_plane(face_B, B.edges, B.vertices, o_B, n_B)) continue;
-        math::Vec3f centroid{0, 0, 0};
-        for (const auto& p : poly_B) centroid = centroid + p;
-        centroid = centroid * (1.0f / static_cast<float>(poly_B.size()));
-        if (point_inside_convex(A, centroid)) {
-            math::Vec3f inverted_normal = n_B * -1.0f;
+
+        Polygon inside = clip_inside_3d(A, poly_B);
+
+        if (inside.size() < 3) {
+            // F_B entirely outside A → no cap contribution.
+            continue;
+        }
+        // The `inside` polygon is the part of F_B that is inside A.
+        // It becomes a cavity cap with INVERTED normal (pointing into
+        // the removed region, away from B's original outward direction).
+        math::Vec3f inverted_normal = n_B * -1.0f;
+        if (polygons_coincident(poly_B, inside)) {
+            // F_B entirely inside A → single cap.
             clipped_faces.push_back(
-                {std::make_shared<PlaneSurface>(poly_B[0], inverted_normal), poly_B});
+                {std::make_shared<PlaneSurface>(inside[0], inverted_normal), inside});
+        } else {
+            // Partial cap: `inside` is the partial fragment.
+            // For convex A, clip_inside_3d returns a single convex polygon.
+            clipped_faces.push_back(
+                {std::make_shared<PlaneSurface>(inside[0], inverted_normal), inside});
         }
     }
 
