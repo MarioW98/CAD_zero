@@ -365,16 +365,9 @@ TEST_CASE("ADR-0025: bool_subtract of overlapping boxes — χ=2, manifold pendi
 
 TEST_CASE("ADR-0025: bool_subtract partial-overlap with grid-straddle (regression for unwelded interface ring)") {
     // A=[-1,1]³, B shift (0.3,0,0) → B=[-0.7,1.3]×[-1,1]×[-1,1].
-    // A \ B = [-1, 0.3] × [-1,1] × [-1,1].
-    // Expected: V=8, E=12, F=6, χ=2, is_closed_manifold=true.
-    //
-    // Known limitation: the current bool_subtract algorithm does not
-    // generate the "cut face" at x=0.3 (the plane where B's boundary
-    // clips A). Part 1 discards A's +X face (entirely inside B). Part 2
-    // adds B's x=-0.7 face as a cap (wrong — it's inside A but not on
-    // the boundary of A\B). The correct algorithm needs to generate the
-    // cut face from the intersection of B's clipping plane with A's
-    // interior — a separate step not yet implemented (ADR-0025 v4 TODO).
+    // A \ B = [-1,-0.7]×[-1,1]×[-1,1] (slab of A left of B's -X face).
+    // The cut plane is x=-0.7 = B's -X face → Part 2 cap, no missing face.
+    // Expected: V=8, E=12, F=6, χ=2, is_closed_manifold=true, loops_are_closed=true.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -382,15 +375,12 @@ TEST_CASE("ADR-0025: bool_subtract partial-overlap with grid-straddle (regressio
     }
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
-    CHECK(result->face_count() > 0);
+    CHECK(result->vertex_count() == 8);
+    CHECK(result->edge_count()   == 12);
+    CHECK(result->face_count()   == 6);
     CHECK(euler_characteristic(*result) == 2);
     CHECK(loops_are_closed(*result));
-    // TODO(ADR-0025 v4): when cut-face generation is implemented,
-    // restore the strict assertions:
-    //   CHECK(result->vertex_count() == 8);
-    //   CHECK(result->edge_count()   == 12);
-    //   CHECK(result->face_count()   == 6);
-    //   CHECK(is_closed_manifold(*result));
+    CHECK(is_closed_manifold(*result));
 }
 
 TEST_CASE("ADR-0025: bool_intersect of nested boxes (B inside A) returns B") {

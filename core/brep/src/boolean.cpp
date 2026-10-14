@@ -1187,8 +1187,64 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
         Polygon inside = clip_inside_3d(B, poly_A, &table);
 
         if (inside.size() < 3) {
-            clipped_faces.push_back(
-                {std::make_shared<PlaneSurface>(poly_A[0], n_A), poly_A});
+            // inside is empty or degenerate. If poly_A is entirely
+            // outside B (no vertex satisfies all B half-spaces),
+            // keep it intact. Otherwise, poly_A is partially inside B
+            // but clip_inside_3d collapsed the inside fragment to a
+            // degenerate polygon (edge or point). In this case, we
+            // clip poly_A against B directly using clip_outside_3d
+            // to get the surviving (outside) part.
+            // Check if any vertex of poly_A is inside B.
+            bool any_inside = false;
+            for (const auto& p : poly_A) {
+                bool inside_b = true;
+                for (const auto& bf : B.solid.shell().faces()) {
+                    math::Vec3f bo, bn;
+                    if (!get_face_plane(bf, B.edges, B.vertices, bo, bn)) continue;
+                    if ((p - bo).dot(bn) > kWeldGrid) {
+                        inside_b = false;
+                        break;
+                    }
+                }
+                if (inside_b) { any_inside = true; break; }
+            }
+            if (!any_inside) {
+                clipped_faces.push_back(
+                    {std::make_shared<PlaneSurface>(poly_A[0], n_A), poly_A});
+            } else {
+                // Partial overlap with degenerate inside: clip poly_A
+                // to keep only the part OUTSIDE B.
+                Polygon clipped = poly_A;
+                for (const auto& bf : B.solid.shell().faces()) {
+                    math::Vec3f bo, bn;
+                    if (!get_face_plane(bf, B.edges, B.vertices, bo, bn)) continue;
+                    // Keep vertices where dot > -tol (OUTSIDE this half-space).
+                    Polygon clipped_result;
+                    const std::size_t n = clipped.size();
+                    for (std::size_t i = 0; i < n; ++i) {
+                        const auto& curr = clipped[i];
+                        const auto& next = clipped[(i + 1) % n];
+                        const float d_curr = (curr - bo).dot(bn);
+                        const float d_next = (next - bo).dot(bn);
+                        const bool curr_keep = d_curr >= -kWeldGrid;
+                        const bool next_keep = d_next >= -kWeldGrid;
+                        if (curr_keep) clipped_result.push_back(curr);
+                        if (curr_keep != next_keep) {
+                            const float denom = d_curr - d_next;
+                            if (std::abs(denom) > 1e-12f) {
+                                const float t = d_curr / denom;
+                                clipped_result.push_back(curr + (next - curr) * t);
+                            }
+                        }
+                    }
+                    clipped = std::move(clipped_result);
+                    if (clipped.size() < 3) break;
+                }
+                if (clipped.size() >= 3) {
+                    clipped_faces.push_back(
+                        {std::make_shared<PlaneSurface>(clipped[0], n_A), clipped});
+                }
+            }
         } else if (polygons_coincident(poly_A, inside)) {
             continue;
         } else {
