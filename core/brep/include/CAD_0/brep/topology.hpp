@@ -264,12 +264,23 @@ std::vector<FaceId> faces_around_vertex(const BRepBody& body, VertexId vertex_id
 // access `body.edges[ce->edge()].coedges()` directly.
 const CoEdge* opposite_coedge(const BRepBody& body, const CoEdge* ce) noexcept;
 
-// is_closed_manifold — strict closed-manifold contract:
-//   * shell.is_closed()
-//   * every loop of every face is closed (loops_are_closed)
-//   * every edge has exactly 2 co-edges
-// Strict enough to reject the periodic-surface sphere/torus (ADR-0022
-// §5 documents this as a deliberate regression guard).
+// is_closed_manifold — strict closed-orientable-manifold contract
+// (ADR-0022 §2, extended in ADR-0025 v4):
+//
+//   0. V > 0, E > 0, F > 0, shell.is_closed()
+//   1. Every edge has exactly 2 co-edges (manifoldness).
+//   2. For every edge, the two co-edges have OPPOSITE orientations
+//      (one forward, one reversed) — the orientability invariant.
+//      A duplicated interface ring (same orientation on both co-edges)
+//      fails this check immediately.
+//   3. loops_are_closed(body) — every loop's co-edges form a cycle.
+//   4. euler_characteristic(body) == 2 — single closed shell (sphere).
+//
+// Strict enough to reject:
+//   - periodic-surface sphere/torus (no seam wire → V=E=0)
+//   - two faces glued back-to-back (co-edges same orientation)
+//   - non-connected shells (χ ≠ 2)
+//   - any topology defect from a broken boolean op
 bool is_closed_manifold(const BRepBody& body) noexcept;
 
 // wireframe_edges — one (v0, v1) pair per edge, canonicalised so that

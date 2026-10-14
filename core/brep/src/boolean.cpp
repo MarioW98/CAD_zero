@@ -603,7 +603,39 @@ Polygon clip_inside_3d(
         poly = clip_polygon_inside(poly, origin, normal);
         if (poly.size() < 3) return {};
     }
-    return poly;
+    // Deduplicate consecutive vertices that are equal within kWeldGrid.
+    // Sutherland-Hodgman can produce duplicates when a vertex lies
+    // exactly on the clip plane (it gets added both as "current inside"
+    // and as "intersection point" with t≈0). Duplicates break
+    // polygons_coincident() and Greiner-Hormann.
+    Polygon deduped;
+    deduped.reserve(poly.size());
+    for (const auto& p : poly) {
+        if (deduped.empty()) {
+            deduped.push_back(p);
+        } else {
+            const auto& last = deduped.back();
+            const float dx = p.x - last.x;
+            const float dy = p.y - last.y;
+            const float dz = p.z - last.z;
+            if (dx*dx + dy*dy + dz*dz > kWeldGrid * kWeldGrid) {
+                deduped.push_back(p);
+            }
+        }
+    }
+    // Also check wraparound: if the first and last vertices are equal,
+    // drop the last one (the polygon is implicitly closed).
+    if (deduped.size() >= 2) {
+        const auto& first = deduped.front();
+        const auto& last = deduped.back();
+        const float dx = first.x - last.x;
+        const float dy = first.y - last.y;
+        const float dz = first.z - last.z;
+        if (dx*dx + dy*dy + dz*dz <= kWeldGrid * kWeldGrid) {
+            deduped.pop_back();
+        }
+    }
+    return deduped;
 }
 
 // Classify a point as inside/outside a convex polyhedron.

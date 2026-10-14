@@ -165,21 +165,45 @@ const CoEdge* opposite_coedge(const BRepBody& body, const CoEdge* ce) noexcept {
 }
 
 bool is_closed_manifold(const BRepBody& body) noexcept {
-    // A closed manifold solid must have at least one vertex, one edge,
-    // and one face. Without this guard, the periodic-surface sphere
-    // (1 face, 0 edges, 0 vertices) and the MVP cylinder (3 faces, 0
-    // edges, 0 vertices) would pass vacuously (ADR-0022 §5 regression
-    // guard).
+    // Invariant 0: a closed manifold solid must have at least one
+    // vertex, one edge, and one face. Without this guard, the
+    // periodic-surface sphere (1 face, 0 edges, 0 vertices) would
+    // pass vacuously (ADR-0022 §5 regression guard).
     if (body.vertex_count() == 0) return false;
     if (body.edge_count()   == 0) return false;
     if (body.face_count()   == 0) return false;
     if (!body.solid.shell().is_closed()) return false;
-    if (!loops_are_closed(body)) return false;
+
+    // Invariant 1: every edge has exactly 2 co-edges (manifoldness —
+    // extends Edge::is_manifold() to the whole body).
     for (const auto& edge : body.edges) {
         if (edge.coedges().size() != 2) {
             return false;
         }
     }
+
+    // Invariant 2: for every edge, the two co-edges have OPPOSITE
+    // orientations (one forward, one reversed). This is what distinguishes
+    // an orientable closed solid from two faces glued back-to-back.
+    // A duplicated interface ring (same orientation on both co-edges)
+    // fails this check immediately.
+    for (const auto& edge : body.edges) {
+        const auto& ce = edge.coedges();
+        if (ce.size() != 2) return false;
+        if (ce[0]->reversed() == ce[1]->reversed()) {
+            return false;  // same orientation → not orientable
+        }
+    }
+
+    // Invariant 3: every loop of every face is closed (end vertex of
+    // co-edge i equals start vertex of co-edge (i+1) mod n).
+    if (!loops_are_closed(body)) return false;
+
+    // Invariant 4: Euler characteristic χ = V − E + F = 2 for a single
+    // closed shell (topological sphere). A body with χ ≠ 2 is either
+    // not a single shell (multi-shell, χ ≠ 2) or has a topology defect.
+    if (euler_characteristic(body) != 2) return false;
+
     return true;
 }
 

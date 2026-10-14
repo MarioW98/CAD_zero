@@ -260,25 +260,17 @@ TEST_CASE("ADR-0025: bool_intersect of boxes with coplanar faces works") {
     CHECK(result->face_count() >= 0);
 }
 
-TEST_CASE("ADR-0025: bool_union of boxes touching at a face — documented MVP limitation") {
-    // Box A: [-1,1]³
-    // Box B: [-1,1] × [-1,1] × [1,3]  (sits on top of A)
-    // Union = a 1×2×2 box (4 units tall). 8V/12E/6F.
-    //
-    // KNOWN LIMITATION: the centroid-classification approach (ADR-0024)
-    // keeps both A's and B's faces when they are touching but not
-    // overlapping, because each face's centroid is outside the other
-    // solid. This produces 12 faces (6+6) instead of 6, because the
-    // shared z=1 face is kept by both A (as its top) and B (as its
-    // bottom) — they are coincident but the deduplication by SnappedKeySet
-    // catches them as duplicates (same vertex set), so the actual count
-    // is 6 unique faces. The vertices, however, are NOT shared between
-    // A and B in the body model — A's top vertices are at z=1, B's
-    // bottom vertices are at z=1, but they come from different
-    // construction paths and may not weld if the snapping misses.
-    //
-    // For MVP we accept the result as a non-empty body; the strict
-    // 8V/12E/6F assertion is documented as the proper-impl target.
+TEST_CASE("ADR-0025: bool_union of boxes touching at a face — strict closed-manifold contract") {
+    // Box A: [-1,1]³ → 8V/12E/6F
+    // Box B: [-1,1] × [-1,1] × [1,3] → 8V/12E/6F (shifted by (0,0,2))
+    // Union: a 2×2×4 box. Topology of the union:
+    //   - 4 bottom vertices of A + 4 top vertices of B + 4 shared at z=1 = 12V
+    //   - 12 edges of A + 12 edges of B - 4 shared at z=1 + 4 verticals merged
+    //     = 12 + 12 - 4 = 20E (the 4 shared bottom-of-B / top-of-A edges weld)
+    //   - 5 faces of A (top skipped, inside B) + 5 faces of B (bottom skipped,
+    //     inside A) = 10F
+    //   - χ = 12 - 20 + 10 = 2 ✓
+    //   - is_closed_manifold: every edge has 2 co-edges with opposite orientations
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -286,112 +278,20 @@ TEST_CASE("ADR-0025: bool_union of boxes touching at a face — documented MVP l
     }
     auto result = bool_union(*A, *B);
     REQUIRE(result != nullptr);
-    CHECK(result->face_count() > 0);
-    // The result is non-empty. Proper implementation (full GH with
-    // edge subdivision) would produce 8V/12E/6F.
+    CHECK(result->vertex_count() == 12);
+    CHECK(result->edge_count()   == 20);
+    CHECK(result->face_count()   == 10);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(is_closed_manifold(*result));
 }
 
-TEST_CASE("ADR-0025: bool_union of boxes touching at a face — produces closed manifold (polygon_subtract)") {
-    // Same geometry as above, but with the new polygon_subtract_3d
-    // implementation (ADR-0025 v2):
-    //   - Face top of A (z=1): inside = clip_inside_3d(B, top_A).
-    //     B is [-1,1]×[-1,1]×[1,3]. The face top_A is z=1 with
-    //     vertices (±1,±1,1). All vertices are on B's boundary
-    //     (z=1 = B's bottom face). clip_inside_3d keeps them (within
-    //     tol) → inside has same vertices as top_A → polygons_coincident
-    //     → top_A skipped (entirely inside B). ✓
-    //   - Face bottom of B (z=1): same logic → skipped. ✓
-    //   - Face +X of A (x=1, y∈[-1,1], z∈[-1,1]): clip_inside_3d(B, +X_A).
-    //     B's bottom face plane is z=1, normal (0,-1,0). Vertex
-    //     (1,-1,1) of +X_A has dot((1,-1,1)-(1,1,1),(0,-1,0)) = 2 > tol
-    //     → outside → discarded. Result: inside is degenerate (only
-    //     vertices at z=1 survive). inside.size() < 3 → +X_A survives
-    //     intact. ✓
-    //   - Similarly for +X of B (which is at x=1 too, same as A's +X).
-    //     Wait — B is shifted by (0,0,2), so B's +X face is at x=1
-    //     with z∈[1,3]. clip_inside_3d(A, +X_B): A is [-1,1]³.
-    //     Vertices of +X_B: (1,±1,1), (1,±1,3). The vertex (1,±1,3)
-    //     has z=3 > 1 = A's max z → outside A → discarded. The vertex
-    //     (1,±1,1) is on A's boundary. So inside is degenerate.
-    //     +X_B survives intact. ✓
-    //   - Face -X of A: entirely outside B (B doesn't extend to x=-1
-    //     in the negative direction... actually B is [-1,1] in X too).
-    //     Wait, B is [-1,1]×[-1,1]×[1,3]. So B's -X face is at x=-1
-    //     with z∈[1,3]. A's -X face is at x=-1 with z∈[-1,1]. They
-    //     share the edge at z=1. clip_inside_3d(B, -X_A): B's bottom
-    //     plane z=1 cuts -X_A. Vertices of -X_A: (-1,±1,±1). The ones
-    //     at z=1 are on B's boundary. The ones at z=-1 are below B.
-    //     So inside is the part of -X_A with z≥1, which is the edge
-    //     at z=1 — degenerate. -X_A survives intact. ✓
-    //
-    // Result: 5 faces of A (top skipped) + 5 faces of B (bottom skipped)
-    // = 10 faces, then deduplication catches the 4 shared lateral
-    // faces (-X, +X, -Y, +Y) → 10 - 4 = 6 unique faces.
-    //
-    // Vertices: A has 8, B has 8. After welding (4 shared vertices at
-    // the z=1 corners), total = 8 + 8 - 4 = 12. Hmm, that's not 8.
-    //
-    // Actually the union of two boxes touching at a face should have
-    // 8 vertices (the 4 bottom of A + 4 top of B). But our welding
-    // produces 12 because A's top 4 and B's bottom 4 are at the same
-    // positions but the lateral faces of A and B have different z
-    // ranges, so their vertices don't all weld.
-    //
-    // This is a fundamental limitation: the lateral faces of A (z∈[-1,1])
-    // and B (z∈[1,3]) are SEPARATE faces in the result, not merged into
-    // a single tall face. To merge them would require face merging
-    // after boolean, which is a separate algorithm.
-    //
-    // For MVP we accept 12 vertices, 10 faces (before dedup) → after
-    // dedup 6 unique faces. χ = 12 - E + 6. For a closed manifold
-    // χ should be 2. Let's see what E is.
-    auto A = make_box(Vec3f{1, 1, 1});
-    auto B = make_box(Vec3f{1, 1, 1});
-    for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3f{0, 0, 2.0f});
-    }
-    auto result = bool_union(*A, *B);
-    REQUIRE(result != nullptr);
-    CHECK(result->face_count() > 0);
-    CHECK(loops_are_closed(*result));
-    // Diagnostic: print V/E/F and χ.
-    // The result should be a closed manifold (every edge shared by 2 faces).
-    // For now, just check χ is a small integer (the topology is consistent
-    // even if not a single closed shell).
-    const auto chi = euler_characteristic(*result);
-    CHECK(chi != 0);  // non-degenerate
-    // is_closed_manifold may fail if edges are not all shared by 2 faces.
-    // This happens when A and B share lateral edges that don't get
-    // deduplicated because the faces are separate (not merged).
-    // Documented limitation: face merging is not implemented.
-}
-
-TEST_CASE("ADR-0025: bool_subtract of box minus a corner — polygon_subtract produces L-shape") {
-    // Box A: [-1,1]³
-    // Box B: [0,2]³ (overlaps the +X corner of A)
+TEST_CASE("ADR-0025: bool_subtract of box minus a corner — χ=2, manifold pending coedge fix") {
+    // Box A: [-1,1]³ → 8V/12E/6F
+    // Box B: [0,2]³ (overlaps the +X corner of A, shifted by (1,1,1))
     // A \ B = A with the [0,1]³ corner removed.
-    //
-    // With the new polygon_subtract_3d implementation (ADR-0025 v3):
-    //   - Face +X of A (x=1, vertici (1,±1,±1)): inside = clip_inside_3d(B, +X_A).
-    //     B è [0,2]³. I vertici di +X_A a x=1 sono sul boundary di B (x=0..2).
-    //     La faccia +X di A ha vertici (1,1,1),(1,-1,1),(1,-1,-1),(1,1,-1).
-    //     Per la faccia x=2 di B (origin (2,1,1), normal (1,0,0)):
-    //       dot((1,1,1)-(2,1,1),(1,0,0)) = -1 ≤ tol → inside
-    //       dot((1,-1,1)-(2,1,1),(1,0,0)) = -1 ≤ tol → inside
-    //       ... tutti i vertici sono dentro (x=1 ≤ 2). OK.
-    //     Per la faccia x=0 di B (origin (0,1,1), normal (-1,0,0)):
-    //       dot((1,1,1)-(0,1,1),(-1,0,0)) = -1 ≤ tol → inside
-    //       ... tutti dentro. OK.
-    //     Per la faccia y=2 di B: dot((1,1,1)-(0,2,0),(0,1,0)) = -1 ≤ tol → inside
-    //       dot((1,-1,1)-(0,2,0),(0,1,0)) = -3 ≤ tol → inside
-    //       ... tutti dentro. OK.
-    //     Per la faccia y=0 di B: dot((1,1,1)-(0,0,0),(0,-1,0)) = -1 ≤ tol → inside
-    //       dot((1,-1,1)-(0,0,0),(0,-1,0)) = 1 > tol → OUTSIDE!
-    //     Quindi (1,-1,1) e (1,-1,-1) vengono scartati. Il poligono
-    //     `inside` risultante è la parte di +X_A con y ≥ 0. polygon_subtract
-    //     produce il frammento L-shape con y < 0.
-    //
-    // Risultato atteso: il frammento L-shape della faccia +X di A sopravvive.
+    // χ=2 passes (topologically a sphere). is_closed_manifold may fail
+    // because polygon_subtract_3d fragments may have inconsistent coedge
+    // orientations — documented as the next bug to fix.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -400,12 +300,8 @@ TEST_CASE("ADR-0025: bool_subtract of box minus a corner — polygon_subtract pr
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
     CHECK(result->face_count() > 0);
+    CHECK(euler_characteristic(*result) == 2);
     CHECK(loops_are_closed(*result));
-    // χ should be 2 for a proper closed manifold (box with corner notch
-    // is topologically still a sphere). Documented: may not pass due
-    // to face-merging not implemented.
-    const auto chi = euler_characteristic(*result);
-    CHECK(chi != 0);  // non-degenerate
 }
 
 TEST_CASE("ADR-0025: bool_subtract of disjoint boxes returns A unchanged (GH path)") {
@@ -449,9 +345,12 @@ TEST_CASE("ADR-0025: bool_subtract of identical boxes returns empty (GH path)") 
     CHECK_FALSE(is_closed_manifold(*result));  // empty body
 }
 
-TEST_CASE("ADR-0025: bool_subtract of overlapping boxes produces non-empty body") {
+TEST_CASE("ADR-0025: bool_subtract of overlapping boxes — χ=2, manifold pending coedge fix") {
     // Box A: [-1,1]³
     // Box B: [-0.5, 1.5] × [-1, 1] × [-1, 1] (overlaps +X half of A)
+    // A \ B = A with the [0,1] × [-1,1] × [-1,1] slab removed.
+    // χ=2 passes. is_closed_manifold may fail due to coedge orientation
+    // inconsistency in polygon_subtract_3d fragments — next bug to fix.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -460,9 +359,8 @@ TEST_CASE("ADR-0025: bool_subtract of overlapping boxes produces non-empty body"
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
     CHECK(result->face_count() > 0);
+    CHECK(euler_characteristic(*result) == 2);
     CHECK(loops_are_closed(*result));
-    const auto chi = euler_characteristic(*result);
-    CHECK(chi != 0);  // non-degenerate
 }
 
 TEST_CASE("ADR-0025: bool_intersect of nested boxes (B inside A) returns B") {
@@ -525,17 +423,12 @@ TEST_CASE("ADR-0025: bool_intersect of identical boxes returns one box (regressi
 // polyhedron whose boundary is the outer skin of the two boxes).
 //
 
-TEST_CASE("ADR-0024: bool_union of overlapping boxes produces a non-empty body") {
-    // NOTE: the MVP implementation uses fan-triangulation + centroid
-    // classification (ADR-0024 §2 documented simplification). This
-    // produces a valid body but NOT always a closed manifold, because
-    // the diagonal edges of the triangulation are not shared by two
-    // faces. The result is topologically a triangle soup with welded
-    // vertices but non-manifold edges.
-    //
-    // A proper Greiner-Hormann implementation would preserve the
-    // polygon structure and produce a closed manifold. For now we
-    // verify the body is non-empty and has the expected face count.
+TEST_CASE("ADR-0024: bool_union of overlapping boxes — χ=2, manifold pending coedge fix") {
+    // Box A: [-1,1]³
+    // Box B: [-0.5, 1.5] × [-1, 1] × [-1, 1] (overlaps +X half of A)
+    // A ∪ B = a box [-1, 1.5] × [-1, 1] × [-1, 1] with a step.
+    // χ=2 passes. is_closed_manifold may fail due to coedge orientation
+    // inconsistency in polygon_subtract_3d fragments — next bug to fix.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -544,8 +437,7 @@ TEST_CASE("ADR-0024: bool_union of overlapping boxes produces a non-empty body")
     auto result = bool_union(*A, *B);
     REQUIRE(result != nullptr);
     CHECK(result->face_count() > 0);
-    CHECK(result->vertex_count() > 0);
-    // loops_are_closed should still hold (each face is a valid triangle).
+    CHECK(euler_characteristic(*result) == 2);
     CHECK(loops_are_closed(*result));
 }
 
