@@ -1,7 +1,7 @@
 # ADR-0025: Proper Greiner-Hormann with collinear edge handling
 
 ## Status
-Accepted (2026-10-14) — Phase D, step (c+ fix v2)
+Accepted (2026-10-14) — Phase D, step (c+ fix v3)
 
 ## Context
 
@@ -33,7 +33,7 @@ Three remedies exist in the literature:
   that splits collinear edges at common endpoints.
 
 This ADR picks **on-boundary classification + identical-body shortcut
-+ coplanar-face special case**. Rationale:
++ coplanar-face special case + polygon_subtract_3d for bool_union**. Rationale:
 
 - The identical-body shortcut (`bodies_identical()`) handles the most
   common collinear case: A == B → all 6 face pairs are coplanar and
@@ -105,7 +105,24 @@ identical:
 - `bool_subtract(A, A)` returns empty.
 - `bool_intersect(A, A)` returns a copy of A.
 
-### 5. What is explicitly NOT in this ADR
+### 5. polygon_subtract_3d — the bool_union primitive
+
+The key insight for `bool_union`: the boundary of A ∪ B consists of
+the parts of A's faces that are OUTSIDE B, plus the parts of B's faces
+that are OUTSIDE A.
+
+For each face F_A:
+1. `inside = clip_inside_3d(B, F_A)` — Sutherland-Hodgman, convex-safe.
+2. If `inside` is empty → F_A survives intact (entirely outside B).
+3. If `inside == F_A` (vertex sets equal) → F_A skipped (entirely inside B).
+4. Otherwise → `outside = polygon_subtract_3d(F_A, inside, normal)`
+   via Greiner-Hormann in 2D (projected onto F_A's plane).
+
+`polygon_subtract_3d` uses `greiner_hormann_2d` and returns the
+`outside` fragments. The 2D projection + GH + 3D unprojection pipeline
+handles collinear edges via the `IntersectionType::Overlap` case.
+
+### 6. What is explicitly NOT in this ADR
 
 - **Symbolic perturbation (SOS)** — too complex for MVP, on-boundary
   classification suffices for the test cases.

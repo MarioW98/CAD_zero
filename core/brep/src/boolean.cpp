@@ -410,7 +410,6 @@ void compute_intersections(
                 s->pos, s_next->pos, c->pos, c_next->pos, t_lo, t_hi);
             if (itype == IntersectionType::None) continue;
             if (itype == IntersectionType::Point) {
-                // Single intersection point at parameter t_lo along (s, s_next).
                 Vec2 ip{
                     s->pos.x + t_lo * (s_next->pos.x - s->pos.x),
                     s->pos.y + t_lo * (s_next->pos.y - s->pos.y)
@@ -420,7 +419,17 @@ void compute_intersections(
                 s_ins->neighbor = c_ins;
                 c_ins->neighbor = s_ins;
             } else {
-                // Overlap: insert two intersection vertices at t_lo and t_hi.
+                // Overlap: insert two intersection vertices.
+                // Find the iterator pointing to the vertex BEFORE which
+                // we want to insert ip_hi. That's the next original
+                // vertex after s (i.e., the original s_next, now
+                // reachable as s_lo->next->...->s_next).
+                //
+                // Simpler approach: insert ip_lo after s_it, then
+                // insert ip_hi after the original s_next (which we
+                // still hold as a pointer). To find its iterator, walk
+                // from s_lo forward until we hit a vertex whose pos
+                // matches s_next->pos AND is not an intersection.
                 Vec2 ip_lo{
                     s->pos.x + t_lo * (s_next->pos.x - s->pos.x),
                     s->pos.y + t_lo * (s_next->pos.y - s->pos.y)
@@ -433,19 +442,25 @@ void compute_intersections(
                 GHVertex* c_lo = insert_intersection(clip, c_it, ip_lo);
                 s_lo->neighbor = c_lo;
                 c_lo->neighbor = s_lo;
-                // Re-find s_it's position (the list may have grown).
-                // Walk forward from s_lo to find the original s_next,
-                // then insert ip_hi before it.
-                GHList::iterator s_hi_it = std::next(std::find_if(
-                    subject.begin(), subject.end(),
-                    [s_lo](const GHVertex& v) { return &v == s_lo; }));
-                GHList::iterator c_hi_it = std::next(std::find_if(
-                    clip.begin(), clip.end(),
-                    [c_lo](const GHVertex& v) { return &v == c_lo; }));
-                GHVertex* s_hi = insert_intersection(subject, s_hi_it, ip_hi);
-                GHVertex* c_hi = insert_intersection(clip, c_hi_it, ip_hi);
-                s_hi->neighbor = c_hi;
-                c_hi->neighbor = s_hi;
+                // Find the iterator for s_next (the original next vertex)
+                // by walking forward from s_lo. We expect it to be
+                // s_lo->next (the original s_next, untouched).
+                GHVertex* cursor = s_lo->next;
+                GHList::iterator s_hi_it = subject.end();
+                for (auto it = subject.begin(); it != subject.end(); ++it) {
+                    if (&*it == cursor) { s_hi_it = it; break; }
+                }
+                GHVertex* c_cursor = c_lo->next;
+                GHList::iterator c_hi_it = clip.end();
+                for (auto it = clip.begin(); it != clip.end(); ++it) {
+                    if (&*it == c_cursor) { c_hi_it = it; break; }
+                }
+                if (s_hi_it != subject.end() && c_hi_it != clip.end()) {
+                    GHVertex* s_hi = insert_intersection(subject, s_hi_it, ip_hi);
+                    GHVertex* c_hi = insert_intersection(clip, c_hi_it, ip_hi);
+                    s_hi->neighbor = c_hi;
+                    c_hi->neighbor = s_hi;
+                }
             }
         }
     }
@@ -471,15 +486,18 @@ void classify_intersections(
     }
     if (!start) return;
     // Walk the cyclic list and toggle inside/outside at each intersection.
+    // Bounded to prevent infinite loops on malformed lists.
     GHVertex* v = start;
-    bool done = false;
-    while (!done) {
+    std::size_t steps = 0;
+    const std::size_t max_steps = subject.size() * 2 + 8;
+    while (v != nullptr && steps < max_steps) {
+        ++steps;
         if (v->is_intersection) {
             inside = !inside;
             v->is_entry = inside;
         }
         v = v->next;
-        if (v == start) done = true;
+        if (v == start) break;
     }
 }
 
@@ -488,6 +506,7 @@ void classify_intersections(
 // clip polygon; `keep_inside=false` produces fragments outside.
 //
 // Bounded walk to prevent infinite loops on degenerate inputs.
+// Defensive nullptr checks to prevent SIGSEGV on malformed lists.
 std::vector<Polygon2D> walk_results(
     GHList& subject,
     bool keep_inside
@@ -499,14 +518,15 @@ std::vector<Polygon2D> walk_results(
     for (auto& sv : subject) {
         if (!sv.is_intersection || sv.visited) continue;
         if (sv.is_entry != want_entry) continue;
+        if (!sv.next) continue;  // defensive
 
         Polygon2D result;
         result.push_back(sv.pos);
         sv.visited = true;
         GHVertex* current = sv.next;
         std::size_t steps = 0;
-        const std::size_t max_steps = subject.size() * 4 + 16;
-        while (current != &sv && steps < max_steps) {
+        const std::size_t max_steps = subject.size() * 8 + 32;
+        while (current != nullptr && current != &sv && steps < max_steps) {
             ++steps;
             if (current->is_intersection) {
                 if (current->visited) break;
@@ -514,7 +534,7 @@ std::vector<Polygon2D> walk_results(
                 result.push_back(current->pos);
                 if (!current->neighbor) break;
                 current = current->neighbor;
-                if (current->visited) break;
+                if (current == nullptr || current->visited) break;
                 current->visited = true;
             } else {
                 result.push_back(current->pos);
@@ -667,6 +687,44 @@ GHResult greiner_hormann_2d(
     result.inside = walk_results(subject, true);
     result.outside = walk_results(subject, false);
     return result;
+}
+
+// 3D polygon subtraction: returns the parts of `subject_poly` that are
+// OUTSIDE `clip_poly`. Both polygons must be coplanar (lie on the same
+// plane, defined by `plane_normal`).
+//
+// Projects both polygons onto a local 2D frame defined by the plane
+// normal, runs Greiner-Hormann in 2D (which handles collinear edges
+// per ADR-0025), and projects the outside fragments back to 3D.
+//
+// Used by bool_union and bool_subtract to compute the part of a face
+// that survives after removing the portion inside the other solid.
+std::vector<Polygon> polygon_subtract_3d(
+    const Polygon& subject_poly,
+    const Polygon& clip_poly,
+    math::Vec3f plane_normal
+) {
+    std::vector<Polygon> result;
+    if (subject_poly.size() < 3 || clip_poly.size() < 3) return result;
+    LocalFrame frame = build_local_frame(plane_normal, subject_poly[0]);
+    Polygon2D subject_2d = project_polygon(frame, subject_poly);
+    Polygon2D clip_2d = project_polygon(frame, clip_poly);
+    GHResult gh = greiner_hormann_2d(subject_2d, clip_2d);
+    for (const auto& p : gh.outside) {
+        if (p.size() >= 3) {
+            result.push_back(unproject_polygon(frame, p));
+        }
+    }
+    return result;
+}
+
+// Check if two polygons have the same vertex set (within kWeldGrid).
+// Used to detect "inside == F_A" (face entirely inside the other solid).
+bool polygons_coincident(const Polygon& a, const Polygon& b) {
+    if (a.size() != b.size()) return false;
+    SnappedKeySet a_keys = snap_polygon(a);
+    SnappedKeySet b_keys = snap_polygon(b);
+    return a_keys == b_keys;
 }
 
 // ---------------------------------------------------------------------------
@@ -830,8 +888,25 @@ std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
 }
 
 // ---------------------------------------------------------------------------
-// bool_union — A ∪ B via Greiner-Hormann + identical-body shortcut
+// bool_union — A ∪ B via polygon subtraction (ADR-0025)
 // ---------------------------------------------------------------------------
+//
+// Algorithm:
+//   boundary(A ∪ B) = {parts of A's faces outside B}
+//                   ∪ {parts of B's faces outside A}
+//
+// For each face F_A of A:
+//   1. inside = clip_inside_3d(B, F_A)  # Sutherland-Hodgman, convex-safe
+//   2. If inside is empty → F_A is entirely outside B → keep F_A intact
+//   3. If inside == F_A (vertex sets equal) → F_A entirely inside B → skip
+//   4. Otherwise → F_A is partially inside B → outside = polygon_subtract_3d(F_A, inside)
+//      Add outside fragments (with F_A's outward normal).
+//
+// Same for B's faces against A. The deduplication by SnappedKeySet
+// catches the case where A and B share a coincident face (e.g. boxes
+// touching at a face): both A's top and B's bottom survive as fragments
+// with the same vertex set, and deduplication keeps only one.
+//
 std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
     auto validate_planar = [](const BRepBody& body) -> bool {
         for (const auto& face : body.solid.shell().faces()) {
@@ -852,12 +927,10 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
     shell.set_closed(true);
 
     std::vector<ClippedFace> clipped_faces;
-    const auto& shell_A = A.solid.shell();
-    const auto& shell_B = B.solid.shell();
 
     // Edge case: A == B → return a copy of A.
     if (bodies_identical(A, B)) {
-        for (const auto& face_A : shell_A.faces()) {
+        for (const auto& face_A : A.solid.shell().faces()) {
             Polygon poly_A = extract_face_polygon(face_A, A.edges, A.vertices);
             if (poly_A.size() < 3) continue;
             math::Vec3f o_A, n_A;
@@ -869,50 +942,44 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
         return result;
     }
 
-    // Part 1: A's faces outside B. For each face of A, keep the face
-    // intact if its centroid is OUTSIDE B. (For convex polyhedra this
-    // is correct: a face is either entirely inside B or partially
-    // outside. We keep only the entirely-outside faces as intact
-    // polygons — partial faces require Greiner-Hormann, which is
-    // documented as a known limitation for the c+ step.)
-    for (const auto& face_A : shell_A.faces()) {
-        Polygon poly_A = extract_face_polygon(face_A, A.edges, A.vertices);
-        if (poly_A.size() < 3) continue;
-        math::Vec3f o_A, n_A;
-        if (!get_face_plane(face_A, A.edges, A.vertices, o_A, n_A)) continue;
-        // Compute centroid.
-        math::Vec3f centroid{0, 0, 0};
-        for (const auto& p : poly_A) centroid = centroid + p;
-        centroid = centroid * (1.0f / static_cast<float>(poly_A.size()));
-        if (!point_inside_convex(B, centroid)) {
-            clipped_faces.push_back(
-                {std::make_shared<PlaneSurface>(poly_A[0], n_A), poly_A});
-        }
-    }
+    // Helper: process one solid's faces against the other solid.
+    // For each face, compute the part outside `other` and add to
+    // clipped_faces. Deduplicate against existing entries.
+    auto process_faces = [&](
+        const BRepBody& self,
+        const BRepBody& other
+    ) {
+        for (const auto& face : self.solid.shell().faces()) {
+            Polygon poly = extract_face_polygon(face, self.edges, self.vertices);
+            if (poly.size() < 3) continue;
+            math::Vec3f o, n;
+            if (!get_face_plane(face, self.edges, self.vertices, o, n)) continue;
 
-    // Part 2: B's faces outside A (deduplicated).
-    for (const auto& face_B : shell_B.faces()) {
-        Polygon poly_B = extract_face_polygon(face_B, B.edges, B.vertices);
-        if (poly_B.size() < 3) continue;
-        math::Vec3f o_B, n_B;
-        if (!get_face_plane(face_B, B.edges, B.vertices, o_B, n_B)) continue;
-        math::Vec3f centroid{0, 0, 0};
-        for (const auto& p : poly_B) centroid = centroid + p;
-        centroid = centroid * (1.0f / static_cast<float>(poly_B.size()));
-        if (!point_inside_convex(A, centroid)) {
-            SnappedKeySet poly_keys = snap_polygon(poly_B);
-            bool is_dup = false;
-            for (const auto& existing : clipped_faces) {
-                if (existing.polygon.size() != poly_B.size()) continue;
-                SnappedKeySet existing_keys = snap_polygon(existing.polygon);
-                if (existing_keys == poly_keys) { is_dup = true; break; }
-            }
-            if (!is_dup) {
+            // Compute the part of `poly` that is inside `other`.
+            Polygon inside = clip_inside_3d(other, poly);
+
+            if (inside.size() < 3) {
+                // No part of poly is inside other → poly survives intact.
                 clipped_faces.push_back(
-                    {std::make_shared<PlaneSurface>(poly_B[0], n_B), poly_B});
+                    {std::make_shared<PlaneSurface>(poly[0], n), poly});
+            } else if (polygons_coincident(poly, inside)) {
+                // poly is entirely inside other → skip.
+                continue;
+            } else {
+                // Partial overlap: compute poly - inside via GH.
+                auto outside_fragments = polygon_subtract_3d(poly, inside, n);
+                for (const auto& frag : outside_fragments) {
+                    if (frag.size() >= 3) {
+                        clipped_faces.push_back(
+                            {std::make_shared<PlaneSurface>(frag[0], n), frag});
+                    }
+                }
             }
         }
-    }
+    };
+
+    process_faces(A, B);
+    process_faces(B, A);
 
     if (clipped_faces.empty()) {
         return result;
