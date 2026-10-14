@@ -9,6 +9,7 @@ set(CAD_0_BREP_HEADERS
 )
 
 set(CAD_0_BREP_SOURCES
+    src/topology.cpp
     src/tessellate.cpp
 )
 

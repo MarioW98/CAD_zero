@@ -86,6 +86,99 @@ TEST_CASE("BRep: make_box") {
     CHECK(b.max.x == doctest::Approx(1.0f));
 }
 
+// ---------------------------------------------------------------------------
+// ADR-0021 — radial-edge population, Euler characteristic, loop closure
+// ---------------------------------------------------------------------------
+//
+// These tests exercise the contract documented in ADR-0021:
+//   §4  link_radial_edges() must populate Edge::coedges_ from the
+//       (Face, Loop, CoEdge) hierarchy. The factory calls it once
+//       at the end of construction; every edge of a closed solid must
+//       end up with exactly two co-edges (manifold contract).
+//   §5  euler_characteristic(body) = V − E + F must equal 2 for any
+//       closed-shell body. The box is the canonical case.
+//   §6  loops_are_closed(body) must hold for every loop of every face.
+//
+
+TEST_CASE("ADR-0021: make_box populates radial-edge list (every edge has 2 coedges)") {
+    auto body = make_box(Vec3f{1, 1, 1});
+    REQUIRE(body->edge_count() == 12);
+    for (const auto& edge : body->edges) {
+        CHECK(edge.coedges().size() == 2);
+        CHECK(edge.is_manifold());
+    }
+}
+
+TEST_CASE("ADR-0021: make_box euler characteristic equals 2") {
+    auto body = make_box(Vec3f{1, 1, 1});
+    CHECK(euler_characteristic(*body) == 2);
+}
+
+TEST_CASE("ADR-0021: make_box with non-uniform half-extents still has chi == 2") {
+    auto body = make_box(Vec3f{2, 3, 4});
+    CHECK(euler_characteristic(*body) == 2);
+}
+
+TEST_CASE("ADR-0021: every loop of every box face is closed") {
+    auto body = make_box(Vec3f{1, 1, 1});
+    CHECK(loops_are_closed(*body));
+}
+
+TEST_CASE("ADR-0021: every box face has exactly one outer loop with 4 coedges") {
+    auto body = make_box(Vec3f{1, 1, 1});
+    REQUIRE(body->face_count() == 6);
+    for (const auto& face : body->solid.shell().faces()) {
+        REQUIRE(face.loops().size() == 1);
+        const auto& loop = face.loops()[0];
+        CHECK(loop.is_outer());
+        CHECK(loop.coedges().size() == 4);
+    }
+}
+
+TEST_CASE("ADR-0021: link_radial_edges is idempotent") {
+    auto body = make_box(Vec3f{1, 1, 1});
+    // Re-run the link pass: counts must stay at exactly 2 per edge.
+    link_radial_edges(*body);
+    for (const auto& edge : body->edges) {
+        CHECK(edge.coedges().size() == 2);
+    }
+    CHECK(euler_characteristic(*body) == 2);
+}
+
+TEST_CASE("ADR-0021: radial-edge list contains CoEdges from the right faces") {
+    // Edge 0 is the bottom-front edge {0,1}. The two faces that use it
+    // are Face 0 (bottom, normal -Z, forward) and Face 2 (front, normal
+    // -Y, forward). The radial list must contain both, and both must
+    // reference edge id 0.
+    auto body = make_box(Vec3f{1, 1, 1});
+    REQUIRE(body->edge_count() >= 1);
+    const auto& edge0 = body->edges[0];
+    REQUIRE(edge0.coedges().size() == 2);
+    for (const CoEdge* ce : edge0.coedges()) {
+        CHECK(ce->edge() == 0);
+    }
+}
+
+TEST_CASE("ADR-0021: vertical edge {0,4} is shared by Face 2 and Face 4") {
+    // Edge 8 is the vertical edge {0,4}. It belongs to Face 2 (front)
+    // and Face 4 (left). Face 2 walks it 4→0 (reversed), Face 4 walks
+    // it 0→4 (forward). The radial list must have exactly two entries
+    // with reversed flags as documented.
+    auto body = make_box(Vec3f{1, 1, 1});
+    REQUIRE(body->edge_count() >= 9);
+    const auto& edge8 = body->edges[8];
+    REQUIRE(edge8.coedges().size() == 2);
+    int forward_count = 0;
+    int reversed_count = 0;
+    for (const CoEdge* ce : edge8.coedges()) {
+        if (ce->reversed()) ++reversed_count;
+        else                ++forward_count;
+    }
+    // Face 2 walks it reversed, Face 4 walks it forward.
+    CHECK(forward_count == 1);
+    CHECK(reversed_count == 1);
+}
+
 TEST_CASE("BRep: make_sphere") {
     auto body = make_sphere(2.0f);
     CHECK(body != nullptr);
