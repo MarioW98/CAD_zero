@@ -363,6 +363,37 @@ TEST_CASE("ADR-0025: bool_subtract of overlapping boxes — χ=2, manifold pendi
     CHECK(loops_are_closed(*result));
 }
 
+TEST_CASE("ADR-0025: bool_subtract partial-overlap with grid-straddle (regression for unwelded interface ring)") {
+    // Box A: [-1,1]³ → 8V/12E/6F
+    // Box B: [-0.7, 1.3] × [-1, 1] × [-1, 1] (shift (0.3, 0, 0))
+    // A \ B = A with the [0.3, 1] × [-1,1] × [-1,1] slab removed.
+    //
+    // The interface ring is at x = 0.3, which is NOT a clean multiple of
+    // kWeldGrid (1e-6): 0.3 / 1e-6 = 299999.9999... → straddles the
+    // grid cell boundary. The two computation paths (GH fragments for
+    // A's faces, clip_inside_3d for B's caps) produce vertices at x=0.3
+    // that diverge by ~ULP and fall in different grid cells → no weld.
+    //
+    // Expected topology (computed by hand):
+    //   V = 8  (4 original A vertices at x=-1 + 4 new at x=0.3)
+    //   E = 12 (4 bottom ring + 4 top ring + 4 verticals, all shared by 2 faces)
+    //   F = 6  (5 faces of A surviving: -X, -Y, +Y, -Z, +Z + 1 cap at x=0.3 with inverted normal)
+    //   χ = 8 - 12 + 6 = 2
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
+    for (auto& v : B->vertices) {
+        v.set_position(v.position() + Vec3f{0.3f, 0, 0});
+    }
+    auto result = bool_subtract(*A, *B);
+    REQUIRE(result != nullptr);
+    CHECK(result->vertex_count() == 8);
+    CHECK(result->edge_count()   == 12);
+    CHECK(result->face_count()   == 6);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(loops_are_closed(*result));
+    CHECK(is_closed_manifold(*result));
+}
+
 TEST_CASE("ADR-0025: bool_intersect of nested boxes (B inside A) returns B") {
     // Box A: half-extents (3,3,3) → [-3,3]³
     // Box B: half-extents (1,1,1) → [-1,1]³ (inside A)

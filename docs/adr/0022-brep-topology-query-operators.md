@@ -60,7 +60,7 @@ Rationale:
 | `edges_around_vertex` | `(const BRepBody&, VertexId) → std::vector<EdgeId>` | The edges incident on this vertex, in no particular order (radial sort is Phase D step (c) — needs curve tangents). |
 | `faces_around_vertex` | `(const BRepBody&, VertexId) → std::vector<FaceId>` | The faces touching this vertex, deduplicated. |
 | `opposite_coedge` | `(const BRepBody&, const CoEdge*) → const CoEdge*` | For a manifold edge, the other co-edge on the same edge. Returns `nullptr` if the edge is non-manifold or the input is not registered radially. |
-| `is_closed_manifold` | `(const BRepBody&) → bool` | `shell.is_closed() && loops_are_closed(body) && every edge has exactly 2 coedges`. Strict enough to reject the periodic-surface sphere/torus. |
+| `is_closed_manifold` | `(const BRepBody&) → bool` | Strict closed-orientable-manifold contract (4 invariants, see §7). |
 | `wireframe_edges` | `(const BRepBody&) → std::vector<std::pair<VertexId, VertexId>>` | One `(v0, v1)` pair per edge, with `v0 < v1` (canonical form). Useful for future wireframe rendering; pure topology here. |
 | `vertex_valence` | `(const BRepBody&, VertexId) → std::size_t` | Number of edges incident on the vertex. Convenience wrapper around `edges_around_vertex(body, v).size()`. |
 
@@ -143,6 +143,29 @@ outward; each face is a 3-coedge loop (not 4 like the box).
 - Floating-point determinism (ADR-0014) untouched: every new function
   is integer ID arithmetic + raw pointer bookkeeping. No `float` is
   evaluated by anything in this ADR.
+
+### 7. `is_closed_manifold` — strict closed-orientable-manifold contract
+
+Updated in ADR-0025 FASE 3 to enforce 4 invariants:
+
+1. **Manifoldness**: every edge has exactly 2 co-edges (extends
+   `Edge::is_manifold()` to the whole body).
+2. **Orientability (XOR)**: for every edge, exactly one of the two
+   co-edges is `reversed()` (logical XOR). This is the invariant that
+   distinguishes an orientable closed solid from two faces glued
+   back-to-back. A duplicated interface ring (same orientation on both
+   co-edges) fails this check immediately.
+3. **Loop closure**: `loops_are_closed(body)` — every loop's co-edges
+   form a cycle.
+4. **Euler characteristic**: `euler_characteristic(body) == 2` —
+   single closed shell (topological sphere). A body with χ ≠ 2 is
+   either multi-shell or has a topology defect.
+
+Strict enough to reject:
+- periodic-surface sphere/torus (no seam wire → V=E=0)
+- two faces glued back-to-back (co-edges same orientation → fails XOR)
+- non-connected shells (χ ≠ 2)
+- any topology defect from a broken boolean op
 
 ## References
 - ADR-0021 — B-Rep topology data structure (the parent ADR).

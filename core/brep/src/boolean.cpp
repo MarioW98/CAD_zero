@@ -721,16 +721,18 @@ GHResult greiner_hormann_2d(
     return result;
 }
 
-// 3D polygon subtraction: returns the parts of `subject_poly` that are
-// OUTSIDE `clip_poly`. Both polygons must be coplanar (lie on the same
-// plane, defined by `plane_normal`).
+// 3D polygon subtraction with shared vertices: returns the parts of
+// `subject_poly` that are OUTSIDE `clip_poly`. Both polygons must be
+// coplanar (lie on the same plane, defined by `plane_normal`).
 //
-// Projects both polygons onto a local 2D frame defined by the plane
-// normal, runs Greiner-Hormann in 2D (which handles collinear edges
-// per ADR-0025), and projects the outside fragments back to 3D.
+// FASE 2 single-source-of-truth: the clip_poly vertices are passed
+// directly from the caller (which already computed them via
+// clip_inside_3d). This avoids recomputing the interface ring points
+// by a different FP path, which would cause welding failures when
+// the points straddle grid cell boundaries.
 //
-// Used by bool_union and bool_subtract to compute the part of a face
-// that survives after removing the portion inside the other solid.
+// The clip_poly_2d is computed by projecting the SHARED clip_poly
+// (3D) into 2D, ensuring bit-identical positions with the caller.
 std::vector<Polygon> polygon_subtract_3d(
     const Polygon& subject_poly,
     const Polygon& clip_poly,
@@ -759,6 +761,50 @@ bool polygons_coincident(const Polygon& a, const Polygon& b) {
     return a_keys == b_keys;
 }
 
+// SharedVertexPool — single source of truth for vertex positions
+// (ADR-0025 FASE 2: single-source-of-truth fix).
+//
+// Problem: in partial-overlap booleans, the interface ring vertices are
+// computed TWICE by different FP paths (clip_inside_3d for A's faces
+// against B, and clip_inside_3d for B's faces against A). Even though
+// both use Sutherland-Hodgman, the operation order differs, producing
+// vertices at "the same" geometric position but with ~ULP FP divergence.
+// When the position straddles a grid cell boundary (e.g. x=0.3 where
+// 0.3/1e-6 = 299999.9999...), the SnappedKey differs and welding fails.
+//
+// Solution: canonicalize every vertex position through a single pool.
+// The pool maps a SnappedKey to the FIRST Vec3f inserted for that cell.
+// When two paths produce vertices in the SAME cell, both receive the
+// SAME canonical Vec3f — bit-identical by construction.
+//
+// This handles the case where two paths produce vertices that snap to
+// the same cell. The straddle case (different cells) is handled by the
+// caller computing the interface vertices ONCE and passing them to
+// both paths — true single-source-of-truth at the computation level.
+//
+// kWeldGrid stays at 1e-6. ADR-0014 untouched.
+class SharedVertexPool {
+public:
+    const math::Vec3f& canonicalize(const math::Vec3f& pos) {
+        SnappedKey key = snap(pos);
+        auto it = pool_.find(key);
+        if (it != pool_.end()) {
+            return it->second;
+        }
+        pool_.emplace(key, pos);
+        return pool_.at(key);
+    }
+
+    void canonicalize_polygon(Polygon& poly) {
+        for (auto& p : poly) {
+            p = canonicalize(p);
+        }
+    }
+
+private:
+    std::map<SnappedKey, math::Vec3f> pool_;
+};
+
 // ---------------------------------------------------------------------------
 // Body assembly — shared by all three boolean ops
 // ---------------------------------------------------------------------------
@@ -768,8 +814,19 @@ struct ClippedFace {
     Polygon polygon;
 };
 
-void assemble_body(BRepBody& result, const std::vector<ClippedFace>& clipped_faces) {
+void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces, bool use_pool) {
     auto& shell = result.solid.shell_mut();
+
+    // FASE 2: canonicalize vertex positions through a SharedVertexPool
+    // before welding. Applied ONLY to bool_union and bool_subtract
+    // (use_pool=true), NOT to bool_intersect (which already produces
+    // golden-stable output and must not be altered — ADR-0014).
+    if (use_pool) {
+        SharedVertexPool pool;
+        for (auto& cf : clipped_faces) {
+            pool.canonicalize_polygon(cf.polygon);
+        }
+    }
     std::map<SnappedKey, VertexId> weld_map;
     auto weld_vertex = [&](const math::Vec3f& pos) -> VertexId {
         SnappedKey key = snap(pos);
@@ -915,7 +972,7 @@ std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
         return result;  // empty body
     }
 
-    assemble_body(*result, clipped_faces);
+    assemble_body(*result, clipped_faces, /*use_pool=*/false);
     return result;
 }
 
@@ -970,7 +1027,7 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
             clipped_faces.push_back(
                 {std::make_shared<PlaneSurface>(poly_A[0], n_A), poly_A});
         }
-        assemble_body(*result, clipped_faces);
+        assemble_body(*result, clipped_faces, /*use_pool=*/true);
         return result;
     }
 
@@ -1017,7 +1074,7 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
         return result;
     }
 
-    assemble_body(*result, clipped_faces);
+    assemble_body(*result, clipped_faces, /*use_pool=*/true);
     return result;
 }
 
@@ -1138,7 +1195,7 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
         return result;
     }
 
-    assemble_body(*result, clipped_faces);
+    assemble_body(*result, clipped_faces, /*use_pool=*/true);
     return result;
 }
 
