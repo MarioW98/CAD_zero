@@ -15,7 +15,7 @@ The original proposal suggested persistent naming based on
 - **Boolean operations** re-shape topology wholesale.
 
 Topological naming based on geometric signature is the well-known
-"wrong turn" that OpenCascade's OCAF took for years before introducing
+"wrong turn" that several CAD systems took before introducing
 history-based naming (Andrade 1998, Chen & Luo 2010).
 
 ## Decision
@@ -70,4 +70,3 @@ error rather than silently picking a wrong face.
   PhD thesis, University of Maryland.
 - Chen, X., & Luo, Z. (2010). *Research on Persistent Identification
   of Topological Entities in Parametric CAD Systems*. ASME IDETC.
-- OpenCascade TopoDS history documentation (anti-reference).

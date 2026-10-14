@@ -6,7 +6,6 @@
 //
 // References:
 //   * Inigo Quilez — https://iquilezles.org/articles/distfunctions/
-//   * Siemens NX Implicit Modeling — design philosophy
 //
 #pragma once
 

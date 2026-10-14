@@ -18,7 +18,7 @@ two incident faces. This is too restrictive for real CAD:
 
 ## Decision
 The B-Rep kernel uses a **radial-edge** structure inspired by
-Weiler (1986) and used by ACIS. Every edge carries a list of
+Weiler (1986). Every edge carries a list of
 co-edges, one per incident face; the list is radially ordered.
 
 ```cpp
@@ -30,8 +30,8 @@ struct Edge {
 };
 ```
 
-### Why not TopoDS-style?
-OpenCascade's `TopoDS_Shape` uses a single inheritance hierarchy with
+### Why not a single-inheritance topology hierarchy?
+An alternative design uses a single inheritance hierarchy with
 orientation flags. It is more memory-efficient but harder to reason
 about (orientation is implicit in the cast direction). The
 radial-edge structure is more verbose but explicit.

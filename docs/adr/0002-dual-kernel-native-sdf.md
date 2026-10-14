@@ -47,5 +47,5 @@ makes `std::visit` dispatch impossible.
   nullable pointers.
 
 ## References
-- Siemens NX "Convergent Modeling" whitepaper
-- nTopology / nTop implicit modeling documentation
+- Dual-representation CAD concept: treating SDF and B-Rep as peers
+  rather than converting one to the other.

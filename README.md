@@ -5,9 +5,9 @@
 
 **Dual-representation CAD kernel — native SDF + B-Rep, in C++20 and Python.**
 
-CAD_0 is a from-scratch CAD kernel where **SDF (signed distance fields) and B-Rep (boundary representation) are first-class peers**, inspired by Siemens NX *Convergent Modeling*. There is no "primary" representation: every operation has a native implementation in both domains, and the system dispatches on operand types.
+CAD_0 is a from-scratch CAD kernel where **SDF (signed distance fields) and B-Rep (boundary representation) are first-class peers**. There is no "primary" representation: every operation has a native implementation in both domains, and the system dispatches on operand types.
 
-The long-term goal is an **open-source CAD system that can stand next to commercial modelers** — built without any third-party CAD kernel (no OpenCascade, no Parasolid, no ACIS — [ADR-0003](docs/adr/0003-third-party-policy.md)), so every geometric decision lives in this repository and can be tested deterministically ([ADR-0014](docs/adr/0014-floating-point-determinism.md)).
+The long-term goal is an **open-source CAD system built without any third-party CAD kernel** ([ADR-0003](docs/adr/0003-third-party-policy.md)), so every geometric decision lives in this repository and can be tested deterministically ([ADR-0014](docs/adr/0014-floating-point-determinism.md)).
 
 > **Status — Phase D step (c+ fix v4) complete.** An interactive desktop app (PySide6) on top of the kernel: parametric shape creation, undo/redo, viewport picking with 3D highlight, STL/OBJ import with vertex welding, STL/OBJ/3MF export, and a versioned native project format (`.CAD_0` v0.2.0) with a migration chain. **Phase D steps (a)–(c)** landed the B-Rep topology data structure ([ADR-0021](docs/adr/0021-brep-topology-data-structure.md)), query operators ([ADR-0022](docs/adr/0022-brep-topology-query-operators.md)), seam wires + `bool_intersect` ([ADR-0023](docs/adr/0023-analytic-seam-wires-and-boolean-intersect.md)). **Phase D step (c+)** ([ADR-0024](docs/adr/0024-boolean-union-and-subtract.md)) added `bool_union`/`bool_subtract`. **Phase D step (c+ fix v4)** ([ADR-0025](docs/adr/0025-proper-greiner-hormann.md)) strengthens `is_closed_manifold` with 4 invariants (manifoldness, **coedge opposite orientations**, loop closure, χ=2), fixes `clip_inside_3d` vertex deduplication, and adds a strict test: `bool_union` of boxes touching at a face passes with V=12/E=20/F=10/χ=2/`is_closed_manifold==true`. Partial-overlap cases (corner notch, slab) pass χ=2 but coedge orientation in GH fragments is the next bug to fix. Next up: fix coedge orientation in `polygon_subtract_3d` fragments, then **Phase E** — SDF ↔ B-Rep bridge. The CI matrix (GCC 11 debug + release, Clang 14) is green on `main`.
 
@@ -214,7 +214,7 @@ See [docs/architecture/overview.md](docs/architecture/overview.md) for the full 
 |-----|-------|
 | [0001](docs/adr/0001-use-cpp20.md) | C++20 (subset) for the core kernel |
 | [0002](docs/adr/0002-dual-kernel-native-sdf.md) | **SDF is a first-class native representation; `Shape` uses `std::variant`** |
-| [0003](docs/adr/0003-third-party-policy.md) | No third-party CAD kernels (OpenCascade, Parasolid, ACIS) |
+| [0003](docs/adr/0003-third-party-policy.md) | No third-party CAD kernels |
 | [0004](docs/adr/0004-tolerance-model.md) | Tolerance is a first-class citizen; no global epsilon |
 | [0005](docs/adr/0005-persistent-naming-early.md) | **Persistent naming by genealogy + subshape tracing (NOT geometric signature)** |
 | [0006](docs/adr/0006-ui-primary-pyside6.md) | PySide6 (Python) is the primary UI; Qt6 C++ removed |

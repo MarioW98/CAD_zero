@@ -198,5 +198,3 @@ fix is always in the factory, never in the data structure.
   integer-only and does not perturb FP evaluation).
 - Weiler, K. (1986). *Topological Structures for Geometric Modeling*.
   PhD thesis, Rensselaer Polytechnic Institute.
-- ACIS 7.0 documentation (radial-edge variant used in production CAD
-  kernels — anti-reference for the `unique_ptr` migration question).

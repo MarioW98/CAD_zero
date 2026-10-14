@@ -4,17 +4,15 @@
 Accepted (2025-10-07)
 
 ## Context
-The proposal forbids third-party CAD kernels (OpenCascade, Parasolid,
-ACIS) and allows computational geometry libraries (CGAL, OpenVDB,
+The proposal forbids third-party CAD kernels and allows
+computational geometry libraries (CGAL, OpenVDB,
 Shewchuk predicates) on a case-by-case basis.
 
 ## Decision
 
 ### Forbidden
 Any kernel that ships a full B-Rep / NURBS / boolean stack:
-- OpenCascade (OCCT)
-- Parasolid
-- ACIS / Spatial
+- Any proprietary or open-source third-party CAD kernel
 - Any SaaS-licensed geometry engine
 
 These would replace, not augment, the native kernel. Their inclusion
