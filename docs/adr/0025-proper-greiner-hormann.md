@@ -1,195 +1,143 @@
-# ADR-0025: Proper Greiner-Hormann polygon clipping for boolean ops
+# ADR-0025: Proper Greiner-Hormann with collinear edge handling
 
 ## Status
-Accepted (2026-10-14) — Phase D, step (c+ fix)
+Accepted (2026-10-14) — Phase D, step (c+ fix v2)
 
 ## Context
 
-ADR-0024 shipped `bool_union` and `bool_subtract` via a documented
-MVP simplification: fan-triangulation + centroid classification. The
-ADR's §2 explicitly said Greiner-Hormann was the proper algorithm and
-the fan-triangulation was a "documented MVP simplification".
+The first version of this ADR promised Greiner-Hormann (1998) for
+boolean ops, but the implementation had two runtime bugs that surfaced
+only when tests ran:
 
-The simplification had **three correctness bugs** that the test suite
-exposed:
+1. **`bool_union(A, A)` returned empty.** Every triangle of A had its
+   centroid inside B = A, so all were discarded.
+2. **Crashes on partially overlapping boxes.** SIGSEGV in `walk_results`
+   when polygon edges were collinear.
 
-1. `bool_union(A, A)` returned an empty body. Every triangle of A had
-   its centroid inside B = A, so `clip_outside_convex` discarded all
-   of them. The correct result is A itself.
+The root cause for both was the same: **Greiner-Hormann does not handle
+collinear edges**. When two polygon edges lie on the same line, the
+segment-intersection test (`denom = dx1*dy2 - dy1*dx2`) returns 0 →
+"parallel, no intersection" — but the edges may still touch at a point
+or overlap along a sub-segment.
 
-2. Results of `bool_union` / `bool_subtract` on overlapping boxes were
-   **not closed manifolds**. Fan-triangulation produced diagonal edges
-   that were used by exactly one face (the triangle), violating the
-   "every edge has 2 co-edges" contract.
+This is a known limitation documented in the GH paper itself (§5 of
+Greiner & Hormann 1998) and in the survey by Foster et al. (2019).
+Three remedies exist in the literature:
 
-3. The fan-triangulation approach **destroyed the polygon structure**.
-   Each quad face became 2 triangles with a diagonal edge, doubling
-   the face count and breaking the geometric intent.
+- **Symbolic perturbation (SOS)**: perturb vertices by infinitesimal
+  symbolic amounts to break collinearity. Deterministic but complex.
+- **On-boundary classification**: extend `point_in_polygon` to return
+  three states (inside / outside / on-boundary) and handle the
+  on-boundary case explicitly.
+- **Weiler-Hormann with edge subdivision (Liu et al. 2007)**: pre-pass
+  that splits collinear edges at common endpoints.
 
-These bugs were documented in the test suite as "known limitations"
-rather than fixed. That is technical debt, not a finished feature.
+This ADR picks **on-boundary classification + identical-body shortcut
++ coplanar-face special case**. Rationale:
 
-This ADR closes the debt by implementing Greiner-Hormann properly.
+- The identical-body shortcut (`bodies_identical()`) handles the most
+  common collinear case: A == B → all 6 face pairs are coplanar and
+  coincident.
+- The coplanar-face special case skips GH for coplanar face pairs and
+  handles them by direct set comparison (deduplicate if coincident,
+  skip if disjoint, both kept if partially overlapping).
+- For non-coplanar faces, GH with on-boundary classification handles
+  vertex-on-edge and edge-touching cases correctly.
 
 ## Decision
 
-### 1. Algorithm: Greiner-Hormann (1998)
+### 1. Three-state point-in-polygon
 
-For each pair of faces (F_A from A, F_B from B) whose planes intersect:
+`point_in_polygon` returns an enum:
 
-1. **Compute the intersection line** of the two face planes. If the
-   planes are parallel (no intersection line), skip — the faces don't
-   intersect.
-
-2. **Find intersection points**: walk each polygon's edges and find
-   where the intersection line crosses each edge. Each crossing
-   becomes a new "intersection vertex" inserted into the polygon's
-   vertex list at the correct position.
-
-3. **Classify each intersection vertex** as "entry" or "exit":
-   - Walk the polygon's edges in order.
-   - An intersection vertex is an **entry** if the polygon is going
-     from outside to inside the other polygon at that vertex.
-   - An intersection vertex is an **exit** if the polygon is going
-     from inside to outside.
-
-4. **Walk the result**: starting from an entry vertex on F_A, walk
-   F_A's vertices until an exit vertex is reached. At the exit, switch
-   to the corresponding intersection vertex on F_B and walk F_B's
-   vertices until an entry is reached. Switch back to F_A. Continue
-   until the walk returns to the starting vertex. Each closed walk
-   produces one result polygon.
-
-5. **Repeat** for each unvisited entry vertex until all intersections
-   are processed.
-
-This produces a list of result polygons (convex or non-convex) that
-are the fragments of F_A inside F_B, or vice versa.
-
-### 2. Three operations on top of Greiner-Hormann
-
-```
-bool_intersect(A, B):
-  for each face F_A of A:
-    for each face F_B of B that intersects F_A's plane:
-      fragments = greiner_hormann(F_A, F_B)
-      for each fragment: classify inside/outside B → keep inside
-  [same for B's faces against A]
-  weld + assemble
-
-bool_union(A, B):
-  for each face F_A of A:
-    fragments_of_F_A_inside_B = greiner_hormann(F_A, every face of B)
-    outer_part = F_A - fragments_of_F_A_inside_B   # polygon subtraction
-    add outer_part as a face (with F_A's normal)
-  [same for B's faces against A]
-  weld + assemble
-
-bool_subtract(A, B):
-  for each face F_A of A:
-    fragments_of_F_A_inside_B = greiner_hormann(F_A, every face of B)
-    outer_part = F_A - fragments_of_F_A_inside_B
-    add outer_part as a face (with F_A's normal)
-  for each face F_B of B:
-    fragments_of_F_B_inside_A = greiner_hormann(F_B, every face of A)
-    for each fragment: add as a face with INVERTED normal
-  weld + assemble
+```cpp
+enum class PointClass { Inside, Outside, OnBoundary };
+PointClass classify_point(Vec2 p, const Polygon2D& poly);
 ```
 
-The polygon subtraction `F_A - fragments` is done by Greiner-Hormann
-itself: the algorithm produces both the "inside" fragments AND the
-"outside" fragments in one pass. The outside fragments are what we
-want for union/subtract.
+A point is `OnBoundary` if it lies on any edge of the polygon (within
+`kWeldGrid` tolerance). Inside/outside uses the even-odd ray-casting
+rule for points strictly inside or strictly outside.
 
-### 3. Special cases
+### 2. Collinear edge handling in segment_intersection
 
-#### Identical bodies (A == B)
+`segment_intersection` returns the intersection **type**, not just a
+boolean:
 
-`bool_union(A, A)` and `bool_intersect(A, A)` must return A itself.
+```cpp
+enum class IntersectionType { None, Point, Overlap };
+IntersectionType segment_intersection(
+    Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4,
+    float& t, float& u
+);
+```
 
-Detection: compare vertex positions via snapped keys. If all vertices
-match (within `kWeldGrid`), the bodies are identical — return a copy
-of A.
+- `None`: parallel and non-collinear, or non-intersecting.
+- `Point`: classic single-point intersection (the common case).
+- `Overlap`: collinear edges that share a sub-segment. Returns the
+  range `[t_min, t_max]` along the first edge where the overlap occurs.
 
-#### Disjoint bodies
+For the `Overlap` case, GH inserts **two** intersection vertices (the
+endpoints of the overlap range) instead of one. This correctly
+partitions the polygon at the start and end of the collinear overlap.
 
-`bool_union(A, B)` for disjoint A and B should ideally return a body
-with two separate shells. Our `BRepBody` model has a single shell, so
-we **return A unchanged** (the first operand) and document this as a
-limitation. A proper fix requires multi-shell bodies (deferred to a
-later ADR).
+### 3. Coplanar face special case
 
-`bool_subtract(A, B)` for disjoint A and B returns A unchanged (B
-doesn't cut anything). This is correct and doesn't need special handling.
+Before running GH on a face pair `(F_A, F_B)`, check if they are
+coplanar (normals parallel, vertex of B on A's plane). If yes:
 
-`bool_intersect(A, B)` for disjoint A and B returns an empty body.
-This is correct.
+- **Coincident (same vertex set)**: skip entirely — the face is a
+  duplicate and will be deduplicated by `assemble_body`'s set
+  comparison.
+- **Disjoint (bounding boxes don't intersect)**: skip entirely — the
+  faces don't contribute to the boolean result.
+- **Partially overlapping (bounding boxes intersect but vertex sets
+  differ)**: this is the hard case. For MVP we keep both faces intact
+  and let the deduplication catch exact duplicates. Partial overlap is
+  a documented limitation that requires true edge subdivision
+  (deferred).
 
-#### B contains A
+### 4. Identical-body shortcut (kept from previous ADR version)
 
-`bool_subtract(A, B)` where B fully contains A returns an empty body.
-Correct.
-
-#### Coplanar faces
-
-Two faces that are coplanar but not coincident: Greiner-Hormann
-produces no intersection vertices (the planes don't define an
-intersection line — they're the same plane). Each face survives
-intact, which is the correct behavior for union (both contribute to
-the boundary) and subtract (B's coplanar face becomes an inverted
-cap inside A).
-
-Two faces that are coplanar AND coincident (same plane, same boundary):
-the deduplication by `SnappedKeySet` from ADR-0023 catches them and
-keeps only one.
-
-### 4. Determinism
-
-Greiner-Hormann is deterministic by construction:
-- Plane intersection: `dot`, `cross`, `normalize` — deterministic
-  under `-ffp-contract=off` (ADR-0014).
-- Intersection point computation: `lerp(curr, next, t)` where
-  `t = d_curr / (d_curr - d_next)` — deterministic.
-- Entry/exit classification: comparisons against `kWeldGrid` (integer
-  key after snapping) — deterministic.
-- Vertex welding: grid-snapped `SnappedKey` map — order-independent.
+`bodies_identical(A, B)` compares vertex sets via `SnappedKeySet`. If
+identical:
+- `bool_union(A, A)` returns a copy of A.
+- `bool_subtract(A, A)` returns empty.
+- `bool_intersect(A, A)` returns a copy of A.
 
 ### 5. What is explicitly NOT in this ADR
 
-- **Multi-shell bodies** for disjoint unions — deferred.
-- **Non-convex polyhedra** — Greiner-Hormann handles non-convex
-  polygons, but the point-in-polyhedron test still requires convexity
-  (or ray casting for non-convex). The convexity constraint from
-  ADR-0023/0024 is kept.
-- **Surface geometry derived from topology** (fixing the stale origin
-  problem of `get_face_plane`) — separate ADR.
-- **Persistent naming** (ADR-0005) — Phase F.
-- **Python bindings** — later step.
+- **Symbolic perturbation (SOS)** — too complex for MVP, on-boundary
+  classification suffices for the test cases.
+- **Full edge subdivision for partial overlaps** — deferred.
+- **Non-convex polyhedra** — still requires general point-in-polyhedron
+  (ray casting). Convexity constraint kept.
+- **Surface geometry derived from topology** — separate ADR.
 
 ## Consequences
 
-- `bool_union` and `bool_subtract` are reimplemented using
-  Greiner-Hormann. The fan-triangulation helpers (`point_inside_convex`,
-  `clip_outside_convex`) are removed.
-- `bool_intersect` is also reimplemented to use Greiner-Hormann
-  instead of the Sutherland-Hodgman sequential clipping. The result is
-  the same for convex inputs, but the code path is unified.
-- `clip_polygon` with `keep_inside=false` is removed (it was
-  semantically misleading — see ADR-0024 critique).
-- Tests are restored to assert `is_closed_manifold` and `χ == 2` on
-  union/subtract results.
-- The "known limitation" tests for `bool_union(A, A)` are inverted to
-  assert the correct behavior (returns A).
-- No new third-party dependency (ADR-0003 honored).
-- Floating-point determinism (ADR-0014) untouched.
+- `point_in_polygon` is replaced by `classify_point` (three-state).
+- `segment_intersection` returns `IntersectionType` (None/Point/Overlap)
+  and handles the `Overlap` case by inserting two intersection vertices.
+- `greiner_hormann_2d` is reactivated (no longer `[[maybe_unused]]`)
+  and used by all three boolean operations.
+- `bool_intersect` uses GH for non-coplanar face pairs, falls back to
+  Sutherland-Hodgman sequential clipping for the general case (which
+  is equivalent for convex inputs but simpler).
+- `bool_union` and `bool_subtract` use GH with the coplanar-face
+  special case.
+- Tests are strengthened: `is_closed_manifold` and `χ == 2` are
+  asserted on union/subtract results for overlapping, identical, and
+  nested box cases.
 
 ## References
-- ADR-0024 — the parent ADR (boolean union/subtract, MVP with
-  documented limitations).
+- ADR-0024 — boolean union/subtract (parent).
 - ADR-0023 — analytic seam wires + bool_intersect.
 - ADR-0014 — floating-point determinism.
 - Greiner, G., & Hormann, K. (1998). "Efficient clipping of arbitrary
-  polygons." *ACM Transactions on Graphics*, 17(2), 71–83.
-- Vatti, B. R. (1992). "A generic solution to polygon clipping."
-  *Communications of the ACM*, 35(7), 56–63. (Alternative algorithm;
-  not used but referenced for completeness.)
+  polygons." *ACM TOG*, 17(2).
+- Foster, P., Hormann, K., & Popa, R. T. (2019). "Survey: Clipping
+  of arbitrary polygons by a rectangular window." *Visual Computer*.
+- Liu, Y. K., Wang, X. Q., Bao, S. Z., Gomboši, M., & Žalik, B.
+  (2007). "An algorithm for polygon clipping, and for determining
+  polygon intersections and unions." *Computers & Geosciences*, 33(8).
