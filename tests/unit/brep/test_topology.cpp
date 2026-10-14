@@ -192,6 +192,236 @@ TEST_CASE("BRep: make_cylinder") {
     CHECK(body->face_count() == 3);  // lateral + 2 caps
 }
 
+// ---------------------------------------------------------------------------
+// ADR-0022 — query operators + make_tetrahedron
+// ---------------------------------------------------------------------------
+//
+// These tests exercise the ADR-0022 query operators (free functions,
+// pure integer/pointer bookkeeping) on two canonical solids:
+//   * make_box    — 8V/12E/6F/1S, every vertex valence 3
+//   * make_tetrahedron — 4V/6E/4F/1S, every vertex valence 3
+//
+// Both bodies must satisfy is_closed_manifold(body) == true. The
+// sphere/torus are explicit non-closed-manifold regression guards
+// (their periodic-surface representation lacks seam wires — ADR-0022 §5).
+//
+
+// ---------------------------------------------------------------------------
+// make_tetrahedron — structural counts
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ADR-0022: make_tetrahedron produces 4V/6E/4F/1S") {
+    auto body = make_tetrahedron();
+    REQUIRE(body != nullptr);
+    CHECK(body->vertex_count() == 4);
+    CHECK(body->edge_count() == 6);
+    CHECK(body->face_count() == 4);
+}
+
+TEST_CASE("ADR-0022: tetrahedron euler characteristic equals 2") {
+    auto body = make_tetrahedron();
+    CHECK(euler_characteristic(*body) == 2);
+}
+
+TEST_CASE("ADR-0022: tetrahedron every vertex has valence 3") {
+    auto body = make_tetrahedron();
+    for (VertexId v = 0; v < body->vertex_count(); ++v) {
+        CHECK(vertex_valence(*body, v) == 3);
+    }
+}
+
+TEST_CASE("ADR-0022: tetrahedron every edge has 2 coedges") {
+    auto body = make_tetrahedron();
+    for (const auto& edge : body->edges) {
+        CHECK(edge.coedges().size() == 2);
+        CHECK(edge.is_manifold());
+    }
+}
+
+TEST_CASE("ADR-0022: tetrahedron every loop is closed") {
+    auto body = make_tetrahedron();
+    CHECK(loops_are_closed(*body));
+}
+
+TEST_CASE("ADR-0022: tetrahedron every face has one 3-coedge outer loop") {
+    auto body = make_tetrahedron();
+    for (const auto& face : body->solid.shell().faces()) {
+        REQUIRE(face.loops().size() == 1);
+        const auto& loop = face.loops()[0];
+        CHECK(loop.is_outer());
+        CHECK(loop.coedges().size() == 3);  // triangular
+    }
+}
+
+// ---------------------------------------------------------------------------
+// is_closed_manifold — strict contract
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ADR-0022: is_closed_manifold(box) == true") {
+    auto body = make_box(Vec3f{1, 1, 1});
+    CHECK(is_closed_manifold(*body));
+}
+
+TEST_CASE("ADR-0022: is_closed_manifold(tetrahedron) == true") {
+    auto body = make_tetrahedron();
+    CHECK(is_closed_manifold(*body));
+}
+
+TEST_CASE("ADR-0022: is_closed_manifold(sphere) == false (regression guard)") {
+    // The sphere is represented as a single periodic face with no seam
+    // wire (ADR-0021 §5 / ADR-0022 §5). It must NOT pass the closed-
+    // manifold contract — this is a deliberate regression guard against
+    // silently "fixing" make_sphere into a closed shell without proper
+    // seam wires.
+    auto body = make_sphere(2.0f);
+    CHECK_FALSE(is_closed_manifold(*body));
+}
+
+TEST_CASE("ADR-0022: is_closed_manifold(cylinder) == false (no edges, 3 free faces)") {
+    // Same regression guard as the sphere: the cylinder MVP has 3 faces
+    // but no edges/vertices wired together. is_closed_manifold must
+    // reject it until proper seam wires are added (Phase D step (c)).
+    auto body = make_cylinder(1.0f, 2.0f);
+    CHECK_FALSE(is_closed_manifold(*body));
+}
+
+// ---------------------------------------------------------------------------
+// faces_around_edge — radial traversal
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ADR-0022: box every edge has exactly 2 incident faces") {
+    auto body = make_box(Vec3f{1, 1, 1});
+    for (EdgeId eid = 0; eid < body->edge_count(); ++eid) {
+        auto faces = faces_around_edge(*body, eid);
+        CHECK(faces.size() == 2);
+        // The two faces must be distinct.
+        CHECK(faces[0] != faces[1]);
+    }
+}
+
+TEST_CASE("ADR-0022: tetrahedron every edge has exactly 2 incident faces") {
+    auto body = make_tetrahedron();
+    for (EdgeId eid = 0; eid < body->edge_count(); ++eid) {
+        auto faces = faces_around_edge(*body, eid);
+        CHECK(faces.size() == 2);
+        CHECK(faces[0] != faces[1]);
+    }
+}
+
+TEST_CASE("ADR-0022: faces_around_edge on out-of-range edge returns empty") {
+    auto body = make_box(Vec3f{1, 1, 1});
+    auto faces = faces_around_edge(*body, 9999);
+    CHECK(faces.empty());
+}
+
+// ---------------------------------------------------------------------------
+// edges_around_vertex + vertex_valence
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ADR-0022: box every vertex has valence 3") {
+    auto body = make_box(Vec3f{1, 1, 1});
+    for (VertexId v = 0; v < body->vertex_count(); ++v) {
+        auto edges = edges_around_vertex(*body, v);
+        CHECK(edges.size() == 3);
+        CHECK(vertex_valence(*body, v) == 3);
+    }
+}
+
+TEST_CASE("ADR-0022: edges_around_vertex on out-of-range vertex returns empty") {
+    auto body = make_box(Vec3f{1, 1, 1});
+    auto edges = edges_around_vertex(*body, 9999);
+    CHECK(edges.empty());
+}
+
+// ---------------------------------------------------------------------------
+// faces_around_vertex
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ADR-0022: box every vertex touches exactly 3 faces") {
+    auto body = make_box(Vec3f{1, 1, 1});
+    for (VertexId v = 0; v < body->vertex_count(); ++v) {
+        auto faces = faces_around_vertex(*body, v);
+        CHECK(faces.size() == 3);
+    }
+}
+
+TEST_CASE("ADR-0022: tetrahedron every vertex touches exactly 3 faces") {
+    auto body = make_tetrahedron();
+    for (VertexId v = 0; v < body->vertex_count(); ++v) {
+        auto faces = faces_around_vertex(*body, v);
+        CHECK(faces.size() == 3);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// opposite_coedge — adjacency walk
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ADR-0022: box opposite_coedge returns the other coedge on each edge") {
+    auto body = make_box(Vec3f{1, 1, 1});
+    for (const auto& edge : body->edges) {
+        REQUIRE(edge.coedges().size() == 2);
+        const CoEdge* ce0 = edge.coedges()[0];
+        const CoEdge* ce1 = edge.coedges()[1];
+        CHECK(opposite_coedge(*body, ce0) == ce1);
+        CHECK(opposite_coedge(*body, ce1) == ce0);
+    }
+}
+
+TEST_CASE("ADR-0022: opposite_coedge(nullptr) returns nullptr") {
+    auto body = make_box(Vec3f{1, 1, 1});
+    CHECK(opposite_coedge(*body, nullptr) == nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// wireframe_edges
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ADR-0022: box wireframe has 12 canonical edges") {
+    auto body = make_box(Vec3f{1, 1, 1});
+    auto wf = wireframe_edges(*body);
+    CHECK(wf.size() == 12);
+    // Every pair must be canonical (v0 < v1).
+    for (const auto& [a, b] : wf) {
+        CHECK(a < b);
+    }
+}
+
+TEST_CASE("ADR-0022: tetrahedron wireframe has 6 canonical edges") {
+    auto body = make_tetrahedron();
+    auto wf = wireframe_edges(*body);
+    CHECK(wf.size() == 6);
+    for (const auto& [a, b] : wf) {
+        CHECK(a < b);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Edge orientation consistency — every edge's two co-edges must be
+// oppositely oriented (one forward, one reversed). This is what makes
+// the shell consistently oriented.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ADR-0022: box every edge has opposite coedge orientations") {
+    auto body = make_box(Vec3f{1, 1, 1});
+    for (const auto& edge : body->edges) {
+        REQUIRE(edge.coedges().size() == 2);
+        bool r0 = edge.coedges()[0]->reversed();
+        bool r1 = edge.coedges()[1]->reversed();
+        CHECK(r0 != r1);  // oppositely oriented
+    }
+}
+
+TEST_CASE("ADR-0022: tetrahedron every edge has opposite coedge orientations") {
+    auto body = make_tetrahedron();
+    for (const auto& edge : body->edges) {
+        REQUIRE(edge.coedges().size() == 2);
+        bool r0 = edge.coedges()[0]->reversed();
+        bool r1 = edge.coedges()[1]->reversed();
+        CHECK(r0 != r1);
+    }
+}
+
 TEST_CASE("PlaneSurface: evaluate and normal") {
     PlaneSurface plane(Vec3f{0, 0, 0}, Vec3f{0, 1, 0});
     auto p = plane.evaluate(3.0f, 4.0f);

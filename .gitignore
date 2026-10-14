@@ -1,6 +1,8 @@
 # Build artifacts
-# `build*/` (non `build/`) così da escludere anche le cartelle:
-# build_tbb/, build_check/, build_release/, build_debug/, …
+# `build*/` (not `build/`) so that any build-prefixed directory is
+# ignored: build_tbb/, build_check/, build_release/, build_debug/, …
+# The previous exact `build/` rule let build_tbb/ slip through and
+# 1.9 MB of generated .so + .ninja_log got committed to main once.
 build*/
 out/
 bin/

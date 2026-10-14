@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace CAD_0::brep {
@@ -224,5 +225,60 @@ std::int64_t euler_characteristic(const BRepBody& body) noexcept;
 // Returns false on the first violation. Used by tests as a regression
 // guard (ADR-0021 §6).
 bool loops_are_closed(const BRepBody& body) noexcept;
+
+// ---------------------------------------------------------------------------
+// Query operators — ADR-0022 §2
+// ---------------------------------------------------------------------------
+//
+// Free functions, not methods. Read-only. Pure integer + pointer
+// bookkeeping; no floating-point evaluation (ADR-0014 honored).
+//
+// All return `std::vector` by value; for the MVP scale (cube = 12
+// entries, tetrahedron = 6) the copy is trivial. Switch to
+// `std::span<const T>` (C++26) when the kernel starts handling real
+// CAD bodies (10^4+ edges).
+//
+
+// faces_around_edge — the faces that use this edge, in radial order
+// (the order in which their co-edges were registered on the edge).
+// Empty if `edge_id` is out of range. For a manifold solid, always
+// size 2.
+std::vector<FaceId> faces_around_edge(const BRepBody& body, EdgeId edge_id);
+
+// edges_around_vertex — the edges incident on this vertex, in no
+// particular order. Radial sort needs curve tangents and is deferred
+// to Phase D step (c).
+std::vector<EdgeId> edges_around_vertex(const BRepBody& body, VertexId vertex_id);
+
+// faces_around_vertex — the faces touching this vertex, deduplicated.
+// Order matches the edge incidence order (each edge contributes its
+// face set in turn).
+std::vector<FaceId> faces_around_vertex(const BRepBody& body, VertexId vertex_id);
+
+// opposite_coedge — for a manifold edge, the other co-edge on the same
+// edge. Returns nullptr if the edge is non-manifold (3+ co-edges) or
+// the input co-edge is not registered radially on its edge.
+//
+// For non-manifold edges the function returns the first non-input
+// entry in radial order; callers needing the full radial ring should
+// access `body.edges[ce->edge()].coedges()` directly.
+const CoEdge* opposite_coedge(const BRepBody& body, const CoEdge* ce) noexcept;
+
+// is_closed_manifold — strict closed-manifold contract:
+//   * shell.is_closed()
+//   * every loop of every face is closed (loops_are_closed)
+//   * every edge has exactly 2 co-edges
+// Strict enough to reject the periodic-surface sphere/torus (ADR-0022
+// §5 documents this as a deliberate regression guard).
+bool is_closed_manifold(const BRepBody& body) noexcept;
+
+// wireframe_edges — one (v0, v1) pair per edge, canonicalised so that
+// v0 < v1. Useful as input for a future wireframe renderer; pure
+// topology here.
+std::vector<std::pair<VertexId, VertexId>> wireframe_edges(const BRepBody& body);
+
+// vertex_valence — number of edges incident on the vertex.
+// Convenience wrapper around edges_around_vertex(body, v).size().
+std::size_t vertex_valence(const BRepBody& body, VertexId vertex_id);
 
 } // namespace CAD_0::brep
