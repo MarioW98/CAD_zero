@@ -41,6 +41,7 @@ namespace {
 using Polygon = std::vector<math::Vec3f>;
 
 constexpr float kWeldGrid = 1e-6f;
+constexpr float kPlaneTol = 1e-6f;  // Plane classification tolerance (ADR-0025 FASE 3)
 constexpr float kEps       = 1e-9f;
 
 struct SnappedKey {
@@ -623,18 +624,21 @@ private:
     SharedVertexPool pool_;
 };
 
-// Sutherland-Hodgman clip: keep the part of `poly` that is inside the
-// half-space defined by (plane_origin, plane_normal). "Inside" means
-// dot(p - origin, normal) <= tolerance.
+// Sutherland-Hodgman clip primitive.
+// keep_inside=true  → keep vertices where dot(p - origin, normal) <= tol
+// keep_inside=false → keep vertices where dot(p - origin, normal) >= -tol
+// (complementary half-space, with symmetric tolerance band so points
+// exactly on the plane are kept by both sides — needed for slab
+// decomposition where adjacent slabs share boundary points).
 //
 // If `table` is non-null, intersection points are computed via the
-// table (single-source-of-truth) instead of locally. This ensures
-// both Part 1 and Part 2 of bool_union/subtract receive the SAME
-// Vec3f for interface ring points.
-Polygon clip_polygon_inside(
+// table (single-source-of-truth) so both Part 1 and Part 2 of
+// bool_union/subtract receive the SAME Vec3f for interface ring points.
+Polygon clip_polygon_sh(
     const Polygon& poly,
     math::Vec3f plane_origin,
     math::Vec3f plane_normal,
+    bool keep_inside,
     IntersectionTable* table
 ) {
     if (poly.empty()) return {};
@@ -646,17 +650,17 @@ Polygon clip_polygon_inside(
         const auto& next = poly[(i + 1) % n];
         const float d_curr = (curr - plane_origin).dot(plane_normal);
         const float d_next = (next - plane_origin).dot(plane_normal);
-        const bool curr_inside = d_curr <= kWeldGrid;
-        const bool next_inside = d_next <= kWeldGrid;
-        if (curr_inside) {
+        const bool curr_keep = keep_inside ? (d_curr <= kPlaneTol)
+                                           : (d_curr >= -kPlaneTol);
+        const bool next_keep = keep_inside ? (d_next <= kPlaneTol)
+                                           : (d_next >= -kPlaneTol);
+        if (curr_keep) {
             result.push_back(curr);
         }
-        if (curr_inside != next_inside) {
+        if (curr_keep != next_keep) {
             const float denom = d_curr - d_next;
-            if (std::abs(denom) > 1e-12f) {
+            if (std::abs(denom) > kPlaneTol) {
                 if (table) {
-                    // Single-source-of-truth: get the canonical point
-                    // from the IntersectionTable.
                     result.push_back(table->get_or_compute(
                         curr, next, plane_origin, plane_normal));
                 } else {
@@ -667,6 +671,16 @@ Polygon clip_polygon_inside(
         }
     }
     return result;
+}
+
+// Backward-compatible wrapper: keep_inside=true.
+Polygon clip_polygon_inside(
+    const Polygon& poly,
+    math::Vec3f plane_origin,
+    math::Vec3f plane_normal,
+    IntersectionTable* table
+) {
+    return clip_polygon_sh(poly, plane_origin, plane_normal, true, table);
 }
 
 // Clip a 3D polygon against every face plane of `clipper`, keeping the
@@ -805,18 +819,20 @@ GHResult greiner_hormann_2d(
     return result;
 }
 
-// 3D polygon subtraction with shared vertices: returns the parts of
-// `subject_poly` that are OUTSIDE `clip_poly`. Both polygons must be
-// coplanar (lie on the same plane, defined by `plane_normal`).
+// 3D polygon subtraction via slab decomposition (ADR-0025 FASE 2).
 //
-// FASE 2 single-source-of-truth: the clip_poly vertices are passed
-// directly from the caller (which already computed them via
-// clip_inside_3d). This avoids recomputing the interface ring points
-// by a different FP path, which would cause welding failures when
-// the points straddle grid cell boundaries.
+// subject \ clipper = subject \ (H₀ ∩ H₁ ∩ … ∩ Hₙ)
+//                     = ⋃ᵢ (subject ∩ comp(Hᵢ) ∩ H₀ ∩ … ∩ H_{i-1})
 //
-// The clip_poly_2d is computed by projecting the SHARED clip_poly
-// (3D) into 2D, ensuring bit-identical positions with the caller.
+// For each plane i of the clipper:
+//   1. piece = SH_clip(subject, comp(Hᵢ))  — keep OUTSIDE half-space i
+//   2. piece = SH_clip(piece, H₀) … SH_clip(piece, H_{i-1}) — keep
+//      inside all previous half-spaces (so pieces are disjoint)
+//   3. If piece has ≥ 3 vertices, it's a valid outside fragment.
+//
+// Uses the existing SH primitive (clip_polygon_sh) with the same
+// kPlaneTol constant — no magic numbers, no GH in the production path.
+// Interface points go through the IntersectionTable when non-null.
 std::vector<Polygon> polygon_subtract_3d(
     const Polygon& subject_poly,
     const Polygon& clip_poly,
@@ -824,13 +840,122 @@ std::vector<Polygon> polygon_subtract_3d(
 ) {
     std::vector<Polygon> result;
     if (subject_poly.size() < 3 || clip_poly.size() < 3) return result;
+
+    // Collect clipper face planes. The clip_poly is a single polygon
+    // representing the clip region on the same plane as subject.
+    // For slab decomposition we need the clipper's half-spaces, which
+    // for a convex polygon are defined by its edges.
+    // Each edge (v[j], v[j+1]) defines a half-space: the interior of
+    // the convex polygon is to the left of the edge direction.
+    // The outward normal of edge j (in 2D, on the subject's plane) is
+    // perpendicular to the edge, pointing outward.
+    //
+    // But we're in 3D on a shared plane. The clip_poly's edges define
+    // half-spaces in the LOCAL 2D frame. We project to 2D, do slab
+    // decomposition in 2D, then unproject.
     LocalFrame frame = build_local_frame(plane_normal, subject_poly[0]);
     Polygon2D subject_2d = project_polygon(frame, subject_poly);
     Polygon2D clip_2d = project_polygon(frame, clip_poly);
-    GHResult gh = greiner_hormann_2d(subject_2d, clip_2d);
-    for (const auto& p : gh.outside) {
-        if (p.size() >= 3) {
-            result.push_back(unproject_polygon(frame, p));
+
+    // Compute clipper edge half-spaces in 2D.
+    // For a convex polygon with CCW winding, the interior is to the
+    // left of each edge. The outward normal of edge (a→b) is (dy, -dx).
+    struct HalfSpace2D {
+        Vec2 origin;
+        Vec2 normal;  // outward (points away from interior)
+    };
+    std::vector<HalfSpace2D> clip_planes;
+    const std::size_t cn = clip_2d.size();
+    for (std::size_t j = 0; j < cn; ++j) {
+        const Vec2& a = clip_2d[j];
+        const Vec2& b = clip_2d[(j + 1) % cn];
+        const float dx = b.x - a.x;
+        const float dy = b.y - a.y;
+        // Outward normal (for CCW polygon): (dy, -dx) normalized.
+        const float len = std::sqrt(dx * dx + dy * dy);
+        if (len < kEps) continue;
+        Vec2 outward{dy / len, -dx / len};
+        clip_planes.push_back({a, outward});
+    }
+
+    if (clip_planes.empty()) return result;
+
+    // Slab decomposition: for each clipper half-space i, compute:
+    //   piece = subject ∩ comp(Hᵢ) ∩ H₀ ∩ … ∩ H_{i-1}
+    // using SH clipping in 2D.
+    auto sh_clip_2d = [](
+        const Polygon2D& poly,
+        Vec2 origin, Vec2 outward_normal,
+        bool keep_inside
+    ) -> Polygon2D {
+        if (poly.empty()) return {};
+        Polygon2D res;
+        res.reserve(poly.size() + 1);
+        const std::size_t n = poly.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            const Vec2& curr = poly[i];
+            const Vec2& next = poly[(i + 1) % n];
+            const float d_curr = (curr.x - origin.x) * outward_normal.x
+                               + (curr.y - origin.y) * outward_normal.y;
+            const float d_next = (next.x - origin.x) * outward_normal.x
+                               + (next.y - origin.y) * outward_normal.y;
+            // keep_inside=true: keep d <= tol (inside the half-space)
+            // keep_inside=false: keep d >= -tol (outside/complement)
+            const bool curr_keep = keep_inside ? (d_curr <= kPlaneTol)
+                                               : (d_curr >= -kPlaneTol);
+            const bool next_keep = keep_inside ? (d_next <= kPlaneTol)
+                                               : (d_next >= -kPlaneTol);
+            if (curr_keep) res.push_back(curr);
+            if (curr_keep != next_keep) {
+                const float denom = d_curr - d_next;
+                if (std::abs(denom) > kPlaneTol) {
+                    const float t = d_curr / denom;
+                    res.push_back({curr.x + t * (next.x - curr.x),
+                                   curr.y + t * (next.y - curr.y)});
+                }
+            }
+        }
+        return res;
+    };
+
+    for (std::size_t i = 0; i < clip_planes.size(); ++i) {
+        // Step 1: keep OUTSIDE half-space i.
+        Polygon2D piece = sh_clip_2d(subject_2d, clip_planes[i].origin,
+                                      clip_planes[i].normal, /*keep_inside=*/false);
+        if (piece.size() < 3) continue;
+        // Step 2: keep INSIDE all previous half-spaces (0..i-1).
+        for (std::size_t j = 0; j < i; ++j) {
+            piece = sh_clip_2d(piece, clip_planes[j].origin,
+                                clip_planes[j].normal, /*keep_inside=*/true);
+            if (piece.size() < 3) break;
+        }
+        // Deduplicate consecutive vertices (SH can produce duplicates
+        // when a vertex lies exactly on the clip plane).
+        Polygon2D deduped;
+        for (const auto& p : piece) {
+            if (deduped.empty()) {
+                deduped.push_back(p);
+            } else {
+                const auto& last = deduped.back();
+                const float dx = p.x - last.x;
+                const float dy = p.y - last.y;
+                if (dx * dx + dy * dy > kPlaneTol * kPlaneTol) {
+                    deduped.push_back(p);
+                }
+            }
+        }
+        // Check wraparound.
+        if (deduped.size() >= 2) {
+            const auto& first = deduped.front();
+            const auto& last = deduped.back();
+            const float dx = first.x - last.x;
+            const float dy = first.y - last.y;
+            if (dx * dx + dy * dy <= kPlaneTol * kPlaneTol) {
+                deduped.pop_back();
+            }
+        }
+        if (deduped.size() >= 3) {
+            result.push_back(unproject_polygon(frame, deduped));
         }
     }
     return result;
@@ -854,17 +979,14 @@ struct ClippedFace {
     Polygon polygon;
 };
 
-void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces) {
+void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces, bool canonicalize) {
     auto& shell = result.solid.shell_mut();
 
-    // FASE B: canonicalize vertex positions through a SharedVertexPool
-    // before welding. The pool is behavior-neutral for original vertices
-    // (already bit-identical from source meshes) and ensures interface
-    // ring vertices (computed by IntersectionTable) are canonicalized
-    // consistently. Applied to all boolean ops uniformly.
-    SharedVertexPool pool;
-    for (auto& cf : clipped_faces) {
-        pool.canonicalize_polygon(cf.polygon);
+    if (canonicalize) {
+        SharedVertexPool pool;
+        for (auto& cf : clipped_faces) {
+            pool.canonicalize_polygon(cf.polygon);
+        }
     }
     std::map<SnappedKey, VertexId> weld_map;
     auto weld_vertex = [&](const math::Vec3f& pos) -> VertexId {
@@ -1011,7 +1133,7 @@ std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
         return result;  // empty body
     }
 
-    assemble_body(*result, clipped_faces);
+    assemble_body(*result, clipped_faces, /*canonicalize=*/false);
     return result;
 }
 
@@ -1066,7 +1188,7 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
             clipped_faces.push_back(
                 {std::make_shared<PlaneSurface>(poly_A[0], n_A), poly_A});
         }
-        assemble_body(*result, clipped_faces);
+        assemble_body(*result, clipped_faces, /*canonicalize=*/true);
         return result;
     }
 
@@ -1113,7 +1235,7 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
         return result;
     }
 
-    assemble_body(*result, clipped_faces);
+    assemble_body(*result, clipped_faces, /*canonicalize=*/true);
     return result;
 }
 
@@ -1187,64 +1309,10 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
         Polygon inside = clip_inside_3d(B, poly_A, &table);
 
         if (inside.size() < 3) {
-            // inside is empty or degenerate. If poly_A is entirely
-            // outside B (no vertex satisfies all B half-spaces),
-            // keep it intact. Otherwise, poly_A is partially inside B
-            // but clip_inside_3d collapsed the inside fragment to a
-            // degenerate polygon (edge or point). In this case, we
-            // clip poly_A against B directly using clip_outside_3d
-            // to get the surviving (outside) part.
-            // Check if any vertex of poly_A is inside B.
-            bool any_inside = false;
-            for (const auto& p : poly_A) {
-                bool inside_b = true;
-                for (const auto& bf : B.solid.shell().faces()) {
-                    math::Vec3f bo, bn;
-                    if (!get_face_plane(bf, B.edges, B.vertices, bo, bn)) continue;
-                    if ((p - bo).dot(bn) > kWeldGrid) {
-                        inside_b = false;
-                        break;
-                    }
-                }
-                if (inside_b) { any_inside = true; break; }
-            }
-            if (!any_inside) {
-                clipped_faces.push_back(
-                    {std::make_shared<PlaneSurface>(poly_A[0], n_A), poly_A});
-            } else {
-                // Partial overlap with degenerate inside: clip poly_A
-                // to keep only the part OUTSIDE B.
-                Polygon clipped = poly_A;
-                for (const auto& bf : B.solid.shell().faces()) {
-                    math::Vec3f bo, bn;
-                    if (!get_face_plane(bf, B.edges, B.vertices, bo, bn)) continue;
-                    // Keep vertices where dot > -tol (OUTSIDE this half-space).
-                    Polygon clipped_result;
-                    const std::size_t n = clipped.size();
-                    for (std::size_t i = 0; i < n; ++i) {
-                        const auto& curr = clipped[i];
-                        const auto& next = clipped[(i + 1) % n];
-                        const float d_curr = (curr - bo).dot(bn);
-                        const float d_next = (next - bo).dot(bn);
-                        const bool curr_keep = d_curr >= -kWeldGrid;
-                        const bool next_keep = d_next >= -kWeldGrid;
-                        if (curr_keep) clipped_result.push_back(curr);
-                        if (curr_keep != next_keep) {
-                            const float denom = d_curr - d_next;
-                            if (std::abs(denom) > 1e-12f) {
-                                const float t = d_curr / denom;
-                                clipped_result.push_back(curr + (next - curr) * t);
-                            }
-                        }
-                    }
-                    clipped = std::move(clipped_result);
-                    if (clipped.size() < 3) break;
-                }
-                if (clipped.size() >= 3) {
-                    clipped_faces.push_back(
-                        {std::make_shared<PlaneSurface>(clipped[0], n_A), clipped});
-                }
-            }
+            // inside is empty or degenerate (area-zero). The removed
+            // portion has zero area, so poly_A survives intact.
+            clipped_faces.push_back(
+                {std::make_shared<PlaneSurface>(poly_A[0], n_A), poly_A});
         } else if (polygons_coincident(poly_A, inside)) {
             continue;
         } else {
@@ -1284,7 +1352,7 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
         return result;
     }
 
-    assemble_body(*result, clipped_faces);
+    assemble_body(*result, clipped_faces, /*canonicalize=*/true);
     return result;
 }
 

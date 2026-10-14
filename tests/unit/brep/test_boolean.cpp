@@ -383,6 +383,28 @@ TEST_CASE("ADR-0025: bool_subtract partial-overlap with grid-straddle (regressio
     CHECK(is_closed_manifold(*result));
 }
 
+TEST_CASE("ADR-0025: bool_subtract slab decomposition (subject shares edge with clip, no straddle)") {
+    // A=[-1,1]³, B shift (0.5,0,0) → B=[-0.5,1.5]×[-1,1]×[-1,1].
+    // A \ B = [-1,-0.5]×[-1,1]×[-1,1].
+    // All vertices of A's lateral faces are on B's boundary (shared edges).
+    // This is the slab decomposition primitive test: polygon_subtract_3d
+    // must produce the outside fragment [-1,-0.5]×[-1,1] for each lateral face.
+    // V=8, E=12, F=6, χ=2, is_closed_manifold=true.
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
+    for (auto& v : B->vertices) {
+        v.set_position(v.position() + Vec3f{0.5f, 0, 0});
+    }
+    auto result = bool_subtract(*A, *B);
+    REQUIRE(result != nullptr);
+    CHECK(result->vertex_count() == 8);
+    CHECK(result->edge_count()   == 12);
+    CHECK(result->face_count()   == 6);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(loops_are_closed(*result));
+    CHECK(is_closed_manifold(*result));
+}
+
 TEST_CASE("ADR-0025: bool_intersect of nested boxes (B inside A) returns B") {
     // Box A: half-extents (3,3,3) → [-3,3]³
     // Box B: half-extents (1,1,1) → [-1,1]³ (inside A)
