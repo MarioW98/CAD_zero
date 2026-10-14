@@ -241,21 +241,18 @@ TEST_CASE("ADR-0024: bool_union of overlapping boxes produces a non-empty body")
     CHECK(loops_are_closed(*result));
 }
 
-TEST_CASE("ADR-0024: bool_union of identical boxes — documented MVP limitation") {
-    // KNOWN LIMITATION: the fan-triangulation + centroid-classification
-    // MVP (ADR-0024 §2) returns an EMPTY body for bool_union(A, A)
-    // because every triangle of A has its centroid inside B=A, so
-    // clip_outside_convex discards all of them. The correct result
-    // would be A itself, but that requires Greiner-Hormann (deferred).
-    //
-    // This test documents the limitation: the body is non-null but
-    // empty. A proper implementation would return 8V/12E/6F.
+TEST_CASE("ADR-0024: bool_union of identical boxes returns A (identical-body shortcut)") {
+    // ADR-0025: bodies_identical() shortcut detects A == B and returns
+    // a copy of A. The result is 8V/12E/6F with χ = 2 and is_closed_manifold.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});  // same position
     auto result = bool_union(*A, *B);
     REQUIRE(result != nullptr);
-    // MVP returns empty; proper impl would return A.
-    CHECK(result->face_count() == 0);
+    CHECK(result->vertex_count() == 8);
+    CHECK(result->edge_count()   == 12);
+    CHECK(result->face_count()   == 6);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(is_closed_manifold(*result));
 }
 
 TEST_CASE("ADR-0024: bool_union every edge is welded (no duplicate edges)") {
@@ -297,8 +294,10 @@ TEST_CASE("ADR-0024: bool_subtract of overlapping boxes produces a non-empty bod
     CHECK(loops_are_closed(*result));
 }
 
-TEST_CASE("ADR-0024: bool_subtract of disjoint boxes returns A (triangulated)") {
-    // A \ (disjoint B) = A. Fan-triangulation produces 12 triangles.
+TEST_CASE("ADR-0024: bool_subtract of disjoint boxes returns A unchanged") {
+    // A \ (disjoint B) = A. Centroid classification: every face of A
+    // has centroid outside B → kept. No face of B is inside A → Part 2
+    // empty. Result is A: 8V/12E/6F.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -307,8 +306,10 @@ TEST_CASE("ADR-0024: bool_subtract of disjoint boxes returns A (triangulated)") 
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 8);
-    CHECK(result->face_count()   == 12);  // 6 quads × 2 triangles
+    CHECK(result->edge_count()   == 12);
+    CHECK(result->face_count()   == 6);
     CHECK(euler_characteristic(*result) == 2);
+    CHECK(is_closed_manifold(*result));
     CHECK(loops_are_closed(*result));
 }
 

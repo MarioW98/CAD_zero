@@ -203,7 +203,7 @@ See [docs/architecture/overview.md](docs/architecture/overview.md) for the full 
 | B | SDF kernel, marching cubes, vertex welding | ✅ done |
 | C | Viewport architecture, PySide6 desktop app | ✅ done |
 | C+ | Native format + migrators, STL/OBJ import, picking, CI matrix, toolchain contract | ✅ done |
-| **D** | **Radial-edge B-Rep topology (ADR-0012) — ADR first, then pure-topology MVP** | ▶️ steps (a)+(b)+(c)+(c+) done ([ADR-0021](docs/adr/0021-brep-topology-data-structure.md), [0022](docs/adr/0022-brep-topology-query-operators.md), [0023](docs/adr/0023-analytic-seam-wires-and-boolean-intersect.md), [0024](docs/adr/0024-boolean-union-and-subtract.md)) |
+| **D** | **Radial-edge B-Rep topology (ADR-0012) — ADR first, then pure-topology MVP** | ▶️ steps (a)+(b)+(c)+(c+) done ([ADR-0021](docs/adr/0021-brep-topology-data-structure.md), [0022](docs/adr/0022-brep-topology-query-operators.md), [0023](docs/adr/0023-analytic-seam-wires-and-boolean-intersect.md), [0024](docs/adr/0024-boolean-union-and-subtract.md), [0025](docs/adr/0025-proper-greiner-hormann.md)) |
 | E | SDF ↔ B-Rep bridge | planned |
 | F | Modeling: feature history, sketcher | planned |
 | H | STEP AP203 MVP (ADR-0010) | planned |
@@ -236,7 +236,8 @@ See [docs/architecture/overview.md](docs/architecture/overview.md) for the full 
 | [0021](docs/adr/0021-brep-topology-data-structure.md) | B-Rep topology data structure — radial-edge entity set, ID scheme, ownership, Euler invariant (Phase D step (a)) |
 | [0022](docs/adr/0022-brep-topology-query-operators.md) | B-Rep topology query operators (faces_around_edge, edges_around_vertex, opposite_coedge, is_closed_manifold, wireframe_edges, vertex_valence) + make_tetrahedron (Phase D step (b)) |
 | [0023](docs/adr/0023-analytic-seam-wires-and-boolean-intersect.md) | Analytic seam wires (sphere: 2V/1E/1F, cylinder: 4V/5E/3F — both now closed manifolds) + bool_intersect on convex polyhedra via Sutherland-Hodgman (Phase D step (c)) |
-| [0024](docs/adr/0024-boolean-union-and-subtract.md) | bool_union and bool_subtract via fan-triangulation + centroid classification (MVP simplification of Greiner-Hormann; documented limitations for identical/degenerate cases) (Phase D step (c+)) |
+| [0024](docs/adr/0024-boolean-union-and-subtract.md) | bool_union and bool_subtract via centroid classification + identical-body shortcut (MVP; partial-overlap faces kept intact when their centroid is outside the other solid) (Phase D step (c+)) |
+| [0025](docs/adr/0025-proper-greiner-hormann.md) | Greiner-Hormann 2D polygon clipping infrastructure (kept for future use; current bool_union/subtract use the simpler centroid-classification approach with identical-body shortcut, ADR-0024 §3) (Phase D step (c+) fix) |
 
 ## Testing, determinism, CI
 
