@@ -1,32 +1,83 @@
 // core/bridge/src/sdf_to_brep.cpp
 #include "CAD_0/bridge/sdf_to_brep.hpp"
 
+#include "CAD_0/brep/topology.hpp"
+
 #include <cmath>
 #include <map>
 #include <sstream>
+#include <stdexcept>
+#include <string>
+#include <utility>
 
 namespace CAD_0::bridge {
 
+namespace {
+
 // ---------------------------------------------------------------------------
-// Faceted conversion: each triangle → Face with PlaneSurface
+// Actionable error helpers (ADR-0026 D2 + acceptance correction 2:
+// visible errors that name the likely cause and the remedy — never a
+// bare assertion, never a silent skip).
+// ---------------------------------------------------------------------------
+
+[[noreturn]] void throw_empty_surface() {
+    throw std::invalid_argument(
+        "sdf_to_brep_faceted: the SDF produced no surface mesh - nothing "
+        "to convert. The field has no zero crossing inside its bounds "
+        "(empty or fully-outside field), or the resolution is 0. Give "
+        "the SDF a non-empty interior or use a resolution > 0.");
+}
+
+[[noreturn]] void throw_degenerate_triangle(std::size_t tri) {
+    std::ostringstream os;
+    os << "sdf_to_brep_faceted: degenerate triangle " << tri
+       << " (zero area) - likely cause: the SDF evaluates to exactly 0 "
+          "ON a grid point (ADR-0026 input contract P2), which makes "
+          "distinct grid-edge crossings coincide. Remedy: offset the "
+          "sampling grid (e.g. translate the SDF by a small generic "
+          "amount) or change the resolution.";
+    throw std::runtime_error(os.str());
+}
+
+[[noreturn]] void throw_postcondition() {
+    throw std::runtime_error(
+        "sdf_to_brep_faceted: postcondition failed - the assembled body "
+        "is not a closed manifold (is_closed_manifold, ADR-0022 sec. 7). "
+        "Either this is a bridge bug, or the input violates the "
+        "ADR-0026 supported input class (P1 enclosure / P2 on-grid "
+        "zeros / P3 feature separation vs cell size). Check the bounds "
+        "padding and the resolution against the minimum feature size; "
+        "if the input is a supported sphere, please report this as a "
+        "bridge bug.");
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// Faceted conversion (ADR-0026 MVP): welded MC mesh → radial-edge body.
+// Reuses the ADR-0025 v5 assembly patterns instead of inventing new ones.
 // ---------------------------------------------------------------------------
 std::unique_ptr<brep::BRepBody> sdf_to_brep_faceted(
     const sdf::SDFBody& sdf_body,
     const SdfToBrepOptions& opts) {
 
-    auto body = std::make_unique<brep::BRepBody>();
-    auto& shell = body->solid.shell_mut();
-    shell.set_closed(true);
-
-    // Extract mesh
+    // 1. Extraction pipeline — unchanged (ADR-0015/0016: MC33 with
+    //    asymptotic decider, canonical edge-key welding, canonicalized
+    //    edge interpolation).
     sdf::TriangleMesh mesh = sdf::marching_cubes(
         sdf_body, opts.march_resolution, opts.compute_normals);
 
     if (mesh.positions.empty() || mesh.indices.empty()) {
-        return body;
+        throw_empty_surface();
     }
 
-    // Create vertices
+    auto body = std::make_unique<brep::BRepBody>();
+    auto& shell = body->solid.shell_mut();
+
+    // 2. Vertex map — 1:1 with the welded mesh. The MC welder already
+    //    produces canonical vertex identity (integer edge keys), so the
+    //    SharedVertexPool philosophy (ADR-0025 sec. 6) degenerates to
+    //    identity here: by construction, not by tolerance.
     body->vertices.reserve(mesh.positions.size());
     for (const auto& p : mesh.positions) {
         body->vertices.push_back(brep::Vertex{p});
@@ -35,21 +86,32 @@ std::unique_ptr<brep::BRepBody> sdf_to_brep_faceted(
         body->vertices[i].set_id(static_cast<brep::VertexId>(i));
     }
 
-    // Create edges: for each triangle, create 3 edges (deduplicated by vertex pair)
-    // Use a map to avoid duplicate edges
+    // 3. Edge map — keyed by the canonical (min, max) vertex pair, the
+    //    same integer pattern as ADR-0025 v5 assemble_body. Each edge's
+    //    intrinsic direction is min -> max; a loop traversing a -> b
+    //    uses the edge reversed iff a > b. This derives the coedge
+    //    flag from the EDGE'S INTRINSIC DIRECTION vs the loop's
+    //    traversal direction — fixing the pre-Phase-D stub, which
+    //    derived it from the creating triangle's index order.
     std::map<std::pair<brep::VertexId, brep::VertexId>, brep::EdgeId> edge_map;
-    auto get_or_create_edge = [&](brep::VertexId v0, brep::VertexId v1) -> brep::EdgeId {
-        auto key = std::make_pair(std::min(v0, v1), std::max(v0, v1));
-        auto it = edge_map.find(key);
-        if (it != edge_map.end()) return it->second;
-        brep::EdgeId eid = static_cast<brep::EdgeId>(body->edges.size());
-        body->edges.push_back(brep::Edge{v0, v1});
-        body->edges.back().set_id(eid);
-        edge_map[key] = eid;
-        return eid;
+    auto get_or_create_edge = [&](brep::VertexId a, brep::VertexId b)
+        -> std::pair<brep::EdgeId, bool> {
+        const auto key = std::make_pair(std::min(a, b), std::max(a, b));
+        const auto [it, inserted] = edge_map.emplace(
+            key, static_cast<brep::EdgeId>(body->edges.size()));
+        if (inserted) {
+            body->edges.push_back(brep::Edge{key.first, key.second});
+            body->edges.back().set_id(it->second);
+        }
+        return {it->second, a > b};
     };
 
-    // Create faces: each triangle → Face with PlaneSurface
+    // 4. Faces — one per MC triangle (ADR-0026 D3), no skips. A
+    //    degenerate triangle (repeated index or exactly-zero area —
+    //    bit-identical coincident positions make the cross product
+    //    exactly zero, no tolerance involved) is a P2 contract
+    //    violation: a visible, actionable error instead of the old
+    //    silent `continue` that punched holes while claiming closure.
     const std::size_t num_tris = mesh.indices.size() / 3;
     for (std::size_t t = 0; t < num_tris; ++t) {
         const auto i0 = mesh.indices[t * 3 + 0];
@@ -60,35 +122,42 @@ std::unique_ptr<brep::BRepBody> sdf_to_brep_faceted(
         const auto& p1 = mesh.positions[i1];
         const auto& p2 = mesh.positions[i2];
 
-        // Compute face normal
-        math::Vec3f normal = (p1 - p0).cross(p2 - p0).normalized();
-        if (normal.length() < 1e-9f) continue;  // degenerate triangle
+        const math::Vec3f n = (p1 - p0).cross(p2 - p0);
+        if (i0 == i1 || i1 == i2 || i2 == i0 || n.length_sq() == 0.0f) {
+            throw_degenerate_triangle(t);
+        }
 
-        // Create edges
-        brep::EdgeId e0 = get_or_create_edge(i0, i1);
-        brep::EdgeId e1 = get_or_create_edge(i1, i2);
-        brep::EdgeId e2 = get_or_create_edge(i2, i0);
-
-        // Determine edge direction (reversed or not)
-        bool r0 = (i0 > i1);
-        bool r1 = (i1 > i2);
-        bool r2 = (i2 > i0);
-
-        // Create face with plane surface
-        auto surf = std::make_shared<brep::PlaneSurface>(p0, normal);
+        auto surf = std::make_shared<brep::PlaneSurface>(p0, n.normalized());
         brep::Face face(surf);
         face.set_id(static_cast<brep::FaceId>(t));
 
-        // Create loop
+        // The loop follows the mesh triangle's winding (i0 -> i1 ->
+        // i2 -> i0), which MC33 emits consistently oriented (global
+        // signed-volume pass), so the surface normal agrees with the
+        // loop by the right-hand rule.
         brep::Loop loop;
-        loop.add_coedge(brep::CoEdge{e0, r0});
-        loop.add_coedge(brep::CoEdge{e1, r1});
-        loop.add_coedge(brep::CoEdge{e2, r2});
+        const auto [e01, r01] = get_or_create_edge(i0, i1);
+        loop.add_coedge(brep::CoEdge{e01, r01});
+        const auto [e12, r12] = get_or_create_edge(i1, i2);
+        loop.add_coedge(brep::CoEdge{e12, r12});
+        const auto [e20, r20] = get_or_create_edge(i2, i0);
+        loop.add_coedge(brep::CoEdge{e20, r20});
         face.add_loop(std::move(loop));
 
         shell.add_face(std::move(face));
     }
 
+    // 5. Assembly + hard postcondition. link_radial_edges is the only
+    //    sanctioned radial population point (ADR-0021 sec. 4). The
+    //    shell flag reflects the REAL invariant: claimed, verified
+    //    immediately, and retracted (with the throw) if the 4-invariant
+    //    contract (ADR-0022 sec. 7) does not hold.
+    brep::link_radial_edges(*body);
+    shell.set_closed(true);
+    if (!brep::is_closed_manifold(*body)) {
+        shell.set_closed(false);
+        throw_postcondition();
+    }
     return body;
 }
 

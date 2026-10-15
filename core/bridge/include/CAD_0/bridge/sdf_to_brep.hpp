@@ -1,19 +1,33 @@
 // core/bridge/include/CAD_0/bridge/sdf_to_brep.hpp
 //
-// Bridge: SDF → B-Rep conversion.
+// Bridge: SDF → B-Rep conversion (ADR-0026, Phase E).
 //
-// Converts an SDF body into a B-Rep body by:
-//   1. Extracting a triangle mesh via marching cubes
-//   2. Detecting planar patches in the mesh (groups of coplanar triangles)
-//   3. Creating a faceted B-Rep where each planar patch becomes a Face
-//      with a PlaneSurface, and the triangle edges become Edges.
+// Two paths:
 //
-// For non-planar regions (spheres, cylinders), the mesh is kept as
-// individual triangles, each becoming a tiny planar Face.
+//   1. Primitive fitting: an SDF that IS a known primitive (sphere,
+//      box, cylinder) converts to the exact analytic B-Rep
+//      (seam-wired, is_closed_manifold since ADR-0023).
 //
-// Also provides primitive fitting: detects if the SDF is a known
-// primitive (sphere, box, cylinder) and creates the exact analytic
-// B-Rep instead of a faceted approximation.
+//   2. Faceted extraction: everything else goes through MC33
+//      marching cubes + integer-keyed vertex welding (ADR-0015/0016);
+//      each welded triangle becomes one Face on a PlaneSurface
+//      (ADR-0026 D3 — 1:1 granularity, no planar merging). The body
+//      is assembled with the ADR-0025 v5 patterns: canonical vertex
+//      identity (1:1 with the welded mesh), edges keyed by the
+//      (min, max) vertex pair, coedge orientation derived from the
+//      edge's intrinsic direction vs the loop's traversal direction,
+//      link_radial_edges, and the 4-invariant is_closed_manifold
+//      contract as a hard postcondition.
+//
+// Error contract (ADR-0026 D2 + acceptance correction 2 — visible,
+// actionable, never silent):
+//
+//   - empty surface (nothing to extract)              → std::invalid_argument
+//   - degenerate triangle (likely on-grid zero, P2)   → std::runtime_error
+//     naming the remedy: offset the sampling grid or change the
+//     resolution
+//   - is_closed_manifold postcondition failure        → std::runtime_error
+//     (bridge bug, or input outside the supported class P1/P2/P3)
 //
 #pragma once
 
@@ -30,13 +44,14 @@ namespace CAD_0::bridge {
 // Options for SDF → B-Rep conversion.
 struct SdfToBrepOptions {
     std::uint32_t march_resolution{48};
-    float planar_tolerance{0.01f};  // max deviation from plane to be "planar"
     bool fit_primitives{true};      // try to detect known primitives
     bool compute_normals{true};
 };
 
-// Convert an SDF body to a faceted B-Rep body.
-// Each triangle in the extracted mesh becomes a Face with a PlaneSurface.
+// Convert an SDF body to a faceted B-Rep body (ADR-0026).
+// Each welded MC triangle becomes one Face with a PlaneSurface.
+// Throws per the error contract above — never returns a silently
+// broken body.
 std::unique_ptr<brep::BRepBody> sdf_to_brep_faceted(
     const sdf::SDFBody& sdf_body,
     const SdfToBrepOptions& opts = {});

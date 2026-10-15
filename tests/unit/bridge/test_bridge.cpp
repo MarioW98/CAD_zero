@@ -10,6 +10,11 @@
 #include "CAD_0/sdf/operators.hpp"
 #include "CAD_0/sdf/transforms.hpp"
 #include "CAD_0/brep/factory.hpp"
+#include "CAD_0/brep/topology.hpp"
+
+#include <cmath>
+#include <cstdint>
+#include <stdexcept>
 
 using namespace CAD_0::bridge;
 using CAD_0::math::Vec3f;
@@ -150,4 +155,168 @@ TEST_CASE("Bridge: faceted B-Rep → SDF mesh") {
 
     auto bnds = sdf_body->bounds();
     CHECK(!bnds.empty());
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0026 MVP — topology-era extraction contract (T1–T6).
+//
+// Pinned counts were measured ONCE with a throwaway driver on the pinned
+// configurations below (GCC, Release, -ffp-contract=off) and frozen here,
+// the same method as the ADR-0025 v5 exact-count tests. For a closed
+// triangle mesh the counts satisfy E = 3F/2 and V = F/2 + 2 (chi = 2);
+// the pinned values below match those identities, which is the cheapest
+// hand-derivation cross-check.
+//
+// The contract under test (ADR-0026 D2): V/E/F depend on the grid; chi=2,
+// is_closed_manifold and loops_are_closed DO NOT.
+// ---------------------------------------------------------------------------
+
+// T1 — sphere r=1 centered, res=16: pinned counts + full contract.
+TEST_CASE("Bridge T1: sphere res=16 - pinned counts + manifold contract") {
+    auto sph = s::make_sphere(1.0f);
+    SdfToBrepOptions opts;
+    opts.fit_primitives = false;
+    opts.march_resolution = 16;
+    auto body = sdf_to_brep_faceted(sph, opts);
+
+    REQUIRE(body != nullptr);
+    // Pinned (sphere r=1 centered, res=16): measured once, frozen.
+    CHECK(body->vertex_count() == 1158);
+    CHECK(body->edge_count() == 3468);
+    CHECK(body->face_count() == 2312);
+    // Grid-independent contracts.
+    CHECK(b::euler_characteristic(*body) == 2);
+    CHECK(b::is_closed_manifold(*body));
+    CHECK(b::loops_are_closed(*body));
+    // Explicit invariants 1-2 (ADR-0022 sec. 7): every edge exactly 2
+    // co-edges, with opposite orientation (XOR).
+    for (std::size_t e = 0; e < body->edge_count(); ++e) {
+        const auto& ce = body->edges[e].coedges();
+        REQUIRE(ce.size() == 2);
+        CHECK(ce[0]->reversed() != ce[1]->reversed());
+    }
+}
+
+// T2 — res=8 and res=32: different pinned counts, same contracts —
+// V/E/F are grid-dependent, the invariants are not.
+TEST_CASE("Bridge T2: sphere res=8/32 - grid-dependent counts, invariant contracts") {
+    struct Pin { std::uint32_t res; std::size_t v, e, f; };
+    const Pin pins[] = {
+        {8,  270,   804,   536},
+        {32, 4662, 13980,  9320},
+    };
+    for (const auto& pin : pins) {
+        auto sph = s::make_sphere(1.0f);
+        SdfToBrepOptions opts;
+        opts.fit_primitives = false;
+        opts.march_resolution = pin.res;
+        auto body = sdf_to_brep_faceted(sph, opts);
+
+        REQUIRE(body != nullptr);
+        CHECK(body->vertex_count() == pin.v);
+        CHECK(body->edge_count() == pin.e);
+        CHECK(body->face_count() == pin.f);
+        CHECK(b::euler_characteristic(*body) == 2);
+        CHECK(b::is_closed_manifold(*body));
+        CHECK(b::loops_are_closed(*body));
+    }
+}
+
+// T3 — off-grid center (0.13, 0.29, 0.07): the contracts survive a
+// generic placement. Note (measured): the pinned counts are IDENTICAL
+// to T1's — the extraction is translation-invariant for sphere inputs
+// because bounds() is symmetric about the center and the 1% pad is
+// proportional, so the padded grid is symmetric about the center for
+// any translation. Pinning them documents that invariance.
+TEST_CASE("Bridge T3: off-grid sphere (0.13, 0.29, 0.07) - invariants survive generic placement") {
+    auto sph = s::sdf_translate(s::make_sphere(1.0f), {0.13f, 0.29f, 0.07f});
+    SdfToBrepOptions opts;
+    opts.fit_primitives = false;
+    opts.march_resolution = 16;
+    auto body = sdf_to_brep_faceted(sph, opts);
+
+    REQUIRE(body != nullptr);
+    CHECK(body->vertex_count() == 1158);
+    CHECK(body->edge_count() == 3468);
+    CHECK(body->face_count() == 2312);
+    CHECK(b::euler_characteristic(*body) == 2);
+    CHECK(b::is_closed_manifold(*body));
+    CHECK(b::loops_are_closed(*body));
+}
+
+// T4 — the pinned grids satisfy the input contract (ADR-0026 D2):
+// P2 = no on-grid zeros (min |f| > 0 over ALL grid points), P1 =
+// enclosure (every boundary grid point strictly outside, f > 0).
+// The grid construction must mirror core/sdf/src/mesh_extract.cpp:
+// bounds() padded by 1% of extent, points at min + extent * (i / res).
+TEST_CASE("Bridge T4: pinned grids satisfy the input contract (P1 enclosure, P2 no on-grid zeros)") {
+    auto check_grid = [](const s::SDFBody& sdf, std::uint32_t res) {
+        CAD_0::math::Bboxf bx = sdf.bounds();
+        REQUIRE(!bx.empty());
+        const CAD_0::math::Vec3f pad = bx.extent() * 0.01f;
+        bx.min = bx.min - pad;
+        bx.max = bx.max + pad;
+        const auto ext = bx.extent();
+
+        float min_abs_f = 1e30f;
+        bool boundary_all_outside = true;
+        for (std::uint32_t zi = 0; zi <= res; ++zi) {
+            for (std::uint32_t yi = 0; yi <= res; ++yi) {
+                for (std::uint32_t xi = 0; xi <= res; ++xi) {
+                    const float fx = bx.min.x + ext.x * (static_cast<float>(xi) / static_cast<float>(res));
+                    const float fy = bx.min.y + ext.y * (static_cast<float>(yi) / static_cast<float>(res));
+                    const float fz = bx.min.z + ext.z * (static_cast<float>(zi) / static_cast<float>(res));
+                    const float f = sdf.value({fx, fy, fz});
+                    min_abs_f = std::min(min_abs_f, std::abs(f));
+                    const bool boundary = xi == 0 || yi == 0 || zi == 0 ||
+                                          xi == res || yi == res || zi == res;
+                    if (boundary && !(f > 0.0f)) boundary_all_outside = false;
+                }
+            }
+        }
+        CHECK(min_abs_f > 0.0f);          // P2: no grid point exactly on the surface
+        CHECK(boundary_all_outside);      // P1: surface strictly inside the padded volume
+    };
+
+    check_grid(s::make_sphere(1.0f), 8);
+    check_grid(s::make_sphere(1.0f), 16);
+    check_grid(s::make_sphere(1.0f), 32);
+    check_grid(s::sdf_translate(s::make_sphere(1.0f), {0.13f, 0.29f, 0.07f}), 16);
+}
+
+// T5 — determinism (ADR-0026 D5): two extractions of the same (SDF,
+// grid) produce identical V/E/F and a bit-equal vertex position
+// sequence (== on floats, no epsilon).
+TEST_CASE("Bridge T5: determinism - same (SDF, grid), bit-identical output") {
+    auto extract = [] {
+        auto sph = s::sdf_translate(s::make_sphere(1.0f), {0.13f, 0.29f, 0.07f});
+        SdfToBrepOptions opts;
+        opts.fit_primitives = false;
+        opts.march_resolution = 16;
+        return sdf_to_brep_faceted(sph, opts);
+    };
+    auto first = extract();
+    auto second = extract();
+    REQUIRE(first != nullptr);
+    REQUIRE(second != nullptr);
+
+    CHECK(first->vertex_count() == second->vertex_count());
+    CHECK(first->edge_count() == second->edge_count());
+    CHECK(first->face_count() == second->face_count());
+    REQUIRE(first->vertex_count() == second->vertex_count());
+    for (std::size_t i = 0; i < first->vertex_count(); ++i) {
+        CHECK(first->vertices[i].position() == second->vertices[i].position());
+    }
+}
+
+// T6 — empty input: a visible, actionable error — never a crash, never
+// a silently broken body (the pre-Phase-D stub returned an empty body
+// with shell.is_closed() == true).
+TEST_CASE("Bridge T6: empty SDF - visible error, no crash") {
+    s::SDFBody empty;
+    SdfToBrepOptions opts;
+    opts.fit_primitives = true;
+
+    CHECK_THROWS_AS(sdf_to_brep(empty, opts), std::invalid_argument);
+    CHECK_THROWS_AS(sdf_to_brep_faceted(empty, opts), std::invalid_argument);
 }

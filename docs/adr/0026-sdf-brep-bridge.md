@@ -2,12 +2,34 @@
 
 ## Status
 
-**Proposed (2026-10-16) — DRAFT, awaiting review.**
+**Accepted (2026-10-16) — with two corrections applied on acceptance
+(see § Corrections below).**
 
 Phase E opening move, ADR-first: this document proposes the decisions
-and the MVP contract. **No implementation lands before this ADR is
-accepted.** One docs-only commit opens the phase; code follows only
-after review.
+and the MVP contract. The draft was reviewed and accepted on
+2026-10-16; the MVP implementation follows in a separate code commit.
+One docs-only commit opened the phase; implementation landed only
+after acceptance.
+
+## Corrections on acceptance (2026-10-16)
+
+1. **D5 — CI matrix.** The draft claimed bit-exactness across
+   "GCC 11 / GCC 14 / Clang 14 (the CI matrix)". The real matrix is
+   **GCC 11.4 and Clang 14** (ubuntu-22.04; presets `linux-gcc-debug`,
+   `linux-gcc-release`, `linux-clang`). GCC 14.2 is the local
+   development compiler, not part of the matrix. The D5 text is
+   corrected in place. Decision: GCC 14 is **not** added to the CI
+   matrix now — a matrix change deserves its own CI observation
+   cycle, and nothing in the contract depends on it (sqrt-only
+   arithmetic is IEEE-754 correctly-rounded on all three compilers).
+2. **P2 — actionable errors.** The on-grid-zero failure surfaced by
+   the bridge (degenerate triangle, or a non-manifold assembly
+   downstream of an on-grid zero) must be an **actionable runtime
+   error**: the message names the likely cause and the remedy —
+   offset the sampling grid (e.g. translate the SDF by a small
+   generic amount) or change the resolution — never a bare
+   assertion. Reflected in § Proposed MVP step 2 and in the
+   implementation's error contract.
 
 ## Context
 
@@ -277,8 +299,10 @@ Is extraction bit-exact for fixed (SDF, grid, seed)?
 - **The sphere path's arithmetic** is `dot + sqrt` (and one division
   for the gradient): with `-ffp-contract=off` (ADR-0014) the dot
   product is deterministic, and `std::sqrt` is IEEE-754
-  correctly-rounded → bit-exact across GCC 11 / GCC 14 / Clang 14
-  (the CI matrix). No libm transcendentals are involved.
+  correctly-rounded → bit-exact across the CI matrix (GCC 11.4 and
+  Clang 14, ubuntu-22.04; acceptance correction 1). GCC 14.2, the
+  local development compiler, is not part of the matrix. No libm
+  transcendentals are involved.
 - **MC33 traversal** is single-threaded in fixed cell order; each
   crossing is one interpolation whose endpoints are canonicalized
   (bit-identical across sharing cells, by construction — not by
@@ -339,7 +363,11 @@ Pipeline (reusing existing assembly patterns — see design principle):
 2. **Precondition checks** (the P1–P4 encoding): non-empty mesh; the
    pinned-grid test additionally asserts min |f| > 0 (P2) and
    enclosure (P1). Violations are visible errors — never silent
-   repair.
+   repair. Every runtime error is **actionable** (acceptance
+   correction 2): it names the likely cause and the remedy. The
+   on-grid-zero / degenerate-triangle error tells the caller to
+   offset the sampling grid or change the resolution — never a bare
+   assertion.
 3. **Vertex map**: mesh vertex index → `VertexId`, 1:1, no re-welding
    (mesh indices are already canonical). This is the
    `SharedVertexPool` philosophy degenerating to identity — by
