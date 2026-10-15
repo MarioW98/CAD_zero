@@ -24,6 +24,7 @@
 //
 #include "CAD_0/brep/boolean.hpp"
 #include "CAD_0/brep/analytic.hpp"
+#include "CAD_0/brep/detail/boolean_test_hooks.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -43,6 +44,18 @@ using Polygon = std::vector<math::Vec3f>;
 constexpr float kWeldGrid = 1e-6f;
 constexpr float kPlaneTol = 1e-6f;  // Plane classification tolerance (ADR-0025 FASE 3)
 constexpr float kEps       = 1e-9f;
+// Degenerate-denominator guard for the edge/plane crossing
+// interpolation in IntersectionTable: below this |d0 − d1| the crossing
+// point is not computed and the edge start vertex is reused. Purely a
+// numeric division guard — NOT a geometric tolerance.
+constexpr float kIsectDenomEps = 1e-12f;
+// Loose normal-parallelity pre-filter (polygons_coplanar): |n1·n2| − 1 |
+// above this means the normals are not parallel (≈ 2.6°). Deliberately
+// loose — a cheap rejection before the distance test.
+constexpr float kNormalParallelTol = 1e-3f;
+// Strict parallelity threshold (classify_parallel_plane): |n1·n2| below
+// this (after normalization) means NotParallel. 1 − 1e-6 ≈ cos(0.081°).
+constexpr float kParallelDotMin = 1.0f - 1e-6f;
 
 struct SnappedKey {
     std::int64_t x, y, z;
@@ -609,7 +622,7 @@ public:
         const float d1 = (v1 - plane_origin).dot(plane_normal);
         const float denom = d0 - d1;
         math::Vec3f point;
-        if (std::abs(denom) > 1e-12f) {
+        if (std::abs(denom) > kIsectDenomEps) {
             const float t = d0 / denom;
             point = v0 + (v1 - v0) * t;
         } else {
@@ -763,7 +776,7 @@ bool polygons_coplanar(
     math::Vec3f normal_B
 ) {
     const float dot = normal_A.dot(normal_B);
-    if (std::abs(std::abs(dot) - 1.0f) > 1e-3f) return false;
+    if (std::abs(std::abs(dot) - 1.0f) > kNormalParallelTol) return false;
     if (poly_A.empty() || poly_B.empty()) return false;
     const math::Vec3f origin_A = poly_A[0];
     const float d = (poly_B[0] - origin_A).dot(normal_A);
@@ -1015,7 +1028,7 @@ ParallelPlaneClass classify_parallel_plane(
     if (plen < kEps || slen < kEps) return ParallelPlaneClass::NotParallel;
     const math::Vec3f pn = plane_normal * (1.0f / plen);
     const math::Vec3f sn = subject_normal * (1.0f / slen);
-    if (std::abs(pn.dot(sn)) < 1.0f - 1e-6f) {
+    if (std::abs(pn.dot(sn)) < kParallelDotMin) {
         return ParallelPlaneClass::NotParallel;
     }
     // Parallel: d is constant over the planar subject. Classify from
@@ -1535,9 +1548,10 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
     return result;
 }
 
-// Test-only entry point — see declaration in boolean.hpp (ADR-0025 v5
-// FASE 2). Exposes the internal polygon_subtract_3d slab decomposition
-// to the unit-test suite.
+// Test-only entry point — declaration and contract live in the
+// test-only seam header CAD_0/brep/detail/boolean_test_hooks.hpp
+// (ADR-0025 v5 FASE 2). Exposes the internal polygon_subtract_3d slab
+// decomposition to the unit-test suite.
 std::vector<std::vector<math::Vec3f>> polygon_subtract_fragments_for_tests(
     const std::vector<math::Vec3f>& subject,
     const std::vector<math::Vec3f>& clip,

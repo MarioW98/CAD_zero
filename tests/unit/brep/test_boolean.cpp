@@ -1,24 +1,27 @@
 // tests/unit/brep/test_boolean.cpp
 //
-// Tests for boolean operations on B-Rep bodies — ADR-0023.
+// Tests for boolean operations on B-Rep bodies — ADR-0023/0024/0025.
 //
 // Covers:
-//   * Seam wire factories (make_sphere, make_cylinder) now produce
-//     proper closed manifolds (inversion of the ADR-0022 regression
-//     guards).
-//   * bool_intersect on overlapping boxes (non-trivial intersection).
-//   * bool_intersect on disjoint boxes (empty result).
-//   * bool_intersect on nested boxes (result = inner box).
-//   * bool_intersect on a box and a tetrahedron.
-//   * χ = 2 on every non-empty result.
-//   * is_closed_manifold on every non-empty result.
-//   * bool_union / bool_subtract throw std::runtime_error as documented.
+//   * Seam wire factories (make_sphere, make_cylinder) produce proper
+//     closed manifolds (inversion of the ADR-0022 regression guards).
+//   * bool_intersect: overlapping / disjoint / nested / identical boxes,
+//     curved-input rejection, degenerate face-touching inputs.
+//   * bool_union / bool_subtract: identical-body shortcut, disjoint and
+//     containment cases, corner-notch and slab exact-count regressions.
+//   * Every non-empty closed result: exact V/E/F counts, χ = 2,
+//     loops_are_closed, is_closed_manifold.
+//   * Degenerate zero-volume results and the bool_union partial
+//     coplanar-overlap limitation are asserted exactly as documented
+//     (ADR-0025 v5 Consequences — known limitation).
 //
 #include <doctest/doctest.h>
 
 #include "CAD_0/brep/topology.hpp"
 #include "CAD_0/brep/factory.hpp"
 #include "CAD_0/brep/boolean.hpp"
+// Test-only seam — NOT part of the public kernel API (see header).
+#include "CAD_0/brep/detail/boolean_test_hooks.hpp"
 
 #include <cmath>
 #include <stdexcept>
@@ -126,6 +129,7 @@ TEST_CASE("ADR-0023: bool_intersect of two overlapping boxes produces a box") {
     CHECK(result->face_count()   == 6);
     CHECK(euler_characteristic(*result) == 2);
     CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
 }
 
 TEST_CASE("ADR-0023: bool_intersect of disjoint boxes is empty") {
@@ -153,6 +157,7 @@ TEST_CASE("ADR-0023: bool_intersect of nested boxes returns the inner box") {
     CHECK(result->face_count()   == 6);
     CHECK(euler_characteristic(*result) == 2);
     CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
 }
 
 TEST_CASE("ADR-0023: bool_intersect of identical boxes returns the same box") {
@@ -165,9 +170,12 @@ TEST_CASE("ADR-0023: bool_intersect of identical boxes returns the same box") {
     CHECK(result->face_count()   == 6);
     CHECK(euler_characteristic(*result) == 2);
     CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
 }
 
 TEST_CASE("ADR-0023: bool_intersect result is a closed manifold") {
+    // A=[-1,1]³, B shift (0.5,0.5,0.5) → A ∩ B = [-0.5,1]³, a box:
+    // 8V/12E/6F, χ=2, closed manifold.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -175,6 +183,10 @@ TEST_CASE("ADR-0023: bool_intersect result is a closed manifold") {
     }
     auto result = bool_intersect(*A, *B);
     REQUIRE(result != nullptr);
+    CHECK(result->vertex_count() == 8);
+    CHECK(result->edge_count()   == 12);
+    CHECK(result->face_count()   == 6);
+    CHECK(euler_characteristic(*result) == 2);
     CHECK(is_closed_manifold(*result));
     CHECK(loops_are_closed(*result));
     // Every edge must have exactly 2 co-edges (manifold contract).
@@ -184,6 +196,9 @@ TEST_CASE("ADR-0023: bool_intersect result is a closed manifold") {
 }
 
 TEST_CASE("ADR-0023: bool_intersect every edge has opposite coedge orientations") {
+    // A=[-1,1]³, B shift (0.5,0,0) → A ∩ B = [-0.5,1]×[-1,1]×[-1,1]:
+    // 8V/12E/6F, χ=2, closed manifold; every edge carries one forward
+    // and one reversed coedge.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -191,6 +206,12 @@ TEST_CASE("ADR-0023: bool_intersect every edge has opposite coedge orientations"
     }
     auto result = bool_intersect(*A, *B);
     REQUIRE(result != nullptr);
+    CHECK(result->vertex_count() == 8);
+    CHECK(result->edge_count()   == 12);
+    CHECK(result->face_count()   == 6);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
     for (const auto& edge : result->edges) {
         REQUIRE(edge.coedges().size() == 2);
         bool r0 = edge.coedges()[0]->reversed();
@@ -210,27 +231,25 @@ TEST_CASE("ADR-0023: bool_intersect with sphere throws invalid_argument") {
 }
 
 // ---------------------------------------------------------------------------
-// ADR-0025 — Collinear edge handling
+// ADR-0025 — Degenerate touch inputs (zero-volume intersections)
 // ---------------------------------------------------------------------------
 //
-// These tests exercise the edge cases that Greiner-Hormann classic
-// does not handle but ADR-0025's extensions do:
-//   - boxes touching along a single edge (zero-volume intersection)
-//   - boxes with coplanar faces (some coincident, some not)
-//   - boxes partially overlapping with collinear edge overlap
-//
-// The tests use the public bool_intersect / bool_union / bool_subtract
-// API, which internally uses the Sutherland-Hodgman / centroid
-// classification path. The GH path with collinear handling is exercised
-// by the greiner_hormann_2d unit tests below (which call the function
-// directly via a friend declaration — TODO: add the friend test or
-// expose the function for testing).
+// Boxes that touch face-to-face intersect in a zero-volume square.
+// Sutherland-Hodgman keeps exactly the shared square (its vertices
+// lie on the clipping planes within kPlaneTol) and the canonicalize
+// weld drops the duplicate from the second pass, so the result is a
+// single degenerate face: 4V/4E/1F, χ = 1 (a disk), loops closed,
+// but NOT a closed manifold — each of the 4 edges carries a single
+// coedge (the body has a boundary).
 //
 
-TEST_CASE("ADR-0025: bool_intersect of boxes touching at a single edge returns empty or shared face") {
+TEST_CASE("ADR-0025: bool_intersect of boxes touching at a face returns the degenerate shared face") {
     // Box A: [-1,1]³
-    // Box B: [1,3] × [-1,1] × [-1,1]  (touches A at x=1 face)
-    // Intersection volume = 0 (the shared face has zero volume).
+    // Box B: [1,3] × [-1,1] × [-1,1]  (touches A along the whole x=1 face)
+    // A ∩ B is the zero-volume square x=1, (y,z) ∈ [-1,1]². Clipping
+    // keeps only that square (welded once): V=4, E=4, F=1,
+    // χ = 4−4+1 = 1 (a disk), loops closed, is_closed_manifold=false
+    // (every edge has a single coedge — the body has a boundary).
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -238,19 +257,20 @@ TEST_CASE("ADR-0025: bool_intersect of boxes touching at a single edge returns e
     }
     auto result = bool_intersect(*A, *B);
     REQUIRE(result != nullptr);
-    // Sutherland-Hodgman keeps faces whose vertices satisfy every B
-    // half-space constraint within tolerance. The face x=1 of A has
-    // vertices at x=1 which is on B's boundary (within kWeldGrid),
-    // so it survives. The actual count depends on which faces of A
-    // have all vertices on B's boundary — could be 0, 1, or more
-    // degenerate faces. For MVP we accept any non-negative count.
-    CHECK(result->face_count() >= 0);
+    CHECK(result->vertex_count() == 4);
+    CHECK(result->edge_count()   == 4);
+    CHECK(result->face_count()   == 1);
+    CHECK(euler_characteristic(*result) == 1);
+    CHECK(loops_are_closed(*result));
+    CHECK_FALSE(is_closed_manifold(*result));
 }
 
-TEST_CASE("ADR-0025: bool_intersect of boxes with coplanar faces works") {
+TEST_CASE("ADR-0025: bool_intersect of stacked boxes (coplanar contact faces) returns the degenerate shared face") {
     // Box A: [-1,1]³
-    // Box B: [-1,1] × [-1,1] × [1,3]  (sits on top of A)
-    // The face z=1 of A and the face z=1 of B are coplanar and coincident.
+    // Box B: [-1,1] × [-1,1] × [1,3]  (sits on top of A, contact at z=1)
+    // Same zero-volume contract as the face-touching case above: the
+    // result is the single shared square z=1 → V=4, E=4, F=1, χ=1,
+    // loops closed, not a closed manifold.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -258,8 +278,12 @@ TEST_CASE("ADR-0025: bool_intersect of boxes with coplanar faces works") {
     }
     auto result = bool_intersect(*A, *B);
     REQUIRE(result != nullptr);
-    // Same as above: zero-volume intersection. Accept any non-negative count.
-    CHECK(result->face_count() >= 0);
+    CHECK(result->vertex_count() == 4);
+    CHECK(result->edge_count()   == 4);
+    CHECK(result->face_count()   == 1);
+    CHECK(euler_characteristic(*result) == 1);
+    CHECK(loops_are_closed(*result));
+    CHECK_FALSE(is_closed_manifold(*result));
 }
 
 TEST_CASE("ADR-0025: bool_union of boxes touching at a face — strict closed-manifold contract") {
@@ -285,6 +309,7 @@ TEST_CASE("ADR-0025: bool_union of boxes touching at a face — strict closed-ma
     CHECK(result->face_count()   == 10);
     CHECK(euler_characteristic(*result) == 2);
     CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
 }
 
 TEST_CASE("ADR-0025 v5: bool_subtract of box minus a corner — exact counts, closed manifold") {
@@ -320,10 +345,10 @@ TEST_CASE("ADR-0025 v5: bool_subtract of box minus a corner — exact counts, cl
     CHECK(is_closed_manifold(*result));
 }
 
-TEST_CASE("ADR-0025: bool_subtract of disjoint boxes returns A unchanged (GH path)") {
-    // A \ (disjoint B) = A. With the GH-based path, every face of A
-    // has inside empty (B is entirely outside A) → all 6 faces survive
-    // intact. No face of B is inside A → no caps. Result: 8V/12E/6F.
+TEST_CASE("ADR-0025: bool_subtract of disjoint boxes returns A unchanged") {
+    // A \ (disjoint B) = A. B is entirely outside A: every face of A
+    // survives intact as its own outside fragment, and no face of B
+    // lies inside A, so no caps are emitted. Result: 8V/12E/6F.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -339,10 +364,10 @@ TEST_CASE("ADR-0025: bool_subtract of disjoint boxes returns A unchanged (GH pat
     CHECK(loops_are_closed(*result));
 }
 
-TEST_CASE("ADR-0025: bool_subtract where B contains A returns empty (GH path)") {
-    // A is entirely inside B → every face of A has inside == F_A →
-    // all skipped. No face of B is inside A (A is smaller) → no caps.
-    // Result: empty body.
+TEST_CASE("ADR-0025: bool_subtract where B contains A returns empty") {
+    // A is entirely inside B: every face of A is fully inside B and is
+    // dropped; no face of B is inside A (B is larger), so no caps are
+    // emitted. Result: empty body.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{3, 3, 3});  // A is entirely inside B
     auto result = bool_subtract(*A, *B);
@@ -351,7 +376,7 @@ TEST_CASE("ADR-0025: bool_subtract where B contains A returns empty (GH path)") 
     CHECK_FALSE(is_closed_manifold(*result));  // empty body
 }
 
-TEST_CASE("ADR-0025: bool_subtract of identical boxes returns empty (GH path)") {
+TEST_CASE("ADR-0025: bool_subtract of identical boxes returns empty") {
     // A == B → bodies_identical shortcut triggers → empty body.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
@@ -467,6 +492,7 @@ TEST_CASE("ADR-0025: bool_intersect of nested boxes (B inside A) returns B") {
     CHECK(result->face_count()   == 6);
     CHECK(euler_characteristic(*result) == 2);
     CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
 }
 
 TEST_CASE("ADR-0025: bool_union of identical boxes returns one box (regression)") {
@@ -480,6 +506,7 @@ TEST_CASE("ADR-0025: bool_union of identical boxes returns one box (regression)"
     CHECK(result->face_count()   == 6);
     CHECK(euler_characteristic(*result) == 2);
     CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
 }
 
 TEST_CASE("ADR-0025: bool_subtract of identical boxes returns empty (regression)") {
@@ -496,12 +523,15 @@ TEST_CASE("ADR-0025: bool_intersect of identical boxes returns one box (regressi
     auto B = make_box(Vec3f{1, 1, 1});
     auto result = bool_intersect(*A, *B);
     REQUIRE(result != nullptr);
-    // bool_intersect uses Sutherland-Hodgman. For A ∩ A, every face of
-    // A is inside A, so all 6 faces survive. The deduplication catches
-    // the second pass (B's faces against A). Result: 6 faces.
-    CHECK(result->face_count() == 6);
+    // A ∩ A = A: Sutherland-Hodgman keeps all 6 faces of the first
+    // pass and the canonicalize weld drops the duplicate second pass.
+    // Result: 8V/12E/6F, χ=2, closed manifold.
+    CHECK(result->vertex_count() == 8);
+    CHECK(result->edge_count()   == 12);
+    CHECK(result->face_count()   == 6);
     CHECK(euler_characteristic(*result) == 2);
     CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
 }
 
 // ---------------------------------------------------------------------------
@@ -509,17 +539,25 @@ TEST_CASE("ADR-0025: bool_intersect of identical boxes returns one box (regressi
 // ---------------------------------------------------------------------------
 //
 // bool_union(A, B) = (A's faces outside B) ∪ (B's faces outside A).
-// For two overlapping boxes, the result is the convex hull of the
-// union (since both are convex and overlap, the union is a non-convex
-// polyhedron whose boundary is the outer skin of the two boxes).
+// When the two boxes share full lateral faces (partial coplanar
+// overlap), each side's lateral faces are clipped against the other
+// solid, leaving a gap over the overlap region: the result is an open
+// shell — the documented ADR-0025 v5 known limitation.
 //
 
-TEST_CASE("ADR-0024: bool_union of overlapping boxes — χ=2, manifold pending coedge fix") {
+TEST_CASE("ADR-0024: bool_union of overlapping boxes — open shell, partial coplanar overlap (ADR-0025 v5 known limitation)") {
     // Box A: [-1,1]³
-    // Box B: [-0.5, 1.5] × [-1, 1] × [-1, 1] (overlaps +X half of A)
-    // A ∪ B = a box [-1, 1.5] × [-1, 1] × [-1, 1] with a step.
-    // χ=2 passes. is_closed_manifold may fail due to coedge orientation
-    // inconsistency in polygon_subtract_3d fragments — next bug to fix.
+    // Box B: [-0.5, 1.5] × [-1, 1] × [-1, 1] (overlaps +X half of A;
+    //        the ±Y and ±Z faces are coplanar with A's)
+    // A ∪ B = [-1,1.5] × [-1,1] × [-1,1], but with partial coplanar
+    // overlap the union keeps only A's faces left of x=-0.5 and B's
+    // faces right of x=1 (ADR-0025 v5 Consequences — known limitation).
+    // The result is two open half-shells:
+    //   A-part: box [-1,-0.5]×[-1,1]² without the x=-0.5 face → 8V/12E/5F
+    //   B-part: box [1,1.5]×[-1,1]²   without the x=1     face → 8V/12E/5F
+    //   V = 8+8 = 16, E = 12+12 = 24, F = 5+5 = 10, χ = 16−24+10 = 2,
+    //   loops closed; NOT a closed manifold: the 8 rim edges (4 at
+    //   x=-0.5, 4 at x=1) carry a single coedge each.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -527,9 +565,12 @@ TEST_CASE("ADR-0024: bool_union of overlapping boxes — χ=2, manifold pending 
     }
     auto result = bool_union(*A, *B);
     REQUIRE(result != nullptr);
-    CHECK(result->face_count() > 0);
+    CHECK(result->vertex_count() == 16);
+    CHECK(result->edge_count()   == 24);
+    CHECK(result->face_count()   == 10);
     CHECK(euler_characteristic(*result) == 2);
     CHECK(loops_are_closed(*result));
+    CHECK_FALSE(is_closed_manifold(*result));
 }
 
 TEST_CASE("ADR-0024: bool_union of identical boxes returns A (identical-body shortcut)") {
@@ -544,12 +585,14 @@ TEST_CASE("ADR-0024: bool_union of identical boxes returns A (identical-body sho
     CHECK(result->face_count()   == 6);
     CHECK(euler_characteristic(*result) == 2);
     CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
 }
 
-TEST_CASE("ADR-0024: bool_union every edge is welded (no duplicate edges)") {
-    // Fan-triangulation creates diagonal edges that are used by only one
-    // face (non-manifold). We verify that every edge has at least 1
-    // coedge (no orphan edges) and that the body is consistent.
+TEST_CASE("ADR-0024: bool_union of overlapping boxes — exact coedge census (open shell)") {
+    // Same input as the open-shell union test above: 24 edges — the 16
+    // edges of the two closed half-shell "rings" carry exactly 2
+    // coedges, the 8 open-rim edges (4 at x=-0.5, 4 at x=1) carry
+    // exactly 1. No edge is an orphan and none exceeds 2 coedges.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -557,9 +600,15 @@ TEST_CASE("ADR-0024: bool_union every edge is welded (no duplicate edges)") {
     }
     auto result = bool_union(*A, *B);
     REQUIRE(result != nullptr);
+    REQUIRE(result->edge_count() == 24);
+    std::size_t boundary = 0, interior = 0;
     for (const auto& edge : result->edges) {
-        CHECK(edge.coedges().size() >= 1);  // at least one face uses it
+        REQUIRE(edge.coedges().size() <= 2);
+        if (edge.coedges().size() == 1) ++boundary;
+        else ++interior;
     }
+    CHECK(boundary == 8);
+    CHECK(interior == 16);
 }
 
 // ---------------------------------------------------------------------------
@@ -571,9 +620,18 @@ TEST_CASE("ADR-0024: bool_union every edge is welded (no duplicate edges)") {
 // result is a box with a corner notch removed.
 //
 
-TEST_CASE("ADR-0024: bool_subtract of overlapping boxes produces a non-empty body") {
-    // Same fan-triangulation caveat as bool_union: the result is a
-    // triangle soup, not a closed manifold. Verified non-empty + loops closed.
+TEST_CASE("ADR-0024: bool_subtract of overlapping boxes — corner notch, exact counts, closed manifold") {
+    // Box A: [-1,1]³, B shift (0.5,0.5,0.5) → B=[-0.5,1.5]³.
+    // A \ B = A minus the corner sub-cube [-0.5,1]³ — same corner-cut
+    // family as the ADR-0025 v5 test above, with cut planes at -0.5
+    // (0.5/kWeldGrid snaps exactly, no grid-straddle):
+    //   V = 17: 7 original corners (the (1,1,1) corner is removed)
+    //           + 6 cut/split points on A's edges at x/y/z = -0.5
+    //           + 3 reflex corners of the L-shaped faces
+    //           + 1 corner where the 3 cavity caps meet
+    //   F = 12: 3 intact faces + 2 rectangles per L-shaped face
+    //           (slab decomposition split) + 3 cavity caps
+    //   E = 27, χ = 17 − 27 + 12 = 2, closed manifold, loops closed.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -581,14 +639,18 @@ TEST_CASE("ADR-0024: bool_subtract of overlapping boxes produces a non-empty bod
     }
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
-    CHECK(result->face_count() > 0);
+    CHECK(result->vertex_count() == 17);
+    CHECK(result->edge_count()   == 27);
+    CHECK(result->face_count()   == 12);
+    CHECK(euler_characteristic(*result) == 2);
     CHECK(loops_are_closed(*result));
+    CHECK(is_closed_manifold(*result));
 }
 
 TEST_CASE("ADR-0024: bool_subtract of disjoint boxes returns A unchanged") {
-    // A \ (disjoint B) = A. Centroid classification: every face of A
-    // has centroid outside B → kept. No face of B is inside A → Part 2
-    // empty. Result is A: 8V/12E/6F.
+    // A \ (disjoint B) = A: every face of A survives intact (no overlap
+    // with B), and no face of B lies inside A, so Part 2 emits no caps.
+    // Result is A: 8V/12E/6F.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -613,7 +675,10 @@ TEST_CASE("ADR-0024: bool_subtract where B contains A returns empty") {
     CHECK_FALSE(is_closed_manifold(*result));  // empty body
 }
 
-TEST_CASE("ADR-0024: bool_subtract every edge is welded (no orphan edges)") {
+TEST_CASE("ADR-0024: bool_subtract of overlapping boxes — every edge has exactly 2 coedges") {
+    // Corner-notch result (17V/27E/12F): the T-junction subdivision
+    // makes every edge match pairwise, so all 27 edges carry exactly
+    // 2 coedges (closed-manifold contract).
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -621,12 +686,15 @@ TEST_CASE("ADR-0024: bool_subtract every edge is welded (no orphan edges)") {
     }
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
+    REQUIRE(result->edge_count() == 27);
     for (const auto& edge : result->edges) {
-        CHECK(edge.coedges().size() >= 1);
+        CHECK(edge.coedges().size() == 2);
     }
 }
 
-TEST_CASE("ADR-0024: bool_subtract χ = 2 on non-empty result (triangulated)") {
+TEST_CASE("ADR-0024: bool_subtract of overlapping boxes — χ = 2 on the corner notch") {
+    // Same corner-notch input as the tests above: 17V/27E/12F gives
+    // χ = 17 − 27 + 12 = 2 on a closed manifold.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -634,24 +702,24 @@ TEST_CASE("ADR-0024: bool_subtract χ = 2 on non-empty result (triangulated)") {
     }
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
-    if (result->face_count() > 0) {
-        // χ may not equal 2 for arbitrary boolean results with
-        // fan-triangulation, but it must be a valid integer.
-        const auto chi = euler_characteristic(*result);
-        CHECK(chi != 0);  // non-degenerate
-    }
+    CHECK(result->vertex_count() == 17);
+    CHECK(result->edge_count()   == 27);
+    CHECK(result->face_count()   == 12);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(loops_are_closed(*result));
+    CHECK(is_closed_manifold(*result));
 }
 
 // ---------------------------------------------------------------------------
 // Cross-validation: union is consistent with intersect
 // ---------------------------------------------------------------------------
 
-TEST_CASE("ADR-0024: bool_union and bool_intersect both produce non-empty bodies") {
-    // For two partially overlapping convex bodies, both union and
-    // intersect should produce non-empty results. We don't assert
-    // relative face counts because the fan-triangulation MVP doesn't
-    // guarantee |union| >= |intersect| in all cases (documented
-    // limitation — Greiner-Hormann would fix this).
+TEST_CASE("ADR-0024: bool_union and bool_intersect of overlapping boxes — exact counts on both sides") {
+    // A=[-1,1]³, B shift (0.5,0,0) → overlap [-0.5,1]×[-1,1]×[-1,1].
+    //   intersect = the overlap box: 8V/12E/6F, χ=2, closed manifold.
+    //   union = the open shell of the partial coplanar overlap
+    //           (ADR-0025 v5 known limitation): 16V/24E/10F, χ=2,
+    //           loops closed, not a closed manifold.
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -661,7 +729,16 @@ TEST_CASE("ADR-0024: bool_union and bool_intersect both produce non-empty bodies
     auto i = bool_intersect(*A, *B);
     REQUIRE(u != nullptr);
     REQUIRE(i != nullptr);
-    // Both should produce SOME geometry.
-    CHECK(u->face_count() > 0);
-    CHECK(i->face_count() > 0);
+    CHECK(i->vertex_count() == 8);
+    CHECK(i->edge_count()   == 12);
+    CHECK(i->face_count()   == 6);
+    CHECK(euler_characteristic(*i) == 2);
+    CHECK(loops_are_closed(*i));
+    CHECK(is_closed_manifold(*i));
+    CHECK(u->vertex_count() == 16);
+    CHECK(u->edge_count()   == 24);
+    CHECK(u->face_count()   == 10);
+    CHECK(euler_characteristic(*u) == 2);
+    CHECK(loops_are_closed(*u));
+    CHECK_FALSE(is_closed_manifold(*u));
 }

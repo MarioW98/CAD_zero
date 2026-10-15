@@ -7,6 +7,7 @@ set(CAD_0_BREP_HEADERS
     include/CAD_0/brep/tessellate.hpp
     include/CAD_0/brep/factory.hpp
     include/CAD_0/brep/boolean.hpp
+    include/CAD_0/brep/detail/boolean_test_hooks.hpp
 )
 
 set(CAD_0_BREP_SOURCES
@@ -34,5 +35,7 @@ target_compile_features(CAD_0_brep PUBLIC cxx_std_20)
 
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/include FILES ${CAD_0_BREP_HEADERS})
 
+# detail/ headers are test-only seams, not public API — never installed.
 install(TARGETS CAD_0_brep ARCHIVE DESTINATION lib LIBRARY DESTINATION lib)
-install(DIRECTORY include/CAD_0 DESTINATION include)
+install(DIRECTORY include/CAD_0 DESTINATION include
+        PATTERN "detail" EXCLUDE)
