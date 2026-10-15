@@ -18,6 +18,7 @@
 #include "CAD_0/brep/topology.hpp"
 
 #include <memory>
+#include <vector>
 
 namespace CAD_0::brep {
 
@@ -52,5 +53,15 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B);
 // NOT IMPLEMENTED — throws std::runtime_error.
 // Same limitation as bool_union.
 std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B);
+
+// Test-only entry point (ADR-0025 v5 FASE 2): direct access to the
+// internal polygon_subtract_3d slab decomposition so the unit-test
+// suite can assert the "exactly one outside fragment" contract on a
+// minimal slab case. NOT part of the kernel API — do not call from
+// production code.
+std::vector<std::vector<math::Vec3f>> polygon_subtract_fragments_for_tests(
+    const std::vector<math::Vec3f>& subject,
+    const std::vector<math::Vec3f>& clip,
+    math::Vec3f plane_normal);
 
 } // namespace CAD_0::brep

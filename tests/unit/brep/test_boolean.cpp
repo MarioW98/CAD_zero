@@ -20,7 +20,9 @@
 #include "CAD_0/brep/factory.hpp"
 #include "CAD_0/brep/boolean.hpp"
 
+#include <cmath>
 #include <stdexcept>
+#include <vector>
 
 using namespace CAD_0::brep;
 using namespace CAD_0::math;
@@ -285,13 +287,24 @@ TEST_CASE("ADR-0025: bool_union of boxes touching at a face — strict closed-ma
     CHECK(is_closed_manifold(*result));
 }
 
-TEST_CASE("ADR-0025: bool_subtract of box minus a corner — χ=2, manifold pending coedge fix") {
+TEST_CASE("ADR-0025 v5: bool_subtract of box minus a corner — exact counts, closed manifold") {
     // Box A: [-1,1]³ → 8V/12E/6F
     // Box B: [0,2]³ (overlaps the +X corner of A, shifted by (1,1,1))
     // A \ B = A with the [0,1]³ corner removed.
-    // χ=2 passes (topologically a sphere). is_closed_manifold may fail
-    // because polygon_subtract_3d fragments may have inconsistent coedge
-    // orientations — documented as the next bug to fix.
+    //
+    // Topology (verified after ADR-0025 v5 — parallel-plane rule + cap
+    // loop reversal + T-junction edge subdivision):
+    //   V = 17: 7 original corners (the (1,1,1) corner is removed)
+    //           + 6 cut points on A's original edges at x/y/z = 0
+    //           + 3 axis points (1,0,0),(0,1,0),(0,0,1)
+    //           + the origin (0,0,0) where the 3 caps meet
+    //   F = 12: 3 intact faces (-X,-Y,-Z) + 2 rectangles per cut face
+    //           (+X,+Y,+Z — the L-shape split by the slab decomposition)
+    //           + 3 cavity caps at x=0, y=0, z=0
+    //   E = 27, χ = 17 − 27 + 12 = 2 ✓
+    //   is_closed_manifold: every edge exactly 2 co-edges with opposite
+    //   orientations (the T-junction subdivision splits the long L-split
+    //   edges at the shared vertices so all edges match pairwise).
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -299,9 +312,12 @@ TEST_CASE("ADR-0025: bool_subtract of box minus a corner — χ=2, manifold pend
     }
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
-    CHECK(result->face_count() > 0);
+    CHECK(result->vertex_count() == 17);
+    CHECK(result->edge_count()   == 27);
+    CHECK(result->face_count()   == 12);
     CHECK(euler_characteristic(*result) == 2);
     CHECK(loops_are_closed(*result));
+    CHECK(is_closed_manifold(*result));
 }
 
 TEST_CASE("ADR-0025: bool_subtract of disjoint boxes returns A unchanged (GH path)") {
@@ -345,12 +361,12 @@ TEST_CASE("ADR-0025: bool_subtract of identical boxes returns empty (GH path)") 
     CHECK_FALSE(is_closed_manifold(*result));  // empty body
 }
 
-TEST_CASE("ADR-0025: bool_subtract of overlapping boxes — χ=2, manifold pending coedge fix") {
+TEST_CASE("ADR-0025 v5: bool_subtract of overlapping boxes — exact counts, closed manifold") {
     // Box A: [-1,1]³
     // Box B: [-0.5, 1.5] × [-1, 1] × [-1, 1] (overlaps +X half of A)
     // A \ B = A with the [0,1] × [-1,1] × [-1,1] slab removed.
-    // χ=2 passes. is_closed_manifold may fail due to coedge orientation
-    // inconsistency in polygon_subtract_3d fragments — next bug to fix.
+    // Expected: V=8, E=12, F=6, χ=2, is_closed_manifold=true (clean snap:
+    // 0.5/kWeldGrid = 500000 exactly, no grid-straddle).
     auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
@@ -358,9 +374,12 @@ TEST_CASE("ADR-0025: bool_subtract of overlapping boxes — χ=2, manifold pendi
     }
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
-    CHECK(result->face_count() > 0);
+    CHECK(result->vertex_count() == 8);
+    CHECK(result->edge_count()   == 12);
+    CHECK(result->face_count()   == 6);
     CHECK(euler_characteristic(*result) == 2);
     CHECK(loops_are_closed(*result));
+    CHECK(is_closed_manifold(*result));
 }
 
 TEST_CASE("ADR-0025: bool_subtract partial-overlap with grid-straddle (regression for unwelded interface ring)") {
@@ -403,6 +422,36 @@ TEST_CASE("ADR-0025: bool_subtract slab decomposition (subject shares edge with 
     CHECK(euler_characteristic(*result) == 2);
     CHECK(loops_are_closed(*result));
     CHECK(is_closed_manifold(*result));
+}
+
+TEST_CASE("ADR-0025 v5 FASE 2: minimal slab decomposition — exactly 1 outside fragment") {
+    // Grid-straddle case reduced to A's +Y face (y=1):
+    //   subject = x ∈ [-1,1], z ∈ [-1,1] at y=1  (A's +Y face, CCW from +Y)
+    //   clip    = x ∈ [-0.7,1], z ∈ [-1,1] at y=1 (the inside part after
+    //             clipping against B = [-0.7,1.3]×[-1,1]×[-1,1])
+    // polygon_subtract_3d must return exactly ONE fragment: the outside
+    // rectangle x ∈ [-1,-0.7], z ∈ [-1,1]. The three degenerate slivers
+    // from the coincident boundary edges (x=1, z=±1) collapse to ≤ 2
+    // vertices after deduplication and are dropped (FASE 1 evidence).
+    const std::vector<Vec3f> subject = {
+        Vec3f{ 1.0f, 1.0f, -1.0f}, Vec3f{-1.0f, 1.0f, -1.0f},
+        Vec3f{-1.0f, 1.0f,  1.0f}, Vec3f{ 1.0f, 1.0f,  1.0f}};
+    const std::vector<Vec3f> clip = {
+        Vec3f{ 1.0f, 1.0f, -1.0f}, Vec3f{-0.7f, 1.0f, -1.0f},
+        Vec3f{-0.7f, 1.0f,  1.0f}, Vec3f{ 1.0f, 1.0f,  1.0f}};
+    const auto frags = polygon_subtract_fragments_for_tests(
+        subject, clip, Vec3f{0.0f, 1.0f, 0.0f});
+    REQUIRE(frags.size() == 1);
+    REQUIRE(frags[0].size() == 4);
+    // The single fragment is the outside rectangle: every vertex lies in
+    // x ∈ [-1,-0.7], y = 1, z ∈ [-1,1].
+    for (const auto& v : frags[0]) {
+        CHECK(v.x <= -0.7f + 1e-5f);
+        CHECK(v.x >= -1.0f - 1e-5f);
+        CHECK(std::abs(v.y - 1.0f) < 1e-5f);
+        CHECK(v.z >= -1.0f - 1e-5f);
+        CHECK(v.z <=  1.0f + 1e-5f);
+    }
 }
 
 TEST_CASE("ADR-0025: bool_intersect of nested boxes (B inside A) returns B") {

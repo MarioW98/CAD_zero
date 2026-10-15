@@ -971,6 +971,77 @@ bool polygons_coincident(const Polygon& a, const Polygon& b) {
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0025 v5 — parallel-plane classification (3 cases).
+//
+// When a clip plane is PARALLEL to the (planar) subject's supporting
+// plane, the signed distance d = (p - origin) . n is CONSTANT over the
+// subject, so a single three-way classification decides the plane's
+// effect — no per-vertex clipping needed.
+//
+// Why the rule exists: the SH clip keeps {d <= kPlaneTol} and its
+// complement keeps {d >= -kPlaneTol}. With kPlaneTol > 0 these two
+// sets OVERLAP on the boundary band |d| <= kPlaneTol, so a subject
+// lying exactly on the plane is kept by BOTH sides — the tolerance
+// makes comp(H) ∩ H ≠ ∅ on the boundary band. In exact geometry
+// (kPlaneTol = 0) the open complement does not intersect a subject
+// with d == 0. The three cases close that hole deterministically
+// (n is the OUTWARD normal of the clip solid, so d < 0 = inside):
+//
+//   1. d > +kPlaneTol — subject strictly on the complement side: it
+//      misses the half-space entirely, so it survives whole (for a
+//      cap generator: it can never be inside the other solid).
+//   2. d < -kPlaneTol — subject strictly inside the half-space: the
+//      plane does not restrict it — identity.
+//   3. |d| <= kPlaneTol — coplanar band: the subject lies ON the
+//      boundary, never strictly inside, so it can never contribute
+//      an interior boundary piece. Skip it as a piece generator: in
+//      exact geometry comp(H) ∩ subject = ∅.
+// ---------------------------------------------------------------------------
+enum class ParallelPlaneClass {
+    NotParallel,     // plane cuts through the subject's plane: per-vertex clipping
+    StrictlyInside,  // case 2: d < -kPlaneTol everywhere
+    StrictlyOutside, // case 1: d > +kPlaneTol everywhere
+    CoplanarBand,    // case 3: |d| <= kPlaneTol everywhere
+};
+
+ParallelPlaneClass classify_parallel_plane(
+    const Polygon& subject,
+    math::Vec3f subject_normal,
+    math::Vec3f plane_origin,
+    math::Vec3f plane_normal
+) {
+    const float plen = plane_normal.length();
+    const float slen = subject_normal.length();
+    if (plen < kEps || slen < kEps) return ParallelPlaneClass::NotParallel;
+    const math::Vec3f pn = plane_normal * (1.0f / plen);
+    const math::Vec3f sn = subject_normal * (1.0f / slen);
+    if (std::abs(pn.dot(sn)) < 1.0f - 1e-6f) {
+        return ParallelPlaneClass::NotParallel;
+    }
+    // Parallel: d is constant over the planar subject. Classify from
+    // the extremes over all vertices (a single value for exactly
+    // parallel planes; the min/max window rejects near-parallel inputs
+    // whose d drifts across the tolerance band — those fall back to
+    // per-vertex clipping).
+    float d_min = 0.0f, d_max = 0.0f;
+    bool first = true;
+    for (const auto& v : subject) {
+        const float d = (v - plane_origin).dot(pn);
+        if (first) {
+            d_min = d_max = d;
+            first = false;
+        } else {
+            d_min = std::min(d_min, d);
+            d_max = std::max(d_max, d);
+        }
+    }
+    if (d_max < -kPlaneTol) return ParallelPlaneClass::StrictlyInside;
+    if (d_min > kPlaneTol) return ParallelPlaneClass::StrictlyOutside;
+    if (d_min >= -kPlaneTol && d_max <= kPlaneTol) return ParallelPlaneClass::CoplanarBand;
+    return ParallelPlaneClass::NotParallel;  // straddles the band: clip per-vertex
+}
+
+// ---------------------------------------------------------------------------
 // Body assembly — shared by all three boolean ops
 // ---------------------------------------------------------------------------
 
@@ -1018,19 +1089,83 @@ void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces, bo
         return eid;
     };
     FaceId next_face_id = 0;
+
+    // Pre-pass 1: weld every face's vertices FIRST, so the complete
+    // vertex set is known before any loop is built. T-junction points
+    // may belong to OTHER faces than the one being assembled.
+    std::vector<std::vector<VertexId>> face_vids;
+    face_vids.reserve(clipped_faces.size());
     for (const auto& cf : clipped_faces) {
-        if (cf.polygon.size() < 3) continue;
         std::vector<VertexId> vids;
         vids.reserve(cf.polygon.size());
         for (const auto& p : cf.polygon) vids.push_back(weld_vertex(p));
-        Face face(cf.surface);
+        face_vids.push_back(std::move(vids));
+    }
+
+    // Pre-pass 2 (ADR-0025 v5): T-junction edge subdivision. The slab
+    // decomposition (polygon_subtract_3d) and the cap fragments can
+    // produce adjacent faces whose shared boundary is one FULL edge on
+    // one side and TWO half-edges on the other (a T-junction): an
+    // L-shaped region split into two rectangles shares only part of its
+    // neighbour's edge. Edges are keyed by vertex pairs, so the long
+    // edge and the short edges do not match -> coedges dangle on
+    // distinct overlapping edges -> non-manifold, chi != 2. Fix: split
+    // every face edge at each already-welded vertex that lies ON the
+    // open segment (within kWeldGrid of the supporting line, at least
+    // kWeldGrid away from both endpoints along the edge). After the
+    // split, both sides traverse matching sub-segments and every edge
+    // ends up with exactly two co-edges.
+    auto t_points_on_edge = [&](VertexId v0, VertexId v1) -> std::vector<VertexId> {
+        std::vector<VertexId> out;
+        const math::Vec3f p0 = result.vertices[v0].position();
+        const math::Vec3f p1 = result.vertices[v1].position();
+        const math::Vec3f d = p1 - p0;
+        const float len2 = d.dot(d);
+        if (len2 <= kEps * kEps) return out;
+        const float len = std::sqrt(len2);
+        for (VertexId k = 0; k < static_cast<VertexId>(result.vertices.size()); ++k) {
+            if (k == v0 || k == v1) continue;
+            const math::Vec3f m = result.vertices[k].position() - p0;
+            const float md = m.dot(d);
+            const float t = md / len2;
+            if (t <= 0.0f || t >= 1.0f) continue;
+            // At least kWeldGrid away from both endpoints ALONG the
+            // edge (closer than that is the endpoint's own weld zone).
+            if (t * len <= kWeldGrid || (1.0f - t) * len <= kWeldGrid) continue;
+            // Within kWeldGrid of the supporting line (Pythagoras,
+            // clamped against FP cancellation).
+            float dist2 = m.dot(m) - md * md / len2;
+            if (dist2 < 0.0f) dist2 = 0.0f;
+            if (dist2 <= kWeldGrid * kWeldGrid) out.push_back(k);
+        }
+        // Deterministic order: by position along the edge, ties by id.
+        std::sort(out.begin(), out.end(), [&](VertexId a, VertexId b) {
+            const float ta = (result.vertices[a].position() - p0).dot(d);
+            const float tb = (result.vertices[b].position() - p0).dot(d);
+            if (ta != tb) return ta < tb;
+            return a < b;
+        });
+        return out;
+    };
+
+    for (std::size_t fi = 0; fi < clipped_faces.size(); ++fi) {
+        const auto& vids = face_vids[fi];
+        if (vids.size() < 3) continue;
+        Face face(clipped_faces[fi].surface);
         Loop loop;
         for (std::size_t i = 0; i < vids.size(); ++i) {
-            VertexId v0 = vids[i];
-            VertexId v1 = vids[(i + 1) % vids.size()];
-            EdgeId eid = get_or_create_edge(v0, v1);
-            bool reversed = (v0 > v1);
-            loop.add_coedge(CoEdge{eid, reversed});
+            const VertexId v0 = vids[i];
+            const VertexId v1 = vids[(i + 1) % vids.size()];
+            // Chain v0 -> [T-junction vertices, ordered along the edge]
+            // -> v1: each sub-segment becomes its own co-edge.
+            std::vector<VertexId> chain = t_points_on_edge(v0, v1);
+            chain.insert(chain.begin(), v0);
+            chain.push_back(v1);
+            for (std::size_t c = 0; c + 1 < chain.size(); ++c) {
+                const EdgeId eid = get_or_create_edge(chain[c], chain[c + 1]);
+                const bool reversed = (chain[c] > chain[c + 1]);
+                loop.add_coedge(CoEdge{eid, reversed});
+            }
         }
         face.add_loop(std::move(loop));
         face.set_id(next_face_id++);
@@ -1327,25 +1462,69 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
     }
 
     // Part 2: B's faces inside A, with INVERTED normal (the cavity caps).
+    //
+    // A face of B can only contribute a cavity cap where it lies
+    // STRICTLY inside A. FASE 1 evidence (ADR-0025 v5): in the
+    // grid-straddle case the four faces of B that are COPLANAR with
+    // faces of A (B's ±Y and ±Z, at y,z = ±1) each emitted a spurious
+    // cap equal to the coplanar overlap rectangle — the tolerance band
+    // {d <= kPlaneTol} kept them "inside" although they lie ON ∂A,
+    // never in A's interior. The parallel-plane rule (3 cases) skips
+    // them before clipping.
     for (const auto& face_B : B.solid.shell().faces()) {
         Polygon poly_B = extract_face_polygon(face_B, B.edges, B.vertices);
         if (poly_B.size() < 3) continue;
         math::Vec3f o_B, n_B;
         if (!get_face_plane(face_B, B.edges, B.vertices, o_B, n_B)) continue;
 
-        Polygon inside = clip_inside_3d(A, poly_B, &table);
+        // ADR-0025 v5: classify poly_B against every face plane of A
+        // that is PARALLEL to it (d is constant over the face, one
+        // value to classify).
+        bool skip_cap = false;
+        for (const auto& face_A : A.solid.shell().faces()) {
+            math::Vec3f o_A, n_A;
+            if (!get_face_plane(face_A, A.edges, A.vertices, o_A, n_A)) continue;
+            const auto cls = classify_parallel_plane(poly_B, n_B, o_A, n_A);
+            if (cls == ParallelPlaneClass::CoplanarBand) {
+                // Case 3: the face lies ON a face plane of A — it is on
+                // ∂A, never in A's interior. In exact geometry
+                // comp(H) ∩ subject = ∅; the tolerance band is what
+                // wrongly kept it. No cavity cap.
+                skip_cap = true;
+                break;
+            }
+            if (cls == ParallelPlaneClass::StrictlyOutside) {
+                // Case 1 (early exit): the face is entirely on the
+                // complement side of an A half-space, so it can never
+                // be inside A — no cap. (Equivalent to the sequential
+                // clip emptying it, but decided from one constant d.)
+                skip_cap = true;
+                break;
+            }
+            // Case 2 (StrictlyInside): the plane does not restrict the
+            // face — identity, continue with the remaining planes.
+            // NotParallel: the plane cuts the face; the sequential
+            // clip below handles it.
+        }
+        if (skip_cap) continue;
 
+        Polygon inside = clip_inside_3d(A, poly_B, &table);
         if (inside.size() < 3) {
             continue;
         }
+        // The part of B's face strictly inside A, re-oriented to point
+        // into the cavity (toward where B was removed).
         math::Vec3f inverted_normal = n_B * -1.0f;
-        if (polygons_coincident(poly_B, inside)) {
-            clipped_faces.push_back(
-                {std::make_shared<PlaneSurface>(inside[0], inverted_normal), inside});
-        } else {
-            clipped_faces.push_back(
-                {std::make_shared<PlaneSurface>(inside[0], inverted_normal), inside});
-        }
+        // The loop arrives wound CCW w.r.t. B's ORIGINAL outward normal
+        // (clip_inside_3d preserves the source face's winding). The cap
+        // is emitted with the INVERTED normal, so the loop must be
+        // reversed to stay CCW w.r.t. the face's own normal — otherwise
+        // the two faces sharing each cap edge traverse it in the SAME
+        // direction and is_closed_manifold's coedge-orientation XOR
+        // (invariant 2, ADR-0022 §5) fails.
+        std::reverse(inside.begin(), inside.end());
+        clipped_faces.push_back(
+            {std::make_shared<PlaneSurface>(inside[0], inverted_normal), inside});
     }
 
     if (clipped_faces.empty()) {
@@ -1354,6 +1533,23 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
 
     assemble_body(*result, clipped_faces, /*canonicalize=*/true);
     return result;
+}
+
+// Test-only entry point — see declaration in boolean.hpp (ADR-0025 v5
+// FASE 2). Exposes the internal polygon_subtract_3d slab decomposition
+// to the unit-test suite.
+std::vector<std::vector<math::Vec3f>> polygon_subtract_fragments_for_tests(
+    const std::vector<math::Vec3f>& subject,
+    const std::vector<math::Vec3f>& clip,
+    math::Vec3f plane_normal
+) {
+    const std::vector<Polygon> fragments = polygon_subtract_3d(subject, clip, plane_normal);
+    std::vector<std::vector<math::Vec3f>> out;
+    out.reserve(fragments.size());
+    for (const auto& f : fragments) {
+        out.emplace_back(f.begin(), f.end());
+    }
+    return out;
 }
 
 } // namespace CAD_0::brep

@@ -1,7 +1,7 @@
 # ADR-0025: Proper Greiner-Hormann with collinear edge handling
 
 ## Status
-Accepted (2026-10-14) — Phase D, step (c+ fix v3)
+Accepted (2026-10-14; v5 update 2026-10-15) — Phase D, step (c+ fix v5)
 
 ## Context
 
@@ -167,22 +167,99 @@ it. The root cause is dual-computation of the same geometric point by
 different FP paths. The fix is architectural: compute once, share
 everywhere. kWeldGrid stays at 1e-6.
 
-**Known limitation**: `bool_subtract` does not yet generate "cut faces"
-— the new faces created where B's clipping plane intersects A's
-interior (e.g. the face at x=0.3 when subtracting a shifted box).
-Part 1 discards A's faces that are entirely inside B. Part 2 adds B's
-faces that are inside A as caps with inverted normals. But the face
-at the cut plane is neither — it's a NEW face. Implementing cut-face
-generation is the next step (ADR-0025 v4 TODO).
+**Known limitation (resolved in v5)**: the original v3 note said
+`bool_subtract` did not generate "cut faces" — the cavity wall where B
+cuts into A. This is now handled: the cut face IS Part 2's cap (the
+part of B's face strictly inside A, with inverted normal), and the
+slab tests verify it (6 faces including the cap at x = -0.7).
 
 ### 7. What is explicitly NOT in this ADR
 
 - **Symbolic perturbation (SOS)** — too complex for MVP, on-boundary
   classification suffices for the test cases.
-- **Full edge subdivision for partial overlaps** — deferred.
+- **Full edge subdivision for partial overlaps** — the vertex-on-edge
+  (T-junction) case is now implemented in `assemble_body` (v5 §10);
+  subdivision of coplanar-overlapping FACES remains deferred.
 - **Non-convex polyhedra** — still requires general point-in-polyhedron
   (ray casting). Convexity constraint kept.
 - **Surface geometry derived from topology** — separate ADR.
+
+### 8. v5 — The parallel-plane rule (3 cases)
+
+**Problem (FASE 1 evidence — grid-straddle: A = [-1,1]³, B = [-0.7,1.3]×[-1,1]×[-1,1]).**
+`bool_subtract` Part 2 (cavity caps) emitted four spurious caps — one
+for each face of B COPLANAR with a face of A (B's ±Y and ±Z lie on
+y,z = ±1 exactly like A's). Each spurious cap was the coplanar overlap
+rectangle x ∈ [-0.7,1] on that plane: it re-attached the four vertices
+at x=1 that the subtraction should have removed (V=12 instead of 8,
+F=10 instead of 6, four edges with a single co-edge → non-manifold).
+`polygon_subtract_3d` was verified CORRECT by the same evidence: every
+lateral face of A produced exactly one outside fragment, and the
+slivers from coincident boundary edges collapse in the dedup pass.
+
+**Root cause.** The SH clip keeps `{d ≤ kPlaneTol}` (inside) and its
+complement keeps `{d ≥ -kPlaneTol}` (outside). With `kPlaneTol > 0` the
+two sets OVERLAP on the boundary band `|d| ≤ kPlaneTol`: **the tolerance
+makes comp(H) ∩ H ≠ ∅ on the boundary band**. A face of B lying exactly
+ON a face plane of A (d = 0 everywhere) is therefore classified
+"inside" by the clip — although in exact geometry it lies on ∂A and
+never in A's interior, so it can never bound the cavity.
+
+**Rule.** When a clip plane is PARALLEL to the (planar) subject's
+supporting plane, the signed distance d is CONSTANT over the subject —
+one value, one classification (`classify_parallel_plane`, outward-normal
+convention: d < 0 = inside the clip solid):
+
+1. `d > +kPlaneTol` — subject strictly on the complement side: it
+   misses the half-space entirely (for a cap generator: the face can
+   never be inside the other solid → skip, early exit).
+2. `d < -kPlaneTol` — subject strictly inside the half-space: the plane
+   does not restrict it — identity, continue.
+3. `|d| ≤ kPlaneTol` — coplanar band: the subject lies ON the boundary,
+   never strictly inside. In exact geometry `comp(Hᵢ) ∩ subject = ∅` →
+   skip as a piece generator.
+
+**Enforcement point.** `bool_subtract` Part 2, before clipping: any face
+of B coplanar with a face plane of A (case 3), or entirely outside an A
+half-space (case 1), is skipped as a cap generator. Part 1 needs no
+change — there the coplanar plane correctly leaves A's face
+unrestricted, and the overlap is removed by `polygon_subtract_3d`'s
+transversal edge planes.
+
+*Note*: v5 originally targeted `polygon_subtract_3d` itself; the FASE 1
+per-plane print showed the spurious rectangles are emitted by Part 2's
+cap loop — the 2D slab decomposition never sees a plane parallel to the
+subject. The rule is unchanged; its enforcement point follows the
+evidence.
+
+### 9. v5 — Cap loops are reversed along with their normals
+
+A cap is emitted with the INVERTED normal of B's face, but
+`clip_inside_3d` preserves the source face's winding (CCW w.r.t. B's
+ORIGINAL outward normal). Without reversal the cap's loop is CW w.r.t.
+its own normal, and the two faces sharing each cap edge traverse it in
+the SAME direction — `is_closed_manifold` invariant 2 (coedge-orientation
+XOR, ADR-0022 §5) fails. Part 2 now reverses the loop when it inverts
+the normal.
+
+### 10. v5 — T-junction edge subdivision in assemble_body
+
+The slab decomposition splits an L-shaped outside region into two
+rectangles whose shared boundary covers only PART of the neighbouring
+face's edge (a T-junction). Edges are keyed by vertex pairs, so the long
+edge and the short edges did not match: three distinct, geometrically
+overlapping edges each carried a single co-edge → non-manifold, χ = -4
+on the corner-cut test (A \ B, B = [0,2]³ shifted by (1,1,1)).
+
+`assemble_body` now welds all faces first, then splits every face edge
+at each already-welded vertex lying ON the open segment (within
+kWeldGrid of the supporting line, at least kWeldGrid from both endpoints
+along the edge, ordered deterministically by position — ties by vertex
+id). After the split, adjacent faces traverse matching sub-segments and
+every edge has exactly two co-edges. For inputs without T-junctions the
+pre-pass is a no-op — all previously passing exact-count tests are
+unchanged. Corner-cut test: χ = -4 → χ = 2 with measured counts
+V=17, E=27, F=12, closed manifold.
 
 ## Consequences
 
@@ -199,6 +276,19 @@ generation is the next step (ADR-0025 v4 TODO).
 - Tests are strengthened: `is_closed_manifold` and `χ == 2` are
   asserted on union/subtract results for overlapping, identical, and
   nested box cases.
+- **v5**: `classify_parallel_plane` (3 cases) gates Part 2 of
+  `bool_subtract`; coplanar B-faces no longer emit spurious caps.
+- **v5**: cap loops are reversed together with their inverted normals
+  (coedge-orientation XOR holds).
+- **v5**: `assemble_body` performs T-junction edge subdivision
+  (vertex-on-edge); exact-count assertions added for the corner-cut
+  (V=17/E=27/F=12), overlapping-slab, grid-straddle and slab tests,
+  plus a minimal `polygon_subtract_fragments_for_tests` regression:
+  exactly ONE outside fragment `[-1,-0.7]×[-1,1]`.
+- **v5 known limitation**: `bool_union` with PARTIALLY overlapping
+  coplanar faces still subtracts the overlap from both sides (the
+  overlap region belongs in the union boundary once). Same
+  classification, different action — deferred.
 
 ## References
 - ADR-0024 — boolean union/subtract (parent).
