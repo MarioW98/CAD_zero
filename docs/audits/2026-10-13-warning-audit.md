@@ -268,3 +268,10 @@ Regressione dedicata:
    diagnosi resta completa.
 3. Nessuna deroga futura: le tre vie vietate restano vietate
    (`-Wno-*` globali, pragma a tappeto, downgrade di -Werror).
+4. **Python floor: 3.10** (il `python3` di ubuntu-22.04 CI, già
+   dichiarato in `pyproject.toml` come `requires-python = ">=3.10"`):
+   nessuna sintassi/feature successiva a 3.10 nel codice Python del
+   repo. I backslash DENTRO le espressioni f-string richiedono 3.12
+   (PEP 701): l'ambiente di sviluppo (3.12) li accetta in silenzio, la
+   CI (3.10) li rifiuta all'import — precomputare fuori dall'f-string
+   (red run 38863633779). `match`/`case` (3.10) è lecito.

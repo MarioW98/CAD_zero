@@ -949,13 +949,21 @@ class MainWindow(QMainWindow):
             "faceted": "estrazione faceted (MC33)",
         }.get(rep["fit"], rep["fit"])
 
+        # Labels are precomputed OUTSIDE the f-string: a backslash
+        # inside an f-string expression (e.g. the '\u00ec' escape of
+        # the old inline conditional) is a syntax error on Python
+        # 3.10, the supported floor (CI). The file is UTF-8, so the
+        # plain literal is fine.
+        closed_label = "sì" if rep["closed"] else "NO"
+        loops_label = "sì" if rep["loops"] else "NO"
+
         text = (
             f"Corpo: \"{node.name}\" (id {node.id}, {node.kind})\n"
             f"Path: {fit_label}\n"
             f"V = {rep['V']}, E = {rep['E']}, F = {rep['F']}\n"
             f"\u03c7 = V - E + F = {rep['chi']}\n"
-            f"Closed (is_closed_manifold): {'s\u00ec' if rep['closed'] else 'NO'}\n"
-            f"Loops (loops_are_closed): {'s\u00ec' if rep['loops'] else 'NO'}\n"
+            f"Closed (is_closed_manifold): {closed_label}\n"
+            f"Loops (loops_are_closed): {loops_label}\n"
             f"Tempo di estrazione: {elapsed_ms:.1f} ms"
         )
         box = QMessageBox(
