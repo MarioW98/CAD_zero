@@ -16,6 +16,8 @@
 #include <cstdint>
 #include <stdexcept>
 
+#include "CAD_0/math/quat.hpp"
+
 using namespace CAD_0::bridge;
 using CAD_0::math::Vec3f;
 
@@ -31,6 +33,11 @@ TEST_CASE("Bridge: SDF sphere → B-Rep sphere (primitive fit)") {
     auto body = sdf_to_brep(sph, opts);
 
     REQUIRE(body != nullptr);
+    // Analytic seam wire (ADR-0023): a sphere is ONE face with a
+    // degenerate seam — 2 vertices, 1 edge (the pole-to-pole seam),
+    // 1 face. Pinned, not just face_count() > 0.
+    CHECK(body->vertex_count() == 2);
+    CHECK(body->edge_count() == 1);
     CHECK(body->face_count() == 1);
     CHECK(std::string(body->solid.shell().faces()[0].surface()->type_name()) == "sphere");
 }
@@ -54,6 +61,10 @@ TEST_CASE("Bridge: SDF cylinder → B-Rep cylinder (primitive fit)") {
     auto body = sdf_to_brep(cyl, opts);
 
     REQUIRE(body != nullptr);
+    // Analytic seam wires (ADR-0023): lateral face + 2 caps —
+    // 4 vertices, 5 edges, 3 faces. Pinned.
+    CHECK(body->vertex_count() == 4);
+    CHECK(body->edge_count() == 5);
     CHECK(body->face_count() == 3);
     CHECK(std::string(body->solid.shell().faces()[0].surface()->type_name()) == "cylinder");
 }
@@ -66,8 +77,15 @@ TEST_CASE("Bridge: SDF sphere → B-Rep faceted (no primitive fit)") {
     auto body = sdf_to_brep(sph, opts);
 
     REQUIRE(body != nullptr);
-    CHECK(body->face_count() > 0);
-    CHECK(body->vertex_count() > 0);
+    // Same configuration as contract test T2 (sphere r=1 centered,
+    // res=8): pinned counts measured once and frozen (ADR-0025 v5),
+    // plus the grid-independent contract — not face_count() > 0.
+    CHECK(body->vertex_count() == 270);
+    CHECK(body->edge_count() == 804);
+    CHECK(body->face_count() == 536);
+    CHECK(b::euler_characteristic(*body) == 2);
+    CHECK(b::is_closed_manifold(*body));
+    CHECK(b::loops_are_closed(*body));
     for (const auto& face : body->solid.shell().faces()) {
         CHECK(std::string(face.surface()->type_name()) == "plane");
     }
@@ -84,7 +102,20 @@ TEST_CASE("Bridge: SDF smooth_union → B-Rep faceted") {
     auto body = sdf_to_brep(u, opts);
 
     REQUIRE(body != nullptr);
-    CHECK(body->face_count() > 0);
+    // Pinned (two unit spheres, centers (0,0,0)/(2,0,0) — exactly
+    // tangent — k=0.5, res=8), measured once on the FIXED SmoothMinSDF
+    // (2026-10-16 clamp-sign fix) and frozen. Counts satisfy the
+    // closed-mesh identities (E = 3F/2, V = F/2 + 2). Note: with the
+    // pre-fix operator this configuration extracted a different (much
+    // coarser) shape — the pin also guards the operator through the
+    // bridge. The primitive-fit dispatch falls through to faceted for
+    // an smin root (see T10).
+    CHECK(body->vertex_count() == 350);
+    CHECK(body->edge_count() == 1044);
+    CHECK(body->face_count() == 696);
+    CHECK(b::euler_characteristic(*body) == 2);
+    CHECK(b::is_closed_manifold(*body));
+    CHECK(b::loops_are_closed(*body));
     for (const auto& face : body->solid.shell().faces()) {
         CHECK(std::string(face.surface()->type_name()) == "plane");
     }
@@ -95,8 +126,14 @@ TEST_CASE("Bridge: B-Rep sphere → SDF sphere") {
     auto sdf_body = brep_to_sdf(*body);
 
     REQUIRE(sdf_body != nullptr);
-    CHECK(sdf_body->value(Vec3f{0, 0, 0}) == doctest::Approx(-2.0f).epsilon(0.01f));
-    CHECK(sdf_body->value(Vec3f{3, 0, 0}) == doctest::Approx(1.0f).epsilon(0.01f));
+    // brep_to_sdf detects the analytic sphere face and returns the
+    // EXACT primitive SDF (not a mesh approximation) — so the values
+    // are hand-derived and bit-exact: f(p) = |p| - 2. sqrt of exact
+    // squares is exact here (0, 9, and the 1.9 roundtrip), so == is
+    // sound, no epsilon.
+    CHECK(sdf_body->value(Vec3f{0, 0, 0}) == -2.0f);
+    CHECK(sdf_body->value(Vec3f{3, 0, 0}) == 1.0f);
+    CHECK(sdf_body->value(Vec3f{0, 1.9f, 0}) == -(2.0f - 1.9f));
 }
 
 TEST_CASE("Bridge: B-Rep box → SDF box") {
@@ -104,8 +141,14 @@ TEST_CASE("Bridge: B-Rep box → SDF box") {
     auto sdf_body = brep_to_sdf(*body);
 
     REQUIRE(sdf_body != nullptr);
-    CHECK(sdf_body->value(Vec3f{0, 0, 0}) < 0.0f);
-    CHECK(sdf_body->value(Vec3f{5, 0, 0}) > 0.0f);
+    // Box detection (6 plane faces, 8V/12E) returns the EXACT box
+    // primitive SDF with half-extents from the body bounds — the
+    // values are hand-derived and bit-exact (no sqrt on these paths):
+    // center → -1 (nearest wall), (5,0,0) → +4, the (0.5,0.5,0.5)
+    // corner direction → -0.5 (nearest wall at distance 0.5).
+    CHECK(sdf_body->value(Vec3f{0, 0, 0}) == -1.0f);
+    CHECK(sdf_body->value(Vec3f{5, 0, 0}) == 4.0f);
+    CHECK(sdf_body->value(Vec3f{0.5f, 0.5f, 0.5f}) == -0.5f);
 }
 
 TEST_CASE("Bridge: B-Rep cylinder → SDF cylinder") {
@@ -113,8 +156,17 @@ TEST_CASE("Bridge: B-Rep cylinder → SDF cylinder") {
     auto sdf_body = brep_to_sdf(*body);
 
     REQUIRE(sdf_body != nullptr);
-    CHECK(sdf_body->value(Vec3f{0, 0, 0}) < 0.0f);
-    CHECK(sdf_body->value(Vec3f{5, 0, 0}) > 0.0f);
+    // Cylinder detection (3 faces: cylinder + 2 caps) returns the
+    // EXACT CylinderSDF (radius from the face, height from the
+    // surface). Hand-derived, bit-exact — note the axis is Y and the
+    // distance is 2D on (rho, |y|):
+    //   center → max(-1 radial, -2 axial) = -1
+    //   (5,0,0) → rho - r = 4 (outside, axial inside → no sqrt mixing)
+    //   (0,0,1.9) → rho = sqrt(1.9^2) = 1.9 (roundtrip), radial
+    //     outside distance 1.9 - 1
+    CHECK(sdf_body->value(Vec3f{0, 0, 0}) == -1.0f);
+    CHECK(sdf_body->value(Vec3f{5, 0, 0}) == 4.0f);
+    CHECK(sdf_body->value(Vec3f{0, 0, 1.9f}) == 1.9f - 1.0f);
 }
 
 TEST_CASE("Bridge: round-trip sphere SDF → B-Rep → SDF") {
@@ -123,8 +175,11 @@ TEST_CASE("Bridge: round-trip sphere SDF → B-Rep → SDF") {
     auto roundtrip = brep_to_sdf(*body);
 
     REQUIRE(roundtrip != nullptr);
-    CHECK(roundtrip->value(Vec3f{0, 0, 0}) == doctest::Approx(-2.0f).epsilon(0.01f));
-    CHECK(roundtrip->value(Vec3f{3, 0, 0}) == doctest::Approx(1.0f).epsilon(0.01f));
+    // Default options fit the primitive first, so the round-trip is
+    // analytic end-to-end: EXACT values, hand-derived (f = |p| - 2).
+    CHECK(roundtrip->value(Vec3f{0, 0, 0}) == -2.0f);
+    CHECK(roundtrip->value(Vec3f{3, 0, 0}) == 1.0f);
+    CHECK(roundtrip->value(Vec3f{0, 1.9f, 0}) == -(2.0f - 1.9f));
 }
 
 TEST_CASE("Bridge: round-trip box SDF → B-Rep → SDF") {
@@ -133,8 +188,10 @@ TEST_CASE("Bridge: round-trip box SDF → B-Rep → SDF") {
     auto roundtrip = brep_to_sdf(*body);
 
     REQUIRE(roundtrip != nullptr);
-    CHECK(roundtrip->value(Vec3f{0, 0, 0}) < 0.0f);
-    CHECK(roundtrip->value(Vec3f{5, 0, 0}) > 0.0f);
+    // Analytic round-trip through the box primitive fit: EXACT values,
+    // hand-derived (center → -1, (5,0,0) → +4).
+    CHECK(roundtrip->value(Vec3f{0, 0, 0}) == -1.0f);
+    CHECK(roundtrip->value(Vec3f{5, 0, 0}) == 4.0f);
 }
 
 TEST_CASE("Bridge: faceted B-Rep → SDF mesh") {
@@ -148,13 +205,47 @@ TEST_CASE("Bridge: faceted B-Rep → SDF mesh") {
     auto body = sdf_to_brep(u, opts);
 
     REQUIRE(body != nullptr);
-    CHECK(body->face_count() > 0);
+    // The extraction itself is the pinned contract of the smooth-union
+    // legacy test above (350/1044/696, measured on the fixed smin).
+    CHECK(body->vertex_count() == 350);
+    CHECK(body->edge_count() == 1044);
+    CHECK(body->face_count() == 696);
 
     auto sdf_body = brep_to_sdf(*body);
     REQUIRE(sdf_body != nullptr);
 
+    // No primitive matches a faceted body, so brep_to_sdf falls back
+    // to tessellate_body + MeshSDF. WHY NOT EXACT PINS HERE (documented
+    // per the sweep's rule): the fallback tessellates EVERY planar face
+    // over a default UV domain, which INFLATES the mesh far beyond the
+    // body (measured: 356,352 triangles, bounds ~ ±10-15 on a body of
+    // extent ~4) and makes the majority-vote sign unreliable at
+    // moderate outside distances (e.g. (5,0,0) reads as inside). That
+    // is pre-existing behavior of the documented-stub inverse bridge —
+    // not something this sweep changes. The strongest HONEST assertions
+    // are therefore the ones below: deep-inside and waist signs (the
+    // majority vote is solidly correct there) and the waist depth.
+    //
+    // Waist (1,0,0): the analytic smin dip at the tangent point is
+    // k/16 = 0.03125 (see the SmoothMin regression tests); the faceted
+    // res-8 surface + tessellation perturb it, so a 50% band around
+    // k/16 is the honest coherence check (measured: -0.0348413).
+    const float k = 0.5f;
+    const float waist = sdf_body->value(Vec3f{1, 0, 0});
+    CHECK(waist < 0.0f);
+    CHECK(waist == doctest::Approx(-k / 16.0f).epsilon(0.5f));
+    // Deep inside (center of sphere A): solidly negative.
+    CHECK(sdf_body->value(Vec3f{0, 0, 0}) < 0.0f);
+    // The mesh must cover the source body ([-1, 3] x [-1, 1] x [-1, 1]
+    // for the two unit spheres at distance 2).
     auto bnds = sdf_body->bounds();
     CHECK(!bnds.empty());
+    CHECK(bnds.min.x <= -1.0f);
+    CHECK(bnds.max.x >= 3.0f);
+    CHECK(bnds.min.y <= -1.0f);
+    CHECK(bnds.max.y >= 1.0f);
+    CHECK(bnds.min.z <= -1.0f);
+    CHECK(bnds.max.z >= 1.0f);
 }
 
 // ---------------------------------------------------------------------------
@@ -410,6 +501,41 @@ TEST_CASE("Bridge T8: off-grid smooth-union - invariants survive generic placeme
     CHECK(b::loops_are_closed(*body));
 }
 
+// T8b — ROTATED instance of the T7 body. Translation alone cannot
+// prove grid-independence of the contracts: the padded grid translates
+// rigidly with the body, so the surface keeps the same alignment
+// against the lattice (T3/T8 pinned that invariance). A GENERIC
+// ROTATION is the honest probe: RotateSDF::bounds() returns the corner
+// hull of the rotated child AABB — a different (larger) box — so the
+// same resolution now samples a different lattice against the same
+// shape. Counts are therefore DIFFERENT from T7's (pinned below,
+// measured once like every other pin), while the invariants must not
+// move. The rotation (axis (1,2,3) normalized, 0.6 rad) is generic:
+// no symmetry of the two-sphere body survives it relative to the grid.
+TEST_CASE("Bridge T8b: rotated smooth-union - invariants survive generic orientation") {
+    auto u = smooth_union_two_unit_spheres({0, 0, 0}, {1.2f, 0, 0});
+    const CAD_0::math::Quatf q =
+        CAD_0::math::Quatf::from_axis_angle(Vec3f{1, 2, 3}.normalized(), 0.6f);
+    auto r = s::sdf_rotate(std::move(u), q);
+    SdfToBrepOptions opts;
+    opts.fit_primitives = false;
+    opts.march_resolution = 16;
+    auto body = sdf_to_brep_faceted(r, opts);
+
+    REQUIRE(body != nullptr);
+    // Pinned (T7 body rotated by q, res=16): measured once, frozen.
+    // Deliberately != T7's 1310/3924/2616: the counts are orientation
+    // dependent (the rotated AABB is larger, so res=16 cells are
+    // coarser relative to the shape) — the invariants are not.
+    CHECK(body->vertex_count() == 574);
+    CHECK(body->edge_count() == 1716);
+    CHECK(body->face_count() == 1144);
+    CHECK(b::euler_characteristic(*body) == 2);
+    CHECK(b::is_closed_manifold(*body));
+    CHECK(b::loops_are_closed(*body));
+    // Closed-mesh identities hold for the pin (E = 3F/2, V = F/2 + 2).
+}
+
 // T9 — res=32: different pinned counts, same contracts — V/E/F are
 // grid-dependent, the invariants are not.
 TEST_CASE("Bridge T9: smooth-union res=32 - grid-dependent counts, invariant contracts") {
@@ -477,5 +603,64 @@ TEST_CASE("Bridge T11: report min_abs_field - frozen P2 margin, path-independent
         CHECK(rep.fit == "sphere");
         // The stat measures the grid, not the winning path.
         CHECK(rep.min_abs_field == 0.00393593311f);
+    }
+}
+
+// T12 — grid-mirror coherence (Group C, consolidation sweep): the
+// report's min_abs_field is computed by grid_min_abs_field() in
+// sdf_to_brep.cpp, which MIRRORS the marching-cubes auto-bounds layout
+// of core/sdf/src/mesh_extract.cpp (bounds() + 1% pad, points at
+// min + extent * (i / res)). The mirror is deliberately not shared
+// with mesh_extract (two copies cross-check); this test adds the THIRD
+// side of the triangle — an independent scan of the mesh_extract
+// layout must reproduce the bridge's number BIT-EXACTLY. If either
+// copy drifts (different pad, different point formula, different
+// bounds), the equality breaks and forces a conscious sync.
+TEST_CASE("Bridge T12: report min_abs_field matches the mesh_extract grid layout") {
+    const auto scan = [](const s::SDFBody& sdf, std::uint32_t res) {
+        // Replicates mesh_extract.cpp's auto-bounds grid EXACTLY (the
+        // same expression, the same order): bounds() + 1% pad, then
+        // min + extent * (i / res) per axis.
+        CAD_0::math::Bboxf bx = sdf.bounds();
+        REQUIRE(!bx.empty());
+        const CAD_0::math::Vec3f pad = bx.extent() * 0.01f;
+        bx.min = bx.min - pad;
+        bx.max = bx.max + pad;
+        const auto ext = bx.extent();
+
+        float min_abs_f = 1e30f;
+        for (std::uint32_t zi = 0; zi <= res; ++zi) {
+            for (std::uint32_t yi = 0; yi <= res; ++yi) {
+                for (std::uint32_t xi = 0; xi <= res; ++xi) {
+                    const float fx = bx.min.x + ext.x * (static_cast<float>(xi) / static_cast<float>(res));
+                    const float fy = bx.min.y + ext.y * (static_cast<float>(yi) / static_cast<float>(res));
+                    const float fz = bx.min.z + ext.z * (static_cast<float>(zi) / static_cast<float>(res));
+                    min_abs_f = std::min(min_abs_f, std::abs(sdf.value({fx, fy, fz})));
+                }
+            }
+        }
+        return min_abs_f;
+    };
+
+    {
+        // The T1/T11 sphere: the independent scan must reproduce BOTH
+        // the report field and the frozen T11 pin.
+        auto sph = s::make_sphere(1.0f);
+        SdfToBrepOptions opts;
+        opts.fit_primitives = false;
+        opts.march_resolution = 16;
+        auto rep = sdf_to_brep_report(sph, opts);
+        CHECK(scan(sph, 16) == rep.min_abs_field);       // bit-identical
+        CHECK(rep.min_abs_field == 0.00393593311f);      // the T11 pin
+    }
+    {
+        // A composite body (bounds via union of children): the same
+        // coherence on a different bounds() path.
+        auto u = smooth_union_two_unit_spheres({0, 0, 0}, {1.2f, 0, 0});
+        SdfToBrepOptions opts;
+        opts.fit_primitives = false;
+        opts.march_resolution = 16;
+        auto rep = sdf_to_brep_report(u, opts);
+        CHECK(scan(u, 16) == rep.min_abs_field);
     }
 }

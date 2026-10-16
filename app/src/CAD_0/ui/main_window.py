@@ -101,6 +101,14 @@ class MainWindow(QMainWindow):
         # (add/remove/param/visibility/clear) fires the C++ callback and
         # flags the project as modified. The callback is detached in
         # closeEvent() to break the Python↔C++ reference cycle.
+        # KNOWN RESIDUAL (2026-10-16, verified by A/B experiment — see the
+        # teardown note in bindings/python/tests/test_ui_navigation.py):
+        # after a viewport click fires a change notification, the clicked
+        # window's Scene (sometimes with its CommandStack) outlives
+        # interpreter shutdown via a C++-side reference invisible to
+        # Python's GC. Fixing it needs binding-level work (weak callback
+        # storage or GC traversal) — deliberately out of the
+        # consolidation sweep's scope.
         if self._has_kernel:
             self._scene.set_change_callback(self._on_scene_change)
 
@@ -272,7 +280,7 @@ class MainWindow(QMainWindow):
         # report on the current scene without touching it — no authoring,
         # no scene/document mutation, nothing on the undo stack.
         debug_menu = self.menuBar().addMenu("&Debug")
-        sdf_to_brep_action = QAction("Estrai SDF → B-Rep (report topologia)", self)
+        sdf_to_brep_action = QAction("Extract SDF → B-Rep (topology report)", self)
         sdf_to_brep_action.triggered.connect(self.on_debug_sdf_to_brep_report)
         debug_menu.addAction(sdf_to_brep_action)
 
@@ -867,19 +875,27 @@ class MainWindow(QMainWindow):
         self._refresh_viewport()
 
     def on_about(self) -> None:
+        # License line: backed by the Apache-2.0 LICENSE at the repo
+        # root (see docs/audits/2026-10-16-third-party-license-audit.md
+        # for the dependency inventory). State, not history — no phase
+        # narration here.
         QMessageBox.about(
             self,
             "About CAD_0",
             "<h3>CAD_0</h3>"
-            "<p>Dual-representation CAD kernel — native SDF + B-Rep.</p>"
-            "<p>Phase C+ — working viewport with real mesh rendering.</p>"
-            "<p>License: Apache-2.0</p>"
+            "<p>Dual-representation CAD kernel — native SDF + B-Rep, "
+            "with an SDF → B-Rep extraction bridge and boolean "
+            "operations on the B-Rep side.</p>"
+            "<p>PySide6 desktop app: parametric creation, undo/redo, "
+            "viewport picking, STL/OBJ import/export.</p>"
+            "<p>License: Apache-2.0 — see LICENSE in the repository "
+            "root.</p>"
         )
 
     # ----- Debug menu (read-only inspection) -----
 
     def on_debug_sdf_to_brep_report(self) -> None:
-        """Debug → Estrai SDF → B-Rep: topology report (ADR-0026 consumer).
+        """Debug → Extract SDF → B-Rep: topology report (ADR-0026 consumer).
 
         Runs the SDF → B-Rep bridge on the selected SDF body (or the
         scene's only body when nothing is selected) and reports V/E/F,
@@ -904,16 +920,16 @@ class MainWindow(QMainWindow):
         if node is None:
             QMessageBox.warning(
                 self, "SDF → B-Rep",
-                "Nessun corpo SDF selezionato.\n"
-                "Seleziona un corpo nell'albero delle feature (o nel "
-                "viewport); se la scena contiene un solo corpo, viene "
-                "usato automaticamente.")
+                "No SDF body selected.\n"
+                "Select a body in the feature tree (or in the viewport); "
+                "if the scene contains exactly one body, it is used "
+                "automatically.")
             return
         if node.kind != "sdf":
             QMessageBox.warning(
                 self, "SDF → B-Rep",
-                f"Il nodo \"{node.name}\" è di tipo mesh, non SDF: non c'è "
-                "nessun campo da convertire (ADR-0002).")
+                f"The node \"{node.name}\" is a mesh node, not an SDF node: "
+                "there is no field to convert (ADR-0002).")
             return
 
         # The bridge submodule: re-exported by the package __init__; the
@@ -943,10 +959,10 @@ class MainWindow(QMainWindow):
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
         fit_label = {
-            "sphere": "primitiva esatta (sfera)",
-            "box": "primitiva esatta (box)",
-            "cylinder": "primitiva esatta (cilindro)",
-            "faceted": "estrazione faceted (MC33)",
+            "sphere": "exact primitive (sphere)",
+            "box": "exact primitive (box)",
+            "cylinder": "exact primitive (cylinder)",
+            "faceted": "faceted extraction (MC33)",
         }.get(rep["fit"], rep["fit"])
 
         # Labels are precomputed OUTSIDE the f-string: a backslash
@@ -954,29 +970,29 @@ class MainWindow(QMainWindow):
         # the old inline conditional) is a syntax error on Python
         # 3.10, the supported floor (CI). The file is UTF-8, so the
         # plain literal is fine.
-        closed_label = "sì" if rep["closed"] else "NO"
-        loops_label = "sì" if rep["loops"] else "NO"
+        closed_label = "yes" if rep["closed"] else "NO"
+        loops_label = "yes" if rep["loops"] else "NO"
 
         # min |f| over the sampled grid (ADR-0026 Consequences
         # left-over, resolved as a report field): the P2 margin — how
         # far the closest grid sample sits from the surface. 0 would
-        # mean an on-grid zero (the faceted path rejects it). Diagnostica,
-        # non contratto: mostrata per entrambi i path.
+        # mean an on-grid zero (the faceted path rejects it). A
+        # diagnostic, not a contract: shown for both paths.
         min_abs_f = rep["min_abs_field"]
 
         text = (
-            f"Corpo: \"{node.name}\" (id {node.id}, {node.kind})\n"
+            f"Body: \"{node.name}\" (id {node.id}, {node.kind})\n"
             f"Path: {fit_label}\n"
             f"V = {rep['V']}, E = {rep['E']}, F = {rep['F']}\n"
             f"\u03c7 = V - E + F = {rep['chi']}\n"
             f"Closed (is_closed_manifold): {closed_label}\n"
             f"Loops (loops_are_closed): {loops_label}\n"
-            f"min |f| su griglia (margine P2): {min_abs_f:.6g}\n"
-            f"Tempo di estrazione: {elapsed_ms:.1f} ms"
+            f"min |f| on grid (P2 margin): {min_abs_f:.6g}\n"
+            f"Extraction time: {elapsed_ms:.1f} ms"
         )
         box = QMessageBox(
             QMessageBox.Icon.Information,
-            "SDF → B-Rep — report topologia",
+            "SDF → B-Rep — topology report",
             text,
             QMessageBox.StandardButton.Ok,
             self,

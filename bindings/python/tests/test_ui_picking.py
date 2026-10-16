@@ -29,6 +29,8 @@ Three groups of tests:
 
 from __future__ import annotations
 
+import gc
+
 import pytest
 
 _ROOT = __import__("pathlib").Path(__file__).resolve().parents[3]
@@ -60,7 +62,14 @@ def main_window(monkeypatch):
     yield window
     window.close()
     window.deleteLater()
+    # DeferredDelete flush: without it the C++ QWidget survives shutdown
+    # holding the Python-wrapped Scene/CommandStack (nanobind "leaked
+    # instances" report) - see test_ui_navigation.py for the full note.
+    from PySide6.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     app.processEvents()
+    del window
+    gc.collect()
 
 
 def _scene_probe(w):
@@ -362,6 +371,9 @@ def gl_bridge(monkeypatch):
     yield wrapper, gl, received
     gl.deleteLater()
     wrapper.deleteLater()
+    # DeferredDelete flush - see test_ui_navigation.py for the full note.
+    from PySide6.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     app.processEvents()
 
 

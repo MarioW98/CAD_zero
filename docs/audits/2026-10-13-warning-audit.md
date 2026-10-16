@@ -275,3 +275,11 @@ Regressione dedicata:
    (PEP 701): l'ambiente di sviluppo (3.12) li accetta in silenzio, la
    CI (3.10) li rifiuta all'import — precomputare fuori dall'f-string
    (red run 38863633779). `match`/`case` (3.10) è lecito.
+   **Checker versionato**: `scripts/check_fstring_backslashes.py`
+   (tokenizer PEP 701, richiede 3.12+ per i token FSTRING_*; su
+   interpreti minori rifiuta di girare invece di scansionare nulla).
+   Si esegue in locale pre-push (`python3 scripts/
+   check_fstring_backslashes.py`, di default tutti i .py tracciati):
+   è il feedback veloce sul dev box — il gate autoritativo resta
+   l'import 3.10 della CI, che il checker non sostituisce (su 3.10 la
+   tokenizzazione interna delle f-string non è osservabile).

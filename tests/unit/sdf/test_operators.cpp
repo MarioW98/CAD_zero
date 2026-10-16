@@ -76,6 +76,97 @@ TEST_CASE("SmoothMin: k>0 produces smoother blend") {
     CHECK(v_smooth <= v_hard + 1e-5f);
 }
 
+// ===========================================================================
+// SmoothMin k>0 regression (added 2026-10-16, after the clamp-sign bug)
+//
+// The bug: for k>0 the clamp argument had the sign flipped, so the blend
+// followed the LARGER child (a smooth MAX — an inflated intersection)
+// instead of the smaller (min = union). It survived the whole suite
+// because the tests above sample only the SYMMETRIC midpoint (a == b),
+// where max and min coincide. The regressions below pin the ASYMMETRIC
+// regions, where the two operators differ. A regression of an operator
+// belongs to the operator's suite — the bridge tests (T7-T10) that
+// caught the bug originally only see it through extraction counts.
+//
+// Configuration: two unit spheres, centers (0,0,0) and (1.25, 0, 0),
+// k = 0.4. Every constant is exact in binary floating point, so the
+// expected values are hand-derived and bit-exact where claimed.
+// ===========================================================================
+
+TEST_CASE("SmoothMin regression: clamped regions follow the SMALLER child (a != b)") {
+    // Center of A: a = -1, b = |1.25| - 1 = 0.25 → b - a = 1.25 > k →
+    //   h = 0 → v = a + diff·0 - 0 = a, BIT-EXACT.
+    // Center of B: a = 0.25, b = -1 → a - b = 1.25 > k →
+    //   h = 1 → v = a + diff·1 - 0 = b, BIT-EXACT.
+    // Under the bug both returned the LARGER child (+0.25 — the center
+    // of a sphere evaluated OUTSIDE its own smooth union).
+    auto smin = sdf_smooth_union(
+        make_sphere(1.0f),
+        sdf_translate(make_sphere(1.0f), {1.25f, 0.0f, 0.0f}), 0.4f);
+
+    CHECK(smin.value({0.0f, 0.0f, 0.0f}) == -1.0f);
+    CHECK(smin.value({1.25f, 0.0f, 0.0f}) == -1.0f);
+}
+
+TEST_CASE("SmoothMin regression: symmetric waist blends to a - k/16") {
+    // Midpoint (0.625, 0, 0): a = b = -0.375 exactly → h = 1/2 and
+    //   v = a - k·h·(1-h)/4 = a - k/16 = -0.375 - 0.025 = -0.4
+    // (hand-derived; the only float noise is k = fl(0.4), ~1e-8
+    // relative — hence the tight Approx instead of ==).
+    auto smin = sdf_smooth_union(
+        make_sphere(1.0f),
+        sdf_translate(make_sphere(1.0f), {1.25f, 0.0f, 0.0f}), 0.4f);
+
+    CHECK(smin.value({0.625f, 0.0f, 0.0f}) == doctest::Approx(-0.4f).epsilon(1e-6f));
+}
+
+TEST_CASE("SmoothMin regression: asymmetric blend point vs hand-derived value") {
+    // p = (0.5, 0, 0): a = -0.5, b = -0.25 (both exact), diff = 0.25 <
+    // k → blend region. h = 0.5 - 0.5·(0.25/0.4) = 0.1875. Hand-derived:
+    //   v = a + diff·h - k·h·(1-h)/4
+    //     = -0.5 + 0.25·0.1875 - 0.4·0.1875·0.8125/4
+    //     = -0.468359375
+    // (exact in the reals; fl(0.4) adds ~1e-8 relative noise).
+    auto smin = sdf_smooth_union(
+        make_sphere(1.0f),
+        sdf_translate(make_sphere(1.0f), {1.25f, 0.0f, 0.0f}), 0.4f);
+
+    CHECK(smin.value({0.5f, 0.0f, 0.0f}) == doctest::Approx(-0.468359375f).epsilon(1e-6f));
+}
+
+TEST_CASE("SmoothMin regression: analytic gradient matches FD in the asymmetric blend band") {
+    // The sign fix also re-derived the chain-rule coefficient
+    // (5/8 → 3/8)·(2h-1). A wrong coefficient produces a DIRECTION error
+    // of order 0.25·|grad_b - grad_a| ≈ 0.3 — three orders above FD
+    // noise. Central differences of value() must therefore match the
+    // analytic sample().gradient at ASYMMETRIC points of the blend band
+    // (the symmetric waist has 2h-1 = 0 and cannot see the coefficient).
+    auto smin = sdf_smooth_union(
+        make_sphere(1.0f),
+        sdf_translate(make_sphere(1.0f), {1.25f, 0.0f, 0.0f}), 0.4f);
+
+    const float h = 1e-3f;
+    const Vec3f pts[] = {
+        {0.45f, 0.0f, 0.0f}, {0.50f, 0.0f, 0.0f}, {0.55f, 0.0f, 0.0f},
+        {0.60f, 0.0f, 0.0f}, {0.65f, 0.0f, 0.0f}, {0.70f, 0.0f, 0.0f},
+        {0.75f, 0.0f, 0.0f}, {0.80f, 0.0f, 0.0f}, {0.55f, 0.10f, 0.0f},
+        {0.65f, -0.10f, 0.0f}, {0.60f, 0.0f, 0.15f}, {0.50f, 0.20f, -0.10f},
+    };
+    for (const auto& p : pts) {
+        const auto s = smin.sample(p);
+        const Vec3f fd{
+            smin.value(p + Vec3f{ h, 0, 0}) - smin.value(p + Vec3f{-h, 0, 0}),
+            smin.value(p + Vec3f{0,  h, 0}) - smin.value(p + Vec3f{0, -h, 0}),
+            smin.value(p + Vec3f{0, 0,  h}) - smin.value(p + Vec3f{0, 0, -h}),
+        };
+        const Vec3f fd_grad = fd * (0.5f / h);
+        const Vec3f err = s.gradient - fd_grad;
+        INFO("p =", p.x, p.y, p.z, " analytic:", s.gradient.x, s.gradient.y,
+             s.gradient.z, " fd:", fd_grad.x, fd_grad.y, fd_grad.z);
+        CHECK(err.length() < 1e-3f);
+    }
+}
+
 TEST_CASE("Operators: lipschitz is composed correctly") {
     auto a = make_sphere(1.0f);
     auto b = make_sphere(1.0f);

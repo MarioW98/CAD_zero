@@ -25,6 +25,7 @@ reason; CODESPACES.md documents how to run it with software GL.
 from __future__ import annotations
 
 import ast
+import gc
 from pathlib import Path
 
 import pytest
@@ -112,9 +113,36 @@ def main_window(monkeypatch):
     window = MainWindow()
     window._current_path = None
     yield window
+    # Teardown, and why it looks heavier than close()+deleteLater()
+    # alone (verified 2026-10-16, consolidation sweep): offscreen, a
+    # bare processEvents() does NOT flush Qt's deferred deletes, so the
+    # C++ QWidget survived past interpreter shutdown holding the
+    # Python-wrapped Scene and CommandStack — exactly the instances
+    # nanobind's shutdown report listed as "leaked". The bindings
+    # themselves release cleanly (del + gc is enough without Qt in the
+    # picture); the explicit sendPostedEvents(DeferredDelete) flush is
+    # what actually destroys the window here.
+    #
+    # RESIDUAL, known and NOT fixed here (binding-level work, out of
+    # the sweep's scope): windows whose viewport got CLICKED still leak
+    # their Scene at shutdown — and, depending on the click/selection
+    # pattern, the window's CommandStack too (see test_ui_picking.py,
+    # whose clicked windows leak the Scene+CommandStack pair). Verified
+    # by A/B experiment: neutralizing Scene.set_change_callback
+    # (main_window.py, called in __init__) before construction makes
+    # the click leak disappear; gc.get_objects() sees no Scene alive, so
+    # the holder is a C++ reference invisible to Python's GC (the
+    # stored Python change callback, retained after the click fires a
+    # change notification). A proper fix needs the binding to store
+    # the callback weakly or register GC traversal — deferred,
+    # documented here and reported.
+    from PySide6.QtCore import QCoreApplication, QEvent
     window.close()
     window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     app.processEvents()
+    del window
+    gc.collect()
 
 
 def _require_gl_window(w):
@@ -299,4 +327,10 @@ def test_fallback_path_usable_without_exceptions(main_window, monkeypatch):
 
     w.close()
     w.deleteLater()
+    # Same deferred-delete flush as the main_window fixture teardown —
+    # see the comment there for why processEvents() alone is not enough.
+    from PySide6.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     app.processEvents()
+    del w
+    gc.collect()

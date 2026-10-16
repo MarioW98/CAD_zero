@@ -16,6 +16,7 @@ FASE 3 of the STL/OBJ import feature. Two layers:
 
 from __future__ import annotations
 
+import gc
 import tempfile
 from pathlib import Path
 
@@ -89,7 +90,14 @@ def main_window(monkeypatch):
     yield window
     window.close()
     window.deleteLater()
+    # DeferredDelete flush: without it the C++ QWidget survives shutdown
+    # holding the Python-wrapped Scene/CommandStack (nanobind "leaked
+    # instances" report) - see test_ui_navigation.py for the full note.
+    from PySide6.QtCore import QCoreApplication, QEvent
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     app.processEvents()
+    del window
+    gc.collect()
 
 
 def _write_stl(tmp: Path) -> Path:
