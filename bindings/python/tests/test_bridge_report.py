@@ -1,7 +1,7 @@
 """SDF → B-Rep bridge (ADR-0026) — Python binding tests.
 
 Covers the BINDING layer only; the C++ conversion contract (pinned
-counts, T1-T6) lives in tests/unit/bridge/test_bridge.cpp. What these
+counts, T1-T11) lives in tests/unit/bridge/test_bridge.cpp. What these
 tests pin is what the binding is responsible for:
 
   * the report's grid-INDEPENDENT invariants cross the binding intact:
@@ -9,6 +9,9 @@ tests pin is what the binding is responsible for:
     on the primitive path (sphere/box/cylinder fit) and on the faceted
     path (fit_primitives=False), including an off-grid translated
     sphere (ADR-0026 input contract P2 neighborhood);
+  * min_abs_field — the machine-readable P2 margin (ADR-0026
+    Consequences left-over, resolved as a report field): frozen for
+    the pinned sphere grid and path-independent;
   * the faceted numbers are structurally coherent (closed-triangle-mesh
     identities E = 3F/2, V = F/2 + 2) — the counts themselves are the
     C++ suite's contract (ADR-0026 D2: V/E/F depend on the grid);
@@ -129,6 +132,27 @@ def test_faceted_returns_opaque_python_owned_handle():
     # reference destroys it, nothing dangles, nothing leaks.
     del body
     gc.collect()
+
+
+def test_report_min_abs_field_frozen_p2_margin():
+    # The ADR-0026 Consequences left-over ("machine-readable min |f|"),
+    # resolved as a report field: the P2 margin of the pinned sphere
+    # (r=1, res=16 — the T1 grid), measured once and frozen. The
+    # literal below is the exact float32 value widened to float64 (the
+    # binding converts C++ float -> Python float); determinism is the
+    # ADR-0026 D5 arithmetic class (the build enforces
+    # -ffp-contract=off). Path-independent: the primitive path reports
+    # the same margin at the same resolution.
+    rep = bridge_mod.sdf_to_brep_report(sdf_mod.sphere(1.0), _faceted_opts())
+    assert rep["min_abs_field"] > 0.0
+    assert rep["min_abs_field"] == 0.0039359331130981445
+
+    prim = bridge_mod.SdfToBrepOptions()
+    prim.march_resolution = 16
+    prim.fit_primitives = True
+    rep_prim = bridge_mod.sdf_to_brep_report(sdf_mod.sphere(1.0), prim)
+    assert rep_prim["fit"] == "sphere"
+    assert rep_prim["min_abs_field"] == rep["min_abs_field"]
 
 
 def test_report_via_scene_node_body():

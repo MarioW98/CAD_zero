@@ -957,6 +957,13 @@ class MainWindow(QMainWindow):
         closed_label = "sì" if rep["closed"] else "NO"
         loops_label = "sì" if rep["loops"] else "NO"
 
+        # min |f| over the sampled grid (ADR-0026 Consequences
+        # left-over, resolved as a report field): the P2 margin — how
+        # far the closest grid sample sits from the surface. 0 would
+        # mean an on-grid zero (the faceted path rejects it). Diagnostica,
+        # non contratto: mostrata per entrambi i path.
+        min_abs_f = rep["min_abs_field"]
+
         text = (
             f"Corpo: \"{node.name}\" (id {node.id}, {node.kind})\n"
             f"Path: {fit_label}\n"
@@ -964,6 +971,7 @@ class MainWindow(QMainWindow):
             f"\u03c7 = V - E + F = {rep['chi']}\n"
             f"Closed (is_closed_manifold): {closed_label}\n"
             f"Loops (loops_are_closed): {loops_label}\n"
+            f"min |f| su griglia (margine P2): {min_abs_f:.6g}\n"
             f"Tempo di estrazione: {elapsed_ms:.1f} ms"
         )
         box = QMessageBox(

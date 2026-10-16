@@ -206,13 +206,24 @@ private:
 // --- Smooth union (polynomial) -------------------------------------------
 // Ref: Inigo Quilez — "smooth minimum" (polynomial form, k>0)
 //
-//   h = clamp(0.5 + 0.5·(b - a)/k, 0, 1)
+//   h = clamp(0.5 + 0.5·(a - b)/k, 0, 1)
 //   v = a + (b - a)·h - k·h·(1 - h)·0.25
 //
 // k = 0 → hard min (degenerate to UnionSDF).
 //
+// Bug fix (2026-10-16, found while pinning the ADR-0026 smooth-union
+// follow-up tests): the clamp argument was written with (b - a), which
+// makes h = 1 when b ≥ a + k — so v picked the LARGER child in the
+// clamped regions (a smooth MAX, i.e. an inflated intersection)
+// instead of the smaller (min = union), contradicting both the
+// derivation below and the k = 0 branch. Symptom: the centre of a
+// constituent sphere evaluated OUTSIDE its own "smooth union". The
+// sign flip also changes the chain-rule coefficient:
+// (5/8)·(2h-1) → (3/8)·(2h-1) (rederived below); the value formula
+// and the endpoint cases are unchanged.
+//
 // Gradient derivation (chain rule, p-dependence comes through a(p),
-// b(p), and h(p) = clamp(0.5 + 0.5·(b-a)/k, 0, 1))
+// b(p), and h(p) = clamp(0.5 + 0.5·(a-b)/k, 0, 1))
 // ------------------------------------------------------------------------
 // For 0 < h < 1 (the smooth-interior region, i.e. |b - a| < k):
 //
@@ -225,19 +236,19 @@ private:
 //
 // and the gradient of h itself:
 //
-//   ∇h = (0.5/k)·(∇b - ∇a)
+//   ∇h = (-0.5/k)·(∇b - ∇a)
 //
-// Substituting u = (b - a)/k = 2·(h - 0.5) (so 2h - 1 = u):
+// Substituting u = (b - a)/k = 1 - 2h (so 2h - 1 = -u):
 //
 //   ∇v = (1 - h)·∇a + h·∇b
-//        + (0.5/k)·(∇b - ∇a)·(k·u - k·(1 - 2h)/4)
+//        + (-0.5/k)·(∇b - ∇a)·(k·u - k·(1 - 2h)/4)
 //        = (1 - h)·∇a + h·∇b
-//          + 0.5·(∇b - ∇a)·(u - (1 - 2h)/4)
+//          - 0.5·(∇b - ∇a)·(u - (1 - 2h)/4)
 //
-// Now 2h - 1 = u, so 1 - 2h = -u, so (u - (1 - 2h)/4) = u·(1 + 1/4) = (5/4)·u.
-// And u = 2h - 1, so:
+// Now 1 - 2h = u, so (u - (1 - 2h)/4) = u·(1 - 1/4) = (3/4)·u.
+// And u = -(2h - 1), so:
 //
-//   ∇v = (1 - h)·∇a + h·∇b + (5/8)·(2h - 1)·(∇b - ∇a)
+//   ∇v = (1 - h)·∇a + h·∇b + (3/8)·(2h - 1)·(∇b - ∇a)
 //
 // For h = 0 or h = 1 (the clamped region, |b - a| ≥ k), ∇h = 0 and:
 //   v = b (when h = 1, i.e. b ≤ a) → ∇v = ∇b
@@ -247,16 +258,16 @@ private:
 // --------------
 // In the smooth-interior region:
 //
-//   |∇v| ≤ (1-h)·|∇a| + h·|∇b| + (5/8)·|2h-1|·|∇b - ∇a|
-//        ≤ max(L_a, L_b)·((1-h) + h) + (5/8)·1·(L_a + L_b)
-//        ≤ max(L_a, L_b) + (5/4)·max(L_a, L_b)
-//        = (9/4)·max(L_a, L_b) ≈ 2.25·max(L_a, L_b)
+//   |∇v| ≤ (1-h)·|∇a| + h·|∇b| + (3/8)·|2h-1|·|∇b - ∇a|
+//        ≤ max(L_a, L_b)·((1-h) + h) + (3/8)·1·(L_a + L_b)
+//        ≤ max(L_a, L_b) + (3/4)·max(L_a, L_b)
+//        = (7/4)·max(L_a, L_b) ≈ 1.75·max(L_a, L_b)
 //
 // In the clamped region |∇v| = |∇a| or |∇b| ≤ max(L_a, L_b).
 //
 // Therefore the k-independent Lipschitz upper bound is:
 //
-//   L = 2.25·max(L_a, L_b)
+//   L = 1.75·max(L_a, L_b)
 //
 // We round up to 2.5·max(L_a, L_b) for safety against numerical noise
 // in the FD-vs-analytic comparison, and against composite children
@@ -284,18 +295,21 @@ public:
             return r;
         }
         const float diff = sb.value - sa.value;
-        const float h = std::clamp(0.5f + 0.5f * diff / k_, 0.0f, 1.0f);
+        // h = 1 when b ≤ a - k (v follows b, the SMALLER child — see
+        // the bug-fix note in the class comment); the sign of the
+        // clamp argument is what selects min vs max semantics.
+        const float h = std::clamp(0.5f - 0.5f * diff / k_, 0.0f, 1.0f);
         const float v = sa.value + diff * h - k_ * h * (1.0f - h) * 0.25f;
         // Full chain-rule gradient:
-        //   ∇v = (1 - h)·∇a + h·∇b + (5/8)·(2h - 1)·(∇b - ∇a)
+        //   ∇v = (1 - h)·∇a + h·∇b + (3/8)·(2h - 1)·(∇b - ∇a)
         // for 0 < h < 1, and ∇v = ∇a or ∇b in the clamped region.
         // The clamped branches fall out automatically because (2h - 1)
-        // is ±1 at h = 0 or h = 1 but (5/8)·(±1)·(∇b - ∇a) is the
+        // is ±1 at h = 0 or h = 1 but (3/8)·(±1)·(∇b - ∇a) is the
         // (linear extrapolation) contribution; we must NOT add it in
         // the clamped region. Use a coefficient that vanishes at the
         // clamp boundaries.
         const float chain_coeff = (h > 0.0f && h < 1.0f)
-            ? (5.0f / 8.0f) * (2.0f * h - 1.0f)
+            ? (3.0f / 8.0f) * (2.0f * h - 1.0f)
             : 0.0f;
         const math::Vec3f ga = sa.gradient;
         const math::Vec3f gb = sb.gradient;
@@ -304,7 +318,7 @@ public:
     }
 
     float lipschitz() const noexcept override {
-        // (9/4)·max(L_a, L_b) ≤ 2.5·max(L_a, L_b). See derivation above.
+        // (7/4)·max(L_a, L_b) ≤ 2.5·max(L_a, L_b). See derivation above.
         // k-independent: the (1/k) in ∇h cancels with the (k) in (df/dh).
         // For k = 0 the field degenerates to hard min, so the Lipschitz
         // is just max(L_a, L_b).

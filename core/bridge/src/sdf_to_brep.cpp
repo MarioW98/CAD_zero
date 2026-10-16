@@ -3,7 +3,9 @@
 
 #include "CAD_0/brep/topology.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -256,6 +258,48 @@ const char* primitive_fit_label(const sdf::SDFBody& sdf_body) {
     return "faceted";
 }
 
+// min |f| over the marching-cubes sample grid — the machine-readable
+// P2 margin (ADR-0026 Consequences left-over, resolved as a report
+// field; see SdfToBrepReport::min_abs_field).
+//
+// The grid layout mirrors core/sdf/src/mesh_extract.cpp: bounds()
+// padded by 1% of extent, points at min + extent * (i / res). The
+// mirror is deliberately NOT shared with test T4 (which replicates
+// the same layout independently): two copies cross-check each other,
+// and a layout change breaks T4 first, forcing a conscious sync
+// instead of a silent drift.
+float grid_min_abs_field(const sdf::SDFBody& sdf_body, std::uint32_t res) {
+    if (res == 0) {
+        // Degenerate grid: no P2 margin exists. Reported as 0 — the
+        // faceted path rejects resolution 0 outright (see
+        // throw_empty_surface), so "zero margin" is the honest reading.
+        return 0.0f;
+    }
+    math::Bboxf bx = sdf_body.bounds();
+    if (bx.empty()) {
+        // Unreachable after a successful dispatch (the faceted path
+        // throws on empty bounds first); defensive.
+        return 0.0f;
+    }
+    const math::Vec3f pad = bx.extent() * 0.01f;
+    bx.min = bx.min - pad;
+    bx.max = bx.max + pad;
+    const auto ext = bx.extent();
+
+    float min_abs_f = std::numeric_limits<float>::max();
+    for (std::uint32_t zi = 0; zi <= res; ++zi) {
+        for (std::uint32_t yi = 0; yi <= res; ++yi) {
+            for (std::uint32_t xi = 0; xi <= res; ++xi) {
+                const float fx = bx.min.x + ext.x * (static_cast<float>(xi) / static_cast<float>(res));
+                const float fy = bx.min.y + ext.y * (static_cast<float>(yi) / static_cast<float>(res));
+                const float fz = bx.min.z + ext.z * (static_cast<float>(zi) / static_cast<float>(res));
+                min_abs_f = std::min(min_abs_f, std::abs(sdf_body.value({fx, fy, fz})));
+            }
+        }
+    }
+    return min_abs_f;
+}
+
 } // namespace
 
 SdfToBrepReport sdf_to_brep_report(
@@ -286,6 +330,9 @@ SdfToBrepReport sdf_to_brep_report(
     rep.closed = brep::is_closed_manifold(*body);
     rep.loops = brep::loops_are_closed(*body);
     rep.fit = fit;
+    // P2 margin as a diagnostic (see SdfToBrepReport::min_abs_field):
+    // path-independent, so it is computed after EITHER dispatch.
+    rep.min_abs_field = grid_min_abs_field(sdf_body, opts.march_resolution);
     return rep;
 }
 

@@ -89,6 +89,20 @@ struct SdfToBrepReport {
     bool closed{false};           // is_closed_manifold (ADR-0022 §7)
     bool loops{false};            // loops_are_closed
     std::string fit;              // "sphere"|"box"|"cylinder"|"faceted"
+
+    // min |f| over the marching-cubes sample grid (bounds() + 1% pad,
+    // march_resolution points per axis — the grid the faceted path
+    // samples). The ADR-0026 Consequences left-over "machine-readable
+    // min |f|", resolved as a report FIELD rather than a separate
+    // function: the app's Debug action already renders this struct, so
+    // a field is the smallest surface (no new entry point, no extra
+    // binding). Diagnostic, NOT a contract: 0 would mean an on-grid
+    // zero (the P2 violation the faceted path rejects). Path-
+    // independent: computed for the primitive path too, where it
+    // measures how close the body sits to an on-grid zero at this
+    // resolution. Deterministic for the arithmetic class (ADR-0026 D5;
+    // the build enforces -ffp-contract=off).
+    float min_abs_field{0.0f};
 };
 
 SdfToBrepReport sdf_to_brep_report(

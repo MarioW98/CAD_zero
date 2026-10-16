@@ -96,12 +96,17 @@ void bind_bridge(nb::module_& m) {
             out["closed"] = r.closed;
             out["loops"] = r.loops;
             out["fit"] = r.fit;
+            out["min_abs_field"] = r.min_abs_field;
             return out;
         },
         nb::arg("body"), nb::arg("opts") = SdfToBrepOptions(),
         "Convert an SDF body to B-Rep and report the resulting topology\n"
         "as a dict: V, E, F (grid-dependent), chi (V - E + F), closed\n"
-        "(is_closed_manifold), loops (loops_are_closed), and fit — the\n"
+        "(is_closed_manifold), loops (loops_are_closed), fit — the\n"
         "path that produced the body: \"sphere\"|\"box\"|\"cylinder\"\n"
-        "(exact analytic primitive) or \"faceted\" (MC33 extraction).");
+        "(exact analytic primitive) or \"faceted\" (MC33 extraction) —\n"
+        "and min_abs_field: the minimum |f| over the sampled grid, the\n"
+        "machine-readable P2 margin (diagnostic, not a contract; 0\n"
+        "would mean an on-grid zero, which the faceted path rejects).\n"
+        "Deterministic for the arithmetic class (ADR-0026 D5).");
 }

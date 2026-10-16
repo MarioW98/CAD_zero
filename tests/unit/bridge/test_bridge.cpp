@@ -171,6 +171,16 @@ TEST_CASE("Bridge: faceted B-Rep → SDF mesh") {
 // is_closed_manifold and loops_are_closed DO NOT.
 // ---------------------------------------------------------------------------
 
+// The smooth-union configuration pinned by T7–T10 (and whose grid T4
+// also checks): two unit spheres, centers 1.2 apart, polynomial smin
+// blend k = 0.4 — the ADR-0026 "first follow-up" body.
+static s::SDFBody smooth_union_two_unit_spheres(Vec3f ca, Vec3f cb) {
+    auto a = s::make_sphere(1.0f);
+    if (ca != Vec3f{0, 0, 0}) a = s::sdf_translate(std::move(a), ca);
+    auto b = s::sdf_translate(s::make_sphere(1.0f), cb);
+    return s::sdf_smooth_union(std::move(a), std::move(b), 0.4f);
+}
+
 // T1 — sphere r=1 centered, res=16: pinned counts + full contract.
 TEST_CASE("Bridge T1: sphere res=16 - pinned counts + manifold contract") {
     auto sph = s::make_sphere(1.0f);
@@ -282,6 +292,15 @@ TEST_CASE("Bridge T4: pinned grids satisfy the input contract (P1 enclosure, P2 
     check_grid(s::make_sphere(1.0f), 16);
     check_grid(s::make_sphere(1.0f), 32);
     check_grid(s::sdf_translate(s::make_sphere(1.0f), {0.13f, 0.29f, 0.07f}), 16);
+    // The smooth-union grids pinned by T7–T9 satisfy the input contract
+    // too (P1 enclosure — including the k/4 blend bulge at the waist —
+    // and P2 no on-grid zeros). This is the classification instrument:
+    // if a T7–T9 contract ever fails, this check tells a P1/P2 input
+    // problem apart from a bridge bug.
+    check_grid(smooth_union_two_unit_spheres({0, 0, 0}, {1.2f, 0, 0}), 16);
+    check_grid(
+        smooth_union_two_unit_spheres({0.13f, 0.29f, 0.07f}, {1.33f, 0.29f, 0.07f}),
+        16);
 }
 
 // T5 — determinism (ADR-0026 D5): two extractions of the same (SDF,
@@ -319,4 +338,144 @@ TEST_CASE("Bridge T6: empty SDF - visible error, no crash") {
 
     CHECK_THROWS_AS(sdf_to_brep(empty, opts), std::invalid_argument);
     CHECK_THROWS_AS(sdf_to_brep_faceted(empty, opts), std::invalid_argument);
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0026 Phase E closure — smooth-union follow-up (the "first
+// follow-up" the ADR promised): a genuinely blended body through the
+// bridge, under the same hard contracts as the sphere MVP. Pinned
+// counts measured ONCE with a throwaway driver (GCC, Release,
+// -ffp-contract=off — the flag the root CMakeLists already enforces)
+// and frozen here, same method as T1–T3 (ADR-0025 v5).
+//
+// Prerequisite kernel fix (same session, core/sdf/operators.hpp): the
+// k>0 clamp of SmoothMinSDF had the sign flipped, so "smooth union"
+// followed the LARGER child — an inflated smooth intersection. These
+// pins are measured against the FIXED operator.
+// ---------------------------------------------------------------------------
+
+// T7 — smooth union, res=16: pinned counts + full contract. No
+// degenerate triangles is guaranteed three ways: (1) the faceted path
+// THROWS on a zero-area / repeated-index triangle, so a successful
+// extraction already proves none exist; (2) a repeated-index triangle
+// would create a self-loop edge and break the per-edge 2-coedge XOR
+// below; (3) the pinned counts match the closed-mesh identities.
+TEST_CASE("Bridge T7: smooth-union res=16 - pinned counts + manifold contract") {
+    auto u = smooth_union_two_unit_spheres({0, 0, 0}, {1.2f, 0, 0});
+    SdfToBrepOptions opts;
+    opts.fit_primitives = false;
+    opts.march_resolution = 16;
+    auto body = sdf_to_brep_faceted(u, opts);
+
+    REQUIRE(body != nullptr);
+    // Pinned (two unit spheres, centers (0,0,0)/(1.2,0,0), k=0.4,
+    // res=16): measured once, frozen.
+    CHECK(body->vertex_count() == 1310);
+    CHECK(body->edge_count() == 3924);
+    CHECK(body->face_count() == 2616);
+    // Grid-independent contracts.
+    CHECK(b::euler_characteristic(*body) == 2);
+    CHECK(b::is_closed_manifold(*body));
+    CHECK(b::loops_are_closed(*body));
+    // Explicit invariants 1-2 (ADR-0022 sec. 7): every edge exactly 2
+    // co-edges, with opposite orientation (XOR).
+    for (std::size_t e = 0; e < body->edge_count(); ++e) {
+        const auto& ce = body->edges[e].coedges();
+        REQUIRE(ce.size() == 2);
+        CHECK(ce[0]->reversed() != ce[1]->reversed());
+    }
+}
+
+// T8 — off-grid centers (both + (0.13, 0.29, 0.07)): the contracts
+// survive a generic placement. Note (measured): the pinned counts are
+// IDENTICAL to T7's — the same translation invariance as T3 (bounds()
+// is analytic per child, the union box translates rigidly with the
+// shape, and the 1% pad is proportional, so the padded grid is the
+// same relative lattice for any translation). Pinning them documents
+// that invariance; the grid-INdependence demonstration is carried by
+// the different counts of T9.
+TEST_CASE("Bridge T8: off-grid smooth-union - invariants survive generic placement") {
+    auto u = smooth_union_two_unit_spheres({0.13f, 0.29f, 0.07f}, {1.33f, 0.29f, 0.07f});
+    SdfToBrepOptions opts;
+    opts.fit_primitives = false;
+    opts.march_resolution = 16;
+    auto body = sdf_to_brep_faceted(u, opts);
+
+    REQUIRE(body != nullptr);
+    CHECK(body->vertex_count() == 1310);
+    CHECK(body->edge_count() == 3924);
+    CHECK(body->face_count() == 2616);
+    CHECK(b::euler_characteristic(*body) == 2);
+    CHECK(b::is_closed_manifold(*body));
+    CHECK(b::loops_are_closed(*body));
+}
+
+// T9 — res=32: different pinned counts, same contracts — V/E/F are
+// grid-dependent, the invariants are not.
+TEST_CASE("Bridge T9: smooth-union res=32 - grid-dependent counts, invariant contracts") {
+    auto u = smooth_union_two_unit_spheres({0, 0, 0}, {1.2f, 0, 0});
+    SdfToBrepOptions opts;
+    opts.fit_primitives = false;
+    opts.march_resolution = 32;
+    auto body = sdf_to_brep_faceted(u, opts);
+
+    REQUIRE(body != nullptr);
+    // Pinned (same configuration as T7, res=32).
+    CHECK(body->vertex_count() == 5334);
+    CHECK(body->edge_count() == 15996);
+    CHECK(body->face_count() == 10664);
+    CHECK(b::euler_characteristic(*body) == 2);
+    CHECK(b::is_closed_manifold(*body));
+    CHECK(b::loops_are_closed(*body));
+}
+
+// T10 — NEGATIVE fit test: the blended body must NOT match a
+// primitive. sdf_to_brep_report with fit_primitives=true dispatches
+// through the primitive detector first; an smin-rooted SDF must fall
+// through to the faceted path. A "sphere"/"box"/"cylinder" label
+// here would mean the primitive detection matched a composite body.
+TEST_CASE("Bridge T10: smooth-union fit is faceted - blended bodies never match primitives") {
+    auto u = smooth_union_two_unit_spheres({0, 0, 0}, {1.2f, 0, 0});
+    SdfToBrepOptions opts;
+    opts.fit_primitives = true;
+    opts.march_resolution = 16;
+    auto rep = sdf_to_brep_report(u, opts);
+
+    CHECK(rep.fit == "faceted");
+    // The report carries the same pinned contract as T7.
+    CHECK(rep.vertex_count == 1310);
+    CHECK(rep.edge_count == 3924);
+    CHECK(rep.face_count == 2616);
+    CHECK(rep.chi == 2);
+    CHECK(rep.closed);
+    CHECK(rep.loops);
+}
+
+// T11 — min |f| over the sampled grid (ADR-0026 Consequences
+// left-over, resolved as a report field): the pinned sphere's P2
+// margin, measured once and frozen. Deterministic float: the build
+// enforces -ffp-contract=off and the value class is sqrt-only
+// (ADR-0026 D5) — verified bit-identical across the release and
+// ASan-debug presets before freezing. Path-independent: the primitive
+// path reports the same margin at the same resolution.
+TEST_CASE("Bridge T11: report min_abs_field - frozen P2 margin, path-independent") {
+    {
+        auto sph = s::make_sphere(1.0f);
+        SdfToBrepOptions opts;
+        opts.fit_primitives = false;
+        opts.march_resolution = 16;
+        auto rep = sdf_to_brep_report(sph, opts);
+        CHECK(rep.min_abs_field > 0.0f);             // a P2 margin exists
+        CHECK(rep.min_abs_field == 0.00393593311f);  // measured, frozen
+    }
+    {
+        auto sph = s::make_sphere(1.0f);
+        SdfToBrepOptions opts;
+        opts.fit_primitives = true;
+        opts.march_resolution = 16;
+        auto rep = sdf_to_brep_report(sph, opts);
+        CHECK(rep.fit == "sphere");
+        // The stat measures the grid, not the winning path.
+        CHECK(rep.min_abs_field == 0.00393593311f);
+    }
 }

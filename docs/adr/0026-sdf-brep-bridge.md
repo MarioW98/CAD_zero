@@ -2,14 +2,18 @@
 
 ## Status
 
-**Accepted (2026-10-16) — with two corrections applied on acceptance
-(see § Corrections below).**
+**Implemented (2026-10-16) — MVP, app consumer and smooth-union
+follow-up landed; the § Consequences min |f| left-over is resolved.**
 
-Phase E opening move, ADR-first: this document proposes the decisions
-and the MVP contract. The draft was reviewed and accepted on
-2026-10-16; the MVP implementation follows in a separate code commit.
-One docs-only commit opened the phase; implementation landed only
-after acceptance.
+Accepted 2026-10-16 with two corrections applied on acceptance (see
+§ Corrections below). Implementation, in order: the MVP (faceted
+rewrite to the topology-era contract, tests T1–T6), the app consumer
+(nanobind bindings + the Debug-menu topology report action), and the
+Phase E closure (the smooth-union follow-up, tests T7–T10 — which
+uncovered and fixed a k>0 clamp-sign bug in `SmoothMinSDF` — plus the
+machine-readable `min_abs_field` P2 margin, T11). The bridge contract
+is tested by `tests/unit/bridge/test_bridge.cpp` (T1–T11) and
+`bindings/python/tests/test_bridge_report.py`.
 
 ## Corrections on acceptance (2026-10-16)
 
@@ -447,6 +451,15 @@ passing):
   grid's field values, which `marching_cubes` already computes
   internally — exposing min |f| (or accepting a debug hook) is a
   small, flagged-for-implementation API surface decision.
+  **Resolved at Phase E closure**: exposed as the `min_abs_field`
+  FIELD of `SdfToBrepReport` — not a separate function: the app's
+  Debug action already renders the report, so a field is the
+  smallest surface (no new entry point, no extra binding). It is
+  path-independent (computed for the primitive path too) and
+  diagnostic-only; the grid scan lives in the bridge
+  (`sdf_to_brep.cpp`) and mirrors the `mesh_extract.cpp` layout that
+  test T4 independently replicates, so the two copies cross-check
+  each other.
 - If the cross-compiler bit-exactness claim of D5 ever fails in CI,
   the fallback is already scoped: keep the count-and-invariant
   contract (integer-valued, robust) and drop the T5 bit-equality
