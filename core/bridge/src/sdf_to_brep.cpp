@@ -233,4 +233,60 @@ std::unique_ptr<brep::BRepBody> sdf_to_brep(
     return sdf_to_brep_faceted(sdf_body, opts);
 }
 
+// ---------------------------------------------------------------------------
+// Topology report (ADR-0026 consumer step): same dispatch as
+// sdf_to_brep(), plain-values summary — the caller needs no BRepBody
+// API (the Python binding behind the app's Debug menu).
+// ---------------------------------------------------------------------------
+namespace {
+
+// Label of the primitive the fitter matched, using the SAME describe()
+// prefixes sdf_to_brep_primitive() matches on. Only consulted when the
+// fit already succeeded, so the "faceted" fallback is unreachable in
+// practice — it exists so the helper stays total (and fails safe: a
+// label the table does not know reports "faceted", never a lie about
+// topology). Keep the prefix list in sync with the fitter.
+const char* primitive_fit_label(const sdf::SDFBody& sdf_body) {
+    const sdf::SDFNode* root = sdf_body.root();
+    if (root == nullptr) return "faceted";
+    const std::string desc = root->describe();
+    if (desc.rfind("sphere(", 0) == 0) return "sphere";
+    if (desc.rfind("box(", 0) == 0) return "box";
+    if (desc.rfind("cylinder(", 0) == 0) return "cylinder";
+    return "faceted";
+}
+
+} // namespace
+
+SdfToBrepReport sdf_to_brep_report(
+    const sdf::SDFBody& sdf_body,
+    const SdfToBrepOptions& opts) {
+
+    // Same dispatch as sdf_to_brep(): primitive fit first (same
+    // opts.fit_primitives gate), faceted fallback. Exceptions from
+    // either path propagate unchanged — the report never masks a
+    // bridge error (ADR-0026 D2 error contract).
+    std::unique_ptr<brep::BRepBody> body;
+    const char* fit = "faceted";
+    if (opts.fit_primitives) {
+        body = sdf_to_brep_primitive(sdf_body);
+        if (body) {
+            fit = primitive_fit_label(sdf_body);
+        }
+    }
+    if (!body) {
+        body = sdf_to_brep_faceted(sdf_body, opts);
+    }
+
+    SdfToBrepReport rep;
+    rep.vertex_count = body->vertex_count();
+    rep.edge_count = body->edge_count();
+    rep.face_count = body->face_count();
+    rep.chi = brep::euler_characteristic(*body);
+    rep.closed = brep::is_closed_manifold(*body);
+    rep.loops = brep::loops_are_closed(*body);
+    rep.fit = fit;
+    return rep;
+}
+
 } // namespace CAD_0::bridge

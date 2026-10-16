@@ -37,7 +37,9 @@
 #include "CAD_0/brep/analytic.hpp"
 #include "CAD_0/brep/factory.hpp"
 
+#include <cstdint>
 #include <memory>
+#include <string>
 
 namespace CAD_0::bridge {
 
@@ -63,6 +65,33 @@ std::unique_ptr<brep::BRepBody> sdf_to_brep_primitive(
 
 // High-level: tries primitive fitting first, falls back to faceted.
 std::unique_ptr<brep::BRepBody> sdf_to_brep(
+    const sdf::SDFBody& sdf_body,
+    const SdfToBrepOptions& opts = {});
+
+// Topology report (ADR-0026 consumer step — the app's Debug action).
+//
+// Runs the same dispatch as sdf_to_brep() and summarizes the result as
+// plain values, so callers that only need to INSPECT the outcome (the
+// Python binding behind the app's Debug menu) need no BRepBody API at
+// all. The fields mirror the ADR-0026 D2 contract: V/E/F depend on the
+// sampling grid; chi, closed and loops do not. `fit` names the path that
+// produced the body: "sphere" | "box" | "cylinder" (exact analytic
+// primitive) or "faceted" (MC33 extraction).
+//
+// Throws exactly what the underlying conversion throws
+// (std::invalid_argument / std::runtime_error with their actionable
+// messages) — this wrapper never masks a bridge error.
+struct SdfToBrepReport {
+    std::size_t vertex_count{0};  // V
+    std::size_t edge_count{0};    // E
+    std::size_t face_count{0};    // F
+    std::int64_t chi{0};          // euler_characteristic: V - E + F
+    bool closed{false};           // is_closed_manifold (ADR-0022 §7)
+    bool loops{false};            // loops_are_closed
+    std::string fit;              // "sphere"|"box"|"cylinder"|"faceted"
+};
+
+SdfToBrepReport sdf_to_brep_report(
     const sdf::SDFBody& sdf_body,
     const SdfToBrepOptions& opts = {});
 

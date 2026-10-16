@@ -12,6 +12,7 @@ void bind_sdf(nb::module_&);
 void bind_mesh(nb::module_&);
 void bind_io(nb::module_&);
 void bind_scene(nb::module_&);
+void bind_bridge(nb::module_&);
 
 NB_MODULE(_CAD_0, m) {
     m.doc() = "CAD_0 - dual-representation CAD kernel (native SDF + B-Rep)";
@@ -26,4 +27,5 @@ NB_MODULE(_CAD_0, m) {
     bind_mesh(sdf_mod);
     bind_io(m);
     bind_scene(m);
+    bind_bridge(m);
 }

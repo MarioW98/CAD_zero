@@ -267,6 +267,15 @@ class MainWindow(QMainWindow):
         frame_all.triggered.connect(self.on_frame_all)
         view_menu.addAction(frame_all)
 
+        # ----- Debug menu -----
+        # Read-only inspection tools (ADR-0026 consumer step): they
+        # report on the current scene without touching it — no authoring,
+        # no scene/document mutation, nothing on the undo stack.
+        debug_menu = self.menuBar().addMenu("&Debug")
+        sdf_to_brep_action = QAction("Estrai SDF → B-Rep (report topologia)", self)
+        sdf_to_brep_action.triggered.connect(self.on_debug_sdf_to_brep_report)
+        debug_menu.addAction(sdf_to_brep_action)
+
         # ----- Help menu -----
         help_menu = self.menuBar().addMenu("&Help")
         about = QAction("&About CAD_0", self)
@@ -866,6 +875,99 @@ class MainWindow(QMainWindow):
             "<p>Phase C+ — working viewport with real mesh rendering.</p>"
             "<p>License: Apache-2.0</p>"
         )
+
+    # ----- Debug menu (read-only inspection) -----
+
+    def on_debug_sdf_to_brep_report(self) -> None:
+        """Debug → Estrai SDF → B-Rep: topology report (ADR-0026 consumer).
+
+        Runs the SDF → B-Rep bridge on the selected SDF body (or the
+        scene's only body when nothing is selected) and reports V/E/F,
+        the Euler characteristic, the manifold/loop invariants, the path
+        the bridge took (exact primitive vs faceted extraction) and the
+        extraction time. Strictly read-only: the scene, the document and
+        the undo stack are untouched — an inspection tool, not an
+        authoring action.
+        """
+        if not self._has_kernel:
+            QMessageBox.warning(self, "No kernel", "C++ kernel not available.")
+            return
+
+        # Which body? The selected node; with an empty selection, the
+        # scene's only node (the "active" body). Anything ambiguous is
+        # a visible warning — never a guess.
+        node = None
+        if self._selected_node_id is not None:
+            node = self._scene.get_node(self._selected_node_id)
+        if node is None and self._scene.node_count() == 1:
+            node = self._scene.node_at(0)
+        if node is None:
+            QMessageBox.warning(
+                self, "SDF → B-Rep",
+                "Nessun corpo SDF selezionato.\n"
+                "Seleziona un corpo nell'albero delle feature (o nel "
+                "viewport); se la scena contiene un solo corpo, viene "
+                "usato automaticamente.")
+            return
+        if node.kind != "sdf":
+            QMessageBox.warning(
+                self, "SDF → B-Rep",
+                f"Il nodo \"{node.name}\" è di tipo mesh, non SDF: non c'è "
+                "nessun campo da convertire (ADR-0002).")
+            return
+
+        # The bridge submodule: re-exported by the package __init__; the
+        # direct fallback covers a bare _CAD_0 found on sys.path. Any
+        # failure here (e.g. a stale mixed old-package/new-extension
+        # install) is reported, never a crash.
+        import CAD_0
+        try:
+            bridge_mod = getattr(CAD_0, "bridge", None) or CAD_0._CAD_0.bridge
+        except Exception as exc:
+            QMessageBox.critical(self, "SDF → B-Rep", str(exc))
+            return
+
+        # Timed extraction (default options: resolution 48, primitive
+        # fit first). Bridge errors (ValueError / RuntimeError) cross
+        # the binding with the FULL message — diagnosis and remedy are
+        # already inside (ADR-0026 D2): shown verbatim, never
+        # translated, never reduced to a log line.
+        import time
+        opts = bridge_mod.SdfToBrepOptions()
+        t0 = time.perf_counter()
+        try:
+            rep = bridge_mod.sdf_to_brep_report(node.body, opts)
+        except Exception as exc:
+            QMessageBox.critical(self, "SDF → B-Rep", str(exc))
+            return
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+        fit_label = {
+            "sphere": "primitiva esatta (sfera)",
+            "box": "primitiva esatta (box)",
+            "cylinder": "primitiva esatta (cilindro)",
+            "faceted": "estrazione faceted (MC33)",
+        }.get(rep["fit"], rep["fit"])
+
+        text = (
+            f"Corpo: \"{node.name}\" (id {node.id}, {node.kind})\n"
+            f"Path: {fit_label}\n"
+            f"V = {rep['V']}, E = {rep['E']}, F = {rep['F']}\n"
+            f"\u03c7 = V - E + F = {rep['chi']}\n"
+            f"Closed (is_closed_manifold): {'s\u00ec' if rep['closed'] else 'NO'}\n"
+            f"Loops (loops_are_closed): {'s\u00ec' if rep['loops'] else 'NO'}\n"
+            f"Tempo di estrazione: {elapsed_ms:.1f} ms"
+        )
+        box = QMessageBox(
+            QMessageBox.Icon.Information,
+            "SDF → B-Rep — report topologia",
+            text,
+            QMessageBox.StandardButton.Ok,
+            self,
+        )
+        # Inspection output: let the user select/copy the numbers.
+        box.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        box.exec()
 
     def _clear_selection(self) -> None:
         """Clear the current selection, whatever its origin.

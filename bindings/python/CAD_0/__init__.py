@@ -17,7 +17,9 @@ __version__ = "0.1.0"
 from . import _CAD_0  # noqa: F401
 
 # Re-export kernel submodules
-from ._CAD_0 import math, geometry, sdf, scene, camera, commands  # noqa: F401
+from ._CAD_0 import (  # noqa: F401
+    math, geometry, sdf, scene, camera, commands, bridge,
+)
 from ._CAD_0.geometry import (  # noqa: F401
     Shape,
     ShapeId,
@@ -54,6 +56,7 @@ __all__ = [
     "scene",
     "camera",
     "commands",
+    "bridge",
     "ui",
     "Shape",
     "ShapeId",

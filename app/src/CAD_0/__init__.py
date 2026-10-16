@@ -55,7 +55,9 @@ _promote_libstdcpp_global()
 # This works when _CAD_0.so/.pyd is in the same directory as this file.
 try:
     from . import _CAD_0  # noqa: F401
-    from ._CAD_0 import math, geometry, sdf, scene, camera, commands  # noqa: F401
+    from ._CAD_0 import (  # noqa: F401
+        math, geometry, sdf, scene, camera, commands, bridge,
+    )
     from ._CAD_0.geometry import (  # noqa: F401
         Shape, ShapeId, FeatureId, DatumCS, Transform,
         Metadata, Representation, Units,
