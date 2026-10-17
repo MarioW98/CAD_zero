@@ -146,6 +146,27 @@ outward; each face is a 3-coedge loop (not 4 like the box).
 
 ### 7. `is_closed_manifold` — strict closed-orientable-manifold contract
 
+> **Amendment (2026-10-18, ADR-0027 D6 — Phase F, accepted).**
+> Invariant 4 below turned out to be an over-promise of *spherical
+> topology* — correct for every body this repository had produced until
+> a boolean feature existed: a pierced box (genus 1, χ = 0) is a
+> perfectly closed orientable manifold that invariant 4 rejects. The
+> contract is now SPLIT: **`is_closed_orientable`** enforces invariants
+> 0–3 (the assembly detectors), χ is **reported, never asserted**
+> (`euler_characteristic` + `genus_from_chi`: genus = (2 − χ)/2 derived
+> only when χ ≤ 2 and even — χ > 2 reads as multi-shell, "genus n/d",
+> components counter deferred), and `is_closed_manifold` remains as a
+> **compatibility wrapper with its exact historical meaning**
+> (`is_closed_orientable && χ == 2`) so no existing call site changes
+> semantics — nothing that passed starts failing, nothing that failed
+> starts passing. The §7 analysis below — the χ-invariance of a
+> duplicated interface ring, and the conclusion that only invariant 2
+> catches it — is UNAFFECTED, and becomes what it always actually was:
+> the structural invariants are the assembly-defect detectors; χ is the
+> input's topology. The "non-connected shells (χ ≠ 2)" rejection entry
+> below is re-read accordingly: multi-shell is a CLASSIFICATION
+> (χ > 2 → genus n/d), not an assembly defect.
+
 Updated in ADR-0025 FASE 3 to enforce 4 invariants:
 
 1. **Manifoldness**: every edge has exactly 2 co-edges (extends

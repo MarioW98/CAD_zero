@@ -4,8 +4,13 @@
 //   * ADR-0021 post-pass helpers (link_radial_edges, euler_characteristic,
 //     loops_are_closed);
 //   * ADR-0022 query operators (faces_around_edge, edges_around_vertex,
-//     faces_around_vertex, opposite_coedge, is_closed_manifold,
-//     wireframe_edges, vertex_valence).
+//     faces_around_vertex, opposite_coedge, wireframe_edges,
+//     vertex_valence);
+//   * the closed-manifold contract as amended by ADR-0027 D6 (Phase F):
+//     is_closed_orientable (structural invariants 0–3), genus_from_chi
+//     (the reported genus, correction-1 rule), and the is_closed_manifold
+//     compatibility wrapper (structural ∧ χ == 2 — the exact historical
+//     meaning).
 //
 // All functions here are integer ID arithmetic + raw pointer bookkeeping.
 // No floating-point evaluation happens here, so the determinism contract
@@ -164,7 +169,7 @@ const CoEdge* opposite_coedge(const BRepBody& body, const CoEdge* ce) noexcept {
     return nullptr;
 }
 
-bool is_closed_manifold(const BRepBody& body) noexcept {
+bool is_closed_orientable(const BRepBody& body) noexcept {
     // Invariant 0: a closed manifold solid must have at least one
     // vertex, one edge, and one face. Without this guard, the
     // periodic-surface sphere (1 face, 0 edges, 0 vertices) would
@@ -199,12 +204,46 @@ bool is_closed_manifold(const BRepBody& body) noexcept {
     // co-edge i equals start vertex of co-edge (i+1) mod n).
     if (!loops_are_closed(body)) return false;
 
-    // Invariant 4: Euler characteristic χ = V − E + F = 2 for a single
-    // closed shell (topological sphere). A body with χ ≠ 2 is either
-    // not a single shell (multi-shell, χ ≠ 2) or has a topology defect.
-    if (euler_characteristic(body) != 2) return false;
-
+    // ADR-0027 D6: this is where the STRUCTURAL contract ends. The
+    // input's topological classification (χ, genus — sphere-like,
+    // torus-like, multi-shell) is NOT an assembly correctness
+    // property: it is reported by the callers via
+    // euler_characteristic() and genus_from_chi(), never asserted
+    // here. The pre-Phase-F invariant 4 (χ == 2) lives on inside the
+    // is_closed_manifold compatibility wrapper below, with its exact
+    // historical meaning.
     return true;
+}
+
+std::optional<std::int64_t> genus_from_chi(std::int64_t chi) noexcept {
+    // ADR-0027 D6, acceptance correction 1 (the blocking rule):
+    // genus = (2 − χ)/2 is derived ONLY for χ ≤ 2 and even.
+    //
+    //   * χ ≤ 2, even → one shell of genus (2 − χ)/2 (χ = 2 → 0,
+    //     χ = 0 → 1 — the pierced box, χ = −2 → 2);
+    //   * χ > 2 → multiple shells (χ = 2s − 2g); the components
+    //     counter is deferred, so the genus is not derived — callers
+    //     report "multi-shell, n/d" and a negative genus is never
+    //     displayed as if it were real;
+    //   * odd χ → cannot be a sum of closed orientable components'
+    //     (even) characteristics; under a passing is_closed_orientable
+    //     it is an assembly defect the structural invariants cannot
+    //     see — a half-integer genus would be an assertion, not a
+    //     report, so it is not derived either.
+    if (chi > 2 || (chi % 2) != 0) return std::nullopt;
+    return (2 - chi) / 2;
+}
+
+bool is_closed_manifold(const BRepBody& body) noexcept {
+    // Compatibility wrapper (ADR-0022 §7 as amended by ADR-0027 D6):
+    // the exact historical 4-invariant contract — structural
+    // invariants AND spherical topology (χ == 2). Zero silent
+    // weakening: every pre-Phase-F call site keeps its meaning, and a
+    // correctly extracted genus-1 body fails here exactly as it did
+    // before the amendment (that is this wrapper's contract, not an
+    // extraction error). New code prefers is_closed_orientable() +
+    // explicit χ assertions + genus_from_chi().
+    return is_closed_orientable(body) && euler_characteristic(body) == 2;
 }
 
 std::vector<std::pair<VertexId, VertexId>> wireframe_edges(const BRepBody& body) {

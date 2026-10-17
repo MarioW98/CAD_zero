@@ -166,3 +166,52 @@ def test_report_via_scene_node_body():
     assert rep["chi"] == 2
     assert rep["closed"] is True
     assert rep["loops"] is True
+
+
+def test_report_genus_rule_derived_and_n_d():
+    """ADR-0027 D6, acceptance correction 1 (the blocking rule).
+
+    The report dict gains `orientable` and `genus`:
+      * a sphere (primitive path, χ = 2) → orientable True, genus 0;
+      * the pierced box (the Phase F MVP body, χ = 0) → orientable
+        True, genus 1 DERIVED, the legacy `closed` field False (the
+        χ == 2 compatibility wrapper telling the truth about its own
+        contract — the hole is exactly the case that field was wrong
+        about);
+      * two disjoint spheres (multi-shell, χ = 4) → orientable True,
+        genus None ("n/d" — the components counter is deferred).
+    """
+    # Sphere, primitive path: genus 0.
+    rep = bridge_mod.sdf_to_brep_report(sdf_mod.sphere(1.0))
+    assert rep["genus"] == 0
+    assert rep["orientable"] is True
+    assert rep["closed"] is True
+
+    # The pierced box at the T13 grid (res 48): box half-extents
+    # (1,1,1) minus a through cylinder r=0.25 h=3 (along Y).
+    pierced = sdf_mod.subtract(
+        sdf_mod.box(Vec3f(1.0, 1.0, 1.0)),
+        sdf_mod.cylinder(0.25, 3.0))
+    opts = bridge_mod.SdfToBrepOptions()
+    opts.fit_primitives = False
+    opts.march_resolution = 48
+    rep = bridge_mod.sdf_to_brep_report(pierced, opts)
+    assert rep["fit"] == "faceted"
+    assert rep["chi"] == 0
+    assert rep["genus"] == 1
+    assert rep["orientable"] is True
+    assert rep["closed"] is False
+    assert rep["loops"] is True
+    assert rep["min_abs_field"] > 0.0
+
+    # Multi-shell (the rule's "otherwise"): two disjoint unit spheres,
+    # centers 5 apart — χ = 4, genus NOT derived.
+    two = sdf_mod.union(
+        sdf_mod.sphere(1.0),
+        sdf_mod.translate(sdf_mod.sphere(1.0), Vec3f(5.0, 0.0, 0.0)))
+    opts16 = _faceted_opts()
+    rep2 = bridge_mod.sdf_to_brep_report(two, opts16)
+    assert rep2["chi"] == 4
+    assert rep2["genus"] is None
+    assert rep2["orientable"] is True
+    assert rep2["closed"] is False

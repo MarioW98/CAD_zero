@@ -206,6 +206,21 @@ triangles (zero area, repeated vertex) are contract violations under
 P2 → visible errors, never silent skips — the stub's `continue` is
 what turned a hole into a lie.
 
+> **Amendment (2026-10-18, ADR-0027 D6 — Phase F, accepted).** The
+> bolded sentence is amended to read: "χ, `is_closed_orientable`, and
+> `loops_are_closed` do not [depend on the grid]" — χ is
+> grid-independent (a topological invariant of the extracted surface,
+> given P1–P4 and correct topology resolution); its *value* is 2 − 2g
+> of the input, so genus-0 inputs yield χ = 2 (all the bodies this ADR
+> pinned) and a pierced box yields χ = 0. The bridge's faceted
+> postcondition is now `is_closed_orientable` (the structural
+> invariants, hard) with χ **reported** in `SdfToBrepReport` — plus
+> genus, derived only when χ ≤ 2 and even (multi-shell bodies report
+> "n/d"; the components counter is deferred). The χ = 2 assertion
+> survives only inside the `is_closed_manifold` compatibility wrapper
+> (ADR-0022 §7, as amended) — zero silent weakening of any existing
+> call site.
+
 ### D3. Face granularity
 
 **Choice**: 1:1 triangles for the MVP — each MC triangle becomes one

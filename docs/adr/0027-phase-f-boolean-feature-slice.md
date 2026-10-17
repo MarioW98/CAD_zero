@@ -2,10 +2,37 @@
 
 ## Status
 
-**Proposed (DRAFT, 2026-10-16).** Zero code, zero tests precede acceptance —
-this document is the Phase F opening commit. On acceptance it also
-discharges the ADR-0007 obligation ("each MINOR or MAJOR format change
-requires a new ADR") for the `0.2.0 → 0.3.0` bump decided in D4.
+**Accepted (2026-10-18).** Accepted with three corrections from
+review, applied to this document before any code (the review's own
+rule):
+
+1. **D6 / genus derivation guard (blocking).** The report derives
+   genus = (2 − χ)/2 ONLY when the body is closed-orientable AND
+   χ ≤ 2 AND χ is even; anything else reports "χ = N — multi-shell,
+   genus n/d" and derives nothing. The rule binds `SdfToBrepReport`,
+   the Python binding dict and the Debug report alike (the evenness
+   clause is structural: components of closed orientable surfaces
+   have even χ, so an odd χ under a passing structural check is an
+   assembly defect — deriving a half-integer genus would be an
+   assertion, not a report). The components counter stays deferred.
+   One editorial alignment rides along: the Test plan's pierced-box
+   binding line said "closed yes" — a draft leftover that conflicted
+   with D6's own "Closed orientable: yes" report design and with the
+   wrapper's χ = 2 semantics; it now reads "closed-orientable yes"
+   (the legacy `closed` field is False on the pierced box — the
+   wrapper telling the truth about its own contract).
+2. **D2 / tool-offset anchoring.** The placement offset is anchored
+   in **world coordinates** (sentence added to D2, with the reason
+   and the consequence stated).
+3. **Test plan / undo interleaving.** The undo-interleaving case
+   (delete operand → dangling → undo of the subtract via the LIFO
+   stack → redo: same ids, no rebind) is part of the DAG contract
+   tests.
+
+Implementation proceeds one commit per coherent unit (Proposed MVP),
+CI green after each. This ADR also discharges the ADR-0007 obligation
+("each MINOR or MAJOR format change requires a new ADR") for the
+`0.2.0 → 0.3.0` bump decided in D4.
 
 ## Context
 
@@ -52,9 +79,9 @@ Three findings that shape the decisions, reported honestly:
    (box − through-cylinder) is genus 1, χ = 0 — the first genus > 0
    body ever to face the topology contracts. Every extraction asserted
    to date is genus 0: bridge tests T1–T12, the boolean-kernel tests,
-   the goldens — and the factory sphere/torus fail those contracts for
-   the seam-wire reason, not genus (D6 inspection below). The
-   genus > 0 examples (`sdf_hole.py`, `sphere_to_stl.cpp`) export or
+   and the goldens (the B-Rep factories are seam-wired since ADR-0023
+   and pass — there is no B-Rep torus factory; see the D6 inspection).
+   The genus > 0 examples (`sdf_hole.py`, `sphere_to_stl.cpp`) export or
    display meshes and never call the bridge.
    `is_closed_manifold` rejects it (invariant 4), the bridge throws,
    and the Debug report shows an error dialog on the exact shape this
@@ -124,6 +151,24 @@ amendment.
   operation is its *provenance*, exactly as `builder` + `params` are
   the provenance of a primitive. The materialized body is
   `sdf_subtract(target.body, translate(tool.body, offset))`.
+- **Offset anchoring (review correction 2).** The placement offset
+  is expressed in **world coordinates** and applied as
+  `sdf_translate(tool.body, offset)`: the tool's body is whatever its
+  (possibly re-edited) builder params currently produce, and the
+  offset then positions that body in the world. World anchoring is
+  the honest choice for this MVP for three reasons: it is the one
+  positioning mechanism that works end-to-end today (kernel
+  `translate` op → serialized body → display, the examples' path);
+  every registered builder emits a primitive centered on its own
+  origin, so "tool body frame" and "world frame" coincide at
+  creation and only diverge if we ever add placed builders; and an
+  offset anchored in the tool body's *param-dependent* frame would
+  silently shift the hole whenever the tool's params are re-edited —
+  the exact class of surprise this ADR forbids. Consequence, stated
+  plainly: editing the cylinder's radius does not move the hole;
+  editing the offset does. (`node.transform` remains
+  serialized-but-inert — Context finding — and is not part of this
+  contract.)
 - **FeatureId = `SceneNode::id`** for this MVP: document-unique,
   monotonic, persisted via `next_id`, preserved by `restore_node`.
   ADR-0005's upper layers (`SubshapeRef`, `Generation`) are *not*
@@ -335,8 +380,20 @@ export/display meshes and never call the bridge).
    correctness: χ and genus. New predicate
    **`is_closed_orientable(body)`** = invariants 0–3.
    `euler_characteristic(body)` already exists and is **reported**.
-   Genus `g = (2 − χ) / 2` for connected orientable closed surfaces
-   (with the connectivity caveat below).
+   Genus is **derived, never guessed** (review correction 1, the
+   blocking rule): `genus = (2 − χ)/2` is reported only when
+   `is_closed_orientable(body)` holds AND χ ≤ 2 AND χ is even; any
+   other χ reports "χ = N — multi-shell, genus n/d" and derives
+   nothing. The clauses: χ ≤ 2 keeps the derivation on the
+   single-shell reading (χ = 2 − 2g); χ > 2 means multiple shells
+   (χ = 2s − 2g) and the components counter is deferred (out of
+   scope), so a negative "genus" can never be displayed; evenness is
+   structural — every connected component of a closed orientable
+   surface has even χ, hence so does their sum, and an odd χ under a
+   passing structural check is an assembly defect the structural
+   invariants cannot see — deriving a half-integer genus would be an
+   assertion, not a report. This rule binds the report field, the
+   binding dict and the Debug report identically.
 2. **ADR-0022 §7 amendment** (annotated in place at implementation
    time, pointing here). Invariant 4 was an over-promise of spherical
    topology — correct for every body the repository had produced until
@@ -372,14 +429,23 @@ this ADR mandates):
   required (Test plan).
 - Boolean kernel (ADR-0024/0025 tests): box booleans, corner notch
   χ = 2 — genus 0, unaffected.
-- `make_sphere` / `make_torus` factories: fail `is_closed_manifold`
-  for the *seam-wire* reason (V = E = 0 → invariants 0/1) — they also
-  fail `is_closed_orientable`; the regression guard stands unchanged.
+- B-Rep factories (verified at implementation time, 2026-10-18):
+  `make_box`, `make_tetrahedron`, and the seam-wired `make_sphere` /
+  `make_cylinder` (ADR-0023) all pass `is_closed_manifold` — and
+  therefore `is_closed_orientable` — with χ = 2; the wrapper
+  equivalence holds on each. There is no `make_torus` B-Rep factory;
+  the pre-ADR-0023 seam-wire rejection (V = E = 0, caught by
+  invariant 0) is exercised by a hand-built periodic-fixture in the
+  tests instead. (This line corrects the draft's inspection, which
+  predated the ADR-0023 seam-wire fix — facts over drafts.)
 - Debug report (app): currently "Closed (is_closed_manifold): yes/NO"
-  — after the amendment it shows **χ and genus, not just closed
-  yes/no**: "Closed orientable: yes", "χ = V − E + F = 0",
-  "Genus = 1". χ is already a report field; `genus` is the new field
-  in `SdfToBrepReport` and the binding dict.
+  — after the amendment it shows **χ, genus and the structural
+  contract, not just closed yes/no**: "Closed orientable
+  (is_closed_orientable): yes", "χ = V − E + F = 0", "Genus = 1" —
+  and, for a multi-shell body, "Genus = n/d" (χ shown, genus not
+  derived — the correction-1 rule). χ is already a report field;
+  `genus` is the new field in `SdfToBrepReport` and the binding dict
+  (None when not derived), alongside `orientable`.
 - MC33 capability: the asymptotic decider, integer welding, and radial
   assembly are topology-agnostic; genus > 0 needs no new machinery —
   it needs P3 respected (hole diameter well above cell size; the MVP
@@ -389,10 +455,11 @@ this ADR mandates):
 
 **Connectivity caveat (stated, not solved).** χ alone cannot
 distinguish one genus-1 shell from a multi-component body whose χ sums
-to 0. The MVP reports χ and derives genus only when
-`is_closed_orientable` holds; a components/shell counter is deferred
-(out of scope). P4 (sign fidelity) and the input class keep the MVP
-honest in the meantime.
+to 0 (e.g. a genus-2 shell against a genus-0 pair). The MVP reports χ
+and derives genus only under the correction-1 rule
+(`is_closed_orientable` ∧ χ ≤ 2 ∧ χ even); a components/shell counter
+is deferred (out of scope). P4 (sign fidelity) and the input class
+keep the MVP honest in the meantime.
 
 **Rejected alternatives:**
 
@@ -431,28 +498,49 @@ green after each.
 
 C++:
 
-- `is_closed_orientable`: box and tetrahedron true; `make_sphere` /
-  `make_torus` false (seam-wire guard preserved); two faces glued
-  back-to-back false (XOR); duplicated interface ring false.
+- `is_closed_orientable`: box, tetrahedron and the seam-wired
+  sphere/cylinder factories true; a hand-built periodic-style body
+  (faces but no edges — the pre-ADR-0023 seam-wire shape, invariant 0)
+  false; two faces glued back-to-back false (XOR); duplicated
+  interface ring false.
 - Wrapper equivalence: for every existing genus-0 fixture,
-  `is_closed_manifold == (is_closed_orientable && χ == 2)`.
+  `is_closed_manifold == (is_closed_orientable && χ == 2)` — in the
+  topology suite (factory boxes), the boolean suite (box booleans,
+  corner notch) and the bridge suite (every pinned extraction of
+  T1–T9).
+- `genus_from_chi` (the correction-1 rule, pure integer cases):
+  2 → 0, 0 → 1, −2 → 2; 4, 6, 3 → not derived.
 - **Bridge genus-1 (the MVP's pinned heart):** pierced box (pinned
   geometry, pinned grid) → exact V/E/F frozen by measurement (the
-  house method: measure once, pin, never Approx), χ == 0, genus == 1,
-  `is_closed_orientable`, loops closed, min |f| > 0, deterministic
-  re-run bit-identical. A second grid: counts differ, χ does not —
-  the T2 habit extended to genus 1.
+  house method: measure once, pin, never Approx), χ == 0, genus == 1
+  derived, `is_closed_orientable`, loops closed, the compatibility
+  wrapper **false** (χ ≠ 2 — the zero-silent-weakening check),
+  min |f| > 0, deterministic re-run bit-identical. A second grid:
+  counts differ, χ does not — the T2 habit extended to genus 1.
+- **Multi-shell rule (correction 1):** two disjoint spheres → χ == 4,
+  `is_closed_orientable`, genus NOT derived ("n/d").
 - Format: v0.3 round-trip byte-identical; v0.2 golden → migrator →
   identical extraction report; a dangling-operand file loads with the
   error state; a cyclic file fails with an explicit error.
 - DAG: operand edit → dependent re-materialized bit-identical to a
   fresh construction; operand delete → visible dangling; undo of the
-  delete (same id) → recovered.
+  delete (same id) → recovered. **Undo interleaving (review
+  correction 3):** with the command stack […, Subtract, Delete
+  operand], the LIFO order exercises the interleave — after the
+  Delete the operation dangles; undo (the Delete, same restored id)
+  recovers it; undo of the Subtract removes the operation; redo of
+  the Subtract restores it **with the same node id and the same
+  operand references** (no rebind, ever); redo of the Delete
+  re-dangles it. Ids are compared at every step — any id drift is
+  exactly the failure the test exists to catch.
 
 Python / bindings:
 
-- The report dict gains `genus`; pierced-box report χ = 0, genus = 1,
-  closed yes.
+- The report dict gains `genus` (int when derived, None when not) and
+  `orientable`; pierced-box report χ = 0, genus = 1,
+  closed-orientable yes (the legacy `closed` field — the χ == 2
+  wrapper — is False here: the hole is exactly the case that field
+  was wrong about); two disjoint spheres → χ = 4, genus None.
 - UI smoke (offscreen, monkeypatched boxes — the established driver
   pattern): create box + cylinder → subtract → the tree row exists,
   operands hidden, undo removes it, redo restores the **same ids**;

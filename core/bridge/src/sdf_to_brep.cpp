@@ -7,6 +7,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -44,13 +45,15 @@ namespace {
 [[noreturn]] void throw_postcondition() {
     throw std::runtime_error(
         "sdf_to_brep_faceted: postcondition failed - the assembled body "
-        "is not a closed manifold (is_closed_manifold, ADR-0022 sec. 7). "
-        "Either this is a bridge bug, or the input violates the "
-        "ADR-0026 supported input class (P1 enclosure / P2 on-grid "
-        "zeros / P3 feature separation vs cell size). Check the bounds "
-        "padding and the resolution against the minimum feature size; "
-        "if the input is a supported sphere, please report this as a "
-        "bridge bug.");
+        "is not a closed orientable manifold (is_closed_orientable, "
+        "ADR-0022 sec. 7 as amended by ADR-0027 D6 - the structural "
+        "invariants; chi is reported in the topology report, not "
+        "asserted here). Either this is a bridge bug, or the input "
+        "violates the ADR-0026 supported input class (P1 enclosure / "
+        "P2 on-grid zeros / P3 feature separation vs cell size). Check "
+        "the bounds padding and the resolution against the minimum "
+        "feature size; if the input is a supported sphere, please "
+        "report this as a bridge bug.");
 }
 
 } // namespace
@@ -152,11 +155,16 @@ std::unique_ptr<brep::BRepBody> sdf_to_brep_faceted(
     // 5. Assembly + hard postcondition. link_radial_edges is the only
     //    sanctioned radial population point (ADR-0021 sec. 4). The
     //    shell flag reflects the REAL invariant: claimed, verified
-    //    immediately, and retracted (with the throw) if the 4-invariant
-    //    contract (ADR-0022 sec. 7) does not hold.
+    //    immediately, and retracted (with the throw) if the structural
+    //    contract (ADR-0022 sec. 7 invariants 0-3, as amended by
+    //    ADR-0027 D6) does not hold. The input's topology class
+    //    (chi/genus - sphere-like, torus-like, multi-shell) is NOT an
+    //    assembly property: it is REPORTED by sdf_to_brep_report,
+    //    never asserted here (a genus-1 pierced box extracts exactly
+    //    like a genus-0 sphere).
     brep::link_radial_edges(*body);
     shell.set_closed(true);
-    if (!brep::is_closed_manifold(*body)) {
+    if (!brep::is_closed_orientable(*body)) {
         shell.set_closed(false);
         throw_postcondition();
     }
@@ -327,9 +335,28 @@ SdfToBrepReport sdf_to_brep_report(
     rep.edge_count = body->edge_count();
     rep.face_count = body->face_count();
     rep.chi = brep::euler_characteristic(*body);
+    // Structural contract (ADR-0022 sec. 7 as amended by ADR-0027 D6):
+    // the bridge's hard postcondition. The legacy `closed` field keeps
+    // the wrapper's exact historical meaning (structural AND chi == 2)
+    // so pre-Phase-F consumers see no semantic drift.
+    rep.orientable = brep::is_closed_orientable(*body);
     rep.closed = brep::is_closed_manifold(*body);
     rep.loops = brep::loops_are_closed(*body);
     rep.fit = fit;
+    // Genus, derived under the acceptance-correction-1 rule (the
+    // blocking rule): only for a structurally sound body with
+    // chi <= 2 and even (one shell of genus (2 - chi)/2). A
+    // multi-shell body (chi > 2) reports n/d - genus_derived stays
+    // false - and an odd chi (an assembly defect the structural
+    // invariants cannot see) is never turned into a half-integer
+    // genus: reporting, not asserting.
+    if (rep.orientable) {
+        if (const std::optional<std::int64_t> g =
+                brep::genus_from_chi(rep.chi)) {
+            rep.genus_derived = true;
+            rep.genus = *g;
+        }
+    }
     // P2 margin as a diagnostic (see SdfToBrepReport::min_abs_field):
     // path-independent, so it is computed after EITHER dispatch.
     rep.min_abs_field = grid_min_abs_field(sdf_body, opts.march_resolution);

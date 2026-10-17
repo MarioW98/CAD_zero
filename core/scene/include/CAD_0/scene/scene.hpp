@@ -26,6 +26,8 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <variant>
 #include <vector>
@@ -34,6 +36,48 @@ namespace CAD_0::scene {
 
 // A parameter value that can be edited from the property panel.
 using ParamValue = std::variant<float, std::string, bool>;
+
+// ---- Operation recipes (Phase F, ADR-0027 D2) ------------------------------
+//
+// An operation node is a SceneNode whose payload stays an SDF body
+// (kind = Sdf — the honest ADR-0002 dispatch) and whose PROVENANCE is
+// a recipe referencing two operand nodes by FeatureId, exactly as
+// `builder` + `params` are the provenance of a primitive. The recipe
+// is the source of truth; the materialized body is derived state kept
+// current by rebuild_operations() (core/scene operations.hpp).
+
+enum class OperationType : std::uint8_t {
+    Subtract,  // the ADR-0027 MVP; Union/Intersect reserved, not exposed
+};
+
+struct OperationRecipe {
+    OperationType type{OperationType::Subtract};
+    std::uint32_t target{0};                      // FeatureId (SceneNode::id)
+    std::uint32_t tool{0};                        // FeatureId (SceneNode::id)
+    // Tool placement offset — WORLD coordinates (ADR-0027 D2, review
+    // correction 2): applied as sdf_translate(tool.body, offset); the
+    // tool's body is whatever its builder params currently produce.
+    // Editing the tool's radius does not move the hole; editing the
+    // offset does. node.transform (serialized but inert) is not part
+    // of this contract.
+    float offset_x{0.0f};
+    float offset_y{0.0f};
+    float offset_z{0.0f};
+};
+
+// materialize_operation — THE pure function of (recipe, operand
+// bodies): ADR-0027 D2. The materialized body of an operation node is
+// sdf_subtract(target.body, sdf_translate(tool.body, offset)) — and
+// nothing else. Defined here, next to the recipe, so the Scene
+// methods and the rebuild pass share ONE definition (no drift
+// between creation and re-materialization).
+inline sdf::SDFBody materialize_operation(const OperationRecipe& r,
+                                          const sdf::SDFBody& target,
+                                          const sdf::SDFBody& tool) {
+    return sdf::sdf_subtract(
+        target, sdf::sdf_translate(
+                    tool, math::Vec3f{r.offset_x, r.offset_y, r.offset_z}));
+}
 
 // A shape factory: given the current parameters, rebuild the SDFBody.
 // This allows interactive editing — change a radius, the body is rebuilt.
@@ -84,6 +128,22 @@ struct SceneNode {
     // round-trips its editing metadata. Empty for non-parametric nodes.
     // See ADR-0007 / io/native.hpp.
     std::string builder;
+
+    // ---- Operation provenance (Phase F, ADR-0027 D2) ----
+    // When present, this node is an OPERATION: its body was (and is)
+    // materialized from the referenced operands. The recipe survives
+    // save/load (io v0.3); `operand_missing` is DERIVED state (the DAG
+    // pass computes it, the loader never trusts a file for it).
+    //
+    // operand_missing == true is the VISIBLE DANGLING STATE: an
+    // operand was deleted; the node keeps its LAST materialized body
+    // (display continues), the tree/panel show the error
+    // (operations.hpp: operation_error), and the next rebuild pass
+    // re-materializes it as soon as the operand is restored (same id).
+    // A dangling reference is REPORTED, never silently re-picked —
+    // ADR-0005's generation rule applied at feature granularity.
+    std::optional<OperationRecipe> operation;
+    bool operand_missing{false};
 
     // Rebuild the SDF body from the factory + current params.
     // Sdf-kind only (a Mesh node has no factory — nothing to rebuild).
@@ -223,6 +283,113 @@ public:
         nodes_.push_back(std::move(node));
         if (next_id_ <= id) next_id_ = id + 1;
         notify(SceneChange::NodeAdded, id);
+    }
+
+    // ---- Id-stable command re-creation (Phase F, ADR-0027 D2) ---------
+    //
+    // The undo/redo prerequisite the draft verified as MISSING
+    // (finding 2): create/delete used to re-allocate ids on redo, which
+    // would spuriously dangle every FeatureId reference. The restore
+    // mechanism (the load path) already did it right; these entries
+    // expose the same id-pinning to the command layer. All of them
+    // REFUSE an id already in use — a redo that would land on a live
+    // node's id is an explicit error, never a silent rebind.
+
+    // Re-create a plain Sdf node with a PINNED id (command redo of a
+    // create/delete). Builder tag + params are re-attached by the
+    // caller through get_node_mut() — they are editing metadata, not
+    // identity.
+    std::uint32_t restore_sdf_node(std::uint32_t id, const std::string& name,
+                                   sdf::SDFBody body) {
+        if (get_node(id) != nullptr)
+            throw std::runtime_error(
+                "Scene::restore_sdf_node: id " + std::to_string(id) +
+                " is already in use - restore-style insertion never "
+                "rebinds (ADR-0027 D2)");
+        SceneNode node;
+        node.id = id;
+        node.name = name.empty() ? ("Shape_" + std::to_string(id)) : name;
+        node.kind = NodeKind::Sdf;
+        node.body = std::move(body);
+        node.mesh_dirty = true;
+        nodes_.push_back(std::move(node));
+        if (next_id_ <= id) next_id_ = id + 1;
+        notify(SceneChange::NodeAdded, id);
+        return id;
+    }
+
+    // Create an operation node (kind = Sdf, recipe set) materialized
+    // from the CURRENT operand bodies. Operands must exist and be
+    // Sdf-kind: the subtract action runs with LIVE operands — a LATER
+    // operand deletion is what produces the visible dangling state
+    // (never a silent rebind). Ids are allocated (first execution);
+    // command redo uses restore_operation_node with the pinned id.
+    std::uint32_t add_operation_node(const std::string& name,
+                                     OperationRecipe recipe) {
+        const SceneNode* t = get_node(recipe.target);
+        const SceneNode* w = get_node(recipe.tool);
+        if (t == nullptr || w == nullptr)
+            throw std::runtime_error(
+                "Scene::add_operation_node: operand " +
+                std::to_string(t == nullptr ? recipe.target : recipe.tool) +
+                " does not exist - an operation is created from live "
+                "operands (ADR-0027 D2); a later deletion produces the "
+                "visible dangling state, an absent operand at creation "
+                "is a caller bug");
+        if (t->kind != NodeKind::Sdf || w->kind != NodeKind::Sdf)
+            throw std::runtime_error(
+                "Scene::add_operation_node: operands must be Sdf-kind "
+                "nodes - a mesh has no body to subtract from "
+                "(ADR-0002 honest dispatch)");
+        SceneNode node;
+        node.id = next_id_++;
+        node.name = name.empty() ? "Subtract" : name;
+        node.kind = NodeKind::Sdf;
+        node.operation = recipe;
+        node.body = materialize_operation(recipe, t->body, w->body);
+        node.mesh_dirty = true;
+        nodes_.push_back(std::move(node));
+        notify(SceneChange::NodeAdded, nodes_.back().id);
+        return nodes_.back().id;
+    }
+
+    // Id-stable re-creation of an operation node (command redo,
+    // ADR-0027 D2): same contract as add_operation_node but with a
+    // PINNED id, so the redo of a Subtract lands on the SAME FeatureId
+    // the tree, the recipe consumers and the undo stack already know.
+    std::uint32_t restore_operation_node(std::uint32_t id,
+                                         const std::string& name,
+                                         OperationRecipe recipe) {
+        if (get_node(id) != nullptr)
+            throw std::runtime_error(
+                "Scene::restore_operation_node: id " + std::to_string(id) +
+                " is already in use - restore-style insertion never "
+                "rebinds (ADR-0027 D2)");
+        const SceneNode* t = get_node(recipe.target);
+        const SceneNode* w = get_node(recipe.tool);
+        if (t == nullptr || w == nullptr)
+            throw std::runtime_error(
+                "Scene::restore_operation_node: operand " +
+                std::to_string(t == nullptr ? recipe.target : recipe.tool) +
+                " does not exist - an operation is re-created from live "
+                "operands; if the operand was deleted, undo ITS "
+                "deletion first (the LIFO order guarantees this in the "
+                "app)");
+        if (t->kind != NodeKind::Sdf || w->kind != NodeKind::Sdf)
+            throw std::runtime_error(
+                "Scene::restore_operation_node: operands must be "
+                "Sdf-kind nodes (ADR-0002)");
+        SceneNode node;
+        node.id = id;
+        node.name = name.empty() ? "Subtract" : name;
+        node.kind = NodeKind::Sdf;
+        node.operation = recipe;
+        node.body = materialize_operation(recipe, t->body, w->body);
+        node.mesh_dirty = true;
+        nodes_.push_back(std::move(node));
+        if (next_id_ <= id) next_id_ = id + 1;
+        notify(SceneChange::NodeAdded, id);
+        return id;
     }
 
     // Next id that add_node() will hand out. Persisted by the native

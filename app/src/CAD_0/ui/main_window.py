@@ -12,12 +12,18 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
     QDockWidget,
     QFileDialog,
+    QHBoxLayout,
     QMainWindow,
     QMessageBox,
     QStatusBar,
     QToolBar,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -150,11 +156,14 @@ class MainWindow(QMainWindow):
             self._viewport.set_scene(self._scene)
 
     def _setup_dock_widgets(self) -> None:
-        # Simple QTreeWidget for the feature tree
+        # Simple QTreeWidget for the feature tree. ExtendedSelection
+        # (ADR-0027 D5): the subtract entry point needs exactly two SDF
+        # nodes selected; single-selection was the only selection-mode
+        # change the slice required.
         self._feature_tree = QTreeWidget(self)
         self._feature_tree.setHeaderLabels(["Name", "Type"])
         self._feature_tree.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._feature_tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._feature_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
 
         self._tree_dock = QDockWidget("Feature Tree", self)
         self._tree_dock.setWidget(self._feature_tree)
@@ -256,6 +265,16 @@ class MainWindow(QMainWindow):
         delete_action.setShortcut(QKeySequence.Delete)
         delete_action.triggered.connect(self.on_delete_selected)
         edit_menu.addAction(delete_action)
+
+        edit_menu.addSeparator()
+
+        # ADR-0027 D5 — the boolean feature's entry point: exactly two
+        # SDF-kind nodes selected → a minimal dialog (target/tool + the
+        # tool placement). Operands stay in the tree, hidden from the
+        # viewport; the operation row names them.
+        self._subtract_action = QAction("Su&btract (boolean difference)", self)
+        self._subtract_action.triggered.connect(self.on_subtract)
+        edit_menu.addAction(self._subtract_action)
 
         # ----- View menu -----
         view_menu = self.menuBar().addMenu("&View")
@@ -455,12 +474,27 @@ class MainWindow(QMainWindow):
             node = self._scene.node_at(i)
             if node is None:
                 continue
-            type_label = "Mesh" if node.kind == "mesh" else "SDF"
+            # Operation nodes get their own Type column ("CSG", or
+            # "CSG!" in the visible dangling state — ADR-0027 D2).
+            op = getattr(node, "operation", None)
+            if op is not None:
+                type_label = "CSG!" if node.operand_missing else "CSG"
+            else:
+                type_label = "Mesh" if node.kind == "mesh" else "SDF"
             item = QTreeWidgetItem([node.name, type_label])
             item.setData(0, Qt.UserRole, node.id)
             self._feature_tree.addTopLevelItem(item)
             if node.kind == "mesh":
                 # Imported geometry: no editing metadata, no defaults.
+                continue
+            if op is not None:
+                # The operation's editable params are the placement
+                # offsets, straight from the restored recipe.
+                self._node_types[node.id] = "csg_subtract"
+                self._node_params[node.id] = {
+                    "offset_x": float(op["offset_x"]),
+                    "offset_y": float(op["offset_y"]),
+                    "offset_z": float(op["offset_z"])}
                 continue
             # Editing metadata survives the round-trip via the C++ node's
             # `builder` tag + `params` map (persisted by the native format).
@@ -574,17 +608,26 @@ class MainWindow(QMainWindow):
     def _push_create_command(self, shape_type: str, params: dict) -> None:
         """Push a fully-functional undoable 'create shape' command.
 
-        The command stack's push() calls execute() immediately, so we let
-        execute() be the action that creates the node, and undo() removes it.
-        A mutable holder tracks the node_id (which may differ between
-        do/redo cycles because Scene assigns new IDs).
+        Id-stable across undo/redo cycles (ADR-0027 D2, the verified
+        finding-2 fix): the FIRST execution allocates the id, undo
+        removes the node, and redo re-creates it WITH THE SAME ID via
+        restore-style insertion — references held by operations must
+        never dangle spuriously. (The old behavior re-allocated ids on
+        redo, documented as acceptable before any feature referenced
+        ids; Phase F made it a defect.)
         """
         name = self._shape_display_name(shape_type)
         state = {"node_id": None}
 
         def execute():
-            body = self._make_body(shape_type, params)
-            nid = self._scene.add_node(name, body)
+            if state["node_id"] is None:
+                body = self._make_body(shape_type, params)
+                nid = self._scene.add_node(name, body)
+            else:
+                # Redo: the same node returns with its ORIGINAL id
+                # (restore-style insertion; a live id would raise).
+                nid = self._scene.restore_sdf_node(
+                    state["node_id"], name, self._make_body(shape_type, params))
             # Persist the editing metadata on the C++ node too, so the
             # native save format round-trips it (ADR-0007 builder tag).
             node = self._scene.get_node(nid)
@@ -602,17 +645,13 @@ class MainWindow(QMainWindow):
         def undo():
             nid = state["node_id"]
             if nid is not None:
-                # Remove from scene + side dicts + tree widget
+                # Remove from scene + side dicts + tree widget. The id
+                # stays pinned in `state` for the redo.
                 if self._scene and self._scene.remove_node(nid):
                     self._node_params.pop(nid, None)
                     self._node_types.pop(nid, None)
-                    for i in range(self._feature_tree.topLevelItemCount()):
-                        it = self._feature_tree.topLevelItem(i)
-                        if it.data(0, Qt.UserRole) == nid:
-                            self._feature_tree.takeTopLevelItem(i)
-                            break
+                    self._remove_tree_row(nid)
                     self._property_panel.clear()
-                    state["node_id"] = None
                     self._refresh_viewport()
 
         if self._command_stack:
@@ -633,16 +672,23 @@ class MainWindow(QMainWindow):
         self._create_registered("torus")
 
     def _rebuild_node(self, node_id: int) -> None:
-        """Rebuild an SDF body from its stored params and type.
+        """Rebuild a PRIMITIVE node's body from its stored params and
+        type, then run the DAG pass so every dependent operation
+        follows the edit (ADR-0027 D2).
 
-        The body construction is delegated to the kernel builder registry
-        (single source of truth — see _make_body). Unknown tags leave the
-        node untouched, mirroring the tolerant load contract.
+        Operation nodes do NOT go through here: their editable surface
+        is the placement, handled by _push_operation_offset_command
+        (which reads the other two axes from the node's CURRENT recipe
+        — the recipe is the source of truth; the UI keeps no second
+        copy of any parameter table).
         """
-        if node_id not in self._node_params:
+        if node_id not in self._node_params or not self._scene:
             return
         params = self._node_params[node_id]
         shape_type = self._node_types.get(node_id, "")
+        if shape_type == "csg_subtract":
+            return  # operations re-materialize through their command
+
         try:
             body = self._make_body(shape_type, params)
         except RuntimeError:
@@ -657,6 +703,10 @@ class MainWindow(QMainWindow):
                 node.builder = shape_type
                 node.set_params(
                     {k: float(v) for k, v in params.items()})
+            # The edit may feed dependent operations (ADR-0027 D2:
+            # the DAG pass propagates operand edits to dependents).
+            self._scene.rebuild_operations()
+            self._refresh_operation_rows()
             self._refresh_viewport()
 
     def _on_import(self, format_name: str) -> None:
@@ -790,10 +840,15 @@ class MainWindow(QMainWindow):
         node_id = item.data(0, Qt.UserRole)
         if node_id is None:
             return
-        # Snapshot the node so we can re-create it on redo-after-undo
+        # Snapshot the node so we can re-create it on undo
         shape_type = self._node_types.get(node_id, "")
         params = dict(self._node_params.get(node_id, {}))
-        name = self._shape_display_name(shape_type)
+        is_mesh = False
+        node = self._scene.get_node(node_id)
+        if node is not None and node.kind == "mesh":
+            is_mesh = True
+        name = self._shape_display_name(shape_type) if shape_type else (
+            node.name if node is not None else "")
         state = {"node_id": node_id, "tree_item_idx": None}
         # Capture the tree-widget index so undo can reinsert at the same slot
         for i in range(self._feature_tree.topLevelItemCount()):
@@ -808,19 +863,35 @@ class MainWindow(QMainWindow):
             if self._scene and self._scene.remove_node(nid):
                 self._node_params.pop(nid, None)
                 self._node_types.pop(nid, None)
-                for i in range(self._feature_tree.topLevelItemCount()):
-                    it = self._feature_tree.topLevelItem(i)
-                    if it.data(0, Qt.UserRole) == nid:
-                        self._feature_tree.takeTopLevelItem(i)
-                        break
+                self._remove_tree_row(nid)
                 self._property_panel.clear()
-                state["node_id"] = None
+                # An operand deletion may dangle dependent operations:
+                # run the DAG pass and refresh their rows (visible
+                # state, never a silent rebind — ADR-0027 D2).
+                if self._has_kernel:
+                    self._scene.rebuild_operations()
+                    self._refresh_operation_rows()
                 self._refresh_viewport()
 
         def undo():
-            # Re-create the node with its original shape/params
-            body = self._make_body(shape_type, params)
-            new_id = self._scene.add_node(name, body)
+            nid = state["node_id"]
+            if nid is None or is_mesh:
+                # Imported meshes are not re-creatable parametrically
+                # (pre-existing gap, unchanged by Phase F: delete of a
+                # mesh node is not undoable today).
+                return
+            # Re-create the node with its ORIGINAL id (id-stable undo,
+            # ADR-0027 D2): restore-style insertion, then re-attach the
+            # editing metadata so save round-trips and the panel works.
+            try:
+                body = self._make_body(shape_type, params)
+            except RuntimeError:
+                return  # unknown builder tag: nothing to re-create
+            new_id = self._scene.restore_sdf_node(nid, name, body)
+            node = self._scene.get_node(new_id)
+            if node is not None and shape_type:
+                node.builder = shape_type
+                node.set_params({k: float(v) for k, v in params.items()})
             self._node_params[new_id] = dict(params)
             self._node_types[new_id] = shape_type
             new_item = QTreeWidgetItem([name, "SDF"])
@@ -830,7 +901,10 @@ class MainWindow(QMainWindow):
                 self._feature_tree.insertTopLevelItem(idx, new_item)
             else:
                 self._feature_tree.addTopLevelItem(new_item)
-            state["node_id"] = new_id
+            # The restored operand may recover dangling operations.
+            if self._has_kernel:
+                self._scene.rebuild_operations()
+                self._refresh_operation_rows()
             self._refresh_viewport()
 
         if self._command_stack:
@@ -874,6 +948,199 @@ class MainWindow(QMainWindow):
         self._feature_tree.addTopLevelItem(item)
         self._refresh_viewport()
 
+    # ----- Boolean feature: CSG subtract (ADR-0027 D5) -----
+
+    def _selected_sdf_ids(self) -> list:
+        """The ids of the selected SDF-kind nodes (tree order)."""
+        out = []
+        for item in self._feature_tree.selectedItems():
+            nid = item.data(0, Qt.UserRole)
+            if nid is None:
+                continue
+            node = self._scene.get_node(nid) if self._scene else None
+            if node is not None and node.kind == "sdf":
+                out.append(nid)
+        return out
+
+    def on_subtract(self) -> None:
+        """Edit → Subtract: the boolean difference of two selected bodies.
+
+        Entry point (ADR-0027 D5): exactly two SDF-kind nodes selected
+        → a minimal dialog (target/tool pre-filled from the selection,
+        default target = the lower FeatureId — deterministic, no
+        geometric heuristics — plus the tool placement offset, world
+        coordinates). Anything else is a visible warning, never a guess.
+        """
+        if not self._has_kernel:
+            QMessageBox.warning(self, "No kernel", "C++ kernel not available.")
+            return
+        ids = self._selected_sdf_ids()
+        if len(ids) != 2:
+            QMessageBox.information(
+                self, "Subtract",
+                "Select exactly two SDF bodies in the feature tree:\n"
+                "the TARGET (material to keep) and the TOOL\n"
+                "(material to remove), then Edit → Subtract.")
+            return
+        target_id, tool_id, ox, oy, oz = self._subtract_dialog(ids[0], ids[1])
+        if target_id is None:
+            return  # cancelled
+        self._do_subtract(target_id, tool_id, ox, oy, oz)
+
+    def _subtract_dialog(self, first_id: int, second_id: int):
+        """Minimal subtract dialog. Returns (target, tool, ox, oy, oz),
+        or (None, None, 0, 0, 0) when cancelled."""
+        # The selectable SDF nodes (label + id), in tree order.
+        entries = []
+        for i in range(self._scene.node_count()):
+            node = self._scene.node_at(i)
+            if node is None or node.kind != "sdf":
+                continue
+            entries.append((f"{node.name}  (id {node.id})", node.id))
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Subtract (boolean difference)")
+        layout = QVBoxLayout(dlg)
+
+        combo_target = QComboBox(dlg)
+        combo_tool = QComboBox(dlg)
+        for label, _ in entries:
+            combo_target.addItem(label)
+            combo_tool.addItem(label)
+        # Deterministic default (ADR-0027 D5): target = the lower
+        # FeatureId of the two selected nodes — never a geometric
+        # heuristic.
+        lo, hi = min(first_id, second_id), max(first_id, second_id)
+        combo_target.setCurrentIndex([nid for _, nid in entries].index(lo))
+        combo_tool.setCurrentIndex([nid for _, nid in entries].index(hi))
+
+        row1 = QHBoxLayout()
+        row1.addWidget(combo_target)
+        row1.addWidget(combo_tool)
+        layout.addLayout(row1)
+
+        spins = []
+        row2 = QHBoxLayout()
+        for axis in ("x", "y", "z"):
+            spin = QDoubleSpinBox(dlg)
+            spin.setRange(-10.0, 10.0)
+            spin.setDecimals(3)
+            spin.setSingleStep(0.1)
+            spin.setValue(0.0)
+            spins.append(spin)
+            row2.addWidget(spin)
+        layout.addLayout(row2)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dlg)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+
+        if dlg.exec() != QDialog.Accepted:
+            return None, None, 0.0, 0.0, 0.0
+        target_id = [nid for _, nid in entries][combo_target.currentIndex()]
+        tool_id = [nid for _, nid in entries][combo_tool.currentIndex()]
+        if target_id == tool_id:
+            QMessageBox.warning(
+                self, "Subtract",
+                "Target and tool must be two different bodies.")
+            return None, None, 0.0, 0.0, 0.0
+        return (target_id, tool_id,
+                spins[0].value(), spins[1].value(), spins[2].value())
+
+    def _operation_label(self, target_id: int, tool_id: int) -> str:
+        """The operation row's label: it NAMES its operands (ADR-0027
+        D5) — 'Subtract (Box#1 - Cylinder#2)'. Names are read from the
+        live nodes; a deleted operand keeps its last known name here
+        (the row still identifies what was subtracted)."""
+        parts = []
+        for nid in (target_id, tool_id):
+            node = self._scene.get_node(nid) if self._scene else None
+            name = node.name if node is not None else "?"
+            parts.append(f"{name}#{nid}")
+        return f"Subtract ({parts[0]} - {parts[1]})"
+
+    def _do_subtract(self, target_id: int, tool_id: int,
+                     ox: float, oy: float, oz: float) -> None:
+        """Dialog-free core: create the subtract operation (undoable,
+        id-stable). The operands are hidden from the viewport (the
+        operation is the display); they stay in the tree, selectable
+        and editable, exactly as before."""
+        state = {"op_id": None}
+        label = self._operation_label(target_id, tool_id)
+
+        def execute():
+            if state["op_id"] is None:
+                nid = self._scene.add_operation_node(
+                    "Subtract", target_id, tool_id, ox, oy, oz)
+            else:
+                # Redo: the operation returns with its ORIGINAL id
+                # (id-stable, ADR-0027 D2 — references never rebind).
+                nid = self._scene.restore_operation_node(
+                    state["op_id"], "Subtract", target_id, tool_id,
+                    ox, oy, oz)
+            state["op_id"] = nid
+            node = self._scene.get_node(nid)
+            if node is not None:
+                node.name = label
+            # The placement offsets are the operation's editable
+            # params (the property panel is generic over param dicts).
+            self._node_params[nid] = {
+                "offset_x": float(ox), "offset_y": float(oy),
+                "offset_z": float(oz)}
+            self._node_types[nid] = "csg_subtract"
+            # Hide the operands (serialized state — round-trips).
+            self._scene.set_visible(target_id, False)
+            self._scene.set_visible(tool_id, False)
+            item = QTreeWidgetItem([label, "CSG"])
+            item.setData(0, Qt.UserRole, nid)
+            self._feature_tree.addTopLevelItem(item)
+            self._refresh_viewport()
+            self._status.showMessage(f"Created {label}", 3000)
+
+        def undo():
+            nid = state["op_id"]
+            if nid is not None and self._scene.remove_node(nid):
+                self._node_params.pop(nid, None)
+                self._node_types.pop(nid, None)
+                self._remove_tree_row(nid)
+                # The operands become visible again.
+                self._scene.set_visible(target_id, True)
+                self._scene.set_visible(tool_id, True)
+                self._property_panel.clear()
+                self._refresh_viewport()
+
+        if self._command_stack:
+            self._command_stack.push(execute, undo, f"Subtract")
+        else:
+            execute()
+
+    def _remove_tree_row(self, node_id: int) -> None:
+        """Remove the feature-tree row of a node id (helper shared by
+        every id-stable command)."""
+        for i in range(self._feature_tree.topLevelItemCount()):
+            it = self._feature_tree.topLevelItem(i)
+            if it.data(0, Qt.UserRole) == node_id:
+                self._feature_tree.takeTopLevelItem(i)
+                return
+
+    def _refresh_operation_rows(self) -> None:
+        """Refresh the operation rows' Type column from the live DAG
+        state: 'CSG' when healthy, 'CSG!' when dangling (the visible
+        error state — ADR-0027 D2: reported, never silently re-picked)."""
+        if not self._scene:
+            return
+        for i in range(self._feature_tree.topLevelItemCount()):
+            it = self._feature_tree.topLevelItem(i)
+            nid = it.data(0, Qt.UserRole)
+            if nid is None:
+                continue
+            node = self._scene.get_node(nid)
+            if node is None or not getattr(node, "operation", None):
+                continue
+            it.setText(1, "CSG!" if node.operand_missing else "CSG")
+
     def on_about(self) -> None:
         # License line: backed by the Apache-2.0 LICENSE at the repo
         # root (see docs/audits/2026-10-16-third-party-license-audit.md
@@ -894,15 +1161,103 @@ class MainWindow(QMainWindow):
 
     # ----- Debug menu (read-only inspection) -----
 
+    def _sdf_to_brep_report_text(self, node) -> Optional[str]:
+        """The Debug → Extract SDF → B-Rep report TEXT for a node (or
+        None, with the warning already shown, when the node is not
+        extractable). Pure string building — no dialogs — so the UI
+        smoke tests can assert the report content offscreen without
+        touching QMessageBox.
+
+        Amended content (ADR-0027 D6): χ, genus and the STRUCTURAL
+        contract (is_closed_orientable) — not just closed yes/no. The
+        genus follows the acceptance-correction-1 rule: derived only
+        when χ ≤ 2 and even; a multi-shell body (χ > 2) reports
+        "n/d" (the components counter is deferred).
+        """
+        if node is None or node.kind != "sdf":
+            return None
+
+        # The bridge submodule: re-exported by the package __init__; the
+        # direct fallback covers a bare _CAD_0 found on sys.path. Any
+        # failure here (e.g. a stale mixed old-package/new-extension
+        # install) is reported, never a crash.
+        import CAD_0
+        try:
+            bridge_mod = getattr(CAD_0, "bridge", None) or CAD_0._CAD_0.bridge
+        except Exception as exc:
+            QMessageBox.critical(self, "SDF → B-Rep", str(exc))
+            return None
+
+        # Timed extraction (default options: resolution 48, primitive
+        # fit first). Bridge errors (ValueError / RuntimeError) cross
+        # the binding with the FULL message — diagnosis and remedy are
+        # already inside (ADR-0026 D2): shown verbatim, never
+        # translated, never reduced to a log line.
+        import time
+        opts = bridge_mod.SdfToBrepOptions()
+        t0 = time.perf_counter()
+        try:
+            rep = bridge_mod.sdf_to_brep_report(node.body, opts)
+        except Exception as exc:
+            QMessageBox.critical(self, "SDF → B-Rep", str(exc))
+            return None
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+        fit_label = {
+            "sphere": "exact primitive (sphere)",
+            "box": "exact primitive (box)",
+            "cylinder": "exact primitive (cylinder)",
+            "faceted": "faceted extraction (MC33)",
+        }.get(rep["fit"], rep["fit"])
+
+        # Labels are precomputed OUTSIDE the f-string: a backslash
+        # inside an f-string expression (e.g. the '\u00ec' escape of
+        # the old inline conditional) is a syntax error on Python
+        # 3.10, the supported floor (CI). The file is UTF-8, so the
+        # plain literal is fine.
+        orientable_label = "yes" if rep["orientable"] else "NO"
+        loops_label = "yes" if rep["loops"] else "NO"
+
+        # Genus under the correction-1 rule (ADR-0027 D6): an int when
+        # derived (χ ≤ 2 and even, structurally sound); "n/d" for a
+        # multi-shell body (χ > 2 — the components counter is
+        # deferred), never a fabricated half-integer.
+        if rep["genus"] is None:
+            genus_label = ("n/d (multi-shell? chi > 2 — components "
+                           "counter deferred)")
+        else:
+            genus_label = str(rep["genus"])
+
+        # min |f| over the sampled grid (ADR-0026 Consequences
+        # left-over, resolved as a report field): the P2 margin — how
+        # far the closest grid sample sits from the surface. 0 would
+        # mean an on-grid zero (the faceted path rejects it). A
+        # diagnostic, not a contract: shown for both paths.
+        min_abs_f = rep["min_abs_field"]
+
+        return (
+            f"Body: \"{node.name}\" (id {node.id}, {node.kind})\n"
+            f"Path: {fit_label}\n"
+            f"V = {rep['V']}, E = {rep['E']}, F = {rep['F']}\n"
+            f"\u03c7 = V - E + F = {rep['chi']}\n"
+            f"Genus = {genus_label}\n"
+            f"Closed orientable (is_closed_orientable): {orientable_label}\n"
+            f"Loops (loops_are_closed): {loops_label}\n"
+            f"min |f| on grid (P2 margin): {min_abs_f:.6g}\n"
+            f"Extraction time: {elapsed_ms:.1f} ms"
+        )
+
     def on_debug_sdf_to_brep_report(self) -> None:
-        """Debug → Extract SDF → B-Rep: topology report (ADR-0026 consumer).
+        """Debug → Extract SDF → B-Rep: topology report (ADR-0026
+        consumer, amended by ADR-0027 D6).
 
         Runs the SDF → B-Rep bridge on the selected SDF body (or the
         scene's only body when nothing is selected) and reports V/E/F,
-        the Euler characteristic, the manifold/loop invariants, the path
-        the bridge took (exact primitive vs faceted extraction) and the
-        extraction time. Strictly read-only: the scene, the document and
-        the undo stack are untouched — an inspection tool, not an
+        the Euler characteristic, the genus (correction-1 rule), the
+        structural manifold/loop invariants, the path the bridge took
+        (exact primitive vs faceted extraction) and the extraction
+        time. Strictly read-only: the scene, the document and the
+        undo stack are untouched — an inspection tool, not an
         authoring action.
         """
         if not self._has_kernel:
@@ -932,64 +1287,9 @@ class MainWindow(QMainWindow):
                 "there is no field to convert (ADR-0002).")
             return
 
-        # The bridge submodule: re-exported by the package __init__; the
-        # direct fallback covers a bare _CAD_0 found on sys.path. Any
-        # failure here (e.g. a stale mixed old-package/new-extension
-        # install) is reported, never a crash.
-        import CAD_0
-        try:
-            bridge_mod = getattr(CAD_0, "bridge", None) or CAD_0._CAD_0.bridge
-        except Exception as exc:
-            QMessageBox.critical(self, "SDF → B-Rep", str(exc))
+        text = self._sdf_to_brep_report_text(node)
+        if text is None:
             return
-
-        # Timed extraction (default options: resolution 48, primitive
-        # fit first). Bridge errors (ValueError / RuntimeError) cross
-        # the binding with the FULL message — diagnosis and remedy are
-        # already inside (ADR-0026 D2): shown verbatim, never
-        # translated, never reduced to a log line.
-        import time
-        opts = bridge_mod.SdfToBrepOptions()
-        t0 = time.perf_counter()
-        try:
-            rep = bridge_mod.sdf_to_brep_report(node.body, opts)
-        except Exception as exc:
-            QMessageBox.critical(self, "SDF → B-Rep", str(exc))
-            return
-        elapsed_ms = (time.perf_counter() - t0) * 1000.0
-
-        fit_label = {
-            "sphere": "exact primitive (sphere)",
-            "box": "exact primitive (box)",
-            "cylinder": "exact primitive (cylinder)",
-            "faceted": "faceted extraction (MC33)",
-        }.get(rep["fit"], rep["fit"])
-
-        # Labels are precomputed OUTSIDE the f-string: a backslash
-        # inside an f-string expression (e.g. the '\u00ec' escape of
-        # the old inline conditional) is a syntax error on Python
-        # 3.10, the supported floor (CI). The file is UTF-8, so the
-        # plain literal is fine.
-        closed_label = "yes" if rep["closed"] else "NO"
-        loops_label = "yes" if rep["loops"] else "NO"
-
-        # min |f| over the sampled grid (ADR-0026 Consequences
-        # left-over, resolved as a report field): the P2 margin — how
-        # far the closest grid sample sits from the surface. 0 would
-        # mean an on-grid zero (the faceted path rejects it). A
-        # diagnostic, not a contract: shown for both paths.
-        min_abs_f = rep["min_abs_field"]
-
-        text = (
-            f"Body: \"{node.name}\" (id {node.id}, {node.kind})\n"
-            f"Path: {fit_label}\n"
-            f"V = {rep['V']}, E = {rep['E']}, F = {rep['F']}\n"
-            f"\u03c7 = V - E + F = {rep['chi']}\n"
-            f"Closed (is_closed_manifold): {closed_label}\n"
-            f"Loops (loops_are_closed): {loops_label}\n"
-            f"min |f| on grid (P2 margin): {min_abs_f:.6g}\n"
-            f"Extraction time: {elapsed_ms:.1f} ms"
-        )
         box = QMessageBox(
             QMessageBox.Icon.Information,
             "SDF → B-Rep — topology report",
@@ -1054,6 +1354,23 @@ class MainWindow(QMainWindow):
             self._property_panel.set_readonly_fields(
                 node.name, self._mesh_info_fields(node))
             return
+        # Operation node (ADR-0027 D5): the placement offsets are the
+        # editable params; the operand summary (names + ids) and any
+        # dangling error are read-only context below them.
+        op = getattr(node, "operation", None)
+        if op:
+            params = self._node_params.get(node_id, {})
+            if not params:
+                params = {"offset_x": float(op["offset_x"]),
+                          "offset_y": float(op["offset_y"]),
+                          "offset_z": float(op["offset_z"])}
+                self._node_params[node_id] = params
+            display_params = {k: float(v) for k, v in params.items()
+                              if isinstance(v, (int, float))}
+            readonly = self._operation_info_fields(node_id, op)
+            self._property_panel.set_parameters_and_readonly(
+                node.name, display_params, readonly)
+            return
         # Show the node's parameters in the property panel.
         params = self._node_params.get(node_id, {})
         # Convert to dict[str, float|str|bool] for PropertyPanel
@@ -1061,6 +1378,21 @@ class MainWindow(QMainWindow):
         for k, v in params.items():
             display_params[k] = float(v) if isinstance(v, (int, float)) else str(v)
         self._property_panel.set_parameters(node.name, display_params)
+
+    def _operation_info_fields(self, node_id: int, op: dict) -> dict:
+        """Read-only property-panel fields for an operation node: the
+        operand summary (names + ids) and, when dangling, the
+        actionable error (ADR-0027 D2 — reported, never re-picked)."""
+        fields = {}
+        for role in ("target", "tool"):
+            nid = op.get(role)
+            operand = self._scene.get_node(nid) if nid is not None else None
+            name = operand.name if operand is not None else "?"
+            fields[f"{role.capitalize()} operand"] = f"{name}  (id {nid})"
+        err = self._scene.operation_error(node_id)
+        if err:
+            fields["ERROR"] = err
+        return fields
 
     @staticmethod
     def _mesh_info_fields(node) -> dict:
@@ -1091,6 +1423,14 @@ class MainWindow(QMainWindow):
             value = float(value)
         except (TypeError, ValueError):
             return
+
+        # Operation nodes: the editable surface is the placement — a
+        # dedicated undoable command that reads the other two axes from
+        # the node's CURRENT recipe (source of truth, no UI copy).
+        if self._node_types.get(node_id) == "csg_subtract":
+            self._push_operation_offset_command(node_id, name, value)
+            return
+
         old_value = self._node_params[node_id].get(name, 0.0)
 
         def execute():
@@ -1109,6 +1449,39 @@ class MainWindow(QMainWindow):
         else:
             execute()
         self._status.showMessage(f"Set {name} = {value}", 2000)
+
+    def _push_operation_offset_command(self, node_id: int,
+                                        axis: str, value: float) -> None:
+        """Undoable one-axis placement edit for an operation node
+        (ADR-0027 D5). The other two axes come from the node's CURRENT
+        recipe — the recipe is the source of truth and the UI keeps no
+        second copy (the registry-consistency guard holds: no parameter
+        tables in main_window.py)."""
+        node = self._scene.get_node(node_id)
+        op = node.operation if node is not None else None
+        if op is None or axis not in ("offset_x", "offset_y", "offset_z"):
+            return
+
+        def apply(v: float) -> None:
+            axes = {"offset_x": op["offset_x"],
+                    "offset_y": op["offset_y"],
+                    "offset_z": op["offset_z"]}
+            axes[axis] = float(v)
+            self._scene.set_operation_offset(
+                node_id, axes["offset_x"], axes["offset_y"], axes["offset_z"])
+            self._node_params[node_id][axis] = float(v)
+            self._refresh_operation_rows()
+            self._refresh_viewport()
+            self._mark_modified()
+
+        old_value = float(op[axis])
+        if self._command_stack:
+            self._command_stack.push(
+                lambda: apply(value), lambda: apply(old_value),
+                f"Set {axis} = {value}")
+        else:
+            apply(value)
+        self._status.showMessage(f"Set {axis} = {value}", 2000)
 
     def _do_restore_param(self, node_id: int, name: str, old_value: float) -> None:
         """Legacy undo callback — kept for compatibility, unused after refactor."""

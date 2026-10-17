@@ -467,6 +467,124 @@ TEST_CASE("ADR-0022: is_closed_manifold rejects same-orientation coedge pair (in
     CHECK_FALSE(is_closed_manifold(body));
 }
 
+// ---------------------------------------------------------------------------
+// ADR-0027 D6 (Phase F, accepted) — is_closed_orientable (structural
+// invariants 0–3), genus_from_chi (the reported genus, acceptance
+// correction 1), and the is_closed_manifold compatibility wrapper
+// (structural ∧ χ == 2 — the exact historical meaning).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ADR-0027: is_closed_orientable true on the genus-0 factories") {
+    // box, tetrahedron, and the seam-wired sphere/cylinder (ADR-0023):
+    // all structurally sound, all χ = 2 → both the structural contract
+    // and the historical wrapper hold.
+    auto check = [](const BRepBody& b) {
+        CHECK(is_closed_orientable(b));
+        CHECK(euler_characteristic(b) == 2);
+        CHECK(is_closed_manifold(b));
+    };
+    check(*make_box(Vec3f{1, 1, 1}));
+    check(*make_box(Vec3f{2, 3, 4}));
+    check(*make_tetrahedron());
+    check(*make_sphere(1.0f));
+    check(*make_cylinder(0.5f, 2.0f));
+}
+
+TEST_CASE("ADR-0027: is_closed_orientable false on a no-edge body (invariant 0, the pre-ADR-0023 seam-wire shape)") {
+    // The periodic-surface shape the invariant-0 guard exists for: a
+    // shell claiming closure with faces but no edges/vertices (the
+    // pre-ADR-0023 sphere/torus representation). Without the guard
+    // this would pass vacuously.
+    BRepBody body;
+    auto& shell = body.solid.shell_mut();
+    shell.set_closed(true);
+    Face face(std::make_shared<PlaneSurface>(Vec3f{0, 0, 0}, Vec3f{0, 0, 1}));
+    face.set_id(0);
+    shell.add_face(std::move(face));
+
+    CHECK_FALSE(is_closed_orientable(body));
+    CHECK_FALSE(is_closed_manifold(body));  // wrapper: structural fails first
+}
+
+TEST_CASE("ADR-0027: is_closed_orientable false on the duplicated interface ring (XOR)") {
+    // Same fixture as the ADR-0022 invariant-2 test above: two faces
+    // glued back-to-back, χ = 2 — only the structural XOR catches it.
+    // The is_closed_manifold wrapper inherits the rejection through
+    // is_closed_orientable (its structural half), NOT through χ.
+    BRepBody body;
+    body.vertices = {
+        Vertex{{0, 0, 0}},
+        Vertex{{1, 0, 0}},
+        Vertex{{0, 1, 0}},
+    };
+    for (std::size_t i = 0; i < body.vertices.size(); ++i)
+        body.vertices[i].set_id(static_cast<VertexId>(i));
+    body.edges = {Edge{0, 1}, Edge{1, 2}, Edge{0, 2}};
+    for (std::size_t i = 0; i < body.edges.size(); ++i)
+        body.edges[i].set_id(static_cast<EdgeId>(i));
+
+    auto& shell = body.solid.shell_mut();
+    shell.set_closed(true);
+    for (FaceId id = 0; id < 2; ++id) {
+        Face face(std::make_shared<PlaneSurface>(Vec3f{0, 0, 0}, Vec3f{0, 0, 1}));
+        Loop loop;
+        loop.add_coedge(CoEdge{0, false});
+        loop.add_coedge(CoEdge{1, false});
+        loop.add_coedge(CoEdge{2, true});
+        face.add_loop(std::move(loop));
+        face.set_id(id);
+        shell.add_face(std::move(face));
+    }
+    link_radial_edges(body);
+
+    CHECK(euler_characteristic(body) == 2);
+    CHECK_FALSE(is_closed_orientable(body));
+    CHECK_FALSE(is_closed_manifold(body));
+}
+
+TEST_CASE("ADR-0027: genus_from_chi — the derivation rule (acceptance correction 1)") {
+    // Derived: one shell of genus (2 − χ)/2, χ ≤ 2 and even.
+    CHECK(genus_from_chi(2)  == std::optional<std::int64_t>{0});
+    CHECK(genus_from_chi(0)  == std::optional<std::int64_t>{1});   // pierced box
+    CHECK(genus_from_chi(-2) == std::optional<std::int64_t>{2});   // double torus
+    CHECK(genus_from_chi(-4) == std::optional<std::int64_t>{3});
+    // NOT derived: multi-shell (χ > 2 — components counter deferred).
+    CHECK(genus_from_chi(4)  == std::nullopt);
+    CHECK(genus_from_chi(6)  == std::nullopt);
+    CHECK(genus_from_chi(100) == std::nullopt);
+    // NOT derived: odd χ — impossible as a sum of closed orientable
+    // components' (even) characteristics; an assembly defect the
+    // structural invariants cannot see. A half-integer genus would be
+    // an assertion, not a report.
+    CHECK(genus_from_chi(1)  == std::nullopt);
+    CHECK(genus_from_chi(3)  == std::nullopt);
+    CHECK(genus_from_chi(-1) == std::nullopt);
+}
+
+TEST_CASE("ADR-0027: wrapper equivalence on the genus-0 topology fixtures") {
+    // is_closed_manifold == (is_closed_orientable && χ == 2) on every
+    // genus-0 fixture of this suite — nothing that passed starts
+    // failing, nothing that failed starts passing (the zero-silent-
+    // weakening contract).
+    auto check = [](const BRepBody& b) {
+        CHECK(is_closed_manifold(b) ==
+              (is_closed_orientable(b) && euler_characteristic(b) == 2));
+    };
+    check(*make_box(Vec3f{1, 1, 1}));
+    check(*make_box(Vec3f{2, 3, 4}));
+    check(*make_tetrahedron());
+    check(*make_sphere(1.0f));
+    check(*make_cylinder(0.5f, 2.0f));
+}
+
+TEST_CASE("ADR-0027: make_box reports genus 0 under the derivation rule") {
+    const auto body = make_box(Vec3f{1, 1, 1});
+    CHECK(is_closed_orientable(*body));
+    const auto g = genus_from_chi(euler_characteristic(*body));
+    REQUIRE(g.has_value());
+    CHECK(*g == 0);
+}
+
 TEST_CASE("PlaneSurface: evaluate and normal") {
     PlaneSurface plane(Vec3f{0, 0, 0}, Vec3f{0, 1, 0});
     auto p = plane.evaluate(3.0f, 4.0f);

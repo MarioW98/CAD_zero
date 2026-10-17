@@ -6,6 +6,7 @@
 #include "CAD_0/io/native.hpp"
 
 #include "CAD_0/scene/builders.hpp"
+#include "CAD_0/scene/operations.hpp"
 #include "CAD_0/sdf/operators.hpp"
 #include "CAD_0/sdf/primitives.hpp"
 #include "CAD_0/sdf/transforms.hpp"
@@ -16,6 +17,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -61,6 +63,21 @@ const bool kMigrator0102Registered [[maybe_unused]] = [] {
     register_migrator(NativeVersion{0, 1, 0}, NativeVersion{0, 2, 0},
                       [](json::JsonValue&) {
                           // no-op by design — see ADR-0007a.
+                      });
+    return true;
+}();
+
+// The 0.2.0 -> 0.3.0 migrator (ADR-0027 D4): a deliberate CONTENT
+// no-op. v0.2.0 documents carry no operation fields, and a missing
+// "operation" member parses as "not an operation node" — the same
+// field tolerance PATCH files rely on. The entry exists so the chain
+// 0.1.0 → 0.2.0 → 0.3.0 is explicit, registered, and exercised by
+// both frozen goldens on every CI run (the v0.1.0 one walks BOTH
+// steps).
+const bool kMigrator0203Registered [[maybe_unused]] = [] {
+    register_migrator(NativeVersion{0, 2, 0}, NativeVersion{0, 3, 0},
+                      [](json::JsonValue&) {
+                          // no-op by design — see ADR-0027 D4.
                       });
     return true;
 }();
@@ -602,6 +619,39 @@ std::string serialize_document(const scene::Scene& s, const NativeCamera& cam,
             if (!node.params.empty())
                 n.emplace_back("params", params_to_json(node.params));
             n.emplace_back("body", serialize_node_impl(*node.body.root()));
+            // v0.3.0 (ADR-0027 D4): the operation recipe — the node's
+            // provenance, serialized right after the cached body it
+            // explains. The exact ADR-0027 D4 shape:
+            //   "operation": { "type": "subtract", "target": 2,
+            //                  "tool": 3, "params": { "offset_x": … } }
+            if (node.operation) {
+                JsonValue op(JsonObject{});
+                op.as_object().emplace_back(
+                    "type",
+                    JsonValue(node.operation->type ==
+                                  scene::OperationType::Subtract
+                                  ? "subtract"
+                                  : "?"));
+                op.as_object().emplace_back(
+                    "target",
+                    JsonValue(static_cast<double>(node.operation->target)));
+                op.as_object().emplace_back(
+                    "tool",
+                    JsonValue(static_cast<double>(node.operation->tool)));
+                op.as_object().emplace_back(
+                    "params",
+                    JsonValue(JsonObject{})
+                        .set("offset_x",
+                             JsonValue(static_cast<double>(
+                                 node.operation->offset_x)))
+                        .set("offset_y",
+                             JsonValue(static_cast<double>(
+                                 node.operation->offset_y)))
+                        .set("offset_z",
+                             JsonValue(static_cast<double>(
+                                 node.operation->offset_z))));
+                n.emplace_back("operation", std::move(op));
+            }
         }
         nodes.push_back(JsonValue(std::move(n)));
     }
@@ -664,27 +714,47 @@ ParsedDocument parse_document(std::string_view text,
     const JsonValue& version_v = root.at("version");
     if (!version_v.is_string())
         type_error("version string", version_v);
-    const NativeVersion file_version = parse_version(version_v.as_string());
+    NativeVersion file_version = parse_version(version_v.as_string());
 
     if (!file_version.same_major_minor(kNativeVersion)) {
-        // MAJOR or MINOR mismatch → migrator chain. The lookup key
-        // normalizes the file's PATCH to zero: a migrator registered from
-        // (M.m.0) upgrades EVERY M.m.x — PATCH differences are compatible
-        // in both directions (ADR-0007), so 0.1.3 opens with the 0.1.0 →
-        // 0.2.0 migrator. Migrators run forward (upgrade) only.
-        const NativeVersion from_minor{file_version.major, file_version.minor, 0};
+        // MAJOR or MINOR mismatch → the migrator CHAIN, walked one
+        // MINOR step at a time (ADR-0007): 0.1.0 → 0.2.0 → 0.3.0 → …
+        // Each step's lookup key normalizes the file's PATCH to zero:
+        // a migrator registered from (M.m.0) upgrades EVERY M.m.x —
+        // PATCH differences are compatible in both directions
+        // (ADR-0007), so 0.1.3 opens with the 0.1.0 → 0.2.0 step.
+        // Migrators run forward (upgrade) only; a missing step is an
+        // explicit error naming both ends. The step search is bounded
+        // to the current MAJOR.MINOR and the minor strictly increases,
+        // so the walk always terminates. ParsedDocument::version keeps
+        // reporting the FILE's original version (the historical fact);
+        // the migrated representation is the one this build produces.
         const auto& registry = migrator_registry();
-        const MigratorKey key{from_minor, kNativeVersion};
-        const auto it = registry.find(key);
-        if (it == registry.end()) {
-            throw std::runtime_error(
-                "native format: file version " + version_to_string(file_version) +
-                " cannot be read by this build (expects " +
-                version_to_string(kNativeVersion) +
-                "): no migrator registered for that upgrade — "
-                "ADR-0007 requires an explicit migrator for MAJOR/MINOR changes");
+        NativeVersion current = file_version;
+        while (!current.same_major_minor(kNativeVersion)) {
+            const NativeVersion from{current.major, current.minor, 0};
+            const auto it = std::find_if(
+                registry.begin(), registry.end(),
+                [&from](const std::pair<MigratorKey, Migrator>& kv) {
+                    return kv.first.from == from &&
+                           kv.first.to.major == from.major &&
+                           kv.first.to.minor > from.minor &&
+                           kv.first.to.minor <= kNativeVersion.minor;
+                });
+            if (it == registry.end()) {
+                throw std::runtime_error(
+                    "native format: file version " +
+                    version_to_string(file_version) +
+                    " cannot be read by this build (expects " +
+                    version_to_string(kNativeVersion) +
+                    "): no migrator registered from " +
+                    version_to_string(from) +
+                    " — ADR-0007 requires an explicit migrator chain "
+                    "for MAJOR/MINOR changes");
+            }
+            it->second(root);
+            current = it->first.to;
         }
-        it->second(root);
     }
     // PATCH differences are forward/backward compatible (ADR-0007).
 
@@ -781,7 +851,7 @@ ParsedDocument parse_document(std::string_view text,
             // No builder/params/body for an imported mesh (ADR-0002):
             // those fields belong to the SDF representation. Surprising
             // leftovers on a mesh node are surfaced, not ignored.
-            for (const char* leftover : {"builder", "params", "body"})
+            for (const char* leftover : {"builder", "params", "body", "operation"})
                 if (node_v.find(leftover))
                     throw std::runtime_error(
                         std::string("native format: node ") +
@@ -820,8 +890,96 @@ ParsedDocument parse_document(std::string_view text,
         if (const scene::BuilderSpec* spec = scene::find_builder(node.builder))
             node.factory = spec->factory();
 
+        // v0.3.0 (ADR-0027 D4) — the operation recipe (optional). The
+        // recipe is parsed HERE (pass 1); reference validation and
+        // re-materialization run in pass 2 below, once every node is
+        // known. "operand_missing" is NEVER read from the file — it is
+        // derived state, recomputed by the pass.
+        if (const JsonValue* op_v = node_v.find("operation")) {
+            if (!op_v->is_object())
+                type_error("object for node \"operation\"", *op_v);
+            scene::OperationRecipe recipe;
+
+            const JsonValue& type_v = op_v->at("type");
+            if (!type_v.is_string())
+                type_error("string for operation \"type\"", type_v);
+            const std::string type = type_v.as_string();
+            if (type == "subtract") {
+                recipe.type = scene::OperationType::Subtract;
+            } else {
+                throw std::runtime_error(
+                    "native format: node " + std::to_string(node.id) +
+                    " has an unknown operation type \"" + type +
+                    "\" (this build reads \"subtract\"; the file was "
+                    "likely written by a newer CAD_0 version — "
+                    "ADR-0027 D4)");
+            }
+
+            const auto operand_id =
+                [&node](const JsonValue& v, const char* field) -> std::uint32_t {
+                    if (!v.is_number())
+                        type_error(std::string("number for operation \"") +
+                                   field + "\"", v);
+                    const double d = v.as_number();
+                    if (!(d >= 0.0) || d != std::floor(d) ||
+                        d > static_cast<double>(
+                            std::numeric_limits<std::uint32_t>::max()))
+                        throw std::runtime_error(
+                            "native format: node " +
+                            std::to_string(node.id) + " operation \"" +
+                            field + "\" must be a non-negative integer "
+                            "(got " + std::to_string(d) + ")");
+                    return static_cast<std::uint32_t>(d);
+                };
+            recipe.target = operand_id(op_v->at("target"), "target");
+            recipe.tool = operand_id(op_v->at("tool"), "tool");
+
+            // Offsets live under "params" (the ADR-0027 D4 shape);
+            // each defaults to 0 when absent (the same field tolerance
+            // PATCH files rely on — a writer always emits all three).
+            if (const JsonValue* prm = op_v->find("params")) {
+                if (!prm->is_object())
+                    type_error("object for operation \"params\"", *prm);
+                if (const JsonValue* v = prm->find("offset_x"))
+                    recipe.offset_x =
+                        static_cast<float>(require_number(*v, "offset_x"));
+                if (const JsonValue* v = prm->find("offset_y"))
+                    recipe.offset_y =
+                        static_cast<float>(require_number(*v, "offset_y"));
+                if (const JsonValue* v = prm->find("offset_z"))
+                    recipe.offset_z =
+                        static_cast<float>(require_number(*v, "offset_z"));
+            }
+            node.operation = recipe;
+        }
+
         node.body = sdf::SDFBody(deserialize_node_impl(node_v.at("body"), 0));
         doc.nodes.push_back(std::move(node));
+    }
+
+    // ---- Pass 2 (ADR-0027 D4): validate the operation DAG over the
+    // FULL node list, then re-materialize. Self-references and cycles
+    // are structural corruption — explicit load errors (the load stays
+    // transactional: nothing was installed yet). A missing operand is
+    // NOT corruption: the node keeps its file body and enters the
+    // visible error state; a present operand re-materializes the body
+    // from the recipe (deterministic — catches stale caches).
+    {
+        bool has_ops = false;
+        for (const auto& n : doc.nodes)
+            if (n.operation) { has_ops = true; break; }
+        if (has_ops) {
+            for (const auto& n : doc.nodes) {
+                if (!n.operation) continue;
+                if (n.operation->target == n.id || n.operation->tool == n.id)
+                    throw std::runtime_error(
+                        "native format: node " + std::to_string(n.id) +
+                        " operation references ITSELF ("
+                        "target/tool == own id) — structurally corrupt "
+                        "(ADR-0027 D2)");
+            }
+            scene::rebuild_document_operations(doc.nodes);
+        }
     }
 
     // camera (optional — default if absent).

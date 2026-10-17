@@ -93,6 +93,22 @@ class PropertyPanel(QWidget):
             text.setTextInteractionFlags(Qt.TextSelectableByMouse)
             self._form.addRow(label, text)
 
+    def set_parameters_and_readonly(
+            self, node_name: str, parameters: dict[str, Any],
+            readonly_fields: dict[str, str]) -> None:
+        """Editable parameters PLUS trailing read-only fields.
+
+        Used for operation nodes (ADR-0027 D5): the placement offsets
+        are editable parameters; the operand summary (names + ids) and
+        any dangling-reference error are read-only context below them.
+        """
+        self.set_parameters(node_name, parameters)
+        for name, value in readonly_fields.items():
+            label = QLabel(name)
+            text = QLabel(str(value))
+            text.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self._form.addRow(label, text)
+
     def clear(self) -> None:
         self._current_node_name = None
         self._header.setText("No selection")

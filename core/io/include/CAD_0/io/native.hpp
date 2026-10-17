@@ -1,14 +1,25 @@
 // core/io/include/CAD_0/io/native.hpp
 //
-// Native project format (.CAD_0) — implements ADR-0007 + ADR-0007a.
+// Native project format (.CAD_0) — implements ADR-0007 + ADR-0007a
+// + ADR-0027 D4 (the v0.3.0 bump).
 //
-// Format (v0.2.0):
+// Format (v0.3.0):
 //   * A binary container (ADR-0007a, codec in native_blob.hpp):
 //     [magic "CAD0BLOB" | json_len u32 LE | blob_len u32 LE] + JSON block
 //     + blob section. Files starting with '{' are legacy v0.1.0 pure-JSON
-//     documents and load through the 0.1.0 -> 0.2.0 migrator.
+//     documents and load through the migrator chain.
 //   * JSON for structure (in-house parser, see json.hpp — ADR-0003 forbids
 //     new third-party deps without a companion ADR).
+//   * v0.3.0 (ADR-0027 D4): Sdf nodes may carry an "operation" recipe
+//     (type/target/tool + offset params) — the PROVENANCE of a boolean
+//     feature, exactly as builder+params are the provenance of a
+//     primitive. The recipe is the source of truth; the serialized
+//     "body" is a self-contained cache (last-good geometry for the
+//     dangling state, and the stale-cache diagnostic). The loader is
+//     two-pass: parse every node, then validate + re-materialize the
+//     operations (operands present → deterministic rebuild from the
+//     recipe; operand missing → the file body + the error state; cycle
+//     or self-reference → explicit load error).
 //   * Bulk data (imported mesh geometry) lives in the blob section as
 //     "raw" blobs: float32/uint32, little-endian, bit-exact round-trips
 //     (ADR-0014). The JSON carries one header per blob (id, offset, size,
@@ -18,7 +29,8 @@
 //   * MAJOR.MINOR.PATCH `version` field with the semantics of ADR-0007:
 //       - PATCH bumps are forward-compatible: old readers open new files
 //         (unknown fields are ignored).
-//       - MINOR bumps run the Migrator chain (upgrade-only).
+//       - MINOR bumps run the Migrator chain (upgrade-only, chained:
+//         0.1.0 → 0.2.0 → 0.3.0 → …).
 //       - MAJOR bumps are incompatible: handled by a Migrator chain.
 //   * zstd blob compression is deferred (ADR-0003, no new deps); the
 //     "encoding" field in the blob header makes it a future clean bump.
@@ -68,20 +80,23 @@ struct NativeVersion {
     }
 };
 
-// The version this build reads and writes. 0.2.0: binary blob container
-// for imported meshes (ADR-0007a). A migrator upgrades 0.1.0 documents.
-inline constexpr NativeVersion kNativeVersion{0, 2, 0};
+// The version this build reads and writes. 0.3.0: operation recipes
+// on Sdf nodes (ADR-0027 D4 — the Phase F boolean feature). The
+// migrator chain upgrades older documents: 0.1.0 → 0.2.0 (ADR-0007a,
+// no-op) and 0.2.0 → 0.3.0 (ADR-0027 D4, content no-op — v0.2
+// documents carry no operation fields).
+inline constexpr NativeVersion kNativeVersion{0, 3, 0};
 
 // A Migrator transforms a parsed JSON document from `from_version` to
 // `to_version`. Registered in a chain indexed by the version pair. The
-// first real entry is the no-op 0.1.0 -> 0.2.0 upgrade (v0.1.0 documents
-// carry no blobs; a missing "meshes" member parses as "no meshes") —
-// see ADR-0007a. Any file whose MAJOR.MINOR differs from the current
-// version and has no registered migrator fails with an explicit error.
+// registered steps today: the no-op 0.1.0 → 0.2.0 upgrade (ADR-0007a)
+// and the no-op 0.2.0 → 0.3.0 upgrade (ADR-0027 D4). Any file whose
+// MAJOR.MINOR differs from the current version and has no registered
+// chain of steps fails with an explicit error.
 using Migrator = std::function<void(json::JsonValue&)>;
 
 void register_migrator(NativeVersion from, NativeVersion to, Migrator m);
-std::size_t migrator_count() noexcept; // test hook: 1 (0.1.0 -> 0.2.0)
+std::size_t migrator_count() noexcept; // test hook: 2 (0.1→0.2, 0.2→0.3)
 
 // Parse "MAJOR.MINOR.PATCH" (e.g. "0.1.0"). Throws std::runtime_error
 // with an explicit message on malformed input.

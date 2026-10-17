@@ -664,3 +664,191 @@ TEST_CASE("Bridge T12: report min_abs_field matches the mesh_extract grid layout
         CHECK(scan(u, 16) == rep.min_abs_field);
     }
 }
+
+// ---------------------------------------------------------------------------
+// ADR-0027 D6 (Phase F, accepted) — the genus-1 contract: the pierced
+// box, the genus derivation rule, and the wrapper equivalence over the
+// genus-0 fixtures of this suite.
+//
+// The pierced-box configuration pinned by T13–T15:
+//   target = make_box({1,1,1})           → [-1,1]^3 (half-extents)
+//   tool   = make_cylinder(0.25f, 3.0f)  → along Y, r = 0.25,
+//                                        y ∈ [-1.5, 1.5] (through hole)
+//   body   = sdf_subtract(box, cylinder) → genus 1, χ = 0 — the FIRST
+//                                        genus > 0 body of the repo.
+// Pinned counts were measured ONCE with a throwaway driver (GCC,
+// Release, -ffp-contract=off — the same method as T1–T3) and frozen.
+// ---------------------------------------------------------------------------
+
+static s::SDFBody pierced_box() {
+    auto box = s::make_box(Vec3f{1, 1, 1});
+    auto cyl = s::make_cylinder(0.25f, 3.0f);
+    return s::sdf_subtract(std::move(box), std::move(cyl));
+}
+
+// T13 — the MVP's pinned heart: the first genus-1 extraction. The
+// structural contract holds; χ = 0 is REPORTED and the genus derived
+// (χ ≤ 2, even); the compatibility wrapper keeps failing it — its
+// exact historical meaning, the zero-silent-weakening check.
+TEST_CASE("Bridge T13: pierced box res=48 - genus 1 pinned counts + structural contract") {
+    SdfToBrepOptions opts;
+    opts.fit_primitives = false;
+    opts.march_resolution = 48;
+    auto body = sdf_to_brep_faceted(pierced_box(), opts);
+
+    REQUIRE(body != nullptr);
+    // Pinned (pierced box, res=48): measured once, frozen. The
+    // closed-mesh identities hold with genus: E = 3F/2 and
+    // V − E + F = 0 (one shell, genus 1).
+    CHECK(body->vertex_count() == 15104);
+    CHECK(body->edge_count() == 45312);
+    CHECK(body->face_count() == 30208);
+    CHECK(body->edge_count() == 3 * body->face_count() / 2);
+
+    // Grid-independent contracts, genus-1 edition.
+    CHECK(b::euler_characteristic(*body) == 0);
+    CHECK(b::is_closed_orientable(*body));
+    CHECK(b::loops_are_closed(*body));
+    // The compatibility wrapper keeps its exact historical meaning
+    // (structural ∧ χ == 2): the pierced box FAILS it, exactly as it
+    // did before the amendment. This is the wrapper telling the truth
+    // about its own contract — not an extraction error.
+    CHECK_FALSE(b::is_closed_manifold(*body));
+
+    // Explicit invariants 1-2 (ADR-0022 sec. 7, structural): every
+    // edge exactly 2 co-edges, opposite orientation (XOR).
+    for (std::size_t e = 0; e < body->edge_count(); ++e) {
+        const auto& ce = body->edges[e].coedges();
+        REQUIRE(ce.size() == 2);
+        CHECK(ce[0]->reversed() != ce[1]->reversed());
+    }
+
+    // The report: χ = 0, genus DERIVED = 1 (acceptance correction 1),
+    // orientable, loops; the legacy closed field False; the P2 margin
+    // measured once and frozen.
+    const auto rep = sdf_to_brep_report(pierced_box(), opts);
+    CHECK(rep.fit == "faceted");
+    CHECK(rep.chi == 0);
+    CHECK(rep.orientable);
+    CHECK(rep.genus_derived);
+    CHECK(rep.genus == 1);
+    CHECK_FALSE(rep.closed);
+    CHECK(rep.loops);
+    CHECK(rep.min_abs_field > 0.0f);
+    CHECK(rep.min_abs_field == 0.00218443573f);
+}
+
+// T13b — determinism (the T5 habit, genus-1 edition): two fresh
+// constructions of the same (SDF, grid) produce bit-identical output.
+TEST_CASE("Bridge T13b: pierced box determinism - bit-identical re-run") {
+    auto extract = [] {
+        SdfToBrepOptions opts;
+        opts.fit_primitives = false;
+        opts.march_resolution = 48;
+        return sdf_to_brep_faceted(pierced_box(), opts);
+    };
+    auto first = extract();
+    auto second = extract();
+    REQUIRE(first != nullptr);
+    REQUIRE(second != nullptr);
+
+    CHECK(first->vertex_count() == second->vertex_count());
+    CHECK(first->edge_count() == second->edge_count());
+    CHECK(first->face_count() == second->face_count());
+    REQUIRE(first->vertex_count() == second->vertex_count());
+    for (std::size_t i = 0; i < first->vertex_count(); ++i) {
+        CHECK(first->vertices[i].position() == second->vertices[i].position());
+    }
+}
+
+// T14 — second grid (the T2 habit, genus-1 edition): counts differ,
+// χ = 0 does not — V/E/F are grid-dependent, the topological class
+// is not.
+TEST_CASE("Bridge T14: pierced box res=32 - counts differ, chi = 0 invariant") {
+    SdfToBrepOptions opts;
+    opts.fit_primitives = false;
+    opts.march_resolution = 32;
+    auto body = sdf_to_brep_faceted(pierced_box(), opts);
+
+    REQUIRE(body != nullptr);
+    // Pinned (pierced box, res=32): measured once, frozen. Deliberately
+    // != T13's 15104/45312/30208 — the counts are grid-dependent.
+    CHECK(body->vertex_count() == 6544);
+    CHECK(body->edge_count() == 19632);
+    CHECK(body->face_count() == 13088);
+
+    CHECK(b::euler_characteristic(*body) == 0);   // invariant
+    CHECK(b::is_closed_orientable(*body));
+    CHECK(b::loops_are_closed(*body));
+    CHECK_FALSE(b::is_closed_manifold(*body));    // wrapper: χ ≠ 2
+
+    const auto rep = sdf_to_brep_report(pierced_box(), opts);
+    CHECK(rep.chi == 0);
+    CHECK(rep.genus_derived);
+    CHECK(rep.genus == 1);
+    CHECK(rep.min_abs_field > 0.0f);
+    CHECK(rep.min_abs_field == 0.00499999523f);
+}
+
+// T15 — the genus derivation rule on a multi-shell body (acceptance
+// correction 1): two disjoint spheres → χ = 4 → genus NOT derived
+// ("multi-shell, n/d"), while the structural contract holds.
+TEST_CASE("Bridge T15: disjoint two-sphere union - chi = 4, genus n/d (multi-shell rule)") {
+    auto a = s::make_sphere(1.0f);
+    auto b = s::sdf_translate(s::make_sphere(1.0f), {5.0f, 0.0f, 0.0f});
+    auto two = s::sdf_union(std::move(a), std::move(b));
+    SdfToBrepOptions opts;
+    opts.fit_primitives = false;
+    opts.march_resolution = 16;
+    const auto rep = sdf_to_brep_report(two, opts);
+
+    // Pinned (two disjoint spheres r=1, centers 5 apart, res=16):
+    // measured once, frozen. Two shells → χ = 2 + 2 = 4.
+    CHECK(rep.vertex_count == 1172);
+    CHECK(rep.edge_count == 3504);
+    CHECK(rep.face_count == 2336);
+    CHECK(rep.chi == 4);
+
+    // The structural contract holds; the genus is NOT derived (χ > 2 —
+    // the components counter is deferred, ADR-0027 out of scope), and
+    // the wrapper is False (χ ≠ 2).
+    CHECK(rep.orientable);
+    CHECK(rep.loops);
+    CHECK_FALSE(rep.genus_derived);
+    CHECK_FALSE(rep.closed);
+    CHECK(rep.min_abs_field > 0.0f);
+    CHECK(rep.min_abs_field == 0.00473845005f);
+}
+
+// T16 — wrapper equivalence over this suite's genus-0 fixtures
+// (ADR-0027 D6 move 3): is_closed_manifold == (is_closed_orientable
+// && χ == 2) on every pinned extraction of T1–T9 — nothing that
+// passed starts failing, nothing that failed starts passing.
+TEST_CASE("Bridge T16: wrapper equivalence on the genus-0 fixtures") {
+    auto check = [](const s::SDFBody& sdf, std::uint32_t res) {
+        SdfToBrepOptions opts;
+        opts.fit_primitives = false;
+        opts.march_resolution = res;
+        auto body = sdf_to_brep_faceted(sdf, opts);
+        REQUIRE(body != nullptr);
+        CHECK(b::euler_characteristic(*body) == 2);  // the fixture class
+        CHECK(b::is_closed_manifold(*body) ==
+              (b::is_closed_orientable(*body) &&
+               b::euler_characteristic(*body) == 2));
+    };
+    check(s::make_sphere(1.0f), 16);                                        // T1
+    check(s::make_sphere(1.0f), 8);                                         // T2
+    check(s::make_sphere(1.0f), 32);                                        // T2
+    check(s::sdf_translate(s::make_sphere(1.0f), {0.13f, 0.29f, 0.07f}), 16); // T3
+    check(smooth_union_two_unit_spheres({0, 0, 0}, {1.2f, 0, 0}), 16);      // T7
+    check(smooth_union_two_unit_spheres({0.13f, 0.29f, 0.07f},
+                                        {1.33f, 0.29f, 0.07f}), 16);        // T8
+    check(smooth_union_two_unit_spheres({0, 0, 0}, {1.2f, 0, 0}), 32);      // T9
+    {
+        // T8b (rotated): the same equivalence under a rotation.
+        auto u = smooth_union_two_unit_spheres({0, 0, 0}, {1.2f, 0, 0});
+        const CAD_0::math::Quatf q =
+            CAD_0::math::Quatf::from_axis_angle(Vec3f{1, 2, 3}.normalized(), 0.6f);
+        check(s::sdf_rotate(std::move(u), q), 16);
+    }
+}

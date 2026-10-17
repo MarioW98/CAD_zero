@@ -69,7 +69,9 @@ void bind_bridge(nb::module_& m) {
         });
 
     // Faceted extraction (ADR-0026 D3: one Face per welded MC
-    // triangle, hard is_closed_manifold postcondition). Errors cross
+    // triangle, hard is_closed_orientable postcondition — the
+    // structural contract, ADR-0022 sec. 7 as amended by ADR-0027
+    // D6; chi/genus are reported, not asserted). Errors cross
     // the binding as ValueError / RuntimeError with the full bridge
     // message (diagnosis + remedy), never wrapped.
     bridge_mod.def("sdf_to_brep_faceted",
@@ -83,7 +85,8 @@ void bind_bridge(nb::module_& m) {
     // Topology report — the consumer-friendly entry point: runs the
     // same dispatch as the C++ sdf_to_brep() and returns plain values,
     // so the caller needs no B-Rep API. Keys mirror the ADR-0026 D2
-    // contract: V/E/F are grid-dependent; chi/closed/loops are not.
+    // contract as amended by ADR-0027 D6: V/E/F are grid-dependent;
+    // chi/orientable/closed/loops/genus are not.
     bridge_mod.def("sdf_to_brep_report",
         [](const SDFBody& body, const SdfToBrepOptions& opts) {
             const SdfToBrepReport r =
@@ -93,20 +96,37 @@ void bind_bridge(nb::module_& m) {
             out["E"] = r.edge_count;
             out["F"] = r.face_count;
             out["chi"] = r.chi;
+            out["orientable"] = r.orientable;
             out["closed"] = r.closed;
             out["loops"] = r.loops;
             out["fit"] = r.fit;
+            // Genus under the acceptance-correction-1 rule (the
+            // blocking rule): an int when derived (chi <= 2 and even,
+            // structurally sound — chi = 0 → genus 1, the pierced
+            // box), None otherwise — a multi-shell body (chi > 2,
+            // e.g. two disjoint spheres) reports "multi-shell,
+            // genus n/d"; the components counter is deferred
+            // (ADR-0027 out of scope).
+            out["genus"] = r.genus_derived ? nb::int_(r.genus) : nb::none();
             out["min_abs_field"] = r.min_abs_field;
             return out;
         },
         nb::arg("body"), nb::arg("opts") = SdfToBrepOptions(),
         "Convert an SDF body to B-Rep and report the resulting topology\n"
-        "as a dict: V, E, F (grid-dependent), chi (V - E + F), closed\n"
-        "(is_closed_manifold), loops (loops_are_closed), fit — the\n"
-        "path that produced the body: \"sphere\"|\"box\"|\"cylinder\"\n"
-        "(exact analytic primitive) or \"faceted\" (MC33 extraction) —\n"
-        "and min_abs_field: the minimum |f| over the sampled grid, the\n"
-        "machine-readable P2 margin (diagnostic, not a contract; 0\n"
-        "would mean an on-grid zero, which the faceted path rejects).\n"
-        "Deterministic for the arithmetic class (ADR-0026 D5).");
+        "as a dict: V, E, F (grid-dependent), chi (V - E + F),\n"
+        "orientable (is_closed_orientable — the structural contract,\n"
+        "ADR-0022 sec. 7 as amended by ADR-0027 D6), closed (the legacy\n"
+        "is_closed_manifold wrapper: orientable AND chi == 2 — False on\n"
+        "a correctly extracted pierced box, which is the wrapper telling\n"
+        "the truth about its own contract), loops (loops_are_closed),\n"
+        "fit — the path that produced the body: \"sphere\"|\"box\"|\n"
+        "\"cylinder\" (exact analytic primitive) or \"faceted\" (MC33\n"
+        "extraction) — genus: the DERIVED genus when the rule allows\n"
+        "(structurally sound, chi <= 2 and even; chi = 0 → genus 1),\n"
+        "None otherwise (multi-shell: chi > 2 — report \"n/d\"; the\n"
+        "components counter is deferred), and min_abs_field: the\n"
+        "minimum |f| over the sampled grid, the machine-readable P2\n"
+        "margin (diagnostic, not a contract; 0 would mean an on-grid\n"
+        "zero, which the faceted path rejects). Deterministic for the\n"
+        "arithmetic class (ADR-0026 D5).");
 }

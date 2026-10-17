@@ -9,6 +9,7 @@
 
 #include "CAD_0/scene/scene.hpp"
 #include "CAD_0/scene/builders.hpp"
+#include "CAD_0/scene/operations.hpp"
 #include "CAD_0/viewport/camera.hpp"
 #include "CAD_0/viewport/command_stack.hpp"
 #include "CAD_0/sdf/primitives.hpp"
@@ -37,7 +38,11 @@ void bind_scene(nb::module_& m) {
     // object has no setter" and killed the app during parameter editing).
     nb::class_<scene::SceneNode>(scene_mod, "SceneNode")
         .def_ro("id", &scene::SceneNode::id)
-        .def_ro("name", &scene::SceneNode::name)
+        // `name` is writable (ADR-0027 D5): the subtract command names
+        // its node after its operands ("Subtract (Box#1 - Cylinder#2)")
+        // so the row, the file and the Debug report all identify what
+        // was subtracted.
+        .def_rw("name", &scene::SceneNode::name)
         .def_ro("visible", &scene::SceneNode::visible)
         // Node kind (ADR-0002 honest dispatch): "sdf" or "mesh".
         // Python code that assumes an SDF body MUST check this first —
@@ -107,7 +112,30 @@ void bind_scene(nb::module_& m) {
                     throw std::runtime_error("param \"" + key +
                                              "\" must be number, string or bool");
             }
-        }, nb::arg("params"));
+        }, nb::arg("params"))
+        // ---- Operation provenance (Phase F, ADR-0027 D2) ----
+        // The recipe as a plain dict (None when the node is not an
+        // operation): {"type": "subtract", "target": id, "tool": id,
+        // "offset_x"/"offset_y"/"offset_z": float}. Read-only from
+        // Python: edits go through Scene.set_operation_offset (which
+        // re-materializes through the DAG pass — the recipe and the
+        // body never drift apart).
+        .def_prop_ro("operation", [](const scene::SceneNode& n) -> nb::object {
+            if (!n.operation) return nb::none();
+            nb::dict d;
+            d["type"] = n.operation->type == scene::OperationType::Subtract
+                            ? "subtract" : "?";
+            d["target"] = n.operation->target;
+            d["tool"] = n.operation->tool;
+            d["offset_x"] = n.operation->offset_x;
+            d["offset_y"] = n.operation->offset_y;
+            d["offset_z"] = n.operation->offset_z;
+            return nb::object(d);
+        })
+        // The visible dangling state: an operand was deleted; the node
+        // keeps its last materialized body and reports the error
+        // (Scene.operation_error carries the actionable message).
+        .def_ro("operand_missing", &scene::SceneNode::operand_missing);
 
     // ---- Parametric builder registry (single source of truth) -----------
     //
@@ -233,7 +261,118 @@ void bind_scene(nb::module_& m) {
                  s.set_change_callback(std::move(cb));
              },
              nb::arg("callback").none())
-        .def("next_id", &scene::Scene::next_id);
+        .def("next_id", &scene::Scene::next_id)
+        // ---- Phase F operations (ADR-0027 D2) ----
+        //
+        // The subtract feature's scene surface. add_operation_node
+        // creates the operation from LIVE operands (a later deletion
+        // is what produces the visible dangling state — never a silent
+        // rebind); restore_operation_node / restore_sdf_node are the
+        // id-pinned re-creation entries the undo/redo commands use
+        // (a redo that would land on a live id raises — references
+        // never drift); rebuild_operations is the DAG pass (edit
+        // propagation + dangling detection + recovery, one call);
+        // set_operation_offset edits the placement and re-materializes
+        // through the same pass; operation_error carries the
+        // actionable dangling message for the property panel.
+        .def("add_operation_node",
+             [](scene::Scene& s, const std::string& name,
+                std::uint32_t target, std::uint32_t tool,
+                float ox, float oy, float oz) {
+                 scene::OperationRecipe r;
+                 r.type = scene::OperationType::Subtract;
+                 r.target = target;
+                 r.tool = tool;
+                 r.offset_x = ox;
+                 r.offset_y = oy;
+                 r.offset_z = oz;
+                 return s.add_operation_node(name, r);
+             },
+             nb::arg("name"), nb::arg("target"), nb::arg("tool"),
+             nb::arg("offset_x") = 0.0f, nb::arg("offset_y") = 0.0f,
+             nb::arg("offset_z") = 0.0f,
+             "Create a subtract operation node referencing two live "
+             "SDF operands by id, materialized from their current "
+             "bodies (the tool offset is in world coordinates). "
+             "Returns the new node id.")
+        .def("restore_operation_node",
+             [](scene::Scene& s, std::uint32_t node_id,
+                const std::string& name,
+                std::uint32_t target, std::uint32_t tool,
+                float ox, float oy, float oz) {
+                 scene::OperationRecipe r;
+                 r.type = scene::OperationType::Subtract;
+                 r.target = target;
+                 r.tool = tool;
+                 r.offset_x = ox;
+                 r.offset_y = oy;
+                 r.offset_z = oz;
+                 return s.restore_operation_node(node_id, name, r);
+             },
+             nb::arg("node_id"), nb::arg("name"), nb::arg("target"),
+             nb::arg("tool"), nb::arg("offset_x") = 0.0f,
+             nb::arg("offset_y") = 0.0f, nb::arg("offset_z") = 0.0f,
+             "Re-create a subtract operation node with a PINNED id "
+             "(command redo). Raises RuntimeError if the id is in use "
+             "or an operand is missing — never a silent rebind.")
+        .def("restore_sdf_node",
+             [](scene::Scene& s, std::uint32_t node_id,
+                const std::string& name, sdf::SDFBody body) {
+                 return s.restore_sdf_node(node_id, name, std::move(body));
+             },
+             nb::arg("node_id"), nb::arg("name"), nb::arg("body"),
+             "Re-create a plain SDF node with a PINNED id (command "
+             "redo of create/delete). Builder tag + params are "
+             "re-attached by the caller. Raises RuntimeError if the id "
+             "is in use.")
+        .def("rebuild_operations",
+             [](scene::Scene& s) {
+                 const scene::OperationRebuildResult r =
+                     scene::rebuild_operations(s);
+                 nb::dict out;
+                 out["rebuilt"] = r.rebuilt;
+                 nb::list dang;
+                 for (const auto id : r.dangling) dang.append(id);
+                 out["dangling"] = dang;
+                 return out;
+             },
+             "The DAG rebuild pass: re-materialize every operation node "
+             "from the current operand bodies (topological order). "
+             "Returns {\"rebuilt\": count, \"dangling\": [ids]}. Raises "
+             "RuntimeError on cyclic references (structurally corrupt).")
+        .def("set_operation_offset",
+             [](scene::Scene& s, std::uint32_t node_id,
+                float ox, float oy, float oz) {
+                 scene::SceneNode* n = s.get_node_mut(node_id);
+                 if (n == nullptr || !n->operation)
+                     throw std::runtime_error(
+                         "set_operation_offset: node " +
+                         std::to_string(node_id) +
+                         " is not an operation node");
+                 n->operation->offset_x = ox;
+                 n->operation->offset_y = oy;
+                 n->operation->offset_z = oz;
+                 const scene::OperationRebuildResult r =
+                     scene::rebuild_operations(s);
+                 nb::dict out;
+                 out["rebuilt"] = r.rebuilt;
+                 nb::list dang;
+                 for (const auto id : r.dangling) dang.append(id);
+                 out["dangling"] = dang;
+                 return out;
+             },
+             nb::arg("node_id"), nb::arg("offset_x"), nb::arg("offset_y"),
+             nb::arg("offset_z"),
+             "Edit an operation's tool placement (world coordinates) "
+             "and re-materialize through the DAG pass. Returns the "
+             "rebuild result dict (see rebuild_operations).")
+        .def("operation_error",
+             [](const scene::Scene& s, std::uint32_t node_id) {
+                 return scene::operation_error(s, node_id);
+             },
+             nb::arg("node_id"),
+             "The actionable dangling message for an operation node "
+             "(empty string when the node is not dangling).");
 
     // OrbitCamera — bind to Python so the viewport widget can use it
     auto cam_mod = m.def_submodule("camera", "Camera system");

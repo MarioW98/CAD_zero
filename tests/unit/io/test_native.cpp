@@ -1,17 +1,22 @@
 // tests/unit/io/test_native.cpp
 //
-// Native project format (.CAD_0, ADR-0007 + ADR-0007a) — unit tests.
+// Native project format (.CAD_0, ADR-0007 + ADR-0007a + ADR-0027 D4) —
+// unit tests.
 //
 // Coverage per the feature plan:
 //   * round-trip: SDF evaluation is BIT-IDENTICAL after save/load
 //   * golden v0.1.0 (frozen legacy fixture): loads through the
-//     0.1.0 -> 0.2.0 migrator; SDF values bit-identical
-//   * golden v0.2.0: container + one embedded mesh; re-serialization is
-//     byte-identical (CI drift detector)
+//     migrator CHAIN (0.1.0 → 0.2.0 → 0.3.0); SDF values bit-identical
+//   * golden v0.2.0: loads through the 0.2.0 → 0.3.0 migrator; the
+//     migrated re-serialization is byte-identical to a fresh v0.3 save
+//   * golden v0.3.0: the pierced-box document with an operation recipe;
+//     extraction report χ = 0 / genus 1 (ADR-0027's MVP shape)
 //   * container framing: magic/legacy detection, length validation,
 //     truncation errors
 //   * "raw" blob codec: bit-exact round-trips (incl. -0.0/denormals)
 //   * ID round-trip: node ids and next_id survive a cycle exactly
+//   * operation recipes (ADR-0027 D4): two-pass load (rebuild / dangling
+//     / cycle / self-reference are all explicit), byte-stable round-trip
 //   * explicit errors: corrupted JSON, unknown ops, missing fields,
 //     version mismatches without a migrator — all throw with messages,
 //     and the scene is left untouched (transactional load)
@@ -22,6 +27,7 @@
 #include "CAD_0/io/json.hpp"
 #include "CAD_0/io/native.hpp"
 #include "CAD_0/io/native_blob.hpp"
+#include "CAD_0/bridge/sdf_to_brep.hpp"
 #include "CAD_0/sdf/operators.hpp"
 #include "CAD_0/sdf/primitives.hpp"
 #include "CAD_0/sdf/transforms.hpp"
@@ -130,6 +136,55 @@ std::filesystem::path golden_v2_path() {
            "native_v0_2_0.CAD_0";
 }
 
+std::filesystem::path golden_v3_path() {
+    // The v0.3.0 golden (ADR-0027 D4): the pierced-box document — a
+    // parametric box, a parametric cylinder, and a subtract operation
+    // node carrying its recipe.
+    return std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
+           "native_v0_3_0.CAD_0";
+}
+
+// The pierced-box scene of the v0.3.0 golden (ADR-0027's MVP shape):
+// box (id 1, builder, extent (1,1,1)), cylinder (id 2, builder, r=0.25
+// h=3 — the through-hole tool along Y), subtract operation (id 3,
+// target 1, tool 2, zero offset).
+scene::Scene make_pierced_scene() {
+    scene::Scene s;
+    {
+        scene::SceneNode n;
+        n.id = 1;
+        n.name = "Box";
+        n.builder = "box";
+        n.params = {{"extent_x", 1.0f}, {"extent_y", 1.0f},
+                    {"extent_z", 1.0f}};
+        n.body = sdf::make_box(math::Vec3f{1.0f, 1.0f, 1.0f});
+        s.restore_node(std::move(n));
+    }
+    {
+        scene::SceneNode n;
+        n.id = 2;
+        n.name = "Cylinder";
+        n.builder = "cylinder";
+        n.params = {{"radius", 0.25f}, {"height", 3.0f}};
+        n.body = sdf::make_cylinder(0.25f, 3.0f);
+        s.restore_node(std::move(n));
+    }
+    {
+        scene::OperationRecipe r;
+        r.type = scene::OperationType::Subtract;
+        r.target = 1;
+        r.tool = 2;
+        const std::uint32_t op = s.add_operation_node("Subtract", r);
+        REQUIRE(op == 3);
+        // The operands are hidden in-app (the operation is the display)
+        // — and the golden freezes exactly that state.
+        s.set_visible(1, false);
+        s.set_visible(2, false);
+    }
+    s.set_next_id(4);
+    return s;
+}
+
 // The embedded mesh of the v0.2.0 golden: a regular octahedron — 6
 // vertices, 8 triangles, deterministic to the last bit. Normals are the
 // positions themselves (every vertex is a unit vector).
@@ -167,14 +222,15 @@ std::string read_file(const std::filesystem::path& p) {
 
 TEST_SUITE("io native format") {
 
-TEST_CASE("version constant + migrator chain (ADR-0007/0007a)") {
+TEST_CASE("version constant + migrator chain (ADR-0007/0007a/0027)") {
     CHECK(native::kNativeVersion.major == 0);
-    CHECK(native::kNativeVersion.minor == 2);
+    CHECK(native::kNativeVersion.minor == 3);
     CHECK(native::kNativeVersion.patch == 0);
-    // The first real migrator: 0.1.0 -> 0.2.0 (no-op by design, ADR-0007a).
-    CHECK(native::migrator_count() == 1);
+    // The registered chain: 0.1.0 -> 0.2.0 (ADR-0007a, no-op) and
+    // 0.2.0 -> 0.3.0 (ADR-0027 D4, content no-op).
+    CHECK(native::migrator_count() == 2);
 
-    const auto v = native::parse_version("0.2.0");
+    const auto v = native::parse_version("0.3.0");
     CHECK(v == native::kNativeVersion);
 
     CHECK_THROWS_WITH_AS(native::parse_version("0.1"),
@@ -299,39 +355,56 @@ TEST_CASE("golden v0.1.0 (frozen legacy fixture): loads through the migrator") {
     CHECK(doc.meshes.empty());
 }
 
-TEST_CASE("golden v0.2.0: container + embedded mesh, re-serialization byte-identical") {
+TEST_CASE("golden v0.2.0: loads through the 0.2→0.3 migrator; migrated save == fresh v0.3 save") {
     // Regeneration mode (maintainer-only, never active in CI):
     //   CAD_0_GENERATE_GOLDEN=1 ./CAD_0_tests
     // rewrites the v0.2.0 golden after an INTENTIONAL format change
     // (which requires a companion ADR per ADR-0007/0007a). The v0.1.0
     // golden is frozen and is NEVER rewritten by this path.
+    // NOTE (ADR-0027 D4 bump): the golden BYTES still declare 0.2.0 —
+    // frozen history. The current writer emits 0.3.0, so the fresh-vs-
+    // golden byte comparison of the pre-0.3 era is replaced by its
+    // honest successor: the MIGRATED document re-serializes to exactly
+    // the bytes a natively-built v0.3 document produces (the migrator
+    // loses nothing; the drift detector survives the bump).
     if (const char* env = std::getenv("CAD_0_GENERATE_GOLDEN");
         env && std::string_view(env) == "1") {
         std::filesystem::create_directories(golden_v2_path().parent_path());
-        native::save_file(golden_v2_path(), make_canonical_scene(),
-                          make_canonical_camera(), make_golden_meshes());
-        MESSAGE("golden file (re)written: ", golden_v2_path().string());
+        // A v0.2.0 golden must be written by a v0.2.0 writer — this
+        // regeneration path is frozen history too: it rewrites the
+        // fixture ONLY from the checked-in bytes' own content via the
+        // migrator, which cannot be exercised here. Kept as an explicit
+        // failure so nobody "regenerates" a v0.2 golden with a v0.3
+        // writer by accident.
+        MESSAGE("golden v0.2.0 is FROZEN (ADR-0027 D4): regeneration "
+                "refused by a v0.3.0 writer");
         return;
     }
 
     const std::filesystem::path gp = golden_v2_path();
     const std::string missing =
-        "golden file missing: " + gp.string() +
-        " (regenerate with CAD_0_GENERATE_GOLDEN=1)";
+        "golden file missing: " + gp.string();
     REQUIRE_MESSAGE(std::filesystem::exists(gp), missing);
     const std::string golden = read_file(gp);
 
-    // (a) The canonical scene + mesh serializes to exactly the golden
-    // bytes (fresh container == checked-in container).
+    // The fixture still declares 0.2.0 (frozen history — if this ever
+    // fails, someone rewrote it with a newer writer).
+    CHECK(golden.find("\"version\": \"0.2.0\"") != std::string::npos);
+
     const std::filesystem::path tmp =
         std::filesystem::temp_directory_path() / "cad0_golden_v2_check.CAD_0";
+
+    // (a) The fresh v0.3.0 save of the canonical scene + meshes (the
+    // reference bytes for (c)).
     native::save_file(tmp, make_canonical_scene(),
                       make_canonical_camera(), make_golden_meshes());
-    CHECK(read_file(tmp) == golden);
+    const std::string fresh_v3 = read_file(tmp);
+    CHECK(fresh_v3.find("\"version\": \"0.3.0\"") != std::string::npos);
     std::filesystem::remove(tmp);
 
-    // (b) Load the golden: framing, nodes and mesh all decode; SDF values
-    // are bit-identical; the mesh is exactly the octahedron we wrote.
+    // (b) Load the golden: the 0.2.0 → 0.3.0 migrator runs, framing,
+    // nodes and mesh all decode; SDF values are bit-identical to the
+    // canonical scene; the mesh is exactly the octahedron we wrote.
     const native::ParsedDocument doc = native::load_file(gp);
     REQUIRE(doc.meshes.size() == 1);
     CHECK(doc.meshes[0].id == "mesh_1");
@@ -349,11 +422,274 @@ TEST_CASE("golden v0.2.0: container + embedded mesh, re-serialization byte-ident
     CHECK(sample_grid(s.node_at(0)->body, 7) ==
           sample_grid(make_canonical_scene().node_at(0)->body, 7));
 
-    // (c) Re-serialize the loaded document: byte-identical (the drift
-    // detector — blob offsets, JSON determinism, endian-stable encoding).
+    // (c) Re-serialize the loaded (migrated) document: byte-identical
+    // to the fresh v0.3.0 save — the migrator loses nothing, and the
+    // drift detector (blob offsets, JSON determinism, endian-stable
+    // encoding) keeps working across the bump.
     native::save_file(tmp, s, doc.camera, doc.meshes);
+    CHECK(read_file(tmp) == fresh_v3);
+    std::filesystem::remove(tmp);
+}
+
+// ---------------------------------------------------------------------------
+// v0.3.0 — operation recipes (ADR-0027 D4)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("operations: v0.3 round-trip is byte-identical (pierced box)") {
+    scene::Scene s = make_pierced_scene();
+    const native::NativeCamera cam = make_canonical_camera();
+
+    const std::filesystem::path a =
+        std::filesystem::temp_directory_path() / "cad0_ops_rt_a.CAD_0";
+    const std::filesystem::path b =
+        std::filesystem::temp_directory_path() / "cad0_ops_rt_b.CAD_0";
+
+    native::save_file(a, s, cam);
+    const native::ParsedDocument doc = native::load_file(a);
+    scene::Scene s2;
+    native::install_document(s2, native::ParsedDocument(doc));
+    native::save_file(b, s2, doc.camera);
+    CHECK(read_file(a) == read_file(b));
+
+    std::filesystem::remove(a);
+    std::filesystem::remove(b);
+
+    // The recipe survived the cycle exactly (source of truth).
+    const scene::SceneNode* op = s2.get_node(3);
+    REQUIRE(op != nullptr);
+    REQUIRE(op->operation.has_value());
+    CHECK(op->operation->type == scene::OperationType::Subtract);
+    CHECK(op->operation->target == 1);
+    CHECK(op->operation->tool == 2);
+    CHECK(op->operation->offset_x == 0.0f);
+    CHECK(op->operation->offset_y == 0.0f);
+    CHECK(op->operation->offset_z == 0.0f);
+    CHECK_FALSE(op->operand_missing);
+    // Ids and next_id round-trip exactly.
+    CHECK(s2.get_node(1) != nullptr);
+    CHECK(s2.get_node(2) != nullptr);
+    CHECK(s2.next_id() == 4);
+    // The operand visibility (hidden in-app) round-trips.
+    CHECK_FALSE(s2.get_node(1)->visible);
+    CHECK_FALSE(s2.get_node(2)->visible);
+
+    // The materialized body is bit-identical to a fresh construction
+    // (the loader re-materialized from the recipe — pass 2 — and got
+    // exactly the in-app result; a stale cache would not survive).
+    CHECK(sample_grid(s2.get_node(3)->body, 7) ==
+          sample_grid(s.get_node(3)->body, 7));
+}
+
+TEST_CASE("golden v0.3.0: pierced box with recipe - extraction chi=0 genus=1") {
+    // Regeneration mode (maintainer-only, never active in CI):
+    //   CAD_0_GENERATE_GOLDEN=1 ./CAD_0_tests
+    // rewrites the v0.3.0 golden after an INTENTIONAL format change
+    // (companion ADR required per ADR-0007).
+    if (const char* env = std::getenv("CAD_0_GENERATE_GOLDEN");
+        env && std::string_view(env) == "1") {
+        std::filesystem::create_directories(golden_v3_path().parent_path());
+        native::save_file(golden_v3_path(), make_pierced_scene(),
+                          make_canonical_camera());
+        MESSAGE("golden file (re)written: ", golden_v3_path().string());
+        return;
+    }
+
+    const std::filesystem::path gp = golden_v3_path();
+    const std::string missing = "golden file missing: " + gp.string();
+    REQUIRE_MESSAGE(std::filesystem::exists(gp), missing);
+    const std::string golden = read_file(gp);
+    CHECK(golden.find("\"version\": \"0.3.0\"") != std::string::npos);
+
+    // (a) The fresh save of the pierced-box scene IS the golden bytes.
+    const std::filesystem::path tmp =
+        std::filesystem::temp_directory_path() / "cad0_golden_v3_check.CAD_0";
+    native::save_file(tmp, make_pierced_scene(), make_canonical_camera());
     CHECK(read_file(tmp) == golden);
     std::filesystem::remove(tmp);
+
+    // (b) The golden carries the recipe in the ADR-0027 D4 shape.
+    CHECK(golden.find("\"operation\"") != std::string::npos);
+    CHECK(golden.find("\"type\": \"subtract\"") != std::string::npos);
+
+    // (c) Load: the operation node is intact and NOT dangling; the
+    // extraction report on its body is the ADR-0027 MVP contract —
+    // the first genus > 0 document in the repository's history:
+    // χ = 0, genus 1, closed-orientable.
+    const native::ParsedDocument doc = native::load_file(gp);
+    REQUIRE(doc.nodes.size() == 3);
+    const scene::SceneNode* op = &doc.nodes[2];
+    REQUIRE(op->id == 3);
+    REQUIRE(op->operation.has_value());
+    CHECK(op->operation->target == 1);
+    CHECK(op->operation->tool == 2);
+    CHECK_FALSE(op->operand_missing);
+
+    bridge::SdfToBrepOptions opts;
+    opts.march_resolution = 48;
+    const bridge::SdfToBrepReport rep =
+        bridge::sdf_to_brep_report(op->body, opts);
+    CHECK(rep.fit == "faceted");
+    CHECK(rep.chi == 0);
+    CHECK(rep.orientable);
+    CHECK(rep.genus_derived);
+    CHECK(rep.genus == 1);
+    CHECK(rep.loops);
+    // The T13 pins (the same body, the same grid).
+    CHECK(rep.vertex_count == 15104);
+    CHECK(rep.edge_count == 45312);
+    CHECK(rep.face_count == 30208);
+}
+
+TEST_CASE("operations: file with a missing operand loads with the error state") {
+    // Hand-built v0.3 document whose operation references operand 2,
+    // which does not exist: the load SUCCEEDS (the document opens),
+    // the operation keeps its FILE body (last-good display geometry)
+    // and enters the visible dangling state.
+    const std::string text = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.3.0",
+      "scene": {
+        "next_id": 4,
+        "nodes": [
+          { "id": 1, "name": "Box", "builder": "box",
+            "params": { "extent_x": 1.0, "extent_y": 1.0, "extent_z": 1.0 },
+            "body": { "op": "box", "extent": [1.0, 1.0, 1.0] } },
+          { "id": 3, "name": "Subtract",
+            "body": { "op": "subtract",
+                      "a": { "op": "box", "extent": [1.0, 1.0, 1.0] },
+                      "b": { "op": "translate",
+                             "child": { "op": "cylinder", "radius": 0.25, "height": 3.0 },
+                             "offset": [0.0, 0.0, 0.0] } },
+            "operation": { "type": "subtract", "target": 1, "tool": 2,
+                           "params": { "offset_x": 0.0, "offset_y": 0.0,
+                                       "offset_z": 0.0 } } }
+        ]
+      }
+    })JSON";
+
+    const native::ParsedDocument doc = native::parse_document(text);
+    REQUIRE(doc.nodes.size() == 2);
+    const scene::SceneNode* op =
+        doc.nodes[0].id == 3 ? &doc.nodes[0] : &doc.nodes[1];
+    REQUIRE(op->id == 3);
+    REQUIRE(op->operation.has_value());
+    CHECK(op->operation->tool == 2);
+    // The visible dangling state: the FILE body is kept.
+    CHECK(op->operand_missing);
+    CHECK(op->body.root() != nullptr);
+    // The file body is the subtract tree serialized in the file (the
+    // last-good cache), not a rebuilt anything.
+    std::string desc = op->body.root()->describe();
+    CHECK(desc.rfind("subtract(", 0) == 0);
+}
+
+TEST_CASE("operations: cyclic file is an explicit load error") {
+    // A TRUE cycle (no self-reference): op 1 targets op 2, op 2 targets
+    // op 1 — neither can be materialized first.
+    const std::string cyclic = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.3.0",
+      "scene": {
+        "next_id": 4,
+        "nodes": [
+          { "id": 1, "name": "A", "body": { "op": "box", "extent": [1.0, 1.0, 1.0] },
+            "operation": { "type": "subtract", "target": 2, "tool": 3 } },
+          { "id": 2, "name": "B", "body": { "op": "box", "extent": [1.0, 1.0, 1.0] },
+            "operation": { "type": "subtract", "target": 1, "tool": 3 } },
+          { "id": 3, "name": "C", "body": { "op": "box", "extent": [1.0, 1.0, 1.0] } }
+        ]
+      }
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(cyclic),
+        doctest::Contains("cyclic"), std::runtime_error);
+}
+
+TEST_CASE("operations: self-reference is an explicit load error") {
+    const std::string selfref = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.3.0",
+      "scene": {
+        "next_id": 2,
+        "nodes": [
+          { "id": 1, "name": "Ouroboros",
+            "body": { "op": "box", "extent": [1.0, 1.0, 1.0] },
+            "operation": { "type": "subtract", "target": 1, "tool": 1 } }
+        ]
+      }
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(selfref),
+        doctest::Contains("references ITSELF"), std::runtime_error);
+}
+
+TEST_CASE("operations: unknown operation type / bad fields are explicit errors") {
+    const std::string unknown_type = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.3.0",
+      "scene": {
+        "next_id": 2,
+        "nodes": [
+          { "id": 1, "name": "X", "body": { "op": "box", "extent": [1.0, 1.0, 1.0] },
+            "operation": { "type": "intersect", "target": 1, "tool": 1 } }
+        ]
+      }
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(unknown_type),
+        doctest::Contains("unknown operation type"), std::runtime_error);
+
+    // A mesh node can never carry an operation (the two
+    // representations never mix — ADR-0002). The two-argument
+    // parse_document is the load_file entry point: the text-only one
+    // rejects blob-carrying documents before node parsing (ADR-0007a),
+    // which would mask the check under test.
+    const std::string mesh_op = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.3.0",
+      "scene": {
+        "next_id": 2,
+        "nodes": [
+          { "id": 1, "name": "M", "kind": "mesh",
+            "mesh": { "blob": "mesh_1" },
+            "operation": { "type": "subtract", "target": 1, "tool": 1 } }
+        ]
+      },
+      "meshes": [ { "id": "mesh_1", "encoding": "raw", "offset": 0, "size": 0,
+                    "vertex_count": 0, "triangle_count": 0 } ]
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(mesh_op, ""),
+        doctest::Contains("carries an SDF-only field"), std::runtime_error);
+}
+
+TEST_CASE("operations: stale cached body is caught by the pass-2 rebuild") {
+    // The file's cached body disagrees with the recipe (the box is
+    // intact in the recipe operands, but the cache says a plain box).
+    // Pass 2 re-materializes from the recipe — the loaded body must be
+    // the subtract, not the stale cache.
+    const std::string stale = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.3.0",
+      "scene": {
+        "next_id": 4,
+        "nodes": [
+          { "id": 1, "name": "Box", "builder": "box",
+            "params": { "extent_x": 1.0, "extent_y": 1.0, "extent_z": 1.0 },
+            "body": { "op": "box", "extent": [1.0, 1.0, 1.0] } },
+          { "id": 2, "name": "Cylinder", "builder": "cylinder",
+            "params": { "radius": 0.25, "height": 3.0 },
+            "body": { "op": "cylinder", "radius": 0.25, "height": 3.0 } },
+          { "id": 3, "name": "Subtract",
+            "body": { "op": "box", "extent": [1.0, 1.0, 1.0] },
+            "operation": { "type": "subtract", "target": 1, "tool": 2 } }
+        ]
+      }
+    })JSON";
+
+    const native::ParsedDocument doc = native::parse_document(stale);
+    const scene::SceneNode* op = &doc.nodes[2];
+    REQUIRE(op->id == 3);
+    // The rebuild won: the body is the subtract (per the recipe), not
+    // the stale plain-box cache the file carried.
+    CHECK(op->body.root()->describe().rfind("subtract(", 0) == 0);
+    CHECK_FALSE(op->operand_missing);
 }
 
 TEST_CASE("container: magic + legacy detection, explicit error on foreign files") {
