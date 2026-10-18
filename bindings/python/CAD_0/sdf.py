@@ -32,6 +32,7 @@ from ._CAD_0.sdf import (
     evaluate,
     marching_cubes,
     weld_vertices,
+    display_normals,
 )
 
 __all__ = [
@@ -58,4 +59,5 @@ __all__ = [
     "evaluate",
     "marching_cubes",
     "weld_vertices",
+    "display_normals",
 ]

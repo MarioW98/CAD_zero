@@ -97,4 +97,99 @@ void bind_sdf(nb::module_& m) {
             b.evaluate(body, std::span<const Vec3f>(pts.data(), n), out);
             return out;
         });
+
+    // ---- Display-pipeline normals from exact field gradients --------------
+    //
+    // Graphics sprint: the viewport's shading buffer. For every mesh
+    // vertex p: n = normalize(body.sample(p).gradient) — the kernel's
+    // EXACT analytic gradient (never finite differences). On a CSG min
+    // the gradient is piecewise: smooth across curved regions, and it
+    // picks ONE operand's direction at a live edge (never an average
+    // across the crease) — the CAD look. This is strictly better than
+    // the MC mesh normals, which interpolate the gradients of the two
+    // GRID CORNERS flanking a crossing: near a crease those corners can
+    // sit in different CSG regions and the lerp smears the edge dark.
+    //
+    // Degenerate vertices (|grad| ~ 0, e.g. a sphere's center) keep the
+    // supplied mesh normal so the buffer NEVER contains NaN (a NaN
+    // length fails the > threshold comparison and takes the same
+    // fallback). Without mesh_normals, degenerate rows are (0,0,0) —
+    // still never NaN.
+    //
+    // DISPLAY PIPELINE ONLY: the MC mesh itself (positions, indices,
+    // mesh normals) is NOT touched — the exporters, the bridge and the
+    // golden files consume mesh.normals and must stay byte-identical.
+    m.def("display_normals",
+        [](const SDFBody& body,
+           nb::ndarray<float, nb::ndim<2>> positions,
+           nb::object mesh_normals) {
+            if (positions.shape(1) != 3)
+                throw std::invalid_argument("positions must have shape (N, 3)");
+            const auto n = positions.shape(0);
+
+            // Optional (N,3) float32 fallback normals. Accepted states:
+            // None / an EMPTY array ("no mesh normals") or an exact
+            // (N,3) C-contiguous match — anything else is a caller bug
+            // and fails loudly (never a silent misread of strided or
+            // mistyped memory).
+            const float* fb = nullptr;
+            if (!mesh_normals.is_none()) {
+                if (!nb::isinstance<nb::ndarray<nb::numpy, float, nb::ndim<2>>>(mesh_normals))
+                    throw std::invalid_argument(
+                        "mesh_normals must be a float32 numpy array of "
+                        "shape (N, 3), or None");
+                auto arr = nb::cast<nb::ndarray<nb::numpy, float, nb::ndim<2>>>(mesh_normals);
+                if (arr.shape(0) == 0) {
+                    // Empty: "no mesh normals available" — degenerate
+                    // vertices will get (0,0,0) (still never NaN).
+                } else if (arr.shape(0) == n && arr.shape(1) == 3
+                           && arr.stride(0) == 3 && arr.stride(1) == 1) {
+                    fb = arr.data();
+                } else if (arr.shape(0) != n || arr.shape(1) != 3) {
+                    throw std::invalid_argument(
+                        "mesh_normals must have shape (N, 3) matching "
+                        "positions (or be None/an empty array)");
+                } else {
+                    throw std::invalid_argument(
+                        "mesh_normals must be C-contiguous");
+                }
+            }
+
+            // Same guard constant as the kernel's own normal paths
+            // (interp_gradient_abs, CylinderSDF's axis guard): below it a
+            // direction is not defined.
+            constexpr float kDegenerateGradient = 1e-9f;
+
+            auto* out = new std::vector<float>();
+            out->resize(std::size_t(n) * 3);
+            for (std::size_t i = 0; i < n; ++i) {
+                const Vec3f p{positions(i, 0), positions(i, 1), positions(i, 2)};
+                const Vec3f g = body.sample(p).gradient;
+                const float gl = g.length();
+                Vec3f nv;
+                if (gl > kDegenerateGradient) {
+                    nv = g * (1.0f / gl);
+                } else if (fb != nullptr) {
+                    nv = Vec3f{fb[i * 3 + 0], fb[i * 3 + 1], fb[i * 3 + 2]};
+                } else {
+                    nv = Vec3f{0.0f, 0.0f, 0.0f};
+                }
+                (*out)[i * 3 + 0] = nv.x;
+                (*out)[i * 3 + 1] = nv.y;
+                (*out)[i * 3 + 2] = nv.z;
+            }
+
+            nb::capsule owner(out, [](void* p) noexcept {
+                delete static_cast<std::vector<float>*>(p);
+            });
+            return nb::ndarray<nb::numpy, float, nb::ndim<2>>(
+                out->data(), {std::size_t(n), std::size_t(3)}, owner);
+        },
+        nb::arg("body"), nb::arg("positions"), nb::arg("mesh_normals").none() = nb::none(),
+        "Display-only normal buffer from the EXACT SDF gradient sampled at "
+        "every vertex position: n = normalize(body.sample(p).gradient). "
+        "Vertices with a degenerate gradient (~0) keep the mesh normal "
+        "(or (0,0,0) when none is supplied) — the buffer never contains "
+        "NaN. The mesh itself is untouched: exports, the bridge and the "
+        "goldens consume mesh.normals and stay byte-identical.");
 }

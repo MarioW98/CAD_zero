@@ -294,6 +294,30 @@ class MainWindow(QMainWindow):
         frame_all.triggered.connect(self.on_frame_all)
         view_menu.addAction(frame_all)
 
+        view_menu.addSeparator()
+
+        # Tessellation resolution (graphics sprint, optional item): a
+        # VIEW setting like grid/axes — not a scene mutation, no undo
+        # command, not persisted in .CAD_0. Default 48 (the resolution
+        # every pinned count and golden in the repo assumes). Changing
+        # it re-tessellates every Sdf node: coarser is faster to orbit,
+        # finer smooths the display — and the exported mesh follows
+        # (the tessellation cache IS the export surface in this
+        # architecture; at the default 48 exports are byte-identical).
+        self._tess_resolution = 48
+        self._tess_actions = {}
+        from PySide6.QtGui import QActionGroup
+        tess_group = QActionGroup(self)
+        tess_menu = view_menu.addMenu("Tessellation &Resolution")
+        for res in (32, 48, 64, 96):
+            act = QAction(f"&{res}", self, checkable=True)
+            act.setActionGroup(tess_group)
+            act.setChecked(res == self._tess_resolution)
+            act.triggered.connect(
+                lambda checked, r=res: self._set_tessellation_resolution(r))
+            tess_menu.addAction(act)
+            self._tess_actions[res] = act
+
         # ----- Debug menu -----
         # Read-only inspection tools (ADR-0026 consumer step): they
         # report on the current scene without touching it — no authoring,
@@ -813,6 +837,29 @@ class MainWindow(QMainWindow):
     def on_frame_all(self) -> None:
         self._viewport.frame_all()
         self._status.showMessage("Framed all", 1500)
+
+    def _set_tessellation_resolution(self, resolution: int) -> None:
+        """Core of View -> Tessellation Resolution (dialog-free, the
+        _do_subtract pattern for offscreen tests).
+
+        A pure view setting: no undo command, no scene mutation beyond
+        re-dirtying the tessellation caches. Marks every Sdf node
+        dirty and re-tessellates through the normal refresh path, so
+        the viewport (and everything that reads the cache afterwards)
+        sees the new resolution. Mesh-kind nodes are skipped by kind —
+        imported geometry is never re-tessellated.
+        """
+        if resolution == self._tess_resolution:
+            return
+        self._tess_resolution = resolution
+        for i in range(self._scene.node_count()):
+            node = self._scene.node_at(i)
+            if node is None or node.kind != "sdf":
+                continue
+            node.mesh_dirty = True
+        self._viewport.set_tessellation_resolution(resolution)
+        self._refresh_viewport()
+        self._status.showMessage(f"Tessellation resolution: {resolution}", 3000)
 
     def on_undo(self) -> None:
         if self._command_stack and self._command_stack.can_undo():

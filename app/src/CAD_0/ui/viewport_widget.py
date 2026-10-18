@@ -63,6 +63,12 @@ class ViewportWidget(QWidget):
         self._show_grid = True
         self._show_axes = True
 
+        # Tessellation resolution for the display pipeline (View ->
+        # Tessellation Resolution; graphics sprint optional item). 48 is
+        # the default every pinned count and golden assumes; the setter
+        # + MainWindow's re-dirty pass implement the menu's re-tess.
+        self._tess_resolution = 48
+
         # Mesh data cache
         self._mesh_positions = None
         self._mesh_normals = None
@@ -151,7 +157,7 @@ class ViewportWidget(QWidget):
         if self._scene is None:
             return
         if hasattr(self._scene, 'update_meshes'):
-            self._scene.update_meshes(48)
+            self._scene.update_meshes(self._tess_resolution)
         positions = []
         normals = []
         indices = []
@@ -163,11 +169,16 @@ class ViewportWidget(QWidget):
             node = self._scene.node_at(i)
             if node is None or not node.visible:
                 continue
-            pos = node.cached_mesh.positions
-            nor = node.cached_mesh.normals
-            idx = node.cached_mesh.indices
+            mesh = node.cached_mesh
+            pos = mesh.positions
+            idx = mesh.indices
             if pos is None or len(pos) == 0 or idx is None or len(idx) == 0:
                 continue
+            # Shading normals come from the field, not the mesh (the
+            # graphics-sprint display pipeline — see _display_normals).
+            # Positions/indices are still the MC mesh: exports and the
+            # bridge read those from the node, byte-identically.
+            nor = _display_normals(node)
             n_tris = len(idx) // 3
             node_ranges[node.id] = (tri_offset, tri_offset + n_tris)
             tri_offset += n_tris
@@ -268,6 +279,16 @@ class ViewportWidget(QWidget):
     def set_show_axes(self, show: bool) -> None:
         self._show_axes = show
         self._request_update()
+
+    def set_tessellation_resolution(self, resolution: int) -> None:
+        """Set the display tessellation resolution (View menu).
+
+        Stores the value for the next _refresh_meshes; actually
+        re-tessellating is the caller's business (MainWindow marks the
+        Sdf nodes dirty first — update_meshes skips clean caches, so
+        the resolution change alone would be a no-op).
+        """
+        self._tess_resolution = int(resolution)
 
     # ----- Input -----
     #
@@ -592,3 +613,44 @@ class _ViewportWindow(QOpenGLWindow):
 
 # Need GLfloat for the matrix array
 from ctypes import c_float as GLfloat
+
+
+def _display_normals(node):
+    """Display-only normal buffer for a scene node (graphics sprint).
+
+    SDF nodes: normals from the EXACT field gradient sampled at every
+    mesh vertex — n = normalize(node.body.sample(p).gradient), computed
+    in C++ by CAD_0.sdf.display_normals. The gradient of a CSG min is
+    piecewise: smooth across curved regions (the hole wall shades as a
+    true cylinder) and it picks ONE operand's direction at a live edge —
+    the box/hole crease stays sharp instead of smearing into a dark
+    band. Degenerate vertices (|gradient| ~ 0) keep the mesh normal; the
+    buffer never contains NaN.
+
+    Mesh nodes (imported geometry): the mesh's own normals — there is no
+    field to sample (ADR-0002 honest dispatch on node.kind).
+
+    DISPLAY PIPELINE ONLY: the MC mesh itself (positions, indices, mesh
+    normals) is untouched here — the exporters, the bridge and the
+    golden files consume mesh.normals and stay byte-identical.
+    """
+    mesh = node.cached_mesh
+    pos = mesh.positions
+    if pos is None or len(pos) == 0:
+        return mesh.normals
+    if getattr(node, "kind", "sdf") != "sdf":
+        # Imported geometry: its normals ARE the data.
+        return mesh.normals
+    try:
+        import CAD_0
+        compute = CAD_0.sdf.display_normals
+    except (ImportError, AttributeError):
+        # Kernel absent (fallback mode) or a stale extension build
+        # predating display_normals: keep the app alive with mesh
+        # normals and SAY SO — a silent shading downgrade would hide a
+        # deployment bug.
+        print("[viewport] CAD_0.sdf.display_normals unavailable "
+              "(no kernel or stale extension build) — "
+              "falling back to mesh normals")
+        return mesh.normals
+    return compute(node.body, pos, mesh.normals)
