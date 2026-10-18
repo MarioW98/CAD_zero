@@ -15,6 +15,9 @@
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
+#include <algorithm>
+#include <string>
+#include <vector>
 
 #include "CAD_0/math/quat.hpp"
 
@@ -907,6 +910,21 @@ Vec3f off_grid_center(prop::Prng& prng, float lo, float hi) {
                  prng.frange(lo, hi) + kOffGridOffset};
 }
 
+// Generic unit direction (rejection in the cube, avoiding both the
+// degenerate center and the corners): the smooth-union family below
+// chains its spheres along a RANDOM direction, so the members hit the
+// grid in generic orientations — the rotation lesson of T8b, which
+// pure translations cannot teach.
+Vec3f random_unit_dir(prop::Prng& prng) {
+    for (;;) {
+        const Vec3f d{prng.frange(-1.0f, 1.0f),
+                      prng.frange(-1.0f, 1.0f),
+                      prng.frange(-1.0f, 1.0f)};
+        const float l = d.length();
+        if (l > 0.2f && l < 1.0f) return d * (1.0f / l);
+    }
+}
+
 } // namespace
 
 TEST_CASE("property: bridge spheres (seeded family) - genus-0 invariants at res 24") {
@@ -982,4 +1000,184 @@ TEST_CASE("property: bridge pierced boxes (seeded family) - genus-1 invariants a
         INFO("check: min|f| > 0 on the sampling grid (P2 — no on-grid zeros)");
         CHECK(rep.min_abs_field > 0.0f);
     }
+}
+
+// ===========================================================================
+// Property-based family — EXTENSION: smooth unions (FASE 2 of the
+// property extension, smin k > 0).
+//
+// Tree = smooth union of 2-3 generated spheres chained along a random
+// unit direction. Supported input class, declared with its margins:
+//
+//   * sphere count n in {2, 3}; radii r in [0.55, 1.0] (>= 2.4 cells
+//     at the worst-case cell below — each sphere individually resolved).
+//   * chain TOPOLOGY: collinear centers (c_{i+1} = c_i + u * d_i, one
+//     fixed random unit direction). The 2D profile of the hard union
+//     along the chain is a chain of overlapping disks — simply
+//     connected and touching the axis — so the revolved solid is a
+//     topological ball; the blend only fillets crevices or bridges
+//     gaps THROUGH the axis (the neck dip k/16 is centered on it), so
+//     genus 0 is structural for this class, not hoped for.
+//   * per ADJACENT pair, one of two declared regimes:
+//       - OVERLAP: d = r_i + r_j - o, o in [0.35, 0.65] (2.0-3.7
+//         cells). Hard-union waist >= 2 cells at the worst case
+//         (r1 = r2 = 0.55, o = 0.65 -> waist 0.50; unequal worst
+//         r1 = 1.0, r2 = 0.55, o = 0.35 -> 0.45).
+//       - NECK: equal radii per pair (r_j := r_i — the closed-form
+//         margin below is exact only for equal spheres), gap
+//         g = d - 2r in [0.02, k/8 - 0.02] (away from exact touching
+//         and from the neck-collapse boundary g = k/8 where the blend
+//         stops bridging), and the neck must be FAT:
+//             neck diameter = 2*sqrt((r + k/16)^2 - (r + g/2)^2) >= 2 cells
+//         enforced by deterministic rejection (the formula is the
+//         zero-set radius of the bridging tube at its thinnest).
+//   * blend k per pair in [0.45, 0.70] — a declared SUBRANGE of the
+//     FASE 1 range [0.10, 1.00]: the blend band |f_a - f_b| < k maps
+//     to a fillet strip of width >= k/2 >= 0.225 >= 1 cell at the
+//     worst-case cell (extent <= 5.3 for 3-chains -> cell <= 0.225).
+//   * P2: base center off-grid (kOffGridOffset), random chain
+//     direction, generic radii/gaps — no on-grid surface alignment.
+//
+// BOUNDS()/extraction-volume safety (the FASE 1.1 verification,
+// applied before these trees were used here): the extraction grid is
+// bounds() + 1% of extent (sdf_to_brep.cpp); the blend's k/16 dilation
+// can escape a plain hull ONLY where the two operand fields stay
+// within k/7 of each other up to the hull boundary (near-coincident
+// surfaces — the concentric counterexample, see test_operators.cpp).
+// In this chain class the near-coincident surfaces (crevices, necks)
+// are strictly INTERIOR to the hull: measured on family-shaped
+// geometry with the standalone probe driver (kept with the other
+// measurement drivers OUTSIDE the repo), min f on the padded hull
+// faces = +0.0155..+0.0202 > 0. Safe by construction + probe.
+//
+// Invariants asserted for EVERY member (resolution 24, declared per
+// the cost rule; fit_primitives = false so the negative on fitting —
+// fit == "faceted" — stays part of the contract on blends):
+//   chi = 2, genus = 0 (derived), orientable, loops, E = 3F/2,
+//   V = F/2 + 2, min|f| > 0.
+//
+// Measured cost on this build (GCC 14.2 Release, -ffp-contract=off):
+// see the number in the TEST_CASE — reported, not optimized; the
+// iterations stay FIXED at 25.
+// ===========================================================================
+TEST_CASE("property: bridge smooth unions (seeded family) - genus-0 invariants at res 24") {
+    const std::uint32_t seed = 0xB0D61003u;
+    prop::Prng prng(seed);
+    // Measured once on this build (GCC 14.2, Release, -ffp-contract=off):
+    // 25 members at res 24 = ~0.16 s total (11 neck members, 14
+    // overlap-only — both regimes live).
+    int neck_members = 0;
+    int overlap_members = 0;
+    for (int iter = 0; iter < 25; ++iter) {
+        // --- generate, with deterministic rejection on the P3 margins ---
+        std::vector<float> radii, dists, ks;
+        std::vector<int> neck_pair;  // 1 = neck regime, 0 = overlap
+        float hull_extent = 0.0f;
+        {
+            int tries = 0;
+            for (;;) {
+                ++tries;
+                REQUIRE(tries < 100000);  // generator bug if exhausted
+                radii.clear();
+                dists.clear();
+                ks.clear();
+                neck_pair.clear();
+                const std::uint32_t n = prng.coin() ? 2u : 3u;
+                radii.push_back(prng.frange(0.55f, 1.0f));
+                for (std::uint32_t p = 0; p + 1 < n; ++p) {
+                    const float k = prng.frange(0.45f, 0.70f);
+                    ks.push_back(k);
+                    if (prng.coin()) {
+                        // OVERLAP regime: any radii, overlap 2.0-3.7 cells.
+                        radii.push_back(prng.frange(0.55f, 1.0f));
+                        dists.push_back(radii[p] + radii[p + 1] -
+                                        prng.frange(0.35f, 0.65f));
+                        neck_pair.push_back(0);
+                    } else {
+                        // NECK regime: equal radii (exact margin), gap
+                        // away from 0 and from the collapse boundary k/8.
+                        radii.push_back(radii[p]);
+                        const float g = prng.frange(0.02f, k / 8.0f - 0.02f);
+                        dists.push_back(2.0f * radii[p] + g);
+                        neck_pair.push_back(1);
+                    }
+                }
+                // P3 margin check at the ACTUAL cell size: the hull
+                // extent is r_first + sum(dists) + r_last; the extract
+                // pads it by 1% and divides by the resolution.
+                hull_extent = radii.front();
+                for (std::size_t i = 0; i < dists.size(); ++i) hull_extent += dists[i];
+                hull_extent += radii.back();
+                const float cell = hull_extent * 1.02f / 24.0f;
+                bool ok = true;
+                for (std::size_t p = 0; p < neck_pair.size(); ++p) {
+                    if (neck_pair[p] == 1) {
+                        const float r = radii[p];  // equal pair
+                        const float g = dists[p] - 2.0f * r;
+                        const float rad = r + ks[p] / 16.0f;
+                        const float half_gap = r + g / 2.0f;
+                        if (rad <= half_gap) { ok = false; break; }  // no neck at all
+                        const float neck_rad =
+                            std::sqrt(rad * rad - half_gap * half_gap);
+                        if (2.0f * neck_rad < 2.0f * cell) { ok = false; break; }
+                    }
+                }
+                if (ok) break;
+            }
+        }
+        const bool has_neck = std::find(neck_pair.begin(), neck_pair.end(), 1) != neck_pair.end();
+        if (has_neck) ++neck_members; else ++overlap_members;
+
+        // --- build the chain: nested smin along the generated direction ---
+        const Vec3f base = off_grid_center(prng, -0.3f, 0.3f);
+        const Vec3f dir = random_unit_dir(prng);
+        s::SDFBody body = s::sdf_translate(s::make_sphere(radii[0]), base);
+        Vec3f c = base;
+        for (std::size_t p = 0; p + 1 < radii.size(); ++p) {
+            c = c + dir * dists[p];
+            s::SDFBody next = s::sdf_translate(s::make_sphere(radii[p + 1]), c);
+            body = s::sdf_smooth_union(std::move(body), std::move(next), ks[p]);
+        }
+
+        SdfToBrepOptions opts;
+        opts.fit_primitives = false;  // the fitting negative holds on blends
+        opts.march_resolution = 24;   // declared above (cost rule)
+        const SdfToBrepReport rep = sdf_to_brep_report(body, opts);
+
+        INFO("seed=", seed, " iter=", iter,
+             " radii=(", [&]{ std::string s; for (float r : radii) s += std::to_string(r) + " "; return s; }(), ")",
+             " base=(", base.x, ",", base.y, ",", base.z, ")",
+             " dir=(", dir.x, ",", dir.y, ",", dir.z, ")");
+        INFO("dists=(", [&]{ std::string s; for (float d : dists) s += std::to_string(d) + " "; return s; }(), ")",
+             " ks=(", [&]{ std::string s; for (float k : ks) s += std::to_string(k) + " "; return s; }(), ")",
+             " neck=(", [&]{ std::string s; for (int v : neck_pair) s += std::to_string(v) + " "; return s; }(), ")",
+             " hull_extent=", hull_extent);
+        INFO("V=", rep.vertex_count, " E=", rep.edge_count, " F=", rep.face_count,
+             " chi=", rep.chi, " genus=", rep.genus,
+             " min|f|=", rep.min_abs_field, " fit=", rep.fit);
+
+        INFO("check: fit == \"faceted\" (primitive fitting disabled — the negative on fitting holds on blends)");
+        CHECK(rep.fit == "faceted");
+        INFO("check: chi == 2 (genus 0, one shell)");
+        CHECK(rep.chi == 2);
+        INFO("check: genus derived == 0 (the derivation rule on chi = 2)");
+        CHECK(rep.genus_derived);
+        CHECK(rep.genus == 0);
+        INFO("check: orientable (is_closed_orientable)");
+        CHECK(rep.orientable);
+        INFO("check: loops are closed");
+        CHECK(rep.loops);
+        INFO("check: E == 3F/2 (closed pure-triangle extract)");
+        CHECK(rep.edge_count == 3 * rep.face_count / 2);
+        INFO("check: V == F/2 + 2 (Euler identity for genus 0)");
+        CHECK(2 * rep.vertex_count == rep.face_count + 4);
+        INFO("check: min|f| > 0 on the sampling grid (P2 — no on-grid zeros)");
+        CHECK(rep.min_abs_field > 0.0f);
+    }
+    // Regime liveness for THIS seed (deterministic): both the overlap
+    // and the neck regime must actually occur.
+    INFO("check: both regimes occur (neck members = ", neck_members,
+         ", overlap-only members = ", overlap_members, ")");
+    CHECK(neck_members >= 3);
+    CHECK(overlap_members >= 3);
 }

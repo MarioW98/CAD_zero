@@ -558,29 +558,74 @@ SDFBody leaf_body(const LeafRec& lf) {
     return make_sphere(0.5f);  // unreachable; silences -Wreturn-type
 }
 
+// The declared blend range for the k > 0 extension families below
+// (FASE 1 of the property extension): k in [0.10, 1.00]. Margins:
+//   * k small (0.10) -> the blend band |f_a - f_b| < k is narrow and
+//     the field stays close to the hard min (dip <= k/16 = 0.00625).
+//   * k large (1.00) -> the band is wide; see the bounds() note in the
+//     extension header below the three properties.
+constexpr float kBlendKMin = 0.10f;
+constexpr float kBlendKMax = 1.00f;
+
+// One recorded smooth_min node of a generated tree: the leaves under
+// each operand, for crevice-targeted sampling (the band |f_a - f_b| < k
+// — the only region where the blend deviates from the hard min — opens
+// between the two operand subtrees).
+struct BlendRec {
+    std::vector<LeafRec> side_a, side_b;
+};
+
 struct TreeSpec {
     SDFBody body;
     Bboxf bounds;
     std::vector<LeafRec> leaves;
+    std::vector<BlendRec> blends;  // non-empty only with allow_blend
+    float blend_k_sum = 0.0f;      // sum of the blend k's (dilation envelope = sum/16)
 };
 
-TreeSpec gen_tree(prop::Prng& prng, int depth) {
+// allow_blend = false (default) reproduces the ORIGINAL family bit
+// exactly: one coin draw per internal node, union or subtract — the
+// pinned seeds of the properties above keep their meaning. With
+// allow_blend = true the draw becomes a 3-way choice adding smooth_min
+// nodes with k in the declared range (FASE 1).
+TreeSpec gen_tree(prop::Prng& prng, int depth, bool allow_blend = false) {
     TreeSpec spec;
     if (depth == 0 || prng.int_below(4u) == 0u) {
         spec.leaves.push_back(gen_leaf(prng));
         spec.body = leaf_body(spec.leaves.back());
     } else {
-        TreeSpec a = gen_tree(prng, depth - 1);
-        TreeSpec b = gen_tree(prng, depth - 1);
-        if (prng.coin()) {
-            spec.body = sdf_union(std::move(a.body), std::move(b.body));
+        TreeSpec a = gen_tree(prng, depth - 1, allow_blend);
+        TreeSpec b = gen_tree(prng, depth - 1, allow_blend);
+        if (!allow_blend) {
+            if (prng.coin()) {
+                spec.body = sdf_union(std::move(a.body), std::move(b.body));
+            } else {
+                spec.body = sdf_subtract(std::move(a.body), std::move(b.body));
+            }
         } else {
-            spec.body = sdf_subtract(std::move(a.body), std::move(b.body));
+            const auto op = prng.int_below(3u);
+            if (op == 0u) {
+                spec.body = sdf_union(std::move(a.body), std::move(b.body));
+            } else if (op == 1u) {
+                spec.body = sdf_subtract(std::move(a.body), std::move(b.body));
+            } else {
+                const float k = prng.frange(kBlendKMin, kBlendKMax);
+                spec.body = sdf_smooth_union(std::move(a.body), std::move(b.body), k);
+                spec.blends.push_back(BlendRec{a.leaves, b.leaves});
+                spec.blend_k_sum += k;
+            }
         }
         spec.leaves = std::move(a.leaves);
         spec.leaves.insert(spec.leaves.end(),
                            std::make_move_iterator(b.leaves.begin()),
                            std::make_move_iterator(b.leaves.end()));
+        spec.blends.insert(spec.blends.end(),
+                           std::make_move_iterator(a.blends.begin()),
+                           std::make_move_iterator(a.blends.end()));
+        spec.blends.insert(spec.blends.end(),
+                           std::make_move_iterator(b.blends.begin()),
+                           std::make_move_iterator(b.blends.end()));
+        spec.blend_k_sum += a.blend_k_sum + b.blend_k_sum;
     }
     // The kernel's own bounds() is the source of truth for the family.
     spec.bounds = spec.body.bounds();
@@ -642,6 +687,49 @@ Vec3f near_surface(const LeafRec& lf, prop::Prng& prng, float eps) {
     return lf.center;
 }
 
+// A point on THIS leaf's boundary shell, on the side FACING `target`
+// (eps = relative radial slack). Same exactness note as near_surface:
+// only proximity matters. These points sit at the entrance of the
+// crevice between the two operands of a blend — where the blend band
+// (|f_a - f_b| < k) actually lives. Ray/surface hit per leaf kind:
+// sphere exact; box = first face plane crossed; cylinder = lateral
+// sheet vs caps, first crossed (the finite cylinder is convex, so the
+// exit hit is the min of the two parameters).
+Vec3f surface_toward(const LeafRec& lf, const Vec3f& target, prop::Prng& prng, float eps) {
+    Vec3f dir = target - lf.center;
+    const float dl = dir.length();
+    if (dl < 1e-6f) {
+        dir = random_dir(prng);
+    } else {
+        dir = dir * (1.0f / dl);
+    }
+    float t_hit = 1e30f;
+    switch (lf.kind) {
+    case LeafRec::Kind::Sphere:
+        t_hit = lf.dim.x;
+        break;
+    case LeafRec::Kind::Box: {
+        const float d[3] = {std::abs(dir.x), std::abs(dir.y), std::abs(dir.z)};
+        const float e[3] = {lf.dim.x, lf.dim.y, lf.dim.z};
+        for (int i = 0; i < 3; ++i) {
+            if (d[i] > 1e-6f) t_hit = std::min(t_hit, e[i] / d[i]);
+        }
+        break;
+    }
+    case LeafRec::Kind::Cylinder: {
+        const float rl = std::sqrt(dir.x * dir.x + dir.z * dir.z);
+        if (rl > 1e-6f) t_hit = std::min(t_hit, lf.dim.x / rl);
+        if (std::abs(dir.y) > 1e-6f) {
+            t_hit = std::min(t_hit, lf.dim.y * 0.5f / std::abs(dir.y));
+        }
+        break;
+    }
+    }
+    if (t_hit > 1e29f) t_hit = lf.dim.x;  // defensive: dir ~ tangential
+    const float slack = 1.0f + prng.frange(-eps, eps);
+    return lf.center + dir * (t_hit * slack);
+}
+
 Bboxf expand_bbox(const Bboxf& b, float frac) {
     const Vec3f c{(b.min.x + b.max.x) * 0.5f,
                   (b.min.y + b.max.y) * 0.5f,
@@ -671,23 +759,42 @@ Vec3f uniform_in(prop::Prng& prng, const Bboxf& b) {
 //                    exactly the regime where the 2026-10-16 smooth-min
 //                    clamp-sign bug lived unnoticed under symmetric
 //                    sampling. Uniform/local sampling misses it.
+//   * "crease"     — blended trees only: both endpoints on the FACING
+//                    sheets of the two operands of one blend node
+//                    (surface_toward). These pairs straddle the blend
+//                    band |f_a - f_b| < k — the only region where the
+//                    smooth min deviates from the hard min, and where
+//                    its gradient legitimately exceeds 1.
 struct PointPair {
     Vec3f p, q;
     const char* how;
 };
 
-std::vector<PointPair> gen_pairs(const TreeSpec& t, prop::Prng& prng, int n) {
+// blended = false (default) keeps the original 3-category draw — the
+// pinned seeds above replay bit-identically. blended = true adds the
+// crease category (4-way draw).
+std::vector<PointPair> gen_pairs(const TreeSpec& t, prop::Prng& prng, int n,
+                                 bool blended = false) {
     std::vector<PointPair> out;
     out.reserve(static_cast<std::size_t>(n));
     const Bboxf bb = expand_bbox(t.bounds, 0.25f);
     for (int i = 0; i < n; ++i) {
-        const auto mode = prng.int_below(3u);
+        const auto mode = prng.int_below(blended ? 4u : 3u);
         if (mode == 0u) {
             out.push_back({uniform_in(prng, bb), uniform_in(prng, bb), "uniform"});
         } else if (mode == 1u) {
             const Vec3f p = uniform_in(prng, bb);
             const float rho = prng.frange(1e-3f, 0.25f);
             out.push_back({p, p + random_dir(prng) * rho, "local"});
+        } else if (mode == 3u && !t.blends.empty()) {
+            const auto nb = static_cast<std::uint32_t>(t.blends.size());
+            const BlendRec& br = t.blends[prng.int_below(nb)];
+            const auto na = static_cast<std::uint32_t>(br.side_a.size());
+            const auto nbs = static_cast<std::uint32_t>(br.side_b.size());
+            const LeafRec& la = br.side_a[prng.int_below(na)];
+            const LeafRec& lb = br.side_b[prng.int_below(nbs)];
+            out.push_back({surface_toward(la, lb.center, prng, 0.08f),
+                           surface_toward(lb, la.center, prng, 0.08f), "crease"});
         } else if (t.leaves.size() >= 2) {
             const auto na = static_cast<std::uint32_t>(t.leaves.size());
             const std::uint32_t a = prng.int_below(na);
@@ -822,6 +929,239 @@ TEST_CASE("property: f is strictly positive outside the tree bounds") {
                  " delta=", delta, " p=(", p.x, ",", p.y, ",", p.z, ")",
                  " f=", t.body.value(p));
             INFO("check: f(p) > 0 for p outside bounds() by delta >= 1e-3");
+            CHECK(t.body.value(p) > 0.0f);
+        }
+    }
+}
+
+// ===========================================================================
+// Property families — EXTENSION: smooth blends, smin k > 0 (FASE 1).
+//
+// The generator above is EXTENDED, not replaced: gen_tree(...,
+// allow_blend = true) adds smooth_min nodes with k in the declared range
+// [kBlendKMin, kBlendKMax] = [0.10, 1.00]; with allow_blend = false
+// (default) the draw sequence is bit-identical to the original family,
+// so the pinned seeds of the properties above keep their meaning.
+//
+// Algebra of the kernel's polynomial (operators.hpp), u = (f_b-f_a)/k:
+//     v - min(f_a, f_b) = k * phi(u),  phi(u) = (8u - 7u^2 - 1)/16
+//   * dip BELOW min:   max k/16 at u = 0 (equal fields) — the blend
+//     dilates the solid;
+//   * tuck ABOVE min:  max 9k/112 at |u| = 4/7 — the flank slightly
+//     thinner than the hard union;
+//   * v == min at |u| = 1/7 and at the band edge |u| = 1.
+//
+// EFFECT ON bounds() — verified before these trees are used anywhere
+// else (FASE 1.1). field.hpp declares bounds() as "bounding box of the
+// region where the field can be NEGATIVE". SmoothMinSDF::bounds()
+// returns the plain hull of the children's bounds, but the k/16 dip
+// means the negative region can escape the hull by up to k/16 per
+// blend level wherever the two operand fields stay within k/7 of each
+// other up to the hull boundary (near-coincident surfaces; nested
+// blends accumulate the envelope sum(k_i)/16). Empirical pins
+// (standalone driver smin_slope_probe.cpp, kept with the other
+// measurement drivers OUTSIDE the repo; GCC 14.2 Release
+// -ffp-contract=off):
+//   concentric unit spheres, blend k: zero crossing at EXACTLY
+//     k=0.10 -> r=1.006250    k=0.50 -> r=1.031250    k=1.00 -> r=1.062500
+//   (each = 1 + k/16), while bounds() = [-1,1]^3 and the mesh-extract
+//   volume adds only a 1%-of-extent pad (0.02 here): the escape exceeds
+//   the pad for k >~ 0.32 at this extent. This is a GAP against the
+//   field.hpp bounds() contract — REPORTED, not fixed here (a bounds()
+//   change would shift every pinned MC grid layout; the fix needs its
+//   own decision + sweep). Consequences in this suite:
+//     * property (c) above does NOT transfer to blended trees; the
+//       blended positivity property (g) below uses the explicit
+//       sum(k_i)/16 envelope instead;
+//     * the bridge smooth-union family (test_bridge.cpp) uses chain
+//       geometries whose near-coincident surfaces (crevices/necks) are
+//       strictly INTERIOR to the hull — probe (C): min f on the padded
+//       hull faces = +0.0155..+0.0202 — so the extraction volume is
+//       safe for that declared class.
+//
+// EMPIRICAL SLOPE of the polynomial (FASE 1.3, dedicated guinea pigs —
+// the standalone driver named above): two unit spheres (gap 0.4 and
+// 0.05), dense plane + axis sampling, k sweep:
+//     k=0.10 -> max|grad v| = 1.749998     k=0.25 -> 1.746500
+//     k=0.50 -> 1.749996     k=0.70 -> 1.749996     k=1.00 -> 1.749995
+// The observed maximum sits ON the analytic sup 7/4 = 1.75 — approached
+// at the band edge |x| = k/2 on the axis, where the two sphere
+// gradients are anti-aligned — and is k-independent, exactly as the
+// kernel's derivation states. The DECLARED bound (2.5 * max, see
+// SmoothMinSDF::lipschitz) therefore has ~43% headroom over the worst
+// observation: RELIABLE. No fallback test bound is needed; per the
+// extension rules the fallback (2.5*max computed by the test) would
+// only be adopted — documented as such — if the declared bound failed.
+// ===========================================================================
+
+// --- Property (d): Lipschitz on blended trees ------------------------------
+// Same contract as property (a), on the blended family — the bound is
+// THE KERNEL'S OWN DECLARED tree.lipschitz(): if this fails, the
+// declared bound is the bug (the ray marcher steps on that number).
+TEST_CASE("property: Lipschitz bound holds over seeded random blended CSG trees (smin k > 0)") {
+    const std::uint32_t seed = 0x5EED0011u;
+    prop::Prng prng(seed);
+    int iters_with_blend = 0;
+    for (int iter = 0; iter < 25; ++iter) {
+        const TreeSpec t = gen_tree(prng, 3, /*allow_blend=*/true);
+        if (!t.blends.empty()) ++iters_with_blend;
+        const float L = t.body.lipschitz();
+        INFO("seed=", seed, " iter=", iter, " L=", L,
+             " sum(k)=", t.blend_k_sum, " blends=", t.blends.size());
+        INFO("tree: ", t.body.describe());
+        for (const PointPair& pp : gen_pairs(t, prng, 60, /*blended=*/true)) {
+            const double fp = t.body.value(pp.p);
+            const double fq = t.body.value(pp.q);
+            const Vec3f d3 = pp.p - pp.q;
+            const double dist = std::sqrt(static_cast<double>(d3.x * d3.x) +
+                                          static_cast<double>(d3.y * d3.y) +
+                                          static_cast<double>(d3.z * d3.z));
+            INFO("pair(", pp.how, "): p=(", pp.p.x, ",", pp.p.y, ",", pp.p.z,
+                 ") q=(", pp.q.x, ",", pp.q.y, ",", pp.q.z,
+                 ") f(p)=", fp, " f(q)=", fq, " |p-q|=", dist);
+            // Same pinned float slack as property (a), same rationale.
+            INFO("check: |f(p) - f(q)| <= lipschitz()*|p-q| + 1e-5 (pinned float slack)");
+            CHECK(std::abs(fp - fq) <= static_cast<double>(L) * dist + 1e-5);
+        }
+    }
+    // Family liveness for THIS seed (deterministic). Branching
+    // analysis: P(member has >= 1 smin) follows f(d) = 3/4*[1/3 +
+    // 2/3*(1-(1-f(d-1))^2)], f(0)=0 -> f(3) ~= 0.61, so ~15 of 25
+    // members carry a blend (14 observed on this seed); the rest keep
+    // the unblended contract covered under fresh seeds. Guard well
+    // below the expectation, above degeneration.
+    INFO("check: >= 10 of 25 members contain at least one smooth_min node");
+    CHECK(iters_with_blend >= 10);
+}
+
+// --- Property (e): gradient magnitude vs the declared bound ---------------
+// |grad f| <= tree.lipschitz() at sampled points — including crease
+// points, where the blend gradient legitimately exceeds 1 (observed sup
+// 7/4 per blend level; the declared bound keeps 2.5x per level).
+TEST_CASE("property: gradient magnitude stays under the declared Lipschitz on blended trees") {
+    const std::uint32_t seed = 0x5EED0012u;
+    prop::Prng prng(seed);
+    for (int iter = 0; iter < 25; ++iter) {
+        const TreeSpec t = gen_tree(prng, 3, /*allow_blend=*/true);
+        const float L = t.body.lipschitz();
+        INFO("seed=", seed, " iter=", iter, " L=", L,
+             " sum(k)=", t.blend_k_sum, " blends=", t.blends.size());
+        INFO("tree: ", t.body.describe());
+        const Bboxf bb = expand_bbox(t.bounds, 0.25f);
+        for (int j = 0; j < 60; ++j) {
+            const auto mode = prng.int_below(3u);
+            Vec3f p;
+            const char* how = "uniform";
+            if (mode == 1u) {
+                const auto nl = static_cast<std::uint32_t>(t.leaves.size());
+                p = near_surface(t.leaves[prng.int_below(nl)], prng, 0.08f);
+                how = "near-surface";
+            } else if (mode == 2u && !t.blends.empty()) {
+                const auto nb = static_cast<std::uint32_t>(t.blends.size());
+                const BlendRec& br = t.blends[prng.int_below(nb)];
+                const auto na = static_cast<std::uint32_t>(br.side_a.size());
+                const auto nbs = static_cast<std::uint32_t>(br.side_b.size());
+                const LeafRec& la = br.side_a[prng.int_below(na)];
+                const LeafRec& lb = br.side_b[prng.int_below(nbs)];
+                p = surface_toward(la, lb.center, prng, 0.08f);
+                how = "crease";
+            } else {
+                p = uniform_in(prng, bb);
+            }
+            const float gl = t.body.sample(p).gradient.length();
+            INFO("point(", how, "): p=(", p.x, ",", p.y, ",", p.z,
+                 ") |grad f|=", gl, " L=", L);
+            // Pinned float slack, same discipline as (d): the contract is
+            // exact, only the arithmetic is not.
+            INFO("check: |grad f(p)| <= lipschitz() + 1e-5 (pinned float slack)");
+            CHECK(gl <= L + 1e-5f);
+        }
+    }
+}
+
+// --- Property (f): guinea-pig slope sweep (the pinned empirical envelope) --
+// The dedicated measurement of FASE 1.3, replayed as a regression: the
+// max observed slope must sit UNDER the 7/4 analytic envelope (and the
+// sweep must actually REACH the steep band edge, else the probe is
+// dead). Plus the concentric pair that pins the k/16 dip geometry.
+TEST_CASE("smin guinea pigs: empirical max slope pins the 7/4 analytic envelope (k sweep)") {
+    // Two unit spheres at gap 0.4 (the probe verified the plane-sweep
+    // maximum coincides with the axis). Axis sweep, step 2.5e-4: the
+    // nearest sample to the band edge |x| = k/2 is within 1.25e-4, so
+    // the observed max is >= 1.75 * (1 - 2*1.25e-4/0.10) = 1.7456.
+    for (float k : {0.10f, 0.25f, 0.50f, 0.70f, 1.00f}) {
+        auto a = sdf_translate(make_sphere(1.0f), Vec3f{-1.2f, 0, 0});
+        auto b = sdf_translate(make_sphere(1.0f), Vec3f{+1.2f, 0, 0});
+        auto v = sdf_smooth_union(std::move(a), std::move(b), k);
+        float best = 0.0f;
+        float at = 0.0f;
+        for (double x = -2.2; x <= 2.2; x += 0.00025) {
+            const Vec3f p{static_cast<float>(x), 0.0f, 0.0f};
+            const float gl = v.sample(p).gradient.length();
+            if (gl > best) { best = gl; at = p.x; }
+        }
+        INFO("k=", k, " max|grad v| on axis = ", best, " at x=", at);
+        INFO("check: max|grad v| <= 7/4 + 1e-4 (analytic envelope)");
+        CHECK(best <= 1.75f + 1e-4f);
+        INFO("check: max|grad v| >= 1.70 (the sweep reaches the steep band edge)");
+        CHECK(best >= 1.70f);
+    }
+    // The concentric pair: f_a == f_b everywhere (u = 0), so the field
+    // is exactly f - k/16 and the zero set is the sphere r = 1 + k/16.
+    // The crossing being OUTSIDE bounds() = [-1,1]^3 is the documented
+    // contract gap — see the extension header (reported, not endorsed).
+    for (float k : {0.10f, 0.50f, 1.00f}) {
+        auto v = sdf_smooth_union(make_sphere(1.0f), make_sphere(1.0f), k);
+        double lo = 1.0, hi = 1.0 + k / 8.0;
+        for (int it = 0; it < 80; ++it) {
+            const double mid = 0.5 * (lo + hi);
+            if (v.value(Vec3f{static_cast<float>(mid), 0, 0}) < 0.0f) lo = mid;
+            else hi = mid;
+        }
+        const double crossing = 0.5 * (lo + hi);
+        INFO("k=", k, " zero crossing at r = ", crossing,
+             " (1 + k/16 = ", 1.0 + k / 16.0, ")");
+        INFO("check: |crossing - (1 + k/16)| <= 1e-5 (the dip depth is exactly k/16)");
+        CHECK(std::abs(crossing - (1.0 + k / 16.0)) <= 1e-5);
+        INFO("check: crossing > 1 (the blended solid exits bounds() — documented gap, reported)");
+        CHECK(crossing > 1.0);
+    }
+}
+
+// --- Property (g): positivity outside bounds beyond the blend envelope -----
+// f >= min(leaves) - sum(k_i)/16 holds by induction over the operators
+// (union: equality; subtract: max(a,-b) >= min(a,b); smin: the k/16
+// dip; translate: shift). Every leaf is a true-distance primitive, so a
+// point outside the HULL by delta is outside every leaf's bounds by >=
+// delta and each leaf field is >= delta there. Hence f(p) > 0 whenever
+// delta > sum(k_i)/16: this VERIFIES the documented bounds() dilation
+// effect from the safe side, per member, envelope included.
+TEST_CASE("property: blended trees stay positive outside bounds() beyond the blend-dilation envelope") {
+    const std::uint32_t seed = 0x5EED0013u;
+    prop::Prng prng(seed);
+    for (int iter = 0; iter < 25; ++iter) {
+        const TreeSpec t = gen_tree(prng, 3, /*allow_blend=*/true);
+        const float envelope = t.blend_k_sum / 16.0f;
+        const Bboxf bb = t.bounds;
+        INFO("seed=", seed, " iter=", iter, " sum(k)=", t.blend_k_sum,
+             " envelope=sum(k)/16=", envelope,
+             " bounds=[", bb.min.x, ",", bb.min.y, ",", bb.min.z, "]..[",
+             bb.max.x, ",", bb.max.y, ",", bb.max.z, "]");
+        INFO("tree: ", t.body.describe());
+        for (int j = 0; j < 40; ++j) {
+            const int axis = static_cast<int>(prng.int_below(3u));
+            const bool lo_face = prng.coin();
+            const float delta = prng.frange(envelope + 5e-3f, envelope + 0.30f);
+            Vec3f p = uniform_in(prng, bb);
+            const float face = axis_of(lo_face ? bb.min : bb.max, axis);
+            const float out = face + (lo_face ? -delta : delta);
+            p = Vec3f{axis == 0 ? out : p.x,
+                      axis == 1 ? out : p.y,
+                      axis == 2 ? out : p.z};
+            INFO("j=", j, " axis=", axis, " lo_face=", lo_face,
+                 " delta=", delta, " p=(", p.x, ",", p.y, ",", p.z, ")",
+                 " f=", t.body.value(p));
+            INFO("check: f(p) > 0 for p outside bounds() by delta > sum(k)/16");
             CHECK(t.body.value(p) > 0.0f);
         }
     }
