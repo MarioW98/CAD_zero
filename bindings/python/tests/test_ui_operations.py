@@ -289,3 +289,32 @@ def test_subtract_needs_two_sdf_bodies(main_window, monkeypatch):
     win.on_subtract()
     assert calls  # the warning was shown
     assert win._scene.node_count() == 1  # nothing happened
+
+
+@pytest.mark.skipif(not _pyside6_available(), reason="PySide6 not installed")
+def test_debug_report_multi_shell_genus_n_d(main_window):
+    """ADR-0027 D6 / acceptance correction 1, the Debug-report surface.
+
+    The genus guard's OTHER branch: a multi-shell body (two disjoint
+    spheres, chi = 4) must report genus "n/d" in the Debug report,
+    coherently with SdfToBrepReport (bridge T15) and the binding dict
+    (test_report_genus_rule_derived_and_n_d). The derived branch is
+    already pinned above on the pierced box (chi = 0, Genus = 1).
+    """
+    import CAD_0
+    from CAD_0 import sdf as sdf_mod
+
+    vec = _math.Vec3f
+    two = sdf_mod.union(
+        sdf_mod.sphere(1.0),
+        sdf_mod.translate(sdf_mod.sphere(1.0), vec(5.0, 0.0, 0.0)))
+    nid = main_window._scene.add_node("TwoSpheres", two)
+
+    text = main_window._sdf_to_brep_report_text(
+        main_window._scene.get_node(nid))
+    assert text is not None
+    assert "faceted extraction (MC33)" in text
+    assert "V - E + F = 4" in text      # chi = 4: two closed shells
+    assert "Genus = n/d" in text        # NOT derived (chi > 2)
+    assert "multi-shell" in text
+    assert "Closed orientable (is_closed_orientable): yes" in text

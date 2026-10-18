@@ -742,3 +742,73 @@ TEST_CASE("ADR-0024: bool_union and bool_intersect of overlapping boxes — exac
     CHECK(loops_are_closed(*u));
     CHECK_FALSE(is_closed_manifold(*u));
 }
+
+TEST_CASE("ADR-0027: wrapper equivalence on the genus-0 boolean fixtures") {
+    // D6 move 3 (the zero-silent-weakening contract) over THIS suite's
+    // fixtures: is_closed_manifold == (is_closed_orientable && χ == 2)
+    // on the box booleans and the corner notch — the exact bodies that
+    // made ADR-0025 v5. The identity must hold on the healthy results
+    // (closed, χ = 2) AND on the documented failure (the partial
+    // coplanar union: χ = 2 but structurally open — the wrapper stays
+    // false through its structural half, not through χ). If the wrapper
+    // is ever edited, this is the fixture class that must notice.
+    auto check = [](const BRepBody& b) {
+        CHECK(is_closed_manifold(b) ==
+              (is_closed_orientable(b) && euler_characteristic(b) == 2));
+    };
+
+    auto box_at = [](Vec3f shift) {
+        auto b = make_box(Vec3f{1, 1, 1});
+        for (auto& v : b->vertices) {
+            v.set_position(v.position() + shift);
+        }
+        return b;
+    };
+
+    // bool_intersect of overlapping boxes: the overlap box, 8V/12E/6F.
+    {
+        auto i = bool_intersect(*make_box(Vec3f{1, 1, 1}), *box_at({0.5f, 0, 0}));
+        REQUIRE(i != nullptr);
+        CHECK(euler_characteristic(*i) == 2);
+        check(*i);
+    }
+    // bool_union of boxes touching at a face: 12V/20E/10F, χ = 2.
+    {
+        auto u = bool_union(*make_box(Vec3f{1, 1, 1}), *box_at({0, 0, 2.0f}));
+        REQUIRE(u != nullptr);
+        CHECK(euler_characteristic(*u) == 2);
+        check(*u);
+    }
+    // The corner notch (the ADR-0025 v5 flagship): 17V/27E/12F, χ = 2.
+    {
+        auto d = bool_subtract(*make_box(Vec3f{1, 1, 1}), *box_at({1.0f, 1.0f, 1.0f}));
+        REQUIRE(d != nullptr);
+        CHECK(euler_characteristic(*d) == 2);
+        check(*d);
+    }
+    // The slab (clean snap): 8V/12E/6F, χ = 2.
+    {
+        auto d = bool_subtract(*make_box(Vec3f{1, 1, 1}), *box_at({0.5f, 0, 0}));
+        REQUIRE(d != nullptr);
+        CHECK(euler_characteristic(*d) == 2);
+        check(*d);
+    }
+    // Disjoint subtract: A unchanged, 8V/12E/6F, χ = 2.
+    {
+        auto d = bool_subtract(*make_box(Vec3f{1, 1, 1}), *box_at({10, 0, 0}));
+        REQUIRE(d != nullptr);
+        CHECK(euler_characteristic(*d) == 2);
+        check(*d);
+    }
+    // The partial coplanar-overlap union (ADR-0025 v5 known
+    // limitation): χ = 2 but an open shell — both sides of the
+    // equivalence false through the STRUCTURAL half, never through χ.
+    {
+        auto u = bool_union(*make_box(Vec3f{1, 1, 1}), *box_at({0.5f, 0, 0}));
+        REQUIRE(u != nullptr);
+        CHECK(euler_characteristic(*u) == 2);
+        CHECK_FALSE(is_closed_manifold(*u));
+        CHECK_FALSE(is_closed_orientable(*u));
+        check(*u);
+    }
+}

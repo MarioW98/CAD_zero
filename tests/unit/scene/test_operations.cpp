@@ -331,7 +331,7 @@ TEST_CASE("Operations: undo interleaving - delete operand, undo subtract, redo (
     // The Delete-operand command (execute = delete + rebuild to
     // dangle; undo = restore same id + rebuild to recover).
     stack.push(
-        [&s = ps.s, cyl_id, cyl_spec, cyl_params] {
+        [&s = ps.s, cyl_id] {
             s.remove_node(cyl_id);
             scene::rebuild_operations(s);
         },
