@@ -39,6 +39,9 @@ add_executable(CAD_0_tests ${CAD_0_TEST_SOURCES})
 
 target_include_directories(CAD_0_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/core/math/include
+    # Property-based families (mini-traccia): seeded generators live in
+    # tests/property/ and are shared by the per-area test TUs.
+    ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_SOURCE_DIR}/core/geometry/include
     ${CMAKE_SOURCE_DIR}/core/sdf/include
     ${CMAKE_SOURCE_DIR}/core/concurrency/include

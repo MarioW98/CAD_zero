@@ -812,3 +812,307 @@ TEST_CASE("ADR-0027: wrapper equivalence on the genus-0 boolean fixtures") {
         check(*u);
     }
 }
+
+// ===========================================================================
+// Property-based family (mini-traccia PARTE 2, area 3 — B-Rep boolean).
+// THE ANALYTIC-ORACLE FAMILY: random axis-aligned boxes with variable
+// overlap. The intersection of two axis-aligned boxes is a box computable
+// IN CLOSED FORM, so the property checks exact V/E/F AND the vertex
+// positions — the highest degree of verification (property with oracle).
+//
+// Generator input class, declared (a violation is a GENERATOR bug,
+// classified as such — never a kernel bug):
+//   * half-extents of A and B: uniform in [0.5, 1.5] per axis; A stays
+//     centered at the origin, B is placed by its center.
+//   * B's center: uniform in [-0.8, 0.8]^3, REJECTED unless, on every
+//     axis, the intersection side is >= 0.30 (>> kWeldGrid = 1e-6) and
+//     no A/B face pair lies within 1e-3 of coincidence (coincident
+//     faces are a degenerate regime the pinned suites already cover;
+//     1e-3 = 1000x kWeldGrid keeps the clipping well-conditioned).
+//
+// Why a dedicated make_box_at (instead of shifting make_box() vertices
+// post hoc, as the pinned suites do): the documented bool_intersect
+// precondition is convex polyhedra whose faces are planar. Shifting
+// only the vertices leaves every PlaneSurface at its origin-centered
+// plane — a face whose vertices no longer lie on its own surface. That
+// input is OUT OF CLASS for an oracle that checks POSITIONS (it can
+// still count 8V/12E/6F by topology while being geometrically
+// self-inconsistent). make_box_at translates the vertices AND the
+// plane origins together, so the body is coherent by construction.
+// ===========================================================================
+
+#include "property/property_prng.hpp"
+
+#include <memory>
+
+namespace {
+
+namespace prop = CAD_0::test::property;
+
+// Axis-aligned box B-Rep with half-extents `e` centered at `c` — the
+// coherent translate of brep::make_box (factory.hpp): same vertex/edge/
+// face numbering and outward normals, PlaneSurface origins translated
+// WITH the vertices so every face's vertices lie on its own plane.
+std::unique_ptr<BRepBody> make_box_at(Vec3f e, Vec3f c) {
+    auto body = std::make_unique<BRepBody>();
+    auto& solid = body->solid;
+    auto& shell = solid.shell_mut();
+    shell.set_closed(true);
+
+    const float x = e.x, y = e.y, z = e.z;
+    const float cx = c.x, cy = c.y, cz = c.z;
+    body->vertices = {
+        Vertex{{cx - x, cy - y, cz - z}}, Vertex{{cx + x, cy - y, cz - z}},
+        Vertex{{cx + x, cy + y, cz - z}}, Vertex{{cx - x, cy + y, cz - z}},
+        Vertex{{cx - x, cy - y, cz + z}}, Vertex{{cx + x, cy - y, cz + z}},
+        Vertex{{cx + x, cy + y, cz + z}}, Vertex{{cx - x, cy + y, cz + z}},
+    };
+    for (std::size_t i = 0; i < body->vertices.size(); ++i)
+        body->vertices[i].set_id(static_cast<VertexId>(i));
+
+    body->edges = {
+        Edge{0,1}, Edge{1,2}, Edge{2,3}, Edge{3,0},
+        Edge{4,5}, Edge{5,6}, Edge{6,7}, Edge{7,4},
+        Edge{0,4}, Edge{1,5}, Edge{2,6}, Edge{3,7},
+    };
+    for (std::size_t i = 0; i < body->edges.size(); ++i)
+        body->edges[i].set_id(static_cast<EdgeId>(i));
+
+    auto add_plane_face = [&shell](
+        Vec3f origin, Vec3f normal, FaceId id,
+        EdgeId e0, bool r0, EdgeId e1, bool r1,
+        EdgeId e2, bool r2, EdgeId e3, bool r3) {
+        Face face(std::make_shared<PlaneSurface>(origin, normal));
+        Loop loop;
+        loop.add_coedge(CoEdge{e0, r0});
+        loop.add_coedge(CoEdge{e1, r1});
+        loop.add_coedge(CoEdge{e2, r2});
+        loop.add_coedge(CoEdge{e3, r3});
+        face.add_loop(std::move(loop));
+        face.set_id(id);
+        shell.add_face(std::move(face));
+    };
+
+    // Same numbering as factory.hpp (see there for the cross-product
+    // orientation checks — unchanged by the translation).
+    add_plane_face({cx, cy, cz - z}, {0, 0, -1}, 0,  3, true,  2, true,  1, true,  0, true);
+    add_plane_face({cx, cy, cz + z}, {0, 0,  1}, 1,  4, false, 5, false, 6, false, 7, false);
+    add_plane_face({cx, cy - y, cz}, {0, -1, 0}, 2,  0, false, 9, false, 4, true,  8, true);
+    add_plane_face({cx, cy + y, cz}, {0,  1, 0}, 3,  2, false, 11, false, 6, true, 10, true);
+    add_plane_face({cx - x, cy, cz}, {-1, 0, 0}, 4,  3, false, 8, false, 7, true, 11, true);
+    add_plane_face({cx + x, cy, cz}, { 1, 0, 0}, 5,  1, false, 10, false, 5, true,  9, true);
+
+    link_radial_edges(*body);
+    return body;
+}
+
+} // namespace
+
+TEST_CASE("property: bool_intersect of random axis-aligned boxes matches the analytic box oracle") {
+    const std::uint32_t seed = 0xA11CED01u;
+    prop::Prng prng(seed);
+    // kWeldGrid, mirrored from core/brep/src/boolean.cpp:44 (private
+    // there; same value, same meaning — the kernel's welding grid).
+    constexpr float kOracleWeldGrid = 1e-6f;
+
+    for (int iter = 0; iter < 25; ++iter) {
+        const Vec3f eA{prng.frange(0.5f, 1.5f),
+                       prng.frange(0.5f, 1.5f),
+                       prng.frange(0.5f, 1.5f)};
+        const Vec3f eB{prng.frange(0.5f, 1.5f),
+                       prng.frange(0.5f, 1.5f),
+                       prng.frange(0.5f, 1.5f)};
+
+        // Rejection sampling until in-class (deterministic: the same
+        // seed replays the same draws, so a failure is reproducible).
+        Vec3f shift{};
+        Vec3f lo{}, hi{};
+        {
+            int tries = 0;
+            for (;;) {
+                ++tries;
+                REQUIRE(tries < 100000);  // generator bug if exhausted
+                shift = Vec3f{prng.frange(-0.8f, 0.8f),
+                              prng.frange(-0.8f, 0.8f),
+                              prng.frange(-0.8f, 0.8f)};
+                const float sa[3] = {shift.x, shift.y, shift.z};
+                const float ea[3] = {eA.x, eA.y, eA.z};
+                const float eb[3] = {eB.x, eB.y, eB.z};
+                float l3[3], h3[3];
+                bool ok = true;
+                for (int i = 0; i < 3; ++i) {
+                    l3[i] = std::max(-ea[i], sa[i] - eb[i]);
+                    h3[i] = std::min(ea[i], sa[i] + eb[i]);
+                    if (h3[i] - l3[i] < 0.30f) ok = false;  // min side (>> weld)
+                    if (std::abs((sa[i] - eb[i]) - (-ea[i])) < 1e-3f) ok = false;
+                    if (std::abs((sa[i] + eb[i]) - ea[i]) < 1e-3f) ok = false;
+                }
+                if (ok) {
+                    lo = Vec3f{l3[0], l3[1], l3[2]};
+                    hi = Vec3f{h3[0], h3[1], h3[2]};
+                    break;
+                }
+            }
+        }
+
+        auto A = make_box_at(eA, Vec3f{0, 0, 0});
+        auto B = make_box_at(eB, shift);
+        auto result = bool_intersect(*A, *B);
+
+        INFO("seed=", seed, " iter=", iter,
+             " eA=(", eA.x, ",", eA.y, ",", eA.z, ")",
+             " eB=(", eB.x, ",", eB.y, ",", eB.z, ")",
+             " shift=(", shift.x, ",", shift.y, ",", shift.z, ")");
+        INFO("oracle box: [", lo.x, ",", lo.y, ",", lo.z, "] .. [",
+             hi.x, ",", hi.y, ",", hi.z, "]");
+
+        REQUIRE(result != nullptr);
+        INFO("check: V == 8 (oracle)"); CHECK(result->vertex_count() == 8);
+        INFO("check: E == 12 (oracle)"); CHECK(result->edge_count() == 12);
+        INFO("check: F == 6 (oracle)"); CHECK(result->face_count() == 6);
+        INFO("check: euler characteristic == 2");
+        CHECK(euler_characteristic(*result) == 2);
+        INFO("check: is_closed_manifold");
+        CHECK(is_closed_manifold(*result));
+        INFO("check: loops_are_closed");
+        CHECK(loops_are_closed(*result));
+
+        // Positions: the 8 analytic corners of [lo, hi]^3.
+        const Vec3f corners[8] = {
+            {lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z},
+            {lo.x, hi.y, lo.z}, {hi.x, hi.y, lo.z},
+            {lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z},
+            {lo.x, hi.y, hi.z}, {hi.x, hi.y, hi.z},
+        };
+        bool covered[8] = {false, false, false, false, false, false, false, false};
+        for (std::size_t i = 0; i < result->vertex_count(); ++i) {
+            const Vec3f p = result->vertices[i].position();
+            float best = 1e30f;
+            int best_j = -1;
+            for (int j = 0; j < 8; ++j) {
+                const Vec3f d = p - corners[j];
+                const float dl = d.length();
+                if (dl < best) { best = dl; best_j = j; }
+            }
+            INFO("vertex ", i, " p=(", p.x, ",", p.y, ",", p.z, ")",
+                 " nearest oracle corner #", best_j, " dist=", best);
+            INFO("check: dist(result vertex, nearest oracle corner) <= kWeldGrid (1e-6)");
+            CHECK(best <= kOracleWeldGrid);
+            if (best <= kOracleWeldGrid) covered[best_j] = true;
+        }
+        bool all_covered = true;
+        for (int j = 0; j < 8; ++j) all_covered = all_covered && covered[j];
+        INFO("check: every oracle corner is matched by a result vertex (bijection)");
+        CHECK(all_covered);
+    }
+}
+
+// Sanity for the property family's factory: make_box_at(c = 0) must be
+// structurally identical to brep::make_box, and a translated box must
+// still be a closed orientable manifold on its own. If this fails, the
+// ORACLE FAMILY's failures are generator bugs, not kernel bugs.
+TEST_CASE("property-family factory sanity: make_box_at is a coherent closed box") {
+    const Vec3f e{1.25f, 0.75f, 1.0f};
+    const Vec3f c{0.3f, -0.4f, 0.2f};
+
+    auto at_origin = make_box_at(e, Vec3f{0, 0, 0});
+    auto reference = make_box(e);
+    CHECK(at_origin->vertex_count() == reference->vertex_count());
+    CHECK(at_origin->edge_count() == reference->edge_count());
+    CHECK(at_origin->face_count() == reference->face_count());
+    CHECK(euler_characteristic(*at_origin) == 2);
+    CHECK(is_closed_orientable(*at_origin));
+
+    auto moved = make_box_at(e, c);
+    CHECK(euler_characteristic(*moved) == 2);
+    CHECK(is_closed_orientable(*moved));
+    CHECK(loops_are_closed(*moved));
+    // Vertices really at c +- e (the factory translated them).
+    bool found_min = false, found_max = false;
+    for (const auto& v : moved->vertices) {
+        const Vec3f p = v.position();
+        if (p.x == c.x - e.x && p.y == c.y - e.y && p.z == c.z - e.z) found_min = true;
+        if (p.x == c.x + e.x && p.y == c.y + e.y && p.z == c.z + e.z) found_max = true;
+    }
+    CHECK(found_min);
+    CHECK(found_max);
+
+    // Identical boxes through the property factory: intersection = the
+    // box itself (mirrors the pinned "identical boxes" case).
+    auto same = bool_intersect(*make_box_at(e, Vec3f{0, 0, 0}),
+                               *make_box_at(e, Vec3f{0, 0, 0}));
+    REQUIRE(same != nullptr);
+    CHECK(same->vertex_count() == 8);
+    CHECK(same->edge_count() == 12);
+    CHECK(same->face_count() == 6);
+    CHECK(euler_characteristic(*same) == 2);
+    CHECK(is_closed_manifold(*same));
+
+    // The pinned overlapping case through the property factory: A at
+    // the origin, B shifted by (0.5, 0, 0) — expected [-0.5, 1]^3.
+    auto ov = bool_intersect(*make_box_at(Vec3f{1, 1, 1}, Vec3f{0, 0, 0}),
+                             *make_box_at(Vec3f{1, 1, 1}, Vec3f{0.5f, 0, 0}));
+    REQUIRE(ov != nullptr);
+    CHECK(ov->vertex_count() == 8);
+    CHECK(ov->edge_count() == 12);
+    CHECK(ov->face_count() == 6);
+    CHECK(euler_characteristic(*ov) == 2);
+    CHECK(is_closed_manifold(*ov));
+}
+
+// PINNED REGRESSION — the bug the property family found, made literal
+// and generator-independent. This is seed 0xA11CED01, iteration 0 of
+// "property: bool_intersect ... analytic box oracle" (values printed
+// with 9 significant digits — exact float round-trip). Before the
+// weld grid-boundary-straddle repair in assemble_body this produced
+// V=10 / E=16 / chi=0 (non-manifold): the corner (-0.386547, -1.088843,
+// -1.186705) was computed twice by different clipping paths, one ulp
+// apart, and the two occurrences landed on opposite sides of a kWeldGrid
+// cell boundary, so the snapped-key weld kept both as "distinct"
+// vertices ~1e-10 apart. The repair (proximity pass honoring the
+// kWeldGrid contract) welds them; the oracle holds exactly.
+TEST_CASE("pinned regression: weld grid-boundary straddle on a box-pair intersection") {
+    const Vec3f eA{1.0915029f, 1.08884263f, 1.40153289f};
+    const Vec3f eB{1.12535167f, 1.38211584f, 1.032341f};
+    const Vec3f shift{0.738804758f, -0.448618621f, -0.154364496f};
+
+    auto A = make_box_at(eA, Vec3f{0, 0, 0});
+    auto B = make_box_at(eB, shift);
+    auto result = bool_intersect(*A, *B);
+    REQUIRE(result != nullptr);
+
+    // Analytic oracle: [max(-eA, shift-eB), min(eA, shift+eB)] per axis.
+    const Vec3f lo{std::max(-eA.x, shift.x - eB.x),
+                   std::max(-eA.y, shift.y - eB.y),
+                   std::max(-eA.z, shift.z - eB.z)};
+    const Vec3f hi{std::min(eA.x, shift.x + eB.x),
+                   std::min(eA.y, shift.y + eB.y),
+                   std::min(eA.z, shift.z + eB.z)};
+
+    CHECK(result->vertex_count() == 8);
+    CHECK(result->edge_count() == 12);
+    CHECK(result->face_count() == 6);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
+
+    // Positions within kWeldGrid (1e-6) of the analytic corners.
+    constexpr float kTol = 1e-6f;
+    const Vec3f corners[8] = {
+        {lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z},
+        {lo.x, hi.y, lo.z}, {hi.x, hi.y, lo.z},
+        {lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z},
+        {lo.x, hi.y, hi.z}, {hi.x, hi.y, hi.z},
+    };
+    for (std::size_t i = 0; i < result->vertex_count(); ++i) {
+        const Vec3f p = result->vertices[i].position();
+        float best = 1e30f;
+        for (const Vec3f& c : corners) {
+            const Vec3f d = p - c;
+            const float dl = d.length();
+            if (dl < best) best = dl;
+        }
+        INFO("vertex ", i, " dist to nearest oracle corner = ", best);
+        CHECK(best <= kTol);
+    }
+}

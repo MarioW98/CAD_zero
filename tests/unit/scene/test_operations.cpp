@@ -387,3 +387,97 @@ TEST_CASE("Operations: undo interleaving - delete operand, undo subtract, redo (
     CHECK(ps.s.get_node(cyl_id) == nullptr);
     CHECK(body_json(*ps.s.get_node(op_id)) == op_body_dangling);
 }
+
+// ===========================================================================
+// Property-based family (mini-traccia PARTE 2, area 5 — DAG / feature
+// tree): GENERATED operand edits must re-materialize bit-identically to
+// a fresh construction with the same parameters (the determinism
+// oracle: serialize_node renders an SDF tree as deterministic JSON —
+// two bodies are bit-identical iff their serializations are byte-equal).
+//
+// Declared generator ranges (disjoint BEFORE/AFTER ranges make the
+// "the edit actually changed the result" check structural, not
+// probabilistic):
+//   * box extent_x/y/z: initial in [0.60, 1.20]; extent_x edit in
+//     [1.30, 1.60]
+//   * cylinder radius:  initial in [0.15, 0.30]; radius edit in
+//     [0.32, 0.45]
+//   * cylinder height:  [1.5, 3.0]
+//   * recipe offsets:   [-0.30, 0.30] per axis
+// Outside these = generator bug.
+// ===========================================================================
+
+#include "property/property_prng.hpp"
+
+#include <string>
+
+namespace {
+
+namespace prop = CAD_0::test::property;
+
+} // namespace
+
+TEST_CASE("property: generated operand edits re-materialize bit-identically to fresh constructions") {
+    const std::uint32_t seed = 0xD06A0101u;
+    prop::Prng prng(seed);
+    for (int iter = 0; iter < 25; ++iter) {
+        scene::Scene s;
+        const scene::BuilderSpec* box_spec = scene::find_builder("box");
+        const scene::BuilderSpec* cyl_spec = scene::find_builder("cylinder");
+        REQUIRE(box_spec != nullptr);
+        REQUIRE(cyl_spec != nullptr);
+
+        auto box_params = box_spec->default_params();
+        box_params["extent_x"] = prng.frange(0.60f, 1.20f);
+        box_params["extent_y"] = prng.frange(0.60f, 1.20f);
+        box_params["extent_z"] = prng.frange(0.60f, 1.20f);
+        const std::uint32_t box_id = s.add_node(
+            "Box", box_spec->make(box_params), box_spec->factory(), box_params);
+
+        auto cyl_params = cyl_spec->default_params();
+        cyl_params["radius"] = prng.frange(0.15f, 0.30f);
+        cyl_params["height"] = prng.frange(1.50f, 3.00f);
+        const std::uint32_t cyl_id = s.add_node(
+            "Cylinder", cyl_spec->make(cyl_params), cyl_spec->factory(), cyl_params);
+
+        scene::OperationRecipe r;
+        r.type = OperationType::Subtract;
+        r.target = box_id;
+        r.tool = cyl_id;
+        r.offset_x = prng.frange(-0.30f, 0.30f);
+        r.offset_y = prng.frange(-0.30f, 0.30f);
+        r.offset_z = prng.frange(-0.30f, 0.30f);
+        const std::uint32_t op_id = s.add_operation_node("Subtract", r);
+
+        const std::string before = body_json(*s.get_node(op_id));
+
+        // The generated edit: cylinder radius or box extent_x — the
+        // AFTER range is disjoint from the BEFORE range by construction.
+        const bool edit_radius = prng.coin();
+        std::string edited;
+        if (edit_radius) {
+            const float v = prng.frange(0.32f, 0.45f);
+            s.set_node_param(cyl_id, "radius", v);
+            edited = "cylinder.radius=" + std::to_string(v);
+        } else {
+            const float v = prng.frange(1.30f, 1.60f);
+            s.set_node_param(box_id, "extent_x", v);
+            edited = "box.extent_x=" + std::to_string(v);
+        }
+        const auto rr = scene::rebuild_operations(s);
+        CHECK(rr.rebuilt == 1);
+        CHECK(rr.dangling.empty());
+
+        const std::string after = body_json(*s.get_node(op_id));
+        const scene::OperationRecipe rec = *s.get_node(op_id)->operation;
+        const std::string fresh = body_json_s(scene::materialize_operation(
+            rec, s.get_node(box_id)->body, s.get_node(cyl_id)->body));
+
+        INFO("seed=", seed, " iter=", iter, " edit=", edited,
+             " off=(", r.offset_x, ",", r.offset_y, ",", r.offset_z, ")");
+        INFO("check: the edit changed the materialized body (disjoint ranges)");
+        CHECK(after != before);
+        INFO("check: re-materialized body == fresh construction with the same params (bit-identical)");
+        CHECK(after == fresh);
+    }
+}

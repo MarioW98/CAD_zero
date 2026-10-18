@@ -852,3 +852,134 @@ TEST_CASE("Bridge T16: wrapper equivalence on the genus-0 fixtures") {
         check(s::sdf_rotate(std::move(u), q), 16);
     }
 }
+
+// ===========================================================================
+// Property-based families (mini-traccia PARTE 2, area 2 — the bridge).
+//
+// Seeded generators (tests/property/property_prng.hpp) build members of
+// the SUPPORTED INPUT CLASS, declared here with its explicit margins
+// against the ADR-0026 preconditions (an input outside the class is a
+// GENERATOR bug, classified as such — never a kernel bug):
+//
+//   * spheres: radius in [0.5, 2.0], center generic — sampled uniform
+//     in [-0.4, 0.4]^3 plus a FIXED KNOWN IRRATIONAL offset (P2: the
+//     grid never aligns with the surface, no on-grid zeros):
+//       +0.0137255020f  (sqrt(2)-1, scaled by 1/33.137…, truncated)
+//       — any fixed irrational-derived constant would do; what is
+//     pinned is that it is declared, not accidental.
+//   * pierced boxes: target box [-1,1]^3 (half-extents 1), through
+//     cylinder h = 3.0 (the T13 geometry), hole radius in [0.34, 0.45],
+//     hole center uniform in [-0.25, 0.25]^3 + the same irrational
+//     offset. P3 margin, EXPLICIT: at march_resolution = 24 the cell
+//     size is (2 + 2%) / 24 ~= 0.0842 (bounds + 1% pad), so
+//       hole radius   >= 0.34      ~ 4.04 cells  (T14's pinned margin)
+//       box wall      >= 1 - 0.27 - 0.45 ~ 3.3 cells
+//     both above the ~1-cell pinch threshold of ADR-0026 P3 by > 3x.
+//     P1 holds by construction (compact SDF, honest bounds); P4 is the
+//     sign discipline the SDF property family covers.
+//
+// Resolution 24, DECLARED per the mini-traccia cost rule (the pinned
+// suites stay at 48/32; the family keeps the total suite cost bounded).
+// Measured cost of the two families (25 + 25 members, this build):
+// see the numbers in each TEST_CASE comment — reported, not optimized.
+//
+// Invariants asserted for EVERY member (they must NOT depend on the
+// grid — ADR-0026 D2 as amended by ADR-0027 D6):
+//   sphere:       chi = 2, orientable, loops, E = 3F/2, V = F/2 + 2,
+//                 min|f| > 0 (P2, machine-readable)
+//   pierced box:  chi = 0, genus = 1 (derived), orientable, loops,
+//                 E = 3F/2, V - E + F = 0, min|f| > 0
+// ===========================================================================
+
+#include "property/property_prng.hpp"
+
+namespace {
+
+namespace prop = CAD_0::test::property;
+
+// The fixed, known irrational offset (P2 discipline — declared, not
+// accidental). Same constant for both families.
+constexpr float kOffGridOffset = 0.0137255020f;
+
+Vec3f off_grid_center(prop::Prng& prng, float lo, float hi) {
+    return Vec3f{prng.frange(lo, hi) + kOffGridOffset,
+                 prng.frange(lo, hi) - kOffGridOffset,
+                 prng.frange(lo, hi) + kOffGridOffset};
+}
+
+} // namespace
+
+TEST_CASE("property: bridge spheres (seeded family) - genus-0 invariants at res 24") {
+    const std::uint32_t seed = 0xB0D61001u;
+    prop::Prng prng(seed);
+    // Measured once on this build (GCC 14.2, Release, -ffp-contract=off):
+    // 25 members at res 24 = ~0.14 s total (report call per member).
+    for (int iter = 0; iter < 25; ++iter) {
+        const float r = prng.frange(0.5f, 2.0f);
+        const Vec3f c = off_grid_center(prng, -0.4f, 0.4f);
+        auto body = s::sdf_translate(s::make_sphere(r), c);
+
+        SdfToBrepOptions opts;
+        opts.fit_primitives = false;  // exercise the MC33 faceted path
+        opts.march_resolution = 24;   // declared above (cost rule)
+        const SdfToBrepReport rep = sdf_to_brep_report(body, opts);
+
+        INFO("seed=", seed, " iter=", iter, " r=", r,
+             " center=(", c.x, ",", c.y, ",", c.z, ")");
+        INFO("V=", rep.vertex_count, " E=", rep.edge_count, " F=", rep.face_count,
+             " chi=", rep.chi, " min|f|=", rep.min_abs_field);
+
+        INFO("check: fit == \"faceted\" (primitive fitting disabled)");
+        CHECK(rep.fit == "faceted");
+        INFO("check: chi == 2 (genus 0, one shell)");
+        CHECK(rep.chi == 2);
+        INFO("check: orientable (is_closed_orientable)");
+        CHECK(rep.orientable);
+        INFO("check: loops are closed");
+        CHECK(rep.loops);
+        INFO("check: E == 3F/2 (closed pure-triangle extract)");
+        CHECK(rep.edge_count == 3 * rep.face_count / 2);
+        INFO("check: V == F/2 + 2 (Euler identity for genus 0)");
+        CHECK(2 * rep.vertex_count == rep.face_count + 4);
+        INFO("check: min|f| > 0 on the sampling grid (P2 — no on-grid zeros)");
+        CHECK(rep.min_abs_field > 0.0f);
+    }
+}
+
+TEST_CASE("property: bridge pierced boxes (seeded family) - genus-1 invariants at res 24") {
+    const std::uint32_t seed = 0xB0D61002u;
+    prop::Prng prng(seed);
+    // Measured once on this build (GCC 14.2, Release, -ffp-contract=off):
+    // 25 members at res 24 = ~0.20 s total (report call per member).
+    for (int iter = 0; iter < 25; ++iter) {
+        const float rh = prng.frange(0.34f, 0.45f);  // P3 margin declared above
+        const Vec3f c = off_grid_center(prng, -0.25f, 0.25f);
+        auto body = s::sdf_subtract(
+            s::make_box(Vec3f{1, 1, 1}),
+            s::sdf_translate(s::make_cylinder(rh, 3.0f), c));
+
+        SdfToBrepOptions opts;
+        opts.fit_primitives = false;
+        opts.march_resolution = 24;   // declared above (cost rule)
+        const SdfToBrepReport rep = sdf_to_brep_report(body, opts);
+
+        INFO("seed=", seed, " iter=", iter, " hole_r=", rh,
+             " hole_center=(", c.x, ",", c.y, ",", c.z, ")");
+        INFO("V=", rep.vertex_count, " E=", rep.edge_count, " F=", rep.face_count,
+             " chi=", rep.chi, " min|f|=", rep.min_abs_field);
+
+        INFO("check: chi == 0 (V - E + F = 0, genus 1)");
+        CHECK(rep.chi == 0);
+        INFO("check: genus derived == 1 (the blocking rule)");
+        CHECK(rep.genus_derived);
+        CHECK(rep.genus == 1);
+        INFO("check: orientable (is_closed_orientable)");
+        CHECK(rep.orientable);
+        INFO("check: loops are closed");
+        CHECK(rep.loops);
+        INFO("check: E == 3F/2 (closed pure-triangle extract)");
+        CHECK(rep.edge_count == 3 * rep.face_count / 2);
+        INFO("check: min|f| > 0 on the sampling grid (P2 — no on-grid zeros)");
+        CHECK(rep.min_abs_field > 0.0f);
+    }
+}

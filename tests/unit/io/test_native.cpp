@@ -1590,3 +1590,184 @@ TEST_CASE("mesh nodes: kind dispatch is strict (unknown kinds, SDF leftovers)") 
     CHECK_THROWS_WITH_AS(native::parse_document(mixed, ""),
         doctest::Contains("SDF-only field \"body\""), std::runtime_error);
 }
+
+// ===========================================================================
+// Property-based family (mini-traccia PARTE 2, area 4 — native format).
+//
+// Generated scenes — parametric primitives through the builder registry,
+// Subtract operation recipes (chained allowed), and DELIBERATE dangling
+// references (1 in 4 recipes points at an id no node owns; ADR-0027 D2
+// loads it as the visible error state) — must round-trip:
+//   * byte-identical: save -> load -> save reproduces the same bytes;
+//   * report-identical: the extraction summary (version, node count,
+//     next_id, and every node's id/name/kind/visibility/builder/params/
+//     transform/recipe/operand_missing) is the same before and after.
+//
+// Declared generator ranges: sphere radius [0.3, 1.5]; box extent per
+// axis [0.2, 1.0]; cylinder radius [0.15, 0.5] and height [0.8, 3.0];
+// translations in [-1.5, 1.5] per axis; recipe offsets in [-0.3, 0.3];
+// camera target [-2, 2], distance [4, 12], yaw [-3, 3], pitch
+// [-1.2, 1.2], fov [35, 70]. Outside these = generator bug.
+// ===========================================================================
+
+#include "property/property_prng.hpp"
+#include "CAD_0/scene/builders.hpp"
+#include "CAD_0/scene/operations.hpp"
+
+#include <map>
+#include <sstream>
+
+namespace {
+
+namespace prop = CAD_0::test::property;
+
+// The extraction report: everything the loader recovers, rendered as a
+// deterministic string. Identical strings mean identical extractions.
+std::string extraction_summary(const native::ParsedDocument& doc) {
+    std::ostringstream os;
+    os << "version=" << doc.version.major << "." << doc.version.minor
+       << "." << doc.version.patch << " nodes=" << doc.nodes.size()
+       << " meshes=" << doc.meshes.size() << " next_id=" << doc.next_id;
+    for (const auto& n : doc.nodes) {
+        os << " | node#" << n.id << " name=" << n.name
+           << " kind=" << (n.kind == scene::NodeKind::Mesh ? "mesh" : "sdf")
+           << " visible=" << (n.visible ? 1 : 0)
+           << " builder=" << n.builder;
+        for (const auto& [k, v] : n.params) {
+            os << " p:" << k << "=";
+            if (const auto* f = std::get_if<float>(&v)) os << *f;
+            else if (const auto* sv = std::get_if<std::string>(&v)) os << *sv;
+            else if (const auto* bv = std::get_if<bool>(&v)) os << *bv;
+        }
+        os << " t=(" << n.transform.translation.x << ","
+           << n.transform.translation.y << ","
+           << n.transform.translation.z << ")"
+           << " s=" << n.transform.scale;
+        if (n.operation) {
+            os << " op{target=" << n.operation->target
+               << " tool=" << n.operation->tool
+               << " off=(" << n.operation->offset_x << ","
+               << n.operation->offset_y << "," << n.operation->offset_z << ")}";
+        }
+        os << " missing=" << (n.operand_missing ? 1 : 0);
+    }
+    return os.str();
+}
+
+} // namespace
+
+TEST_CASE("property: generated scenes round-trip byte-identically through the native format") {
+    const std::uint32_t seed = 0xF0CA0101u;
+    prop::Prng prng(seed);
+    const std::filesystem::path path1 =
+        std::filesystem::temp_directory_path() / "cad0_property_fmt_a.CAD_0";
+    const std::filesystem::path path2 =
+        std::filesystem::temp_directory_path() / "cad0_property_fmt_b.CAD_0";
+
+    for (int iter = 0; iter < 25; ++iter) {
+        scene::Scene s;
+        native::NativeCamera cam;
+        cam.target = math::Vec3f{prng.frange(-2.0f, 2.0f),
+                                 prng.frange(-2.0f, 2.0f),
+                                 prng.frange(-2.0f, 2.0f)};
+        cam.distance = prng.frange(4.0f, 12.0f);
+        cam.yaw = prng.frange(-3.0f, 3.0f);
+        cam.pitch = prng.frange(-1.2f, 1.2f);
+        cam.fov_deg = prng.frange(35.0f, 70.0f);
+
+        // 1..4 parametric primitives through the builder registry.
+        std::vector<std::uint32_t> ids;
+        const int n_prim = 1 + static_cast<int>(prng.int_below(4u));
+        for (int k = 0; k < n_prim; ++k) {
+            const char* tag = nullptr;
+            switch (prng.int_below(3u)) {
+            case 0: tag = "sphere"; break;
+            case 1: tag = "box"; break;
+            default: tag = "cylinder"; break;
+            }
+            const scene::BuilderSpec* spec = scene::find_builder(tag);
+            REQUIRE(spec != nullptr);
+            auto params = spec->default_params();
+            if (tag == std::string("sphere")) {
+                params["radius"] = prng.frange(0.3f, 1.5f);
+            } else if (tag == std::string("box")) {
+                params["extent_x"] = prng.frange(0.2f, 1.0f);
+                params["extent_y"] = prng.frange(0.2f, 1.0f);
+                params["extent_z"] = prng.frange(0.2f, 1.0f);
+            } else {
+                params["radius"] = prng.frange(0.15f, 0.5f);
+                params["height"] = prng.frange(0.8f, 3.0f);
+            }
+            const std::uint32_t id = s.add_node(
+                std::string(tag) + std::to_string(k),
+                spec->make(params), spec->factory(), params);
+            ids.push_back(id);
+            if (auto* n = s.get_node_mut(id)) {
+                n->transform.translation = math::Vec3f{
+                    prng.frange(-1.5f, 1.5f),
+                    prng.frange(-1.5f, 1.5f),
+                    prng.frange(-1.5f, 1.5f)};
+                n->transform.scale = prng.frange(0.5f, 2.0f);
+                n->visible = prng.coin();
+            }
+        }
+
+        // 0..2 Subtract recipes. Dangling references are produced the
+        // SUPPORTED way (ADR-0027 D2: "a later deletion produces the
+        // visible dangling state, an absent operand at creation is a
+        // caller bug"): every 4th recipe is created from live operands
+        // and then its tool node is DELETED.
+        const int n_op = static_cast<int>(prng.int_below(3u));
+        for (int k = 0; k < n_op; ++k) {
+            scene::OperationRecipe r;
+            r.type = scene::OperationType::Subtract;
+            r.target = ids[prng.int_below(
+                static_cast<std::uint32_t>(ids.size()))];
+            r.tool = ids[prng.int_below(
+                static_cast<std::uint32_t>(ids.size()))];
+            const bool make_dangling = (prng.int_below(4u) == 0u) && ids.size() >= 2;
+            if (make_dangling && r.target == r.tool) {
+                // Pick a different tool so the deletion leaves exactly
+                // one dangling operand (target stays alive).
+                for (std::uint32_t cand : ids) {
+                    if (cand != r.target) { r.tool = cand; break; }
+                }
+            }
+            r.offset_x = prng.frange(-0.3f, 0.3f);
+            r.offset_y = prng.frange(-0.3f, 0.3f);
+            r.offset_z = prng.frange(-0.3f, 0.3f);
+            s.add_operation_node("Op" + std::to_string(k), r);
+            if (make_dangling && r.target != r.tool) {
+                REQUIRE(s.remove_node(r.tool));
+                // Later recipes must pick among LIVE operands only
+                // (an operand deleted by an earlier recipe is absent
+                // at creation — the caller bug the scene layer
+                // rejects; keep `ids` in sync with reality).
+                std::erase(ids, r.tool);
+            }
+        }
+
+        // save -> load -> save: bytes must match exactly.
+        native::save_file(path1, s, cam);
+        auto doc1 = native::load_file(path1);
+        const native::NativeCamera cam1 = doc1.camera;
+        const std::string sum1 = extraction_summary(doc1);
+        scene::Scene s2;
+        native::install_document(s2, std::move(doc1));
+        native::save_file(path2, s2, cam1);
+        const std::string bytes1 = read_file(path1);
+        const std::string bytes2 = read_file(path2);
+        auto doc2 = native::load_file(path2);
+        const std::string sum2 = extraction_summary(doc2);
+
+        INFO("seed=", seed, " iter=", iter, " n_prim=", n_prim, " n_op=", n_op);
+        INFO("report #1: ", sum1);
+        INFO("report #2: ", sum2);
+        INFO("check: save -> load -> save is byte-identical");
+        CHECK(bytes1 == bytes2);
+        INFO("check: extraction report identical before/after the round-trip");
+        CHECK(sum1 == sum2);
+    }
+    std::filesystem::remove(path1);
+    std::filesystem::remove(path2);
+}

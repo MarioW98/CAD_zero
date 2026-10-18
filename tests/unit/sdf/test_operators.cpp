@@ -480,3 +480,349 @@ TEST_CASE("SmoothMin: UnionSDF and SubtractionSDF propagate Lipschitz correctly"
     auto inter = sdf_intersect(make_sphere(1.0f), sdf_twist(make_box({1, 1, 1}), 0.5f));
     CHECK(inter.lipschitz() == doctest::Approx(twisted.lipschitz()).epsilon(1e-5f));
 }
+
+// ===========================================================================
+// Property-based families (mini-traccia PARTE 2, area 1 — SDF operators).
+//
+// Infrastructure: tests/property/property_prng.hpp — seeded, deterministic,
+// portable (hand-rolled mappings over the standardized mt19937 core). The
+// seed is part of each test and is printed on every failure together with
+// the iteration, the full tree (describe()) and the violated check, so a
+// failure is a reproducible configuration, like a pinned diagnosis.
+//
+// 25 iterations per family, FIXED (PARTE 3) — the suite may not grow
+// silently.
+//
+// Supported input class, declared up front (an input outside these
+// ranges would be a GENERATOR bug, classified as such — never reported
+// as a kernel bug):
+//   * sphere radius            r  in [0.30, 1.20]
+//   * box half-extent (per axis) e in [0.25, 1.00]
+//   * cylinder radius          r  in [0.25, 0.70], height h in [0.60, 1.60]
+//   * translate offset (per axis) in [-1.50, 1.50]
+//   * tree operators: union / subtract / translate only, depth <= 3
+//     (<= 8 leaves) — exactly the mini-traccia family composition; the
+//     smooth union gets its own dedicated k = 0 property below.
+// ===========================================================================
+
+#include "property/property_prng.hpp"
+
+#include <cmath>
+#include <vector>
+
+namespace {
+
+namespace prop = CAD_0::test::property;
+
+// One generated leaf, with everything needed to sample NEAR ITS SURFACE
+// (the asymmetric-pair machinery below).
+struct LeafRec {
+    enum class Kind { Sphere, Box, Cylinder } kind;
+    Vec3f center{};
+    Vec3f dim{};  // sphere: (r,r,r); box: extent; cylinder: (r, h, r)
+};
+
+LeafRec gen_leaf(prop::Prng& prng) {
+    LeafRec lf;
+    lf.center = Vec3f{prng.frange(-1.5f, 1.5f),
+                      prng.frange(-1.5f, 1.5f),
+                      prng.frange(-1.5f, 1.5f)};
+    switch (prng.int_below(3u)) {
+    case 0:
+        lf.kind = LeafRec::Kind::Sphere;
+        lf.dim = Vec3f{prng.frange(0.30f, 1.20f), 0.0f, 0.0f};
+        break;
+    case 1:
+        lf.kind = LeafRec::Kind::Box;
+        lf.dim = Vec3f{prng.frange(0.25f, 1.00f),
+                       prng.frange(0.25f, 1.00f),
+                       prng.frange(0.25f, 1.00f)};
+        break;
+    default:
+        lf.kind = LeafRec::Kind::Cylinder;
+        lf.dim = Vec3f{prng.frange(0.25f, 0.70f), prng.frange(0.60f, 1.60f), 0.0f};
+        break;
+    }
+    return lf;
+}
+
+SDFBody leaf_body(const LeafRec& lf) {
+    switch (lf.kind) {
+    case LeafRec::Kind::Sphere:
+        return sdf_translate(make_sphere(lf.dim.x), lf.center);
+    case LeafRec::Kind::Box:
+        return sdf_translate(make_box(lf.dim), lf.center);
+    case LeafRec::Kind::Cylinder:
+        return sdf_translate(make_cylinder(lf.dim.x, lf.dim.y), lf.center);
+    }
+    return make_sphere(0.5f);  // unreachable; silences -Wreturn-type
+}
+
+struct TreeSpec {
+    SDFBody body;
+    Bboxf bounds;
+    std::vector<LeafRec> leaves;
+};
+
+TreeSpec gen_tree(prop::Prng& prng, int depth) {
+    TreeSpec spec;
+    if (depth == 0 || prng.int_below(4u) == 0u) {
+        spec.leaves.push_back(gen_leaf(prng));
+        spec.body = leaf_body(spec.leaves.back());
+    } else {
+        TreeSpec a = gen_tree(prng, depth - 1);
+        TreeSpec b = gen_tree(prng, depth - 1);
+        if (prng.coin()) {
+            spec.body = sdf_union(std::move(a.body), std::move(b.body));
+        } else {
+            spec.body = sdf_subtract(std::move(a.body), std::move(b.body));
+        }
+        spec.leaves = std::move(a.leaves);
+        spec.leaves.insert(spec.leaves.end(),
+                           std::make_move_iterator(b.leaves.begin()),
+                           std::make_move_iterator(b.leaves.end()));
+    }
+    // The kernel's own bounds() is the source of truth for the family.
+    spec.bounds = spec.body.bounds();
+    return spec;
+}
+
+Vec3f random_dir(prop::Prng& prng) {
+    for (;;) {
+        const Vec3f d{prng.frange(-1.0f, 1.0f),
+                      prng.frange(-1.0f, 1.0f),
+                      prng.frange(-1.0f, 1.0f)};
+        const float l = d.length();
+        if (l > 0.2f && l < 1.0f) return d * (1.0f / l);
+    }
+}
+
+float axis_of(const Vec3f& v, int axis) {
+    return axis == 0 ? v.x : (axis == 1 ? v.y : v.z);
+}
+
+// A point on (or within eps of) THIS leaf's surface sheet, chosen so
+// that the point may land on either side of the sheet (inside/outside):
+// the near-surface shell of a SPECIFIC leaf. Geometric exactness of the
+// sheet is not required — only proximity to one leaf's boundary, far
+// from the other leaves' — that is what makes the cross-leaf pairs
+// straddle the CSG creases.
+Vec3f near_surface(const LeafRec& lf, prop::Prng& prng, float eps) {
+    switch (lf.kind) {
+    case LeafRec::Kind::Sphere: {
+        const float r = lf.dim.x * (1.0f + prng.frange(-eps, eps));
+        return lf.center + random_dir(prng) * r;
+    }
+    case LeafRec::Kind::Box: {
+        // One dominant face: on `axis` at +- extent*(1 +- eps); the
+        // other two coordinates are uniform inside the face.
+        const int axis = static_cast<int>(prng.int_below(3u));
+        const float s = (prng.coin() ? 1.0f : -1.0f) *
+                        (1.0f + prng.frange(-eps, eps));
+        const Vec3f e = lf.dim;
+        Vec3f local{prng.frange(-e.x, e.x),
+                    prng.frange(-e.y, e.y),
+                    prng.frange(-e.z, e.z)};
+        local = Vec3f{axis == 0 ? e.x * s : local.x,
+                      axis == 1 ? e.y * s : local.y,
+                      axis == 2 ? e.z * s : local.z};
+        return lf.center + local;
+    }
+    case LeafRec::Kind::Cylinder: {
+        // Lateral sheet: radius r*(1 +- eps), y uniform in the height.
+        const float r = lf.dim.x * (1.0f + prng.frange(-eps, eps));
+        const float h2 = lf.dim.y * 0.5f;
+        const Vec3f d = random_dir(prng);
+        const float rl = std::sqrt(d.x * d.x + d.z * d.z);
+        const float rx = rl > 1e-6f ? d.x / rl : 1.0f;
+        const float rz = rl > 1e-6f ? d.z / rl : 0.0f;
+        return lf.center + Vec3f{rx * r, prng.frange(-h2, h2), rz * r};
+    }
+    }
+    return lf.center;
+}
+
+Bboxf expand_bbox(const Bboxf& b, float frac) {
+    const Vec3f c{(b.min.x + b.max.x) * 0.5f,
+                  (b.min.y + b.max.y) * 0.5f,
+                  (b.min.z + b.max.z) * 0.5f};
+    const Vec3f h{(b.max.x - b.min.x) * 0.5f * (1.0f + frac),
+                  (b.max.y - b.min.y) * 0.5f * (1.0f + frac),
+                  (b.max.z - b.min.z) * 0.5f * (1.0f + frac)};
+    return Bboxf{c - h, c + h};
+}
+
+Vec3f uniform_in(prop::Prng& prng, const Bboxf& b) {
+    return Vec3f{prng.frange(b.min.x, b.max.x),
+                 prng.frange(b.min.y, b.max.y),
+                 prng.frange(b.min.z, b.max.z)};
+}
+
+// The pair categories, declared (the smin lesson made structural):
+//   * "uniform"    — both points uniform in the padded hull: broad
+//                    coverage, catches gross violations.
+//   * "local"      — small separation rho in [1e-3, 0.25]: probes the
+//                    inequality at short range, where the divide by
+//                    |p - q| is most sensitive.
+//   * "cross-leaf" — THE ASYMMETRIC CATEGORY: each point sits on the
+//                    near-surface shell (eps up to 8%) of a DIFFERENT
+//                    leaf, independently inside/outside. These pairs
+//                    straddle the crease of the piecewise min/max —
+//                    exactly the regime where the 2026-10-16 smooth-min
+//                    clamp-sign bug lived unnoticed under symmetric
+//                    sampling. Uniform/local sampling misses it.
+struct PointPair {
+    Vec3f p, q;
+    const char* how;
+};
+
+std::vector<PointPair> gen_pairs(const TreeSpec& t, prop::Prng& prng, int n) {
+    std::vector<PointPair> out;
+    out.reserve(static_cast<std::size_t>(n));
+    const Bboxf bb = expand_bbox(t.bounds, 0.25f);
+    for (int i = 0; i < n; ++i) {
+        const auto mode = prng.int_below(3u);
+        if (mode == 0u) {
+            out.push_back({uniform_in(prng, bb), uniform_in(prng, bb), "uniform"});
+        } else if (mode == 1u) {
+            const Vec3f p = uniform_in(prng, bb);
+            const float rho = prng.frange(1e-3f, 0.25f);
+            out.push_back({p, p + random_dir(prng) * rho, "local"});
+        } else if (t.leaves.size() >= 2) {
+            const auto na = static_cast<std::uint32_t>(t.leaves.size());
+            const std::uint32_t a = prng.int_below(na);
+            std::uint32_t b = prng.int_below(na);
+            if (b == a) b = (a + 1u) % na;
+            out.push_back({near_surface(t.leaves[a], prng, 0.08f),
+                           near_surface(t.leaves[b], prng, 0.08f), "cross-leaf"});
+        } else {
+            out.push_back({uniform_in(prng, bb), uniform_in(prng, bb), "uniform"});
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+// --- Property (a): Lipschitz -----------------------------------------------
+// For every member of the seeded tree family and every sampled pair:
+//   |f(p) - f(q)| <= lipschitz() * |p - q|   (+ a pinned float slack).
+TEST_CASE("property: Lipschitz bound holds over seeded random CSG trees") {
+    const std::uint32_t seed = 0x5EED0001u;
+    prop::Prng prng(seed);
+    for (int iter = 0; iter < 25; ++iter) {
+        const TreeSpec t = gen_tree(prng, 3);
+        const float L = t.body.lipschitz();
+        INFO("seed=", seed, " iter=", iter, " L=", L);
+        INFO("tree: ", t.body.describe());
+        for (const PointPair& pp : gen_pairs(t, prng, 60)) {
+            const double fp = t.body.value(pp.p);
+            const double fq = t.body.value(pp.q);
+            const Vec3f d3 = pp.p - pp.q;
+            const double dist = std::sqrt(static_cast<double>(d3.x * d3.x) +
+                                          static_cast<double>(d3.y * d3.y) +
+                                          static_cast<double>(d3.z * d3.z));
+            INFO("pair(", pp.how, "): p=(", pp.p.x, ",", pp.p.y, ",", pp.p.z,
+                 ") q=(", pp.q.x, ",", pp.q.y, ",", pp.q.z,
+                 ") f(p)=", fp, " f(q)=", fq, " |p-q|=", dist);
+            // Float-evaluation slack, pinned with its margin: in this
+            // sampling volume |f| <= ~5, so ulp(|f|) <= ~4.8e-7 and the
+            // two evaluations + the distance contribute a few ulp —
+            // 1e-5 is ~20x the worst single-evaluation rounding, two
+            // orders of magnitude below any real Lipschitz violation.
+            // The contract itself is exact; only the arithmetic is not.
+            INFO("check: |f(p) - f(q)| <= lipschitz()*|p-q| + 1e-5 (pinned float slack)");
+            CHECK(std::abs(fp - fq) <= static_cast<double>(L) * dist + 1e-5);
+        }
+    }
+}
+
+// --- Property (b): smooth_min(k=0) == hard min, point per point ----------
+// Bit-exact: both operators must reduce to min(a(p), b(p)) with the
+// same tie semantics (the first operand wins a tie in both — see
+// UnionSDF::sample and the k <= 0 branch of SmoothMinSDF::sample), and
+// a(p)/b(p) are the same float expressions in both trees, so equal
+// bits are REQUIRED, not approximated.
+TEST_CASE("property: smooth_min(k=0) equals the hard union pointwise, bit-exact") {
+    const std::uint32_t seed = 0x5EED0002u;
+    prop::Prng prng(seed);
+    for (int iter = 0; iter < 25; ++iter) {
+        const TreeSpec ta = gen_tree(prng, 2);
+        const TreeSpec tb = gen_tree(prng, 2);
+        // SDFBody's copy constructor deep-clones; the composition
+        // helpers take operands by value.
+        auto smooth = sdf_smooth_union(ta.body, tb.body, 0.0f);
+        auto hard = sdf_union(ta.body, tb.body);
+        INFO("seed=", seed, " iter=", iter);
+        INFO("A: ", ta.body.describe());
+        INFO("B: ", tb.body.describe());
+        const Bboxf bb = expand_bbox(
+            Bboxf{Vec3f{std::min(ta.bounds.min.x, tb.bounds.min.x),
+                              std::min(ta.bounds.min.y, tb.bounds.min.y),
+                              std::min(ta.bounds.min.z, tb.bounds.min.z)},
+                        Vec3f{std::max(ta.bounds.max.x, tb.bounds.max.x),
+                              std::max(ta.bounds.max.y, tb.bounds.max.y),
+                              std::max(ta.bounds.max.z, tb.bounds.max.z)}},
+            0.25f);
+        for (int k = 0; k < 40; ++k) {
+            // Asymmetric sampling: near A's leaves, near B's leaves,
+            // and uniform in the shared hull — the regime where the
+            // clamp-sign bug hid (2026-10-16).
+            Vec3f p;
+            const auto mode = prng.int_below(3u);
+            if (mode == 0u || ta.leaves.empty()) {
+                p = uniform_in(prng, bb);
+            } else if (mode == 1u || tb.leaves.empty()) {
+                p = near_surface(ta.leaves[prng.int_below(
+                                      static_cast<std::uint32_t>(ta.leaves.size()))],
+                                 prng, 0.08f);
+            } else {
+                p = near_surface(tb.leaves[prng.int_below(
+                                      static_cast<std::uint32_t>(tb.leaves.size()))],
+                                 prng, 0.08f);
+            }
+            const float vs = smooth.value(p);
+            const float vh = hard.value(p);
+            INFO("p=(", p.x, ",", p.y, ",", p.z, ") smooth=", vs, " hard=", vh);
+            INFO("check: smooth_min(k=0).value(p) == union.value(p), bit-exact");
+            CHECK(vs == vh);
+        }
+    }
+}
+
+// --- Property (c): strict positivity outside bounds() --------------------
+// P1-flavored enclosure contract at the field level: every point at
+// least delta (in [1e-3, 0.75], declared margin) outside the tree's
+// own bounds() must evaluate strictly positive. Valid by construction
+// for this family: union keeps the hull, subtract keeps A's bounds,
+// translate shifts them — and every primitive's bounds() contains its
+// zero sub-level set strictly.
+TEST_CASE("property: f is strictly positive outside the tree bounds") {
+    const std::uint32_t seed = 0x5EED0003u;
+    prop::Prng prng(seed);
+    for (int iter = 0; iter < 25; ++iter) {
+        const TreeSpec t = gen_tree(prng, 3);
+        const Bboxf bb = t.bounds;
+        INFO("seed=", seed, " iter=", iter,
+             " bounds=[", bb.min.x, ",", bb.min.y, ",", bb.min.z, "]..[",
+             bb.max.x, ",", bb.max.y, ",", bb.max.z, "]");
+        INFO("tree: ", t.body.describe());
+        for (int k = 0; k < 40; ++k) {
+            const int axis = static_cast<int>(prng.int_below(3u));
+            const bool lo_face = prng.coin();
+            const float delta = prng.frange(1e-3f, 0.75f);
+            // Tangential coordinates: uniform inside the face.
+            Vec3f p = uniform_in(prng, bb);
+            const float face = axis_of(lo_face ? bb.min : bb.max, axis);
+            const float out = face + (lo_face ? -delta : delta);
+            p = Vec3f{axis == 0 ? out : p.x,
+                      axis == 1 ? out : p.y,
+                      axis == 2 ? out : p.z};
+            INFO("k=", k, " axis=", axis, " lo_face=", lo_face,
+                 " delta=", delta, " p=(", p.x, ",", p.y, ",", p.z, ")",
+                 " f=", t.body.value(p));
+            INFO("check: f(p) > 0 for p outside bounds() by delta >= 1e-3");
+            CHECK(t.body.value(p) > 0.0f);
+        }
+    }
+}

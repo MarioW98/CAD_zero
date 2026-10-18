@@ -1077,6 +1077,29 @@ void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces, bo
         SnappedKey key = snap(pos);
         auto it = weld_map.find(key);
         if (it != weld_map.end()) return it->second;
+        // Grid-boundary straddle repair. Two arithmetic paths can
+        // produce the SAME geometric interface point 1-2 ulp apart,
+        // and llround(p / kWeldGrid) can then land on opposite sides
+        // of a cell boundary (the x.5 line), yielding two "distinct"
+        // vertices ~1e-10 apart, dangling coedges and a non-manifold
+        // result. Found by the property-based analytic-box-oracle
+        // family (seed 0xA11CED01: V=10/E=16/chi=0 on an in-class
+        // box-pair intersection; the near-duplicates differed by one
+        // ulp on a single coordinate). Repair: honor the kWeldGrid
+        // CONTRACT — distance <= kWeldGrid means the same vertex,
+        // exactly the semantics clip_inside_3d's dedup and the
+        // T-junction pass already apply — with a proximity pass over
+        // the already-welded vertices. The lowest-id vertex within
+        // kWeldGrid wins (deterministic), and the snapped key is also
+        // bound to it so later lookups through either key hit the
+        // same id.
+        for (VertexId k = 0; k < static_cast<VertexId>(result.vertices.size()); ++k) {
+            const math::Vec3f d = result.vertices[k].position() - pos;
+            if (d.x * d.x + d.y * d.y + d.z * d.z <= kWeldGrid * kWeldGrid) {
+                weld_map.emplace(key, k);
+                return k;
+            }
+        }
         VertexId id = static_cast<VertexId>(result.vertices.size());
         result.vertices.push_back(Vertex{pos});
         result.vertices.back().set_id(id);
