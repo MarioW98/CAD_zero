@@ -107,7 +107,10 @@ TEST_CASE("Bridge: SDF smooth_union → B-Rep faceted") {
     REQUIRE(body != nullptr);
     // Pinned (two unit spheres, centers (0,0,0)/(2,0,0) — exactly
     // tangent — k=0.5, res=8), measured once on the FIXED SmoothMinSDF
-    // (2026-10-16 clamp-sign fix) and frozen. Counts satisfy the
+    // (2026-10-16 clamp-sign fix) and frozen. Re-measured once for
+    // ADR-0028 (SmoothMinSDF::bounds() dilates by k/8 — this grid
+    // widened from extent 4x2x2 to 4.125x2.125x2.125): the res-8
+    // topology is UNCHANGED, 350/1044/696 stands. Counts satisfy the
     // closed-mesh identities (E = 3F/2, V = F/2 + 2). Note: with the
     // pre-fix operator this configuration extracted a different (much
     // coarser) shape — the pin also guards the operator through the
@@ -463,10 +466,14 @@ TEST_CASE("Bridge T7: smooth-union res=16 - pinned counts + manifold contract") 
 
     REQUIRE(body != nullptr);
     // Pinned (two unit spheres, centers (0,0,0)/(1.2,0,0), k=0.4,
-    // res=16): measured once, frozen.
-    CHECK(body->vertex_count() == 1310);
-    CHECK(body->edge_count() == 3924);
-    CHECK(body->face_count() == 2616);
+    // res=16): measured once, frozen; re-measured once for ADR-0028
+    // (bounds() + k/8 widened the grid from extent 3.2x2x2 to
+    // 3.30x2.10x2.10): old 1310/3924/2616 -> 1230/3684/2456, every
+    // invariant identical — the shift is of grid LAYOUT, not of
+    // geometry (the ADR-0028 sweep discipline).
+    CHECK(body->vertex_count() == 1230);
+    CHECK(body->edge_count() == 3684);
+    CHECK(body->face_count() == 2456);
     // Grid-independent contracts.
     CHECK(b::euler_characteristic(*body) == 2);
     CHECK(b::is_closed_manifold(*body));
@@ -496,9 +503,12 @@ TEST_CASE("Bridge T8: off-grid smooth-union - invariants survive generic placeme
     auto body = sdf_to_brep_faceted(u, opts);
 
     REQUIRE(body != nullptr);
-    CHECK(body->vertex_count() == 1310);
-    CHECK(body->edge_count() == 3924);
-    CHECK(body->face_count() == 2616);
+    // Same ADR-0028 re-measurement as T7 (the translation-invariance
+    // note below still holds on the dilated layout: the counts are
+    // IDENTICAL to T7's).
+    CHECK(body->vertex_count() == 1230);
+    CHECK(body->edge_count() == 3684);
+    CHECK(body->face_count() == 2456);
     CHECK(b::euler_characteristic(*body) == 2);
     CHECK(b::is_closed_manifold(*body));
     CHECK(b::loops_are_closed(*body));
@@ -526,13 +536,16 @@ TEST_CASE("Bridge T8b: rotated smooth-union - invariants survive generic orienta
     auto body = sdf_to_brep_faceted(r, opts);
 
     REQUIRE(body != nullptr);
-    // Pinned (T7 body rotated by q, res=16): measured once, frozen.
-    // Deliberately != T7's 1310/3924/2616: the counts are orientation
-    // dependent (the rotated AABB is larger, so res=16 cells are
-    // coarser relative to the shape) — the invariants are not.
-    CHECK(body->vertex_count() == 574);
-    CHECK(body->edge_count() == 1716);
-    CHECK(body->face_count() == 1144);
+    // Pinned (T7 body rotated by q, res=16): measured once, frozen;
+    // re-measured once for ADR-0028 (the rotated corner-hull now wraps
+    // the k/8-dilated child box — extent 4.38x3.57x3.32): old
+    // 574/1716/1144 -> 518/1548/1032. Deliberately != T7's
+    // 1230/3684/2456: the counts are orientation dependent (the
+    // rotated AABB is larger, so res=16 cells are coarser relative
+    // to the shape) — the invariants are not.
+    CHECK(body->vertex_count() == 518);
+    CHECK(body->edge_count() == 1548);
+    CHECK(body->face_count() == 1032);
     CHECK(b::euler_characteristic(*body) == 2);
     CHECK(b::is_closed_manifold(*body));
     CHECK(b::loops_are_closed(*body));
@@ -549,10 +562,11 @@ TEST_CASE("Bridge T9: smooth-union res=32 - grid-dependent counts, invariant con
     auto body = sdf_to_brep_faceted(u, opts);
 
     REQUIRE(body != nullptr);
-    // Pinned (same configuration as T7, res=32).
-    CHECK(body->vertex_count() == 5334);
-    CHECK(body->edge_count() == 15996);
-    CHECK(body->face_count() == 10664);
+    // Pinned (same configuration as T7, res=32); re-measured once for
+    // ADR-0028: old 5334/15996/10664 -> 4862/14580/9720.
+    CHECK(body->vertex_count() == 4862);
+    CHECK(body->edge_count() == 14580);
+    CHECK(body->face_count() == 9720);
     CHECK(b::euler_characteristic(*body) == 2);
     CHECK(b::is_closed_manifold(*body));
     CHECK(b::loops_are_closed(*body));
@@ -571,10 +585,15 @@ TEST_CASE("Bridge T10: smooth-union fit is faceted - blended bodies never match 
     auto rep = sdf_to_brep_report(u, opts);
 
     CHECK(rep.fit == "faceted");
-    // The report carries the same pinned contract as T7.
-    CHECK(rep.vertex_count == 1310);
-    CHECK(rep.edge_count == 3924);
-    CHECK(rep.face_count == 2616);
+    // The report carries the same pinned contract as T7 (re-measured
+    // for ADR-0028), plus the re-frozen P2 margin on the honest grid:
+    // the k/8-dilated bounds now COVERS the blend shell, so min|f| is
+    // the margin of the real extraction volume (old layout margin was
+    // measured against a volume that could clip the shell).
+    CHECK(rep.vertex_count == 1230);
+    CHECK(rep.edge_count == 3684);
+    CHECK(rep.face_count == 2456);
+    CHECK(rep.min_abs_field == 0.00277030468f);  // measured, frozen (ADR-0028)
     CHECK(rep.chi == 2);
     CHECK(rep.closed);
     CHECK(rep.loops);
@@ -1102,13 +1121,24 @@ TEST_CASE("property: bridge smooth unions (seeded family) - genus-0 invariants a
                         neck_pair.push_back(1);
                     }
                 }
-                // P3 margin check at the ACTUAL cell size: the hull
-                // extent is r_first + sum(dists) + r_last; the extract
-                // pads it by 1% and divides by the resolution.
+                // P3 margin check at the ACTUAL cell size — recalibrated
+                // for ADR-0028: SmoothMinSDF::bounds() now dilates by
+                // k/8 per blend level, so the extraction extent grows
+                // by sum(k_p)/4 (k_p/8 per side) and the honest cell is
+                // (hull_extent + sum(ks)/4) * 1.02 / 24. The original
+                // calibration (plain hull_extent) survived one member
+                // at 1.93 cells of neck on the wider grid: chi = -2
+                // pinch, min|f| ~ 5e-6 — classified as a GENERATOR bug
+                // (the declared margin no longer held at the real cell
+                // size), not a kernel bug; the rejection now rejects
+                // such members again. hull_extent remains a majorant of
+                // every axis extent of the chain hull.
                 hull_extent = radii.front();
                 for (std::size_t i = 0; i < dists.size(); ++i) hull_extent += dists[i];
                 hull_extent += radii.back();
-                const float cell = hull_extent * 1.02f / 24.0f;
+                float k_sum = 0.0f;
+                for (float kv : ks) k_sum += kv;
+                const float cell = (hull_extent + k_sum / 4.0f) * 1.02f / 24.0f;
                 bool ok = true;
                 for (std::size_t p = 0; p < neck_pair.size(); ++p) {
                     if (neck_pair[p] == 1) {

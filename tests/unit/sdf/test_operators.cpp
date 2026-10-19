@@ -951,33 +951,25 @@ TEST_CASE("property: f is strictly positive outside the tree bounds") {
 //     thinner than the hard union;
 //   * v == min at |u| = 1/7 and at the band edge |u| = 1.
 //
-// EFFECT ON bounds() — verified before these trees are used anywhere
-// else (FASE 1.1). field.hpp declares bounds() as "bounding box of the
-// region where the field can be NEGATIVE". SmoothMinSDF::bounds()
-// returns the plain hull of the children's bounds, but the k/16 dip
-// means the negative region can escape the hull by up to k/16 per
-// blend level wherever the two operand fields stay within k/7 of each
-// other up to the hull boundary (near-coincident surfaces; nested
-// blends accumulate the envelope sum(k_i)/16). Empirical pins
-// (standalone driver smin_slope_probe.cpp, kept with the other
-// measurement drivers OUTSIDE the repo; GCC 14.2 Release
-// -ffp-contract=off):
-//   concentric unit spheres, blend k: zero crossing at EXACTLY
-//     k=0.10 -> r=1.006250    k=0.50 -> r=1.031250    k=1.00 -> r=1.062500
-//   (each = 1 + k/16), while bounds() = [-1,1]^3 and the mesh-extract
-//   volume adds only a 1%-of-extent pad (0.02 here): the escape exceeds
-//   the pad for k >~ 0.32 at this extent. This is a GAP against the
-//   field.hpp bounds() contract — REPORTED, not fixed here (a bounds()
-//   change would shift every pinned MC grid layout; the fix needs its
-//   own decision + sweep). Consequences in this suite:
-//     * property (c) above does NOT transfer to blended trees; the
-//       blended positivity property (g) below uses the explicit
-//       sum(k_i)/16 envelope instead;
-//     * the bridge smooth-union family (test_bridge.cpp) uses chain
-//       geometries whose near-coincident surfaces (crevices/necks) are
-//       strictly INTERIOR to the hull — probe (C): min f on the padded
-//       hull faces = +0.0155..+0.0202 — so the extraction volume is
-//       safe for that declared class.
+// EFFECT ON bounds() — RESOLVED by ADR-0028 (accepted 2026-10-19):
+// SmoothMinSDF::bounds() now dilates the children's hull by k/8 per
+// blend level (2x the k/16 field dip; the distance conversion is
+// sound because every node of this library keeps L >= 1). The
+// measurements that drove the decision are kept below as the
+// historical record, and the guinea pig (f) now PINS that the
+// concentric crossing sits INSIDE the dilated bounds (1 + k/16 <
+// 1 + k/8). Consequences in this suite after the ADR-0028 sweep:
+//   * property (g) asserts against the NEW (dilated) bounds — the
+//     kernel's own box at runtime, spec.bounds = body.bounds();
+//   * the NEW stratified property (h) below closes the blind spot:
+//     distance-band sampling outside bounds(), dense in the thin
+//     first band — exactly the violation class that uniform
+//     external sampling cannot see (the k/16 shell hugging the old
+//     hull boundary);
+//   * the bridge smooth-union family (test_bridge.cpp) keeps its
+//     chain geometries interior to the hull (probe (C): min f on
+//     the padded hull faces +0.0155..+0.0202) and its P3 rejection
+//     is calibrated on the honest k/8-dilated cell.
 //
 // EMPIRICAL SLOPE of the polynomial (FASE 1.3, dedicated guinea pigs —
 // the standalone driver named above): two unit spheres (gap 0.4 and
@@ -1108,23 +1100,28 @@ TEST_CASE("smin guinea pigs: empirical max slope pins the 7/4 analytic envelope 
     }
     // The concentric pair: f_a == f_b everywhere (u = 0), so the field
     // is exactly f - k/16 and the zero set is the sphere r = 1 + k/16.
-    // The crossing being OUTSIDE bounds() = [-1,1]^3 is the documented
-    // contract gap — see the extension header (reported, not endorsed).
+    // ADR-0028: the crossing is beyond the plain leaf hull ([-1,1]^3)
+    // but INSIDE the k/8-dilated bounds — the contract now holds, and
+    // both facts are pinned below.
     for (float k : {0.10f, 0.50f, 1.00f}) {
         auto v = sdf_smooth_union(make_sphere(1.0f), make_sphere(1.0f), k);
-        double lo = 1.0, hi = 1.0 + k / 8.0;
+        double lo = 1.0, hi = 1.0 + k / 8.0f;
         for (int it = 0; it < 80; ++it) {
             const double mid = 0.5 * (lo + hi);
             if (v.value(Vec3f{static_cast<float>(mid), 0, 0}) < 0.0f) lo = mid;
             else hi = mid;
         }
         const double crossing = 0.5 * (lo + hi);
+        const Bboxf cb = v.bounds();
         INFO("k=", k, " zero crossing at r = ", crossing,
-             " (1 + k/16 = ", 1.0 + k / 16.0, ")");
+             " (1 + k/16 = ", 1.0 + k / 16.0, ")",
+             " bounds max = ", cb.max.x, " (1 + k/8 = ", 1.0 + k / 8.0, ")");
         INFO("check: |crossing - (1 + k/16)| <= 1e-5 (the dip depth is exactly k/16)");
         CHECK(std::abs(crossing - (1.0 + k / 16.0)) <= 1e-5);
-        INFO("check: crossing > 1 (the blended solid exits bounds() — documented gap, reported)");
+        INFO("check: crossing > 1 (the blended solid dilates beyond the leaf hull)");
         CHECK(crossing > 1.0);
+        INFO("check: crossing <= 1 + k/8 (the ADR-0028 dilated bounds CONTAINS the shell)");
+        CHECK(crossing <= 1.0 + static_cast<double>(k) / 8.0);
     }
 }
 
@@ -1134,8 +1131,16 @@ TEST_CASE("smin guinea pigs: empirical max slope pins the 7/4 analytic envelope 
 // dip; translate: shift). Every leaf is a true-distance primitive, so a
 // point outside the HULL by delta is outside every leaf's bounds by >=
 // delta and each leaf field is >= delta there. Hence f(p) > 0 whenever
-// delta > sum(k_i)/16: this VERIFIES the documented bounds() dilation
-// effect from the safe side, per member, envelope included.
+// delta > sum(k_i)/16.
+//
+// ADR-0028: the box this property measures against is the kernel's
+// own DILATED bounds (spec.bounds = body.bounds() at runtime), so the
+// drawn delta is counted from the k/8-dilated boundary. The chain
+// gives f(p) >= delta + sum(k_i)/8 - sum(k_i)/16 = delta + sum(k_i)/16
+// > 0 — the check holds with the whole 2x margin to spare. The
+// envelope allowance in the delta draw is kept as the conservative
+// pin of the FIELD deviation (sum(k)/16), never of the box; the
+// band-structured, no-allowance closure is property (h) below.
 TEST_CASE("property: blended trees stay positive outside bounds() beyond the blend-dilation envelope") {
     const std::uint32_t seed = 0x5EED0013u;
     prop::Prng prng(seed);
@@ -1165,4 +1170,79 @@ TEST_CASE("property: blended trees stay positive outside bounds() beyond the ble
             CHECK(t.body.value(p) > 0.0f);
         }
     }
+}
+
+// --- Property (h): stratified positivity outside the ADR-0028 bounds ----
+// THE BLIND-SPOT CLOSURE. Uniform external sampling — property (c)
+// for hard trees, and (g)'s envelope-allowanced draw — cannot see a
+// thin shell hugging the bounds() boundary: exactly where the k/16
+// dilation violation lived (the concentric zero set sat at 1 + k/16,
+// i.e. IN the first band past the old plain hull). This property
+// samples at DECLARED distance bands from the boundary of the
+// kernel's own (ADR-0028, k/8-dilated) bounds():
+//     [0, eps], [eps, 2eps], [2eps, 3eps], [3eps, 4eps],  eps = 0.05
+// with the thin first band covered DENSELY (60 points per member,
+// drawn down to 1e-4 of the boundary — the boundary itself is
+// excluded: a leaf may touch its own hull exactly, and delta = 0 is
+// not "strictly outside"), and 20 points per outer band.
+//
+// Contract, with NO envelope allowance: f(p) > 0 for every p
+// strictly outside bounds(). Sound by the ADR-0028 derivation: a
+// point outside the dilated box by delta >= 0 is outside the leaf
+// hull by >= delta + sum(k_i)/8 (the dilation is exactly the
+// accumulated k/8), so the (g) induction gives
+//     f(p) >= delta + sum(k_i)/8 - sum(k_i)/16 = delta + sum(k_i)/16
+// which is > 0 for every blended member (sum(k) >= 0.10 here) and
+// for every delta > 0 on unblended members (the hard-min family
+// keeps the plain hull, and property (c)'s contract applies).
+// Failure diagnostics as always: seed + iteration + tree + the
+// violated band and point.
+TEST_CASE("property: blended trees are positive in every distance band outside the ADR-0028 bounds") {
+    const std::uint32_t seed = 0x5EED0014u;
+    prop::Prng prng(seed);
+    constexpr float kBandStep = 0.05f;  // declared band width eps
+    int iters_with_blend = 0;
+    for (int iter = 0; iter < 25; ++iter) {
+        const TreeSpec t = gen_tree(prng, 3, /*allow_blend=*/true);
+        if (!t.blends.empty()) ++iters_with_blend;
+        const Bboxf bb = t.bounds;
+        INFO("seed=", seed, " iter=", iter, " sum(k)=", t.blend_k_sum,
+             " blends=", t.blends.size(),
+             " bounds=[", bb.min.x, ",", bb.min.y, ",", bb.min.z, "]..[",
+             bb.max.x, ",", bb.max.y, ",", bb.max.z, "]");
+        INFO("tree: ", t.body.describe());
+        for (int band = 0; band < 4; ++band) {
+            const int n_pts = (band == 0) ? 60 : 20;
+            for (int j = 0; j < n_pts; ++j) {
+                const int axis = static_cast<int>(prng.int_below(3u));
+                const bool lo_face = prng.coin();
+                // Uniform within the band; band 0 is drawn down to
+                // 1e-4 of the boundary (dense thin-band coverage).
+                float delta = kBandStep * (static_cast<float>(band) +
+                                           prng.frange(0.0f, 1.0f));
+                if (delta < 1e-4f) delta = 1e-4f;
+                Vec3f p = uniform_in(prng, bb);
+                const float face = axis_of(lo_face ? bb.min : bb.max, axis);
+                const float out = face + (lo_face ? -delta : delta);
+                p = Vec3f{axis == 0 ? out : p.x,
+                          axis == 1 ? out : p.y,
+                          axis == 2 ? out : p.z};
+                INFO("band=", band, " [", kBandStep * static_cast<float>(band), ",",
+                     kBandStep * static_cast<float>(band + 1), "] j=", j,
+                     " axis=", axis, " lo_face=", lo_face,
+                     " delta=", delta, " p=(", p.x, ",", p.y, ",", p.z, ")",
+                     " f=", t.body.value(p));
+                INFO("check: f(p) > 0 for p strictly outside the ADR-0028 bounds, band ",
+                     band, " (no envelope allowance)");
+                CHECK(t.body.value(p) > 0.0f);
+            }
+        }
+    }
+    // Same liveness guard as (d): the stratified contract is about the
+    // blend dilation, so the family must actually carry blends (same
+    // generator distribution as (d), P(member has >= 1 smin) ~= 0.61
+    // -> ~15 of 25 expected; observed 15 on THIS seed).
+    INFO("check: >= 10 of 25 members contain at least one smooth_min node (observed ",
+         iters_with_blend, ")");
+    CHECK(iters_with_blend >= 10);
 }

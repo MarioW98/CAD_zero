@@ -24,6 +24,8 @@ public:
     }
     float lipschitz()    const noexcept override { return child_->lipschitz(); }
     math::Bboxf bounds() const noexcept override {
+        // ADR-0028 bounds-contract audit: IMMUNE — the negative region
+        // shifts rigidly with the field, and the box shifts with it.
         auto b = child_->bounds();
         return {b.min + offset_, b.max + offset_};
     }
@@ -61,6 +63,9 @@ public:
     }
     float lipschitz()    const noexcept override { return child_->lipschitz(); }
     math::Bboxf bounds() const noexcept override {
+        // ADR-0028 bounds-contract audit: IMMUNE — a rigid rotation
+        // maps the child's negative region exactly, and the corner
+        // hull of the rotated child box contains it.
         auto b = child_->bounds();
         math::Bboxf out;
         // Rotate the 8 corners of the child's bbox.
@@ -124,6 +129,13 @@ public:
     }
     float lipschitz()    const noexcept override { return child_->lipschitz(); }
     math::Bboxf bounds() const noexcept override {
+        // ADR-0028 bounds-contract audit: IMMUNE for s > 0 — f is
+        // negative exactly where g is (the sign of the positive scale
+        // factor never flips it), so the negative region is the
+        // child's scaled by s and the box scales identically. s <= 0
+        // is a degenerate mirror the constructor does not validate;
+        // it is outside the supported input class (the field's sign
+        // semantics would invert), not a bounds() bug.
         auto b = child_->bounds();
         return {b.min * scale_, b.max * scale_};
     }
@@ -174,6 +186,20 @@ public:
         // where R is the radius of the child's bounds. Conservative bound:
         return child_->lipschitz() * (1.0f + std::abs(k_) * 2.0f);
     }
+    // ADR-0028 bounds-contract audit: KNOWN GAP — reported, not
+    // fixed. The warp rotates each horizontal slice by y*k around the
+    // Y axis, so for a child whose negative region sits OFF the twist
+    // axis the warped negative region can leave the child's box
+    // entirely (a small sphere at (2, 5, 0) with k = 1 has its y = 5
+    // slice rotated by 5 rad). The field.hpp contract is violated for
+    // such inputs. Today nothing extracts a twisted off-axis body —
+    // the native-format canonical scene twists an off-axis composite
+    // at k = 0.05 (max warp displacement ~0.03) but is only saved and
+    // loaded in tests, never extracted — so the gap is documented
+    // here and in ADR-0028 instead of fixed: the correct dilation is
+    // slice-dependent (a function of the child's radial extent and
+    // the y-range) and deserves its own decision + pinned sweep,
+    // exactly like the smin k/8 one.
     math::Bboxf bounds() const noexcept override { return child_->bounds(); }
     std::string describe() const override {
         return "twist(" + child_->describe() + ",k=" + std::to_string(k_) + ")";

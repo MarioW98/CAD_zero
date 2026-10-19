@@ -63,6 +63,11 @@ public:
     }
 
     math::Bboxf bounds() const noexcept override {
+        // ADR-0028 bounds-contract audit: IMMUNE, no dilation needed.
+        // min over the children is < 0 iff some child field is < 0, so
+        // the negative region is exactly the UNION of the children's
+        // negative regions — contained in the hull of their (already
+        // correct) bounds. The hard min never dips below any child.
         math::Bboxf b;
         for (const auto& c : children_) b.expand(c->bounds());
         return b;
@@ -121,6 +126,12 @@ public:
     }
 
     math::Bboxf bounds() const noexcept override {
+        // ADR-0028 bounds-contract audit: IMMUNE, no dilation needed.
+        // max(a, b) < 0 iff a < 0 AND b < 0, so the negative region is
+        // a subset of EACH child's — contained in the intersection of
+        // the children's bounds. The hard max never dips below either
+        // child (the smooth-max analogue of the smin dip would need a
+        // smooth_max operator, which this kernel does not have).
         return a_->bounds().intersect(b_->bounds());
     }
 
@@ -185,6 +196,11 @@ public:
         return std::max(a_->lipschitz(), b_->lipschitz());
     }
 
+    // ADR-0028 bounds-contract audit: IMMUNE, no dilation needed.
+    // max(a, -b) < 0 iff a < 0 and b > 0, so the negative region is a
+    // subset of a's negative region — contained in a's bounds alone.
+    // (b's bounds are irrelevant: the tool only ever REMOVES material,
+    // and a hard max never dips below either operand.)
     math::Bboxf bounds() const noexcept override { return a_->bounds(); }
 
     std::string describe() const override {
@@ -327,8 +343,41 @@ public:
     }
 
     math::Bboxf bounds() const noexcept override {
+        // ADR-0028: field.hpp declares bounds() as the box of the region
+        // where the field can be NEGATIVE. The polynomial blend dips
+        // BELOW min(f_a, f_b) by up to k/16 (phi(u) = (8u - 7u^2 - 1)/16,
+        // minimum -1/16 at u = 0), so the negative region escapes the
+        // children's plain hull wherever the two operand fields stay
+        // within k of each other up to the hull boundary (the pinned
+        // probe: concentric unit spheres, blend k — zero crossing at
+        // exactly 1 + k/16, outside the old [-1,1]^3 hull; the escape
+        // exceeds the extractor's 1%-of-extent pad for k >~ 0.32 at
+        // extent 2).
+        //
+        // Fix: dilate the hull by k/8 — 2x the k/16 field dip. The
+        // distance conversion is sound because a point p with
+        // smin(p) < 0 satisfies min(f_a, f_b)(p) < k/16, hence
+        // dist(p, neg-child) <= (k/16)/L_child, and every node in
+        // this library keeps L >= 1 (primitives are unit-Lipschitz;
+        // min/max/translate/rotate/scale preserve L; smin multiplies
+        // by 2.5; twist by (1 + 2|k|)) — so the escape is at most
+        // k/16 in distance and k/8 covers it with headroom.
+        //
+        // Composition along nested blends is by construction: the
+        // parent takes the hull of the children's ALREADY-dilated
+        // boxes and adds its own k/8. The parent's dip applies to the
+        // FIELDS (<= k_p/16 below the min of the child fields), never
+        // to the boxes, so the child dilation is never re-applied.
+        //
+        // k = 0 (hard min): no dip below either child, the plain hull
+        // is exact — no dilation (UnionSDF-equivalent layout).
         math::Bboxf b = a_->bounds();
         b.expand(b_->bounds());
+        if (k_ > 0.0f) {
+            const math::Vec3f dil{k_ * 0.125f, k_ * 0.125f, k_ * 0.125f};
+            b.min = b.min - dil;
+            b.max = b.max + dil;
+        }
         return b;
     }
 
