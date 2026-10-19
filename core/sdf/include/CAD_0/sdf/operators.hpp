@@ -287,8 +287,16 @@ private:
 //
 // We round up to 2.5·max(L_a, L_b) for safety against numerical noise
 // in the FD-vs-analytic comparison, and against composite children
-// whose actual Lipschitz may transiently exceed the declared value
-// (e.g. TwistSDF reports a conservative L).
+// whose actual Lipschitz may transiently exceed the declared value.
+// [Corrected 2026-10-20, ADR-0029 D2 / consequence 6: this note once
+// cited "TwistSDF reports a conservative L" as its example — false in
+// the wide-radius regime, where the twist's then-declared 1 + 2|k|
+// UNDER-reported the true slope for k·r ≳ 0.2 (r ≳ 4 already at
+// k = 0.05; +16% at k = 0.05, r = 10), and this very margin
+// (2.5/1.75 = 1.429× absorption) was what silently covered the lie,
+// up to r ≈ 19 at k = 0.05. TwistSDF now declares the closed form
+// σ(k, √2·R) over its bounds box (ADR-0029); the 2.5× rounding stays
+// as headroom, now on no child's example.]
 //
 // Note: this is k-independent because the (1/k) factor in ∇h is
 // exactly cancelled by the (k) factor in (df/dh): the blend band
@@ -360,8 +368,11 @@ public:
         // dist(p, neg-child) <= (k/16)/L_child, and every node in
         // this library keeps L >= 1 (primitives are unit-Lipschitz;
         // min/max/translate/rotate/scale preserve L; smin multiplies
-        // by 2.5; twist by (1 + 2|k|)) — so the escape is at most
-        // k/16 in distance and k/8 covers it with headroom.
+        // by 2.5; twist by σ(k, √2·R) >= 1, the ADR-0029 closed form
+        // over its bounds box — the (1 + 2|k|) it replaced was NOT an
+        // upper bound in the wide-radius regime, k·r ≳ 0.2) — so the
+        // escape is at most k/16 in distance and k/8 covers it with
+        // headroom.
         //
         // Composition along nested blends is by construction: the
         // parent takes the hull of the children's ALREADY-dilated

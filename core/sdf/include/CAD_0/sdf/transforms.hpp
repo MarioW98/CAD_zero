@@ -157,6 +157,16 @@ private:
 };
 
 // Twist — non-rigid warp along the Y axis. Useful for organic shapes.
+//
+// The warp rotates each horizontal slice by θ(y) = y·k around Y. It is
+// NOT rigid — the rotation angle depends on the height — and the three
+// contract methods treat it accordingly (ADR-0029, the twist warp
+// contract): bounds() carries the child's axis-cylinder, lipschitz()
+// declares the closed-form σ(k, r), and sample() returns the full
+// chain-rule gradient including the shear term. The pre-contract code
+// treated the warp as rigid on all three fronts: bounds() returned the
+// child box unchanged (violated off-axis), lipschitz() declared the
+// dimensionally blind 1 + 2|k|, and the gradient omitted the y shear.
 class TwistSDF final : public SDFNode {
 public:
     TwistSDF(std::unique_ptr<SDFNode> child, float twist_per_unit_y)
@@ -172,35 +182,98 @@ public:
             -p.x * s + p.z * c,
         };
         auto r = child_->sample(local);
-        // Gradient must be rotated forward to match the warp.
+        // Gradient — the full chain rule (ADR-0029 D2). The inverse map
+        // u(p) rotates p's (x, z) by −k·p.y, so its Jacobian carries the
+        // shear column ∂u/∂p.y = (k·u.z, 1, −k·u.x): the rotation angle
+        // itself depends on p.y, with the point's radius as lever arm.
+        // The y-partial therefore gains, on top of the child's g.y, the
+        // shear term
+        //   ∂f/∂p.y = g.y + k · (u.z·g.x − u.x·g.z),
+        // computed HERE in the child's frame (the local point and the
+        // child gradient, before the forward xz rotation below), while
+        // the x/z partials are the child gradient's xz rotated forward:
+        //   ∂f/∂p.x = g.x·c − g.z·s,   ∂f/∂p.z = g.x·s + g.z·c.
+        // Returning g.y alone (the pre-ADR-0029 code) is wrong whenever
+        // the child gradient has a tangential component at an off-axis
+        // point — and the error is invisible to a norm-only property
+        // (the xz rotation is an isometry), which is why the regression
+        // pin checks the gradient against finite differences
+        // component-wise.
+        const float gy = r.gradient.y
+                       + k_ * (local.z * r.gradient.x - local.x * r.gradient.z);
         math::Vec3f g{
             r.gradient.x * c - r.gradient.z * s,
-            r.gradient.y,
+            gy,
             r.gradient.x * s + r.gradient.z * c,
         };
         r.gradient = g;
         return r;
     }
-    float lipschitz()    const noexcept override {
-        // Twist increases the Lipschitz constant by sqrt(1 + (k*R)^2)
-        // where R is the radius of the child's bounds. Conservative bound:
-        return child_->lipschitz() * (1.0f + std::abs(k_) * 2.0f);
+    float lipschitz() const noexcept override {
+        // ADR-0029 D2 — the warp is not a rigid rotation, and the field
+        // slope pays for it. For f = g ∘ u with u the slice rotation by
+        // −k·p.y, the Jacobian J of u satisfies
+        //   JᵀJ:  λ_max = 1 + (t + √(t² + 4t))/2,   t = (k·r)²,
+        // with r the evaluation point's distance from the axis, so the
+        // honest local factor is the closed form
+        //   σ(k, r) = √(1 + (t + √(t² + 4t))/2),   t = (k·r)²,
+        // sandwiched — each direction one line, the proof device and
+        // the sanity envelope — by
+        //   √(1 + (k·r)²)  ≤  σ(k, r)  ≤  1 + |k·r|.
+        // σ grows without bound as r → ∞: the twisted field is not
+        // globally Lipschitz, so the declaration is regional, over the
+        // D1 bounds() box — r_box = √2·R, the corner distance of the
+        // new AABB, covers every in-box consumer (the MC grid and its
+        // 1%-of-extent pad included). The residual — marching far
+        // off-axis, outside the box, where the local σ exceeds the
+        // declared value — is inherent to any non-globally-Lipschitz
+        // warp and is documented in ADR-0029 D2.
+        // Conviction of the old declaration, L_child·(1 + 2|k|): k is
+        // radians per unit length, so no function of k alone can bound
+        // a factor that depends on the dimensionless k·r — it failed
+        // as an upper bound for k·r ≳ 0.2 (r ≳ 4 at k = 0.05; the
+        // true slope runs +16% over it at k = 0.05, r = 10), and the
+        // old comment's √(1 + (k·R)²) was only the sandwich's LOWER
+        // edge: it bounds the y-partial, not the gradient norm (at
+        // k·r = 1 it says 1.414 where the true factor is 1.618).
+        const float r_box = std::sqrt(2.0f) * cylinder_radius(child_->bounds());
+        const float t = (k_ * r_box) * (k_ * r_box);
+        const float sigma = std::sqrt(1.0f + 0.5f * (t + std::sqrt(t * t + 4.0f * t)));
+        return child_->lipschitz() * sigma;
     }
-    // ADR-0028 bounds-contract audit: KNOWN GAP — reported, not
-    // fixed. The warp rotates each horizontal slice by y*k around the
-    // Y axis, so for a child whose negative region sits OFF the twist
-    // axis the warped negative region can leave the child's box
-    // entirely (a small sphere at (2, 5, 0) with k = 1 has its y = 5
-    // slice rotated by 5 rad). The field.hpp contract is violated for
-    // such inputs. Today nothing extracts a twisted off-axis body —
-    // the native-format canonical scene twists an off-axis composite
-    // at k = 0.05 (max warp displacement ~0.03) but is only saved and
-    // loaded in tests, never extracted — so the gap is documented
-    // here and in ADR-0028 instead of fixed: the correct dilation is
-    // slice-dependent (a function of the child's radial extent and
-    // the y-range) and deserves its own decision + pinned sweep,
-    // exactly like the smin k/8 one.
-    math::Bboxf bounds() const noexcept override { return child_->bounds(); }
+    // ADR-0029 D1 — the bounds contract (this block was the audit's
+    // KNOWN GAP; it is the contract now): the AABB of the cylinder
+    // that carries the child's box,
+    //   [−R, R] × [y_min, y_max] × [−R, R],
+    // with R the maximum distance from the Y axis over the child box's
+    // corners. Proof, four steps: (1) sample() computes f = g ∘ u
+    // exactly, so f(p) < 0 ⟺ p ∈ φ(neg g), the forward per-slice
+    // rotation of the child's negative region — no approximation
+    // anywhere in the chain; (2) neg g ⊆ B, the child's own bounds()
+    // contract; (3) φ preserves Y (slices map to slices) and radial
+    // distance (a slice rotation is an isometry of the (x, z) plane),
+    // so φ(B) stays inside the cylinder {y ∈ [y_min, y_max],
+    // |p.xz| ≤ R}, with R attained at a box corner because x² + z² is
+    // convex on the rectangle; (4) the cylinder's AABB is the box
+    // above. Corollaries: MONOTONE — the new box always contains the
+    // old one, the fix can only widen a reported box; K-BLIND — the
+    // proof uses nothing about θ(y) = y·k beyond its being a rotation,
+    // so the bound holds for every finite k, any sign, any magnitude,
+    // with no angle-range analysis. The cost, stated plainly (review
+    // condition 1): an on-axis child box does NOT almost coincide with
+    // its cylinder — R is the cross-section's half-diagonal, so the
+    // footprint dilates by √2 on the diagonal (a centered square pays
+    // 2× footprint and cell volume at the extractor's fixed cell
+    // count); conservativity is provable, monotone, k-blind — and
+    // never free. The tighter slice-tight hull is deferred with its
+    // entry criterion in ADR-0029 D1.
+    math::Bboxf bounds() const noexcept override {
+        const math::Bboxf b = child_->bounds();
+        // k = 0: the identity warp returns the child's box verbatim.
+        if (k_ == 0.0f) return b;
+        const float R = cylinder_radius(b);
+        return {{-R, b.min.y, -R}, {R, b.max.y, R}};
+    }
     std::string describe() const override {
         return "twist(" + child_->describe() + ",k=" + std::to_string(k_) + ")";
     }
@@ -213,6 +286,15 @@ public:
     float twist_k() const noexcept { return k_; }
 
 private:
+    // R = the maximum distance from the Y axis over the child box's
+    // corners: x² + z² is convex on the rectangle and monotone in
+    // |x|, |z|, so the max sits at the (max |x|, max |z|) vertex.
+    static float cylinder_radius(const math::Bboxf& b) noexcept {
+        const float mx = std::max(std::abs(b.min.x), std::abs(b.max.x));
+        const float mz = std::max(std::abs(b.min.z), std::abs(b.max.z));
+        return std::sqrt(mx * mx + mz * mz);
+    }
+
     std::unique_ptr<SDFNode> child_;
     float k_;
 };
