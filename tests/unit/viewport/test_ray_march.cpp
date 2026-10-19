@@ -207,6 +207,16 @@ TEST_CASE("ray_march: respects body Lipschitz constant") {
     // The Twist SDF is the canonical example of a non-unit-Lipschitz field:
     // it reports lipschitz > 1 because the warp can stretch the field.
     // The marcher must scale its step by 1/lipschitz to avoid overshooting.
+    //
+    // Pinned sweep evidence (ADR-0029 unit 3, re-measured live 2026-10-20
+    // on the accepted kernel): declared L = sigma(0.5, r_box = 2) =
+    // 1.618034 (the condemned 1 + 2|k| said 2.0). Plain box: hit at
+    // 4.000000 in 2 steps. Twisted box: hit at 3.999736 in 11 steps —
+    // |dist - 4| = 2.64e-04, ~380x inside the 0.1 tolerance, on the
+    // unrotated y = 0 slice. The old L = 2.0 declaration, simulated on
+    // the same ray, marches the same hit in 14 steps: the honest sigma
+    // buys back 21.4% of the march. D4's watch item, measured — not
+    // predicted.
     auto box = make_box({1, 1, 1});
     auto twisted = sdf_twist(std::move(box), 0.5f);
     REQUIRE(twisted.lipschitz() > 1.0f);
@@ -262,6 +272,12 @@ TEST_CASE("ray_march: Twist body (lipschitz > 1) still hits correctly") {
     // A twisted box has lipschitz > 1. Before the fix, the marcher
     // could overshoot the surface. After the fix, it correctly scales
     // steps by 1/lipschitz.
+    //
+    // Pinned sweep evidence (ADR-0029 unit 3, re-measured live
+    // 2026-10-20): L = 1.618034; hit at 3.999736 in 11 steps
+    // (|dist - 4| = 2.64e-04). Same distance and same step count as
+    // the default-budget watch item: the hit is budget-independent
+    // well before max_distance binds, as it must be.
     auto box = make_box({1, 1, 1});
     auto twisted = sdf_twist(std::move(box), 0.5f);
     REQUIRE(twisted.lipschitz() > 1.0f);

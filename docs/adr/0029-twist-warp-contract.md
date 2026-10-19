@@ -18,6 +18,14 @@ contract fix (1), construction-time validation (2), the pinned
 sweep (3), the property closure (4). This acceptance commit is
 documentation-only: zero code, zero tests, no pins touched.
 
+MVP delivery status: unit 1 (kernel contract fix) and unit 2
+(construction validation) delivered and green; unit 3 — the
+pinned sweep — verified 2026-10-20: full pin matrix green, goldens
+bit-identical, both ray-march watch items re-measured in tolerance
+(L 2.0 → 1.618, hit 3.999736 in 11 steps vs plain 4.000000 in 2),
+zero pinned movement — the conscious re-pin class remains empty,
+no re-freeze issued.
+
 ## Context
 
 `field.hpp` defines the `SDFNode` contract this ADR extends to the
