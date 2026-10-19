@@ -2,29 +2,42 @@
 
 ## Status
 
-**Accepted (2026-10-20).** Proposed 2026-10-19 as a Draft; revised
-the same day on the first review round, which accepted D1–D5 with
-three conditions — (1) D1's on-axis grid cost stated plainly: √2 on
-the diagonal, not near-coincidence; (2) D3's guinea pig scoped to
-bounds and topology, not the gradient; (3) D4's zero-movement
-prediction qualified and backed by the two-contract consumer
-inventory — all folded in at their sites in the revised draft; the
-second review round accepted the revised record without further
-corrections. Unlike ADR-0028, which registered a decision already
-taken, this record argued one — and the argument is now closed.
-Delivery order (the MVP, one commit per unit, suite + CI green
-after each, movements classified per the D4 rule): the kernel
-contract fix (1), construction-time validation (2), the pinned
-sweep (3), the property closure (4). This acceptance commit is
-documentation-only: zero code, zero tests, no pins touched.
+**Implemented (MVP complete, 2026-10-20).** Accepted the same day
+after two review rounds: the first accepted D1–D5 with three
+conditions — (1) D1's on-axis grid cost stated plainly: √2 on the
+diagonal, not near-coincidence; (2) D3's guinea pig scoped to bounds
+and topology, not the gradient; (3) D4's zero-movement prediction
+qualified and backed by the two-contract consumer inventory — all
+folded in at their sites; the second accepted the revised record
+without further corrections. Unlike ADR-0028, which registered a
+decision already taken, this record argued one — and the argument is
+now closed, delivered, and verified. The MVP landed as four commits,
+one per unit, suite + CI green after each, movements classified per
+the D4 rule.
 
-MVP delivery status: unit 1 (kernel contract fix) and unit 2
-(construction validation) delivered and green; unit 3 — the
-pinned sweep — verified 2026-10-20: full pin matrix green, goldens
-bit-identical, both ray-march watch items re-measured in tolerance
-(L 2.0 → 1.618, hit 3.999736 in 11 steps vs plain 4.000000 in 2),
-zero pinned movement — the conscious re-pin class remains empty,
-no re-freeze issued.
+MVP delivery status — all four units delivered and green:
+* unit 1 — the kernel contract fix: D1 cylinder bounds (k = 0
+  passthrough), D2 sigma(k, r_box) lipschitz, the full chain-rule
+  gradient with the y shear; three pinned regressions.
+* unit 2 — construction validation: the D5 table across all 16
+  nodes, the loader error path, ValueError at the Python radius;
+  zero real churn (the one episode was a check false positive,
+  classified and fixed without loosening anything).
+* unit 3 — the pinned sweep, verified 2026-10-20: full pin matrix
+  green, goldens bit-identical, both ray-march watch items
+  re-measured in tolerance (L 2.0 → 1.618, hit 3.999736 in 11
+  steps vs plain 4.000000 in 2), zero pinned movement — the
+  conscious re-pin class remains empty, no re-freeze issued.
+* unit 4 — the property closure, 2026-10-20: the generator twist
+category (default-off) with wide-regime coverage, the
+anti-revolution liveness guards, band-AND-slice stratified
+positivity, pair-Lipschitz against the new declaration,
+component-wise gradient-vs-FD, the sigma(k, r) k-sweep (the old
+declaration violated live in 24 of 32 grid cells), the off-axis
+guinea-pig extraction at res 96 under the full ADR-0026 contract
+set (the first off-axis twisted extraction the kernel could ever
+produce), and the twisted-column bridge family with the
+honest-cell Theta calibration documented in test_bridge.cpp.
 
 ## Context
 

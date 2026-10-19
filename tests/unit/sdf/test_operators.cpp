@@ -523,11 +523,18 @@ struct LeafRec {
     Vec3f dim{};  // sphere: (r,r,r); box: extent; cylinder: (r, h, r)
 };
 
-LeafRec gen_leaf(prop::Prng& prng) {
+LeafRec gen_leaf(prop::Prng& prng, bool on_axis = false) {
     LeafRec lf;
+    // Same draw sequence either way (three frange calls consumed, the
+    // on-axis variant simply zeroes x/z after the fact): the pinned
+    // seeds of the original families keep their meaning.
     lf.center = Vec3f{prng.frange(-1.5f, 1.5f),
                       prng.frange(-1.5f, 1.5f),
                       prng.frange(-1.5f, 1.5f)};
+    if (on_axis) {  // ADR-0029 D3: centered on the twist axis
+        lf.center.x = 0.0f;
+        lf.center.z = 0.0f;
+    }
     switch (prng.int_below(3u)) {
     case 0:
         lf.kind = LeafRec::Kind::Sphere;
@@ -568,6 +575,34 @@ SDFBody leaf_body(const LeafRec& lf) {
 constexpr float kBlendKMin = 0.10f;
 constexpr float kBlendKMax = 1.00f;
 
+// The declared twist ranges (ADR-0029 D3, unit 4). k spans BOTH signs —
+// the D1 bound is k-blind and the D2 sigma is even in |k| — with |k| up
+// to 1.0 (the guinea-pig regime). The WIDE category is the old
+// declaration's failure zone made structural: k = +-0.05 around a unit
+// sphere placed at radius r in [6, 10] off-axis, where the condemned
+// 1 + 2|k| = 1.1 under-reports the true sigma(0.05, r) = 1.161..1.281.
+// A property whose range avoids that regime is vacuous (D3).
+constexpr float kTwistKMin = -1.0f;
+constexpr float kTwistKMax = +1.0f;
+constexpr float kWideK = 0.05f;
+constexpr float kWideRMin = 6.0f;
+constexpr float kWideRMax = 10.0f;
+
+// One recorded twist node of a generated tree. child_snapshot is a deep
+// clone of the child BEFORE the wrap (SDFBody's copy constructor clones)
+// so the liveness probe can evaluate both fields side by side; k is the
+// wrap rate; child_box is the child's own bounds(); non_revolution says
+// whether the child carries a box leaf or any off-axis leaf — a body of
+// revolution about Y is twist-INVARIANT, so a generator drawing only
+// revolution primitives would pass even a wrong twist implementation
+// (the D3 liveness lesson, sharpened).
+struct TwistRec {
+    SDFBody child_snapshot;
+    float k = 0.0f;
+    Bboxf child_box{};
+    bool non_revolution = false;
+};
+
 // One recorded smooth_min node of a generated tree: the leaves under
 // each operand, for crevice-targeted sampling (the band |f_a - f_b| < k
 // — the only region where the blend deviates from the hard min — opens
@@ -582,29 +617,117 @@ struct TreeSpec {
     std::vector<LeafRec> leaves;
     std::vector<BlendRec> blends;  // non-empty only with allow_blend
     float blend_k_sum = 0.0f;      // sum of the blend k's (dilation envelope = sum/16)
+    // ADR-0029 D3 twist bookkeeping (non-empty only with allow_twist):
+    // max_kr = the largest |k| * r_box over the recorded twist nodes
+    // (the wide-regime coverage witness); root_twist = the tree's root
+    // is itself a twist node (its bounds() is then the D1 cylinder AABB,
+    // with root_R the cylinder radius — the ring-stratified sampling of
+    // property (j) keys on exactly those members).
+    std::vector<TwistRec> twists;
+    float max_kr = 0.0f;
+    bool root_twist = false;
+    float root_R = 0.0f;
+
+    // Merge the bookkeeping of two operand subtrees (the CSG branches
+    // of gen_tree): leaves concatenate, blends concatenate, twists
+    // concatenate, k-sums add, max_kr is the max.
+    void merge_children(TreeSpec&& a, TreeSpec&& b) {
+        leaves = std::move(a.leaves);
+        leaves.insert(leaves.end(),
+                      std::make_move_iterator(b.leaves.begin()),
+                      std::make_move_iterator(b.leaves.end()));
+        blends.insert(blends.end(),
+                      std::make_move_iterator(a.blends.begin()),
+                      std::make_move_iterator(a.blends.end()));
+        blends.insert(blends.end(),
+                      std::make_move_iterator(b.blends.begin()),
+                      std::make_move_iterator(b.blends.end()));
+        blend_k_sum += a.blend_k_sum + b.blend_k_sum;
+        twists.insert(twists.end(),
+                      std::make_move_iterator(a.twists.begin()),
+                      std::make_move_iterator(a.twists.end()));
+        twists.insert(twists.end(),
+                      std::make_move_iterator(b.twists.begin()),
+                      std::make_move_iterator(b.twists.end()));
+        max_kr = std::max(a.max_kr, b.max_kr);
+    }
 };
 
 // allow_blend = false (default) reproduces the ORIGINAL family bit
 // exactly: one coin draw per internal node, union or subtract — the
 // pinned seeds of the properties above keep their meaning. With
 // allow_blend = true the draw becomes a 3-way choice adding smooth_min
-// nodes with k in the declared range (FASE 1).
-TreeSpec gen_tree(prop::Prng& prng, int depth, bool allow_blend = false) {
+// nodes with k in the declared range (FASE 1). With allow_twist = true
+// (ADR-0029 D3) the draw widens once more (union / subtract / [smin if
+// allow_blend] / twist): a twist node wraps ONE generated child — either
+// a WIDE member (unit sphere off-axis in [6, 10] at k = +-0.05, the old
+// declaration's failure regime, no subtree) or a full subtree placed
+// on-axis (axis_leaves = true: the twist acts on leaves centered on the
+// Y axis) or off-axis. allow_twist = false (default) keeps every
+// existing draw sequence bit-identical.
+TreeSpec gen_tree(prop::Prng& prng, int depth, bool allow_blend = false,
+                  bool allow_twist = false, bool axis_leaves = false) {
     TreeSpec spec;
     if (depth == 0 || prng.int_below(4u) == 0u) {
-        spec.leaves.push_back(gen_leaf(prng));
+        spec.leaves.push_back(gen_leaf(prng, axis_leaves));
         spec.body = leaf_body(spec.leaves.back());
-    } else {
-        TreeSpec a = gen_tree(prng, depth - 1, allow_blend);
-        TreeSpec b = gen_tree(prng, depth - 1, allow_blend);
-        if (!allow_blend) {
+    } else if (allow_twist) {
+        const std::uint32_t n_ops = allow_blend ? 4u : 3u;
+        const auto op = prng.int_below(n_ops);
+        if (op == n_ops - 1u) {
+            // --- the twist category (ADR-0029 D3) ---
+            TreeSpec child;
+            float k;
             if (prng.coin()) {
-                spec.body = sdf_union(std::move(a.body), std::move(b.body));
+                // WIDE: unit sphere off-axis at radius in [6, 10],
+                // k = +-0.05 — the condemned declaration's zone.
+                const float xr = prng.frange(kWideRMin, kWideRMax) *
+                                 (prng.coin() ? 1.0f : -1.0f);
+                const float y0 = prng.frange(-0.5f, 0.5f);
+                child.leaves.push_back(
+                    LeafRec{LeafRec::Kind::Sphere, Vec3f{xr, y0, 0.0f},
+                            Vec3f{1.0f, 0.0f, 0.0f}});
+                child.body = leaf_body(child.leaves.back());
+                child.bounds = child.body.bounds();
+                k = prng.coin() ? kWideK : -kWideK;
             } else {
-                spec.body = sdf_subtract(std::move(a.body), std::move(b.body));
+                const bool on_axis = prng.coin();
+                child = gen_tree(prng, depth - 1, allow_blend, allow_twist,
+                                 on_axis);
+                k = prng.frange(kTwistKMin, kTwistKMax);
             }
+            TwistRec rec;
+            rec.child_snapshot = child.body;  // deep clone (copy ctor)
+            rec.k = k;
+            rec.child_box = child.bounds;
+            for (const LeafRec& lf : child.leaves) {
+                if (lf.kind == LeafRec::Kind::Box ||
+                    std::abs(lf.center.x) > 0.05f ||
+                    std::abs(lf.center.z) > 0.05f) {
+                    rec.non_revolution = true;
+                    break;
+                }
+            }
+            spec.body = sdf_twist(std::move(child.body), k);
+            spec.leaves = std::move(child.leaves);
+            spec.blends = std::move(child.blends);
+            spec.blend_k_sum = child.blend_k_sum;
+            spec.twists = std::move(child.twists);
+            spec.max_kr = child.max_kr;
+            spec.root_twist = true;
+            const float mx = std::max(std::abs(rec.child_box.min.x),
+                                      std::abs(rec.child_box.max.x));
+            const float mz = std::max(std::abs(rec.child_box.min.z),
+                                      std::abs(rec.child_box.max.z));
+            const float R = std::sqrt(mx * mx + mz * mz);
+            spec.root_R = R;  // the D1 cylinder radius of THIS node
+            spec.max_kr = std::max(spec.max_kr, std::abs(k) * R * std::sqrt(2.0f));
+            spec.twists.push_back(std::move(rec));
         } else {
-            const auto op = prng.int_below(3u);
+            TreeSpec a = gen_tree(prng, depth - 1, allow_blend, allow_twist,
+                                  axis_leaves);
+            TreeSpec b = gen_tree(prng, depth - 1, allow_blend, allow_twist,
+                                  axis_leaves);
             if (op == 0u) {
                 spec.body = sdf_union(std::move(a.body), std::move(b.body));
             } else if (op == 1u) {
@@ -615,18 +738,32 @@ TreeSpec gen_tree(prop::Prng& prng, int depth, bool allow_blend = false) {
                 spec.blends.push_back(BlendRec{a.leaves, b.leaves});
                 spec.blend_k_sum += k;
             }
+            spec.merge_children(std::move(a), std::move(b));
         }
-        spec.leaves = std::move(a.leaves);
-        spec.leaves.insert(spec.leaves.end(),
-                           std::make_move_iterator(b.leaves.begin()),
-                           std::make_move_iterator(b.leaves.end()));
-        spec.blends.insert(spec.blends.end(),
-                           std::make_move_iterator(a.blends.begin()),
-                           std::make_move_iterator(a.blends.end()));
-        spec.blends.insert(spec.blends.end(),
-                           std::make_move_iterator(b.blends.begin()),
-                           std::make_move_iterator(b.blends.end()));
-        spec.blend_k_sum += a.blend_k_sum + b.blend_k_sum;
+    } else if (!allow_blend) {
+        TreeSpec a = gen_tree(prng, depth - 1);
+        TreeSpec b = gen_tree(prng, depth - 1);
+        if (prng.coin()) {
+            spec.body = sdf_union(std::move(a.body), std::move(b.body));
+        } else {
+            spec.body = sdf_subtract(std::move(a.body), std::move(b.body));
+        }
+        spec.merge_children(std::move(a), std::move(b));
+    } else {
+        TreeSpec a = gen_tree(prng, depth - 1, true);
+        TreeSpec b = gen_tree(prng, depth - 1, true);
+        const auto op = prng.int_below(3u);
+        if (op == 0u) {
+            spec.body = sdf_union(std::move(a.body), std::move(b.body));
+        } else if (op == 1u) {
+            spec.body = sdf_subtract(std::move(a.body), std::move(b.body));
+        } else {
+            const float k = prng.frange(kBlendKMin, kBlendKMax);
+            spec.body = sdf_smooth_union(std::move(a.body), std::move(b.body), k);
+            spec.blends.push_back(BlendRec{a.leaves, b.leaves});
+            spec.blend_k_sum += k;
+        }
+        spec.merge_children(std::move(a), std::move(b));
     }
     // The kernel's own bounds() is the source of truth for the family.
     spec.bounds = spec.body.bounds();
@@ -1358,4 +1495,374 @@ TEST_CASE("D5 borderline: SmoothMinSDF k = 0 is the documented hard min (ADR-002
     CHECK(smin.value(p) == doctest::Approx(std::min(fa, fb)).epsilon(1e-6f));
     // Lipschitz at k = 0 is the plain max of the children's (1.0 here).
     CHECK(smin.lipschitz() == doctest::Approx(1.0f));
+}
+
+// ===========================================================================
+// ADR-0029 D3 — the twist property families (unit 4, the MVP's last).
+//
+// The generator twist category is documented at gen_tree: default-off
+// (the allow_blend precedent — every pinned draw sequence above keeps
+// its meaning), on-axis AND off-axis placement, k in [-1, +1] (both
+// signs: the D1 bound is k-blind, the D2 sigma is even in |k|), and the
+// WIDE category (unit sphere off-axis at r in [6, 10], k = +-0.05)
+// covering the condemned declaration's failure regime — a property whose
+// range avoids that zone is vacuous.
+//
+// Liveness, the sharpened FASE 1 lesson: a body of revolution about Y
+// is twist-INVARIANT (a twisted on-axis sphere is the same sphere), so
+// the guards below count the members where the twist actually changes
+// the field — the probe evaluates the child snapshot and the SAME child
+// under the slice rotation, f_child(p) vs f_child(R(-k*p.y) p), an
+// independent in-test oracle — and require non-revolution children
+// (a box leaf, or any leaf off the axis) in the mix.
+//
+// FD scope note (why property (k) runs on sphere children only): the
+// box and cylinder primitives carry their own max-seam creases, where
+// finite differences are not a legitimate oracle for ANY wrapper; the
+// sphere is globally smooth, so twist(sphere) is smooth everywhere and
+// the component-wise comparison is meaningful at every sampled point.
+// The composite trees keep their gradient contract through the
+// pair-Lipschitz property (i), which needs no differentiability.
+// ===========================================================================
+
+// --- Property (i): pair-Lipschitz on twisted trees (ADR-0029 D3) -----------
+// Same contract as (a)/(d), on the twist family: the bound is THE
+// KERNEL'S OWN declared tree.lipschitz() — now the sigma(k, r_box)
+// chain through every twist node. The WIDE members put the old
+// declaration's failure zone (sigma > 1 + 2|k|) in range.
+TEST_CASE("property: Lipschitz bound holds over seeded random twisted CSG trees (ADR-0029 D3)") {
+    const std::uint32_t seed = 0x5EED0021u;
+    prop::Prng prng(seed);
+    int iters_with_twist = 0, iters_alive = 0, iters_non_rev = 0, iters_wide = 0;
+    for (int iter = 0; iter < 25; ++iter) {
+        const TreeSpec t = gen_tree(prng, 3, /*allow_blend=*/false, /*allow_twist=*/true);
+        if (!t.twists.empty()) ++iters_with_twist;
+        const float L = t.body.lipschitz();
+        INFO("seed=", seed, " iter=", iter, " L=", L,
+             " twists=", t.twists.size(), " max_kr=", t.max_kr);
+        INFO("tree: ", t.body.describe());
+
+        // Liveness probes for THIS member's twist nodes: the twist is
+        // alive if the slice rotation changes the child field anywhere
+        // among 8 probe points uniform in the child's own box.
+        bool member_alive = false, member_non_rev = false;
+        for (const TwistRec& rec : t.twists) {
+            bool alive = false;
+            for (int p = 0; p < 8; ++p) {
+                const Vec3f q = uniform_in(prng, rec.child_box);
+                const float ang = -rec.k * q.y;
+                const float c = std::cos(ang), s = std::sin(ang);
+                const Vec3f rotated{q.x * c + q.z * s, q.y, -q.x * s + q.z * c};
+                if (std::abs(rec.child_snapshot.value(rotated) -
+                             rec.child_snapshot.value(q)) > 1e-4f) {
+                    alive = true;
+                    break;
+                }
+            }
+            member_alive = member_alive || alive;
+            member_non_rev = member_non_rev || rec.non_revolution;
+        }
+        if (member_alive) ++iters_alive;
+        if (member_non_rev) ++iters_non_rev;
+        if (t.max_kr >= 0.49f) ++iters_wide;  // the wide regime (|k|*r_box)
+
+        for (const PointPair& pp : gen_pairs(t, prng, 60)) {
+            const double fp = t.body.value(pp.p);
+            const double fq = t.body.value(pp.q);
+            const Vec3f d3 = pp.p - pp.q;
+            const double dist = std::sqrt(static_cast<double>(d3.x * d3.x) +
+                                          static_cast<double>(d3.y * d3.y) +
+                                          static_cast<double>(d3.z * d3.z));
+            INFO("pair(", pp.how, "): p=(", pp.p.x, ",", pp.p.y, ",", pp.p.z,
+                 ") q=(", pp.q.x, ",", pp.q.y, ",", pp.q.z,
+                 ") f(p)=", fp, " f(q)=", fq, " |p-q|=", dist);
+            // Same pinned slack discipline as (a)/(d); on the wide
+            // members |f| reaches ~11, so ulp(|f|) ~ 1e-6 and the
+            // 1e-5 slack keeps ~5x margin over the worst two-eval
+            // rounding — while a real violation of the old declaration
+            // (sigma 1.28 vs 1.1 at k = 0.05, r = 10) is 4 orders up.
+            INFO("check: |f(p) - f(q)| <= lipschitz()*|p-q| + 1e-5 (pinned float slack)");
+            CHECK(std::abs(fp - fq) <= static_cast<double>(L) * dist + 1e-5);
+        }
+    }
+    // Liveness guards (deterministic for this seed). The twist draw is
+    // 1-in-3 per internal node with P(internal) ~ 3/4 at depth 3 —
+    // observed on THIS seed: 11 of 25 members carry a twist, 9 have a
+    // twist that changes the field, 9 carry a non-revolution child, and
+    // 11 reach |k|*r_box >= 0.49 (max_kr = 1.40 — the guinea-pig
+    // regime). Guards well below the observation, above degeneration.
+    INFO("check: >= 10 of 25 members carry at least one twist node (observed 11)");
+    CHECK(iters_with_twist >= 10);
+    INFO("check: >= 8 of 25 members have a twist that CHANGES the field (anti-revolution)");
+    CHECK(iters_alive >= 8);
+    INFO("check: >= 8 of 25 members have a non-revolution twist child (box or off-axis)");
+    CHECK(iters_non_rev >= 8);
+    INFO("check: >= 4 of 25 members reach the WIDE regime |k|*r_box >= 0.49 (the old failure zone)");
+    CHECK(iters_wide >= 4);
+}
+
+// --- Property (j): stratified positivity outside the NEW bounds -----------
+// The (h) closure, twisted: distance bands [0, eps], [eps, 2eps], ...
+// from the bounds() boundary (eps = 0.05, band 0 dense), stratified BY
+// SLICE as well — the twist's violation class is slice-structured (the
+// escape lives at specific heights), so the lateral sampling draws its
+// y from 12 uniform slices of the box, and the root-twist members
+// (whose bounds() IS the D1 cylinder AABB) additionally sample DENSE
+// RINGS just outside the cylinder radius at every slice height: the
+// exact geometry of a slice-rotation escape. Caps: y outside the slab
+// by the band distance, radius inside the cylinder.
+TEST_CASE("property: twisted trees are positive outside bounds() in every band and slice (ADR-0029 D3)") {
+    const std::uint32_t seed = 0x5EED0022u;
+    prop::Prng prng(seed);
+    constexpr float kBandStep = 0.05f;
+    int iters_root_twist = 0;
+    for (int iter = 0; iter < 25; ++iter) {
+        const TreeSpec t = gen_tree(prng, 3, /*allow_blend=*/false, /*allow_twist=*/true);
+        if (t.root_twist) ++iters_root_twist;
+        const Bboxf bb = t.bounds;
+        INFO("seed=", seed, " iter=", iter, " twists=", t.twists.size(),
+             " root_twist=", t.root_twist,
+             " bounds=[", bb.min.x, ",", bb.min.y, ",", bb.min.z, "]..[",
+             bb.max.x, ",", bb.max.y, ",", bb.max.z, "]");
+        INFO("tree: ", t.body.describe());
+        for (int band = 0; band < 4; ++band) {
+            const int n_pts = (band == 0) ? 60 : 20;
+            for (int j = 0; j < n_pts; ++j) {
+                const int axis = static_cast<int>(prng.int_below(3u));
+                const bool lo_face = prng.coin();
+                float delta = kBandStep * (static_cast<float>(band) +
+                                           prng.frange(0.0f, 1.0f));
+                if (delta < 1e-4f) delta = 1e-4f;
+                Vec3f p = uniform_in(prng, bb);
+                if (axis == 1) {
+                    // Cap band: uniform xz inside the box, y outside the
+                    // slab by the band distance.
+                    const float face = lo_face ? bb.min.y : bb.max.y;
+                    p = Vec3f{p.x, face + (lo_face ? -delta : delta), p.z};
+                } else {
+                    // Lateral band, SLICE-STRATIFIED: y drawn from one of
+                    // 12 uniform slices (with jitter), the axis component
+                    // pushed outside the face by the band distance.
+                    const float slice = (static_cast<float>(prng.int_below(12u)) +
+                                         prng.frange(0.0f, 1.0f)) / 12.0f;
+                    p = Vec3f{p.x,
+                              bb.min.y + (bb.max.y - bb.min.y) * slice,
+                              p.z};
+                    const float face = axis_of(lo_face ? bb.min : bb.max, axis);
+                    const float out = face + (lo_face ? -delta : delta);
+                    p = Vec3f{axis == 0 ? out : p.x,
+                              p.y,
+                              axis == 2 ? out : p.z};
+                }
+                INFO("band=", band, " axis=", axis, " delta=", delta,
+                     " p=(", p.x, ",", p.y, ",", p.z, ")", " f=", t.body.value(p));
+                INFO("check: f(p) > 0 outside bounds(), band ", band,
+                     " (slice-stratified laterals)");
+                CHECK(t.body.value(p) > 0.0f);
+            }
+        }
+        // The root-twist rings: dense angular sampling just outside the
+        // cylinder radius, at every slice height — plus the cap disks.
+        if (t.root_twist) {
+            const float R = t.root_R;
+            const float ymin = bb.min.y, ymax = bb.max.y;
+            for (int slice = 0; slice < 8; ++slice) {
+                const float y = ymin + (ymax - ymin) *
+                    (static_cast<float>(slice) + 0.5f) / 8.0f;
+                for (int band = 0; band < 4; ++band) {
+                    float delta = kBandStep * (static_cast<float>(band) +
+                                               prng.frange(0.0f, 1.0f));
+                    if (delta < 1e-4f) delta = 1e-4f;
+                    for (int a = 0; a < 16; ++a) {
+                        const float phi = 6.28318531f * static_cast<float>(a) / 16.0f;
+                        const float rho = R + delta;
+                        const Vec3f p{rho * std::cos(phi), y, rho * std::sin(phi)};
+                        INFO("ring slice=", slice, " band=", band, " a=", a,
+                             " rho=", rho, " p=(", p.x, ",", p.y, ",", p.z, ")",
+                             " f=", t.body.value(p));
+                        INFO("check: f(p) > 0 on the ring outside the cylinder radius");
+                        CHECK(t.body.value(p) > 0.0f);
+                    }
+                }
+            }
+            // Cap disks: above and below the slab, radius inside R.
+            for (int band = 0; band < 4; ++band) {
+                float delta = kBandStep * (static_cast<float>(band) +
+                                           prng.frange(0.0f, 1.0f));
+                if (delta < 1e-4f) delta = 1e-4f;
+                for (int a = 0; a < 8; ++a) {
+                    const float phi = 6.28318531f * static_cast<float>(a) / 8.0f;
+                    const float rho = R * 0.97f * prng.frange(0.0f, 1.0f);
+                    const Vec3f pu{rho * std::cos(phi), ymax + delta, rho * std::sin(phi)};
+                    const Vec3f pd{rho * std::cos(phi), ymin - delta, rho * std::sin(phi)};
+                    INFO("cap band=", band, " pu=(", pu.x, ",", pu.y, ",", pu.z, ")",
+                         " f=", t.body.value(pu));
+                    INFO("check: f > 0 on the cap disks outside the slab");
+                    CHECK(t.body.value(pu) > 0.0f);
+                    CHECK(t.body.value(pd) > 0.0f);
+                }
+            }
+        }
+    }
+    INFO("check: >= 4 of 25 members are root-twist (the ring-stratified class; observed 8 on this seed)");
+    CHECK(iters_root_twist >= 4);
+}
+
+// --- Property (k): gradient vs finite differences, component-wise ----------
+// THE GRADIENT CONTRACT'S WITNESS — the property class that would have
+// caught the shear-term bug (D2): the pre-ADR-0029 gradient returned
+// g.y alone, a DIRECTION error invisible to any norm-only property
+// (property (e) passed trivially through the whole bug era). Here the
+// code gradient is checked COMPONENT BY COMPONENT against central
+// differences on twist(sphere) members — sphere children only, see the
+// FD scope note above (globally smooth; box/cylinder max-seams are not
+// FD-legitimate and keep their contract through (i)).
+//
+// Members: r in [0.30, 1.20], centers on- and off-axis in [-2.5, 2.5]^3,
+// k uniform in [-1, +1]; every fifth member is WIDE (unit sphere at
+// radius [6, 10], k = +-0.05) where the shear term k*(u.z*g.x - u.x*g.z)
+// reaches ~0.5 — the size of the historical bug, 250x the tolerance.
+TEST_CASE("property: twist gradient matches finite differences component-wise on smooth children (ADR-0029 D3)") {
+    const std::uint32_t seed = 0x5EED0023u;
+    prop::Prng prng(seed);
+    constexpr float h = 2e-3f;  // FD step
+    int wide_members = 0;
+    for (int iter = 0; iter < 25; ++iter) {
+        const bool wide = (iter % 5 == 2);
+        if (wide) ++wide_members;
+        const float r = wide ? 1.0f : prng.frange(0.30f, 1.20f);
+        Vec3f c;
+        float k;
+        if (wide) {
+            const float xr = prng.frange(kWideRMin, kWideRMax) *
+                             (prng.coin() ? 1.0f : -1.0f);
+            c = Vec3f{xr, prng.frange(-0.5f, 0.5f), 0.0f};
+            k = prng.coin() ? kWideK : -kWideK;
+        } else {
+            c = Vec3f{prng.frange(-2.5f, 2.5f),
+                      prng.frange(-2.5f, 2.5f),
+                      prng.frange(-2.5f, 2.5f)};
+            k = prng.frange(kTwistKMin, kTwistKMax);
+        }
+        auto body = sdf_twist(sdf_translate(make_sphere(r), c), k);
+        const Bboxf bb = body.bounds();
+        INFO("seed=", seed, " iter=", iter, " wide=", wide,
+             " r=", r, " c=(", c.x, ",", c.y, ",", c.z, ") k=", k);
+        for (int j = 0; j < 20; ++j) {
+            Vec3f p;
+            const char* how;
+            if (j < 10) {
+                // On the sphere's own shell (eps +- 8%): the regime where
+                // the child gradient is full-length and the shear term
+                // is largest.
+                const Vec3f d = random_dir(prng);
+                const float rr = r * (1.0f + prng.frange(-0.08f, 0.08f));
+                p = c + d * rr;
+                how = "shell";
+            } else {
+                p = uniform_in(prng, bb);
+                how = "uniform";
+            }
+            const Vec3f g = body.sample(p).gradient;
+            const Vec3f gfd{
+                (body.value(p + Vec3f{ h, 0, 0}) -
+                 body.value(p + Vec3f{-h, 0, 0})) * (0.5f / h),
+                (body.value(p + Vec3f{0,  h, 0}) -
+                 body.value(p + Vec3f{0, -h, 0})) * (0.5f / h),
+                (body.value(p + Vec3f{0, 0,  h}) -
+                 body.value(p + Vec3f{0, 0, -h})) * (0.5f / h),
+            };
+            INFO("point(", how, "): p=(", p.x, ",", p.y, ",", p.z, ")",
+                 " g=(", g.x, ",", g.y, ",", g.z, ")",
+                 " g_fd=(", gfd.x, ",", gfd.y, ",", gfd.z, ")");
+            // Tolerance budget, pinned: float central differences with
+            // h = 2e-3 pay roundoff eps_f*|f|/(2h) <= 6e-8*11/4e-3 =
+            // 1.7e-4 (|f| <= ~11 on the wide members) plus truncation
+            // h^2*|f'''|/6 <= ~1e-4 — 2e-3 keeps ~6x margin over the
+            // worst combined error, while the shear-term bug it must
+            // catch is O(k*r) ~ 0.5 on the wide members: 250x above.
+            INFO("check: |g_component - fd_component| <= 2e-3 for each of x, y, z");
+            CHECK(std::abs(g.x - gfd.x) <= 2e-3f);
+            CHECK(std::abs(g.y - gfd.y) <= 2e-3f);
+            CHECK(std::abs(g.z - gfd.z) <= 2e-3f);
+        }
+    }
+    INFO("check: exactly 5 of 25 members are WIDE (the shear regime) — observed ",
+         wide_members);
+    CHECK(wide_members == 5);
+}
+
+// --- Property (m): the sigma(k, r) k-sweep (the (f) precedent, twisted) ---
+// The measured max slope of the twisted field vs the D2 closed form,
+// across the declared (k, r) grid: k in {+-1, +-0.5, +-0.25, +-0.05}
+// (both signs — sigma is even, and the field is not), r in {2, 4, 6,
+// 10} (unit sphere off-axis at (r, 0, 0)). Slopes measured ONLY at
+// values (central FD, h = 2e-3, no use of the code gradient) on a
+// 128x64 spherical shell sampling — the surface is where the child
+// gradient is full-length and the singular direction of J is reachable.
+//
+// Values measured once on this build (GCC 14.2, Release,
+// -ffp-contract=off) with the standalone driver, frozen as the pinned
+// expectations in the comments below; the assertions stay ROBUST:
+//   * UPPER: max|grad_FD| <= sigma(k, r+1)*(1 + 2e-3) — r+1 is the
+//     shell's far corner, a majorant of every evaluation radius; the
+//     measured headroom is 1.024..1.368 across the grid, and the 2e-3
+//     term covers the FD noise (measured <= 2e-4 relative).
+//   * LIVENESS: max|grad_FD| >= 0.98 * sigma(k, r) — the sampling
+//     reaches the singular direction: measured ratio 0.99988..1.00002.
+//   * THE OLD DECLARATION, LIVE: at least 22 of the 32 cells measure
+//     max|grad_FD| > 1 + 2|k| — the condemned bound under-reports the
+//     true slope by up to +237% (k = 1, r = 10: 10.099 vs 3.0). The
+//     measured count is 24; the tightest cell is k = +-0.05, r = 4
+//     (sigma 1.105 vs 1.1, +0.5% — still 5x the FD noise).
+TEST_CASE("twist k-sweep: measured max slope pins the sigma(k, r) closed form (ADR-0029 D3)") {
+    const float ks[] = {-1.0f, -0.5f, -0.25f, -0.05f, 0.05f, 0.25f, 0.5f, 1.0f};
+    const float rs[] = {2.0f, 4.0f, 6.0f, 10.0f};
+    constexpr float h = 2e-3f;
+    int cells_over_old = 0;
+    for (float k : ks) {
+        for (float r : rs) {
+            auto body = sdf_twist(sdf_translate(make_sphere(1.0f), {r, 0.0f, 0.0f}), k);
+            float best = 0.0f;
+            const int NT = 128, NP = 64;
+            for (int i = 0; i < NT; ++i) {
+                const float th = 3.14159265f * (static_cast<float>(i) + 0.5f) / NT;
+                for (int j = 0; j < NP; ++j) {
+                    const float ph = 6.28318531f * static_cast<float>(j) / NP;
+                    const Vec3f p{r + std::sin(th) * std::cos(ph), std::cos(th),
+                                  std::sin(th) * std::sin(ph)};
+                    const Vec3f gfd{
+                        (body.value(p + Vec3f{ h, 0, 0}) -
+                         body.value(p + Vec3f{-h, 0, 0})) * (0.5f / h),
+                        (body.value(p + Vec3f{0,  h, 0}) -
+                         body.value(p + Vec3f{0, -h, 0})) * (0.5f / h),
+                        (body.value(p + Vec3f{0, 0,  h}) -
+                         body.value(p + Vec3f{0, 0, -h})) * (0.5f / h),
+                    };
+                    const float gl = gfd.length();
+                    if (gl > best) best = gl;
+                }
+            }
+            // The closed form in double (the same arithmetic the kernel
+            // declares, evaluated here independently of the kernel).
+            const double kk = static_cast<double>(k);
+            const auto sigma_of = [kk](double rr) {
+                const double t = (kk * rr) * (kk * rr);
+                return std::sqrt(1.0 + 0.5 * (t + std::sqrt(t * t + 4.0 * t)));
+            };
+            const double sig_r = sigma_of(r);
+            const double sig_rp = sigma_of(r + 1.0);
+            const double old_decl = 1.0 + 2.0 * std::abs(kk);
+            if (best > old_decl) ++cells_over_old;
+            INFO("k=", k, " r=", r, " max|grad_FD|=", best,
+                 " sigma(k,r)=", sig_r, " sigma(k,r+1)=", sig_rp,
+                 " old 1+2|k|=", old_decl);
+            INFO("check: max|grad_FD| <= sigma(k, r+1) * (1 + 2e-3) — the declared bound, majorant radius");
+            CHECK(best <= sig_rp * 1.002);
+            INFO("check: max|grad_FD| >= 0.98 * sigma(k, r) — the sweep REACHES the singular direction");
+            CHECK(best >= 0.98 * sig_r);
+        }
+    }
+    INFO("check: >= 22 of 32 grid cells measure max|grad_FD| > 1 + 2|k| (the old declaration violated LIVE; measured 24)");
+    CHECK(cells_over_old >= 22);
 }

@@ -1211,3 +1211,372 @@ TEST_CASE("property: bridge smooth unions (seeded family) - genus-0 invariants a
     CHECK(neck_members >= 3);
     CHECK(overlap_members >= 3);
 }
+
+// ===========================================================================
+// ADR-0029 D3 — the twisted-extraction family (unit 4, the MVP's last).
+//
+// The topological license (ADR-0029 D3, proved there): the twist is a
+// per-slice rotation — a diffeomorphism, invertible slice by slice —
+// so the twisted solid is HOMEOMORPHIC to the child: a twisted genus-0
+// body stays genus 0, chi = 2, whatever k. The members below pin that
+// contract on real extractions:
+//   * TW1 — the D3 guinea pig (off-axis sphere, k = 1, res 96): the
+//     first off-axis twisted extraction this kernel could EVER produce
+//     (the old bounds() broke it — the audit's exemplar). Scope (the
+//     review condition): bounds and topology ONLY, NO gradient
+//     assertion on this body — witness separation; the gradient
+//     contract has its own witnesses (test_operators properties (k)
+//     and (m)), and the sphere's regime (k = 1, r ~ 3.6 -> sigma ~ 3.9)
+//     is the magnitude story the k-sweep already owns.
+//   * TW2/TW3 — deterministic twisted-column fixtures (on-axis prisms:
+//     NOT bodies of revolution, the twist coupling is real) and the
+//     prism-union-sphere composite, with pinned counts.
+//   * TW4 — the seeded family: twisted columns + composites, res 48,
+//     full contract set per member.
+//
+// THE HONEST-CELL CALIBRATION (P3 on the effective angular step) —
+// measured, not assumed, with the standalone drivers (kept outside the
+// repo like every measurement driver before them):
+//   * The lateral surface of a twisted prism is a helicoid whose
+//     effective tilt ratio — the arc the surface advances per y-cell
+//     at the corner radius, R*k*cell_y / cell_xz — simplifies, for a
+//     plain column, to exactly Theta/2 = k*H/2, INDEPENDENT of the
+//     resolution and of the section. Above ~0.15 the piecewise-linear
+//     MC interpolation of the helicoidal creases self-intersects and
+//     the extracted genus pinches: measured pinch rates 0/25 (Theta =
+//     0.20), 1/25 (0.28), 13/25 (0.35), 23/25 (0.70) across the full
+//     translate-y cell at res 48; HIGHER resolution makes it WORSE
+//     (more grid nodes -> more near-degenerate alignments: res 96,
+//     Theta in [0.30, 0.45] -> 4/30 only). Below the threshold a rare
+//     combinatorial tail remains (4/60 across six seeds at Theta in
+//     [0.05, 0.16], all genus 1, all with P1/P2 intact — a resolution
+//     limit of MC on helicoidal creases, NOT a kernel bug: the
+//     untwisted control never fails, and the SMOOTH twisted body of
+//     TW1 extracts perfectly at k = 1).
+//   * The declared regime therefore: res 48, Theta in [0.05, 0.16]
+//     (tilt <= 0.08, 2x under the measured cliff), sections in
+//     [0.35, 0.65]^2, H in [1.6, 2.4], fixed irrational off-grid
+//     translate + y jitter, plus a per-member rejection on the
+//     EFFECTIVE tilt ratio <= 0.12 computed on the real bounds cells
+//     (composites grow the hull and the guard catches the extremes).
+//   * The seed below is pinned and verified 25/25 green (14 composites,
+//     11 pure columns, 0 rejections needed — the guard is a guard, not
+//     a filter); a future failure of a member is CLASSIFIED by the
+//     inline P1/P2 grid check (T4 method) before any bug is declared.
+// ===========================================================================
+
+// The D3 guinea pig: sphere r = 0.25 at (2, 5, 0), twist k = 1. Its
+// y = 5 slice rotates by 5 rad; the D1 cylinder bounds is
+// [-2.2638463, 2.2638463] x [4.75, 5.25] x [-2.2638463, 2.2638463]
+// (pinned component-wise in test_transforms.cpp, unit 1). The kernel
+// grid at res 96: padded xz extent 4.618246 -> cell 0.048107 -> the
+// 0.5-diameter sphere spans 10.39 cells (the honest-cell rule on the
+// dilated xz extent, ~10 cells across the diameter, exactly as D3
+// specified); the y extent 0.51 gives cell_y = 0.005313 (anisotropic,
+// fine for a slice-structured body).
+static s::SDFBody guinea_pig_offaxis_twist() {
+    return s::sdf_twist(
+        s::sdf_translate(s::make_sphere(0.25f), {2.0f, 5.0f, 0.0f}), 1.0f);
+}
+
+TEST_CASE("Bridge TW1: off-axis twisted sphere res=96 - the D3 guinea pig, full contract, no gradient asserts") {
+    auto pig = guinea_pig_offaxis_twist();
+
+    // The extraction volume sanity (the honest-cell numbers above, live):
+    const auto bb = pig.bounds();
+    CHECK(bb.min.x == doctest::Approx(-2.2638463f).epsilon(1e-5f));
+    CHECK(bb.max.x == doctest::Approx(2.2638463f).epsilon(1e-5f));
+    CHECK(bb.min.y == doctest::Approx(4.75f).epsilon(1e-6f));
+    CHECK(bb.max.y == doctest::Approx(5.25f).epsilon(1e-6f));
+
+    // P1/P2 on the actual extraction grid (the T4 classification
+    // instrument — also proves the input contract for the pinned counts).
+    {
+        CAD_0::math::Bboxf bx = pig.bounds();
+        const CAD_0::math::Vec3f pad = bx.extent() * 0.01f;
+        bx.min = bx.min - pad;
+        bx.max = bx.max + pad;
+        const auto ext = bx.extent();
+        float min_abs_f = 1e30f;
+        bool boundary_all_outside = true;
+        const std::uint32_t res = 96;
+        for (std::uint32_t zi = 0; zi <= res; ++zi) {
+            for (std::uint32_t yi = 0; yi <= res; ++yi) {
+                for (std::uint32_t xi = 0; xi <= res; ++xi) {
+                    const float fx = bx.min.x + ext.x * (static_cast<float>(xi) / res);
+                    const float fy = bx.min.y + ext.y * (static_cast<float>(yi) / res);
+                    const float fz = bx.min.z + ext.z * (static_cast<float>(zi) / res);
+                    const float f = pig.value({fx, fy, fz});
+                    min_abs_f = std::min(min_abs_f, std::abs(f));
+                    const bool boundary = xi == 0 || yi == 0 || zi == 0 ||
+                                          xi == res || yi == res || zi == res;
+                    if (boundary && !(f > 0.0f)) boundary_all_outside = false;
+                }
+            }
+        }
+        INFO("min|f| on the 97^3 grid = ", min_abs_f);
+        CHECK(min_abs_f > 0.0f);
+        CHECK(boundary_all_outside);
+    }
+
+    SdfToBrepOptions opts;
+    opts.fit_primitives = false;
+    opts.march_resolution = 96;
+    const auto rep = sdf_to_brep_report(pig, opts);
+
+    // Pinned counts (measured once, frozen — the method of T1):
+    // V = 3442, E = 10320, F = 6880.
+    CHECK(rep.vertex_count == 3442);
+    CHECK(rep.edge_count == 10320);
+    CHECK(rep.face_count == 6880);
+
+    // The full ADR-0026 contract set.
+    CHECK(rep.fit == "faceted");
+    INFO("check: chi == 2 (the twist is a diffeomorphism — genus 0 preserved)");
+    CHECK(rep.chi == 2);
+    CHECK(rep.genus_derived);
+    CHECK(rep.genus == 0);
+    CHECK(rep.orientable);
+    CHECK(rep.loops);
+    CHECK(rep.edge_count == 3 * rep.face_count / 2);
+    CHECK(2 * rep.vertex_count == rep.face_count + 4);
+    INFO("min|f| from the report = ", rep.min_abs_field);
+    CHECK(rep.min_abs_field > 0.0f);
+
+    // Bit-identical determinism (the T5 method).
+    {
+        auto first = sdf_to_brep_faceted(pig, opts);
+        auto second = sdf_to_brep_faceted(pig, opts);
+        REQUIRE(first != nullptr);
+        REQUIRE(second != nullptr);
+        CHECK(first->vertex_count() == second->vertex_count());
+        CHECK(first->face_count() == second->face_count());
+        REQUIRE(first->vertex_count() == second->vertex_count());
+        for (std::size_t i = 0; i < first->vertex_count(); ++i) {
+            if (!(first->vertices[i].position() == second->vertices[i].position())) {
+                CHECK(first->vertices[i].position() == second->vertices[i].position());
+                break;
+            }
+        }
+    }
+    // NO gradient assertion on this body — the review scope (witness
+    // separation). The gradient contract's witnesses are the generator
+    // family's (k)/(m) in test_operators.cpp.
+}
+
+// TW2 — deterministic twisted column: box {0.5, 2.0, 0.5} on-axis
+// (a column, NOT a body of revolution — the coupling is real), fixed
+// irrational off-grid translate, Theta = k*H = 0.20 rad (the measured
+// safe zone: 0/25 pinch across the full ty cell at res 48).
+TEST_CASE("Bridge TW2: on-axis twisted column res=48 - pinned counts + full contract") {
+    auto col = s::sdf_twist(
+        s::sdf_translate(s::make_box(Vec3f{0.5f, 2.0f, 0.5f}),
+                         {0.0137255020f, 0.0151f, 7.0f * 0.0137255020f}),
+        0.10f);  // k = 0.10, H = 2 -> Theta = 0.20
+
+    SdfToBrepOptions opts;
+    opts.fit_primitives = false;
+    opts.march_resolution = 48;
+    const auto rep = sdf_to_brep_report(col, opts);
+
+    // Pinned (measured once, frozen).
+    CHECK(rep.vertex_count == 8282);
+    CHECK(rep.edge_count == 24840);
+    CHECK(rep.face_count == 16560);
+    CHECK(rep.fit == "faceted");
+    CHECK(rep.chi == 2);
+    CHECK(rep.genus_derived);
+    CHECK(rep.genus == 0);
+    CHECK(rep.orientable);
+    CHECK(rep.loops);
+    CHECK(rep.edge_count == 3 * rep.face_count / 2);
+    CHECK(2 * rep.vertex_count == rep.face_count + 4);
+    INFO("min|f| = ", rep.min_abs_field);
+    CHECK(rep.min_abs_field > 0.0f);
+}
+
+// TW3 — the composite: the TW2 column united with a sphere (hard
+// union). Both operands are topological balls with a connected,
+// non-tangential intersection, so the union is a ball: genus 0.
+TEST_CASE("Bridge TW3: twisted column union sphere res=48 - pinned counts + full contract") {
+    auto body = s::sdf_union(
+        s::sdf_twist(s::sdf_translate(s::make_box(Vec3f{0.5f, 2.0f, 0.5f}),
+                                      {0.0137255020f, 0.0151f, 7.0f * 0.0137255020f}),
+                     0.10f),
+        s::sdf_translate(s::make_sphere(0.55f),
+                         {0.3f + 0.0137255020f, 0.8f, 0.1f - 0.0137255020f}));
+
+    SdfToBrepOptions opts;
+    opts.fit_primitives = false;
+    opts.march_resolution = 48;
+    const auto rep = sdf_to_brep_report(body, opts);
+
+    // Pinned (measured once, frozen).
+    CHECK(rep.vertex_count == 8686);
+    CHECK(rep.edge_count == 26052);
+    CHECK(rep.face_count == 17368);
+    CHECK(rep.fit == "faceted");
+    CHECK(rep.chi == 2);
+    CHECK(rep.genus_derived);
+    CHECK(rep.genus == 0);
+    CHECK(rep.orientable);
+    CHECK(rep.loops);
+    CHECK(rep.edge_count == 3 * rep.face_count / 2);
+    CHECK(2 * rep.vertex_count == rep.face_count + 4);
+    INFO("min|f| = ", rep.min_abs_field);
+    CHECK(rep.min_abs_field > 0.0f);
+}
+
+// TW4 — the seeded family: 25 members, res 48, Theta in [0.05, 0.16],
+// sections [0.35, 0.65]^2, H in [1.6, 2.4], half composites (sphere
+// r in [0.4, 0.6] protruding laterally AND vertically from the column,
+// overlap structural). The per-member effective-tilt rejection
+// (<= 0.12 on the real bounds cells) and the P1/P2 classification
+// grid check run BEFORE the contract, exactly as calibrated (see the
+// section header). Iterations FIXED at 25; measured cost on this
+// build (GCC 14.2, Release, -ffp-contract=off): ~0.6 s total.
+TEST_CASE("property: bridge twisted columns (seeded family) - genus-0 invariants at res 48 (ADR-0029 D3)") {
+    const std::uint32_t seed = 0xB0D62101u;
+    prop::Prng prng(seed);
+    const float og = 0.0137255020f;
+
+    // The untwisted control (the classification anchor: an extraction
+    // failure HERE would be a kernel bug, not a resolution limit).
+    {
+        auto plain = s::sdf_translate(s::make_box(Vec3f{0.5f, 2.0f, 0.5f}),
+                                      {og, -3 * og, 7 * og});
+        SdfToBrepOptions o;
+        o.fit_primitives = false;
+        o.march_resolution = 48;
+        const auto r = sdf_to_brep_report(plain, o);
+        INFO("control (untwisted column): chi=", r.chi, " genus=", r.genus,
+             " min|f|=", r.min_abs_field);
+        CHECK(r.chi == 2);
+        CHECK(r.genus == 0);
+        CHECK(r.min_abs_field > 0.0f);
+    }
+
+    int composites = 0, pure_columns = 0, rejections = 0;
+    float theta_max_seen = 0.0f;
+    for (int iter = 0; iter < 25; ++iter) {
+        // --- generate, with the effective-tilt rejection ---
+        float ex, ez, H, theta, k, ty, xs = 0, ys = 0, r_sph = 0;
+        bool comp;
+        for (;;) {
+            ex = prng.frange(0.35f, 0.65f);
+            ez = prng.frange(0.35f, 0.65f);
+            H = prng.frange(1.6f, 2.4f);
+            theta = prng.frange(0.05f, 0.16f);
+            k = theta / H;
+            ty = -3 * og + prng.frange(-0.2f, 0.2f);
+            comp = prng.coin();
+            if (comp) {
+                r_sph = prng.frange(0.4f, 0.6f);
+                xs = prng.frange(0.0f, 0.5f * (ex + ez) - 0.15f);
+                ys = prng.frange(-0.5f * H + 0.35f, 0.5f * H - 0.35f);
+            }
+            // Effective tilt on the REAL bounds cells (composites grow
+            // the hull in y — and in xz if the sphere passes the corner
+            // radius — so the guard is per-member, on actual geometry).
+            const float R = std::sqrt(ex * ex + ez * ez);
+            CAD_0::math::Bboxf bb;
+            bb.min = Vec3f{-R, -0.5f * H + ty, -R};
+            bb.max = Vec3f{R, 0.5f * H + ty, R};
+            if (comp) {
+                bb.min.y = std::min(bb.min.y, ys - r_sph);
+                bb.max.y = std::max(bb.max.y, ys + r_sph);
+                bb.max.x = std::max(bb.max.x, xs + r_sph);
+                bb.max.z = std::max(bb.max.z, r_sph + 0.1f);
+                bb.min.z = std::min(bb.min.z, -r_sph + 0.1f);
+            }
+            const Vec3f ext = bb.extent();
+            const float cell_x = ext.x * 1.02f / 48.0f;
+            const float cell_y = ext.y * 1.02f / 48.0f;
+            const float cell_z = ext.z * 1.02f / 48.0f;
+            const float tilt = R * k * cell_y / std::min(cell_x, cell_z);
+            if (tilt <= 0.12f) {
+                theta_max_seen = std::max(theta_max_seen, theta);
+                break;
+            }
+            ++rejections;
+        }
+        if (comp) ++composites; else ++pure_columns;
+
+        auto col = s::sdf_twist(
+            s::sdf_translate(s::make_box(Vec3f{ex, H, ez}), {og, ty, 7 * og}), k);
+        s::SDFBody body = std::move(col);
+        if (comp) {
+            body = s::sdf_union(
+                std::move(body),
+                s::sdf_translate(s::make_sphere(r_sph), {xs + og, ys - og, 0.1f + og}));
+        }
+
+        // --- the P1/P2 classification grid (T4 method, before any
+        // contract failure could be misread as a kernel bug) ---
+        {
+            CAD_0::math::Bboxf bx = body.bounds();
+            REQUIRE(!bx.empty());
+            const CAD_0::math::Vec3f pad = bx.extent() * 0.01f;
+            bx.min = bx.min - pad;
+            bx.max = bx.max + pad;
+            const auto ext = bx.extent();
+            float min_abs_f = 1e30f;
+            bool boundary_all_outside = true;
+            const std::uint32_t res = 48;
+            for (std::uint32_t zi = 0; zi <= res; zi += 3) {
+                for (std::uint32_t yi = 0; yi <= res; yi += 3) {
+                    for (std::uint32_t xi = 0; xi <= res; xi += 3) {
+                        const float fx = bx.min.x + ext.x * (static_cast<float>(xi) / res);
+                        const float fy = bx.min.y + ext.y * (static_cast<float>(yi) / res);
+                        const float fz = bx.min.z + ext.z * (static_cast<float>(zi) / res);
+                        const float f = body.value({fx, fy, fz});
+                        min_abs_f = std::min(min_abs_f, std::abs(f));
+                        const bool boundary = xi == 0 || yi == 0 || zi == 0 ||
+                                              xi == res || yi == res || zi == res;
+                        if (boundary && !(f > 0.0f)) boundary_all_outside = false;
+                    }
+                }
+            }
+            INFO("seed=", seed, " iter=", iter, " P2 probe min|f| (every 3rd plane) = ",
+                 min_abs_f);
+            CHECK(boundary_all_outside);
+        }
+
+        // --- the contract ---
+        SdfToBrepOptions opts;
+        opts.fit_primitives = false;
+        opts.march_resolution = 48;
+        const auto rep = sdf_to_brep_report(body, opts);
+
+        INFO("seed=", seed, " iter=", iter, " ex=", ex, " ez=", ez, " H=", H,
+             " Theta=", theta, " comp=", comp ? 1 : 0);
+        INFO("V=", rep.vertex_count, " E=", rep.edge_count, " F=", rep.face_count,
+             " chi=", rep.chi, " genus=", rep.genus, " min|f|=", rep.min_abs_field);
+
+        INFO("check: fit == \"faceted\"");
+        CHECK(rep.fit == "faceted");
+        INFO("check: chi == 2 (the twist is a diffeomorphism — genus preserved)");
+        CHECK(rep.chi == 2);
+        INFO("check: genus derived == 0");
+        CHECK(rep.genus_derived);
+        CHECK(rep.genus == 0);
+        INFO("check: orientable (is_closed_orientable)");
+        CHECK(rep.orientable);
+        INFO("check: loops are closed");
+        CHECK(rep.loops);
+        INFO("check: E == 3F/2 (closed pure-triangle extract)");
+        CHECK(rep.edge_count == 3 * rep.face_count / 2);
+        INFO("check: V == F/2 + 2 (Euler identity for genus 0)");
+        CHECK(2 * rep.vertex_count == rep.face_count + 4);
+        INFO("check: min|f| > 0 on the sampling grid (P2 — no on-grid zeros)");
+        CHECK(rep.min_abs_field > 0.0f);
+    }
+    // Family liveness (deterministic on this seed): both member classes
+    // live, the Theta range actually reaches its upper half.
+    INFO("check: >= 5 composites (observed ", composites, ")");
+    CHECK(composites >= 5);
+    INFO("check: >= 5 pure columns (observed ", pure_columns, ")");
+    CHECK(pure_columns >= 5);
+    INFO("check: Theta range reached (max seen ", theta_max_seen, " >= 0.12)");
+    CHECK(theta_max_seen >= 0.12f);
+}
