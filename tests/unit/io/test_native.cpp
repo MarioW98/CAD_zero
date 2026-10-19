@@ -996,6 +996,53 @@ TEST_CASE("foreign/wrong formats fail loudly") {
         doctest::Contains("not a CAD_0 native document"), std::runtime_error);
 }
 
+TEST_CASE("corruption: out-of-class SDF parameters are explicit load errors (ADR-0029 D5)") {
+    // A scale node with s = 0 in a file: the constructor's
+    // std::invalid_argument propagates out of parse_document and joins
+    // the ADR-0007 explicit-error family — same test pattern as the
+    // corruption cases above, exception type std::invalid_argument
+    // (ValueError at the Python binding). The message is the FULL
+    // bridge-style constructor message: operator, parameter, value,
+    // supported class, diagnosis, remedy.
+    const std::string zero_scale = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.1.0",
+      "scene": { "next_id": 2, "nodes": [ { "id": 1, "body": {
+        "op": "scale", "s": 0.0,
+        "child": { "op": "sphere", "radius": 1.0 } } } ] }
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(zero_scale),
+        doctest::Contains("ScaleSDF: scale factor s must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(native::parse_document(zero_scale),
+        doctest::Contains("got 0.000000"), std::invalid_argument);
+    CHECK_THROWS_WITH_AS(native::parse_document(zero_scale),
+        doctest::Contains("Remedy: scale by s > 0"), std::invalid_argument);
+
+    // The same check's other out-of-class sign: s < 0 in a file.
+    const std::string neg_scale = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.1.0",
+      "scene": { "next_id": 2, "nodes": [ { "id": 1, "body": {
+        "op": "scale", "s": -1.5,
+        "child": { "op": "sphere", "radius": 1.0 } } } ] }
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(neg_scale),
+        doctest::Contains("ScaleSDF: scale factor s must be finite and > 0"),
+        std::invalid_argument);
+
+    // An empty union children list in a file: the N-ary check.
+    const std::string empty_union = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.1.0",
+      "scene": { "next_id": 2, "nodes": [ { "id": 1, "body": {
+        "op": "union", "children": [] } } ] }
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(empty_union),
+        doctest::Contains("UnionSDF: children must be a non-empty list"),
+        std::invalid_argument);
+}
+
 TEST_CASE("atomic save: writes file, no tmp residue; failure leaves original intact") {
     scene::Scene s = make_canonical_scene();
     const native::NativeCamera cam = make_canonical_camera();

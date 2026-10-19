@@ -2,6 +2,7 @@
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <limits>
 
 #include "CAD_0/sdf/primitives.hpp"
 #include "CAD_0/sdf/transforms.hpp"
@@ -310,4 +311,130 @@ TEST_CASE("TwistSDF: gradient — the shear term, derived and pinned against FD 
         CHECK(std::abs(s.gradient.y - gfd.y) <= 1e-3f);
         CHECK(std::abs(s.gradient.z - gfd.z) <= 1e-3f);
     }
+}
+
+// ===========================================================================
+// ADR-0029 D5 — construction-time validation. One TEST_CASE per node of
+// the D5 table: out-of-class input → std::invalid_argument with the
+// bridge-style message; borderline IN-class input → no exception.
+// ===========================================================================
+
+TEST_CASE("TranslateSDF: null child and non-finite offset rejected (ADR-0029 D5)") {
+    CHECK_THROWS_WITH_AS(TranslateSDF(nullptr, {1, 0, 0}),
+        doctest::Contains("TranslateSDF: child must be a constructed (non-null) SDF child"),
+        std::invalid_argument);
+    const float nan_f = std::numeric_limits<float>::quiet_NaN();
+    const float inf_f = std::numeric_limits<float>::infinity();
+    CHECK_THROWS_WITH_AS(sdf_translate(make_sphere(1.0f), {nan_f, 0, 0}),
+        doctest::Contains("TranslateSDF: offset must be finite on every axis"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(sdf_translate(make_sphere(1.0f), {0, 0, inf_f}),
+        doctest::Contains("TranslateSDF: offset must be finite on every axis"),
+        std::invalid_argument);
+    // The message prints the whole vector: the offending component is
+    // visible in context.
+    CHECK_THROWS_WITH_AS(sdf_translate(make_sphere(1.0f), {0, nan_f, 0}),
+        doctest::Contains("got (0.000000, nan, 0.000000)"),
+        std::invalid_argument);
+    CHECK_NOTHROW(sdf_translate(make_sphere(1.0f), {-1e30f, 0, 0}));
+}
+
+TEST_CASE("RotateSDF: null child and non-unit quaternion rejected (ADR-0029 D5)") {
+    CHECK_THROWS_WITH_AS(RotateSDF(nullptr, Quatf::identity()),
+        doctest::Contains("RotateSDF: child must be a constructed (non-null) SDF child"),
+        std::invalid_argument);
+
+    // Non-unit: a rotate that scales by |q|^2 — norm 2 and norm 0.5.
+    CHECK_THROWS_WITH_AS(sdf_rotate(make_sphere(1.0f), Quatf{2.0f, 0, 0, 0}),
+        doctest::Contains("RotateSDF: quaternion q must have unit norm within 1e-6"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(sdf_rotate(make_sphere(1.0f), Quatf{0.5f, 0, 0, 0}),
+        doctest::Contains("RotateSDF: quaternion q must have unit norm within 1e-6"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(sdf_rotate(make_sphere(1.0f), Quatf{0.5f, 0, 0, 0}),
+        doctest::Contains("got 0.500000"), std::invalid_argument);
+    // NaN components fail the norm check (the negated comparison).
+    const float nan_f = std::numeric_limits<float>::quiet_NaN();
+    CHECK_THROWS_WITH_AS(sdf_rotate(make_sphere(1.0f), Quatf{nan_f, 0, 0, 0}),
+        doctest::Contains("RotateSDF: quaternion q must have unit norm within 1e-6"),
+        std::invalid_argument);
+
+    // Tolerance boundary: |q| = 1 ± 5e-7 is IN-class (serialization
+    // round-trips at ~1e-9), |q| = 1 + 2e-6 is out.
+    const Quatf unit = Quatf::from_axis_angle(Vec3f{1, 2, 3}.normalized(), 0.6f);
+    const Quatf within = Quatf{unit.w * (1.0f + 5e-7f), unit.x * (1.0f + 5e-7f),
+                               unit.y * (1.0f + 5e-7f), unit.z * (1.0f + 5e-7f)};
+    const Quatf beyond = Quatf{unit.w * (1.0f + 2e-6f), unit.x * (1.0f + 2e-6f),
+                               unit.y * (1.0f + 2e-6f), unit.z * (1.0f + 2e-6f)};
+    CHECK_NOTHROW(sdf_rotate(make_sphere(1.0f), within));
+    CHECK_THROWS_WITH_AS(sdf_rotate(make_sphere(1.0f), beyond),
+        doctest::Contains("must have unit norm within 1e-6"),
+        std::invalid_argument);
+    CHECK_NOTHROW(sdf_rotate(make_sphere(1.0f), Quatf::identity()));
+}
+
+TEST_CASE("ScaleSDF: null child and s <= 0 rejected — the motivating rejection (ADR-0029 D5)") {
+    CHECK_THROWS_WITH_AS(ScaleSDF(nullptr, 2.0f),
+        doctest::Contains("ScaleSDF: child must be a constructed (non-null) SDF child"),
+        std::invalid_argument);
+    // s = 0: the motivating finding — 1/s = inf, NaN fields everywhere.
+    CHECK_THROWS_WITH_AS(sdf_scale(make_sphere(1.0f), 0.0f),
+        doctest::Contains("ScaleSDF: scale factor s must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(sdf_scale(make_sphere(1.0f), 0.0f),
+        doctest::Contains("got 0.000000"), std::invalid_argument);
+    // s < 0: the sign flip that turns the negative region into the
+    // unbounded complement of the mirrored child.
+    CHECK_THROWS_WITH_AS(sdf_scale(make_sphere(1.0f), -2.0f),
+        doctest::Contains("ScaleSDF: scale factor s must be finite and > 0"),
+        std::invalid_argument);
+    // NaN and +inf: caught by the finite arm ("all imply finite").
+    const float nan_f = std::numeric_limits<float>::quiet_NaN();
+    CHECK_THROWS_WITH_AS(sdf_scale(make_sphere(1.0f), nan_f),
+        doctest::Contains("ScaleSDF: scale factor s must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(sdf_scale(make_sphere(1.0f),
+                                   std::numeric_limits<float>::infinity()),
+        doctest::Contains("ScaleSDF: scale factor s must be finite and > 0"),
+        std::invalid_argument);
+    // The remedy says what to do instead.
+    CHECK_THROWS_WITH_AS(sdf_scale(make_sphere(1.0f), 0.0f),
+        doctest::Contains("Remedy: scale by s > 0"),
+        std::invalid_argument);
+    CHECK_NOTHROW(sdf_scale(make_sphere(1.0f), 0.25f));
+}
+
+TEST_CASE("TwistSDF: null child and non-finite k rejected (ADR-0029 D5)") {
+    CHECK_THROWS_WITH_AS(TwistSDF(nullptr, 0.5f),
+        doctest::Contains("TwistSDF: child must be a constructed (non-null) SDF child"),
+        std::invalid_argument);
+    const float nan_f = std::numeric_limits<float>::quiet_NaN();
+    CHECK_THROWS_WITH_AS(sdf_twist(make_sphere(1.0f), nan_f),
+        doctest::Contains("TwistSDF: twist rate k must be finite"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(sdf_twist(make_sphere(1.0f),
+                                   -std::numeric_limits<float>::infinity()),
+        doctest::Contains("TwistSDF: twist rate k must be finite"),
+        std::invalid_argument);
+    // Any finite k is in-class: negative (counter-twist) and tiny.
+    CHECK_NOTHROW(sdf_twist(make_sphere(1.0f), -1.0f));
+    CHECK_NOTHROW(sdf_twist(make_sphere(1.0f), 1e-30f));
+}
+
+TEST_CASE("D5 borderline: twist k = 0 identity stays legal (ADR-0029 D5)") {
+    // The audit near-hit: k = 0 is the identity warp. Constructed and
+    // pinned as a passthrough — the field is the child's, bit-for-bit.
+    auto child = make_box({1, 5, 1});
+    const auto plain = child.sample({0.3f, -2.1f, 0.7f});
+    auto twisted = sdf_twist(std::move(child), 0.0f);
+    const auto warped = twisted.sample({0.3f, -2.1f, 0.7f});
+    CHECK(warped.value == plain.value);
+    CHECK(warped.gradient.x == plain.gradient.x);
+    CHECK(warped.gradient.y == plain.gradient.y);
+    CHECK(warped.gradient.z == plain.gradient.z);
+    // And bounds() returns the child's box verbatim (the k = 0
+    // passthrough pinned in the ADR-0029 unit-1 fix).
+    auto b2 = sdf_twist(make_box({1, 5, 1}), 0.0f);
+    CHECK(b2.bounds().min == Vec3f{-1, -5, -1});
+    CHECK(b2.bounds().max == Vec3f{1, 5, 1});
 }

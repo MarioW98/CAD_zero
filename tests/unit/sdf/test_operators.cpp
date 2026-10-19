@@ -7,6 +7,7 @@
 #include "CAD_0/math/vec.hpp"
 
 #include <cmath>
+#include <limits>
 
 using namespace CAD_0::sdf;
 using namespace CAD_0::math;
@@ -1245,4 +1246,116 @@ TEST_CASE("property: blended trees are positive in every distance band outside t
     INFO("check: >= 10 of 25 members contain at least one smooth_min node (observed ",
          iters_with_blend, ")");
     CHECK(iters_with_blend >= 10);
+}
+
+// ===========================================================================
+// ADR-0029 D5 — construction-time validation. One TEST_CASE per node of
+// the D5 table: out-of-class input → std::invalid_argument with the
+// bridge-style message; borderline IN-class input → no exception.
+// ===========================================================================
+
+TEST_CASE("UnionSDF: null operand is a loud error, not a silent drop (ADR-0029 D5)") {
+    // The motivating finding: sdf_union(empty_body, x) used to evaluate
+    // as x — operand loss without a trace. Now it names the operand.
+    SDFBody empty;  // default-constructed: no root
+    SDFBody real = make_sphere(1.0f);
+    CHECK_THROWS_WITH_AS(sdf_union(empty, real),
+        doctest::Contains("UnionSDF: operand a must be a constructed (non-null) SDF child"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(sdf_union(real, empty),
+        doctest::Contains("UnionSDF: operand b must be a constructed (non-null) SDF child"),
+        std::invalid_argument);
+    // Direct constructor: the parameter names survive the move.
+    CHECK_THROWS_WITH_AS(UnionSDF(nullptr, std::make_unique<SphereSDF>(1.0f)),
+        doctest::Contains("UnionSDF: operand a"), std::invalid_argument);
+    CHECK_THROWS_WITH_AS(UnionSDF(std::make_unique<SphereSDF>(1.0f), nullptr),
+        doctest::Contains("UnionSDF: operand b"), std::invalid_argument);
+    CHECK_THROWS_WITH_AS(sdf_union(empty, real),
+        doctest::Contains("Remedy: pass two constructed bodies"),
+        std::invalid_argument);
+    CHECK_NOTHROW(sdf_union(make_sphere(1.0f), make_sphere(1.0f)));
+}
+
+TEST_CASE("UnionSDF: N-ary rejects empty and null-member lists (ADR-0029 D5)") {
+    std::vector<std::unique_ptr<SDFNode>> none;
+    CHECK_THROWS_WITH_AS(UnionSDF(std::move(none)),
+        doctest::Contains("UnionSDF: children must be a non-empty list of SDF children"),
+        std::invalid_argument);
+
+    std::vector<std::unique_ptr<SDFNode>> with_null;
+    with_null.push_back(std::make_unique<SphereSDF>(1.0f));
+    with_null.push_back(nullptr);
+    CHECK_THROWS_WITH_AS(UnionSDF(std::move(with_null)),
+        doctest::Contains("UnionSDF: children[1] must be a constructed (non-null) SDF child"),
+        std::invalid_argument);
+
+    std::vector<std::unique_ptr<SDFNode>> one;
+    one.push_back(std::make_unique<SphereSDF>(1.0f));
+    CHECK_NOTHROW(UnionSDF(std::move(one)));
+}
+
+TEST_CASE("IntersectionSDF: null operands rejected (ADR-0029 D5)") {
+    CHECK_THROWS_WITH_AS(
+        IntersectionSDF(nullptr, std::make_unique<SphereSDF>(1.0f)),
+        doctest::Contains("IntersectionSDF: operand a must be a constructed (non-null) SDF child"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(
+        IntersectionSDF(std::make_unique<SphereSDF>(1.0f), nullptr),
+        doctest::Contains("IntersectionSDF: operand b must be a constructed (non-null) SDF child"),
+        std::invalid_argument);
+    CHECK_NOTHROW(sdf_intersect(make_sphere(1.0f), make_sphere(1.0f)));
+}
+
+TEST_CASE("SubtractionSDF: null operands rejected (ADR-0029 D5)") {
+    CHECK_THROWS_WITH_AS(
+        SubtractionSDF(nullptr, std::make_unique<SphereSDF>(1.0f)),
+        doctest::Contains("SubtractionSDF: operand a must be a constructed (non-null) SDF child"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(
+        SubtractionSDF(std::make_unique<SphereSDF>(1.0f), nullptr),
+        doctest::Contains("SubtractionSDF: operand b must be a constructed (non-null) SDF child"),
+        std::invalid_argument);
+    CHECK_NOTHROW(sdf_subtract(make_sphere(1.0f), make_sphere(1.0f)));
+}
+
+TEST_CASE("SmoothMinSDF: null operands and k < 0 rejected (ADR-0029 D5)") {
+    CHECK_THROWS_WITH_AS(
+        SmoothMinSDF(nullptr, std::make_unique<SphereSDF>(1.0f), 0.5f),
+        doctest::Contains("SmoothMinSDF: operand a must be a constructed (non-null) SDF child"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(
+        SmoothMinSDF(std::make_unique<SphereSDF>(1.0f), nullptr, 0.5f),
+        doctest::Contains("SmoothMinSDF: operand b must be a constructed (non-null) SDF child"),
+        std::invalid_argument);
+    // k < 0: the polynomial derivation assumes k > 0 — the old code
+    // silently coerced to the hard-min branch.
+    CHECK_THROWS_WITH_AS(sdf_smooth_union(make_sphere(1.0f), make_sphere(1.0f), -0.1f),
+        doctest::Contains("SmoothMinSDF: k must be finite and >= 0"),
+        std::invalid_argument);
+    // NaN k: flows into the polynomial producing NaN fields — same
+    // check, same message class.
+    CHECK_THROWS_WITH_AS(
+        sdf_smooth_union(make_sphere(1.0f), make_sphere(1.0f),
+                         std::numeric_limits<float>::quiet_NaN()),
+        doctest::Contains("SmoothMinSDF: k must be finite and >= 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(sdf_smooth_union(make_sphere(1.0f), make_sphere(1.0f), -0.1f),
+        doctest::Contains("Remedy: k = 0 is the documented hard min"),
+        std::invalid_argument);
+}
+
+TEST_CASE("D5 borderline: SmoothMinSDF k = 0 is the documented hard min (ADR-0029 D5)") {
+    // The audit near-hit: sdf_smooth_union(..., 0.0) is IN-class. k = 0
+    // degenerates to the exact hard min — pinned on a configuration
+    // where the two children disagree, so the branch is exercised for
+    // what it is, not just for not-throwing.
+    auto a = make_sphere(1.0f);
+    auto b = sdf_translate(make_sphere(1.0f), {3, 0, 0});
+    auto smin = sdf_smooth_union(std::move(a), std::move(b), 0.0f);
+    const Vec3f p{1.5f, 0.2f, -0.3f};
+    const float fa = make_sphere(1.0f).value(p);
+    const float fb = sdf_translate(make_sphere(1.0f), {3, 0, 0}).value(p);
+    CHECK(smin.value(p) == doctest::Approx(std::min(fa, fb)).epsilon(1e-6f));
+    // Lipschitz at k = 0 is the plain max of the children's (1.0 here).
+    CHECK(smin.lipschitz() == doctest::Approx(1.0f));
 }

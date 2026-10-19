@@ -6,6 +6,7 @@
 #pragma once
 
 #include "CAD_0/sdf/field.hpp"
+#include "CAD_0/sdf/detail/validate.hpp"
 #include "CAD_0/math/mat.hpp"
 #include "CAD_0/math/quat.hpp"
 
@@ -17,7 +18,17 @@ namespace CAD_0::sdf {
 class TranslateSDF final : public SDFNode {
 public:
     TranslateSDF(std::unique_ptr<SDFNode> child, math::Vec3f offset)
-        : child_(std::move(child)), offset_(offset) {}
+        : child_(std::move(child)), offset_(offset) {
+        detail::require_non_null(child_, "TranslateSDF", "child",
+            "the wrapper dereferences it on every sample() (undefined "
+            "behavior, not an empty field)",
+            "construct the child first; an empty SDFBody has no root to "
+            "wrap");
+        detail::require_finite_vec3(offset, "TranslateSDF", "offset",
+            "a non-finite offset shifts the field off the number line: "
+            "sample() and bounds() return NaN for every query",
+            "translate by a finite vector");
+    }
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {
         return child_->sample(p - offset_);
@@ -53,7 +64,23 @@ class RotateSDF final : public SDFNode {
 public:
     RotateSDF(std::unique_ptr<SDFNode> child, math::Quatf q)
         : child_(std::move(child)), q_(q), inv_q_(q.conjugate()),
-          qmat_(q.to_matrix()) {}
+          qmat_(q.to_matrix()) {
+        detail::require_non_null(child_, "RotateSDF", "child",
+            "the wrapper dereferences it on every sample() (undefined "
+            "behavior, not an empty field)",
+            "construct the child first; an empty SDFBody has no root to "
+            "wrap");
+        // ADR-0029 D5: unit norm within 1e-6 (serialization round-trips
+        // at ~1e-9). A non-unit quaternion rotates-AND-scales the field
+        // by |q|^2, breaking the rigid-rotation Lipschitz, gradient and
+        // bounds() contracts; NaN components fail the norm check.
+        detail::require_unit_quat(q_, "RotateSDF",
+            "a non-unit quaternion rotates AND scales the field by |q|^2, "
+            "breaking the rigid-rotation Lipschitz, gradient and bounds() "
+            "contracts (NaN components fail the norm check too)",
+            "normalize the quaternion first (Quatf::normalized()) or build "
+            "it with from_axis_angle(unit_axis, angle)");
+    }
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {
         const math::Vec3f local = inv_q_.rotate(p);
@@ -116,7 +143,24 @@ private:
 class ScaleSDF final : public SDFNode {
 public:
     ScaleSDF(std::unique_ptr<SDFNode> child, float s)
-        : child_(std::move(child)), inv_s_(1.0f / s), scale_(s) {}
+        : child_(std::move(child)), inv_s_(1.0f / s), scale_(s) {
+        detail::require_non_null(child_, "ScaleSDF", "child",
+            "the wrapper dereferences it on every sample() (undefined "
+            "behavior, not an empty field)",
+            "construct the child first; an empty SDFBody has no root to "
+            "wrap");
+        // ADR-0029 D5 — the motivating rejection. The member init above
+        // computes 1/s before this check runs; for out-of-class s that
+        // is a fleeting inf/NaN inside an object being abandoned — the
+        // throw guarantees it never escapes into a query.
+        detail::require_positive(s, "ScaleSDF", "scale factor s",
+            "s = 0 computes 1/s = inf (NaN fields on every query) and "
+            "s < 0 flips the field's sign, making the negative region "
+            "the unbounded complement of the mirrored child, which no "
+            "bounds() box can describe",
+            "scale by s > 0 — reflection is not a supported transform in "
+            "this kernel");
+    }
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {
         auto r = child_->sample(p * inv_s_);
@@ -133,9 +177,9 @@ public:
         // negative exactly where g is (the sign of the positive scale
         // factor never flips it), so the negative region is the
         // child's scaled by s and the box scales identically. s <= 0
-        // is a degenerate mirror the constructor does not validate;
-        // it is outside the supported input class (the field's sign
-        // semantics would invert), not a bounds() bug.
+        // is REJECTED at construction (ADR-0029 D5): it is outside the
+        // supported input class (the field's sign semantics would
+        // invert), not a bounds() bug.
         auto b = child_->bounds();
         return {b.min * scale_, b.max * scale_};
     }
@@ -170,7 +214,22 @@ private:
 class TwistSDF final : public SDFNode {
 public:
     TwistSDF(std::unique_ptr<SDFNode> child, float twist_per_unit_y)
-        : child_(std::move(child)), k_(twist_per_unit_y) {}
+        : child_(std::move(child)), k_(twist_per_unit_y) {
+        detail::require_non_null(child_, "TwistSDF", "child",
+            "the wrapper dereferences it on every sample() (undefined "
+            "behavior, not an empty field)",
+            "construct the child first; an empty SDFBody has no root to "
+            "wrap");
+        // ADR-0029 D5: any finite k (k = 0 is the identity warp and
+        // stays legal; the bounds() passthrough and the σ(k, r) closed
+        // form are both k-blind).
+        detail::require_finite(k_, "TwistSDF", "twist rate k",
+            "a non-finite twist rate makes every slice's rotation angle "
+            "NaN: the field, the gradient, bounds() and lipschitz() all "
+            "return NaN",
+            "pass a finite radians-per-unit-y rate (k = 0 keeps the "
+            "child untouched)");
+    }
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {
         const float ang = p.y * k_;

@@ -10,13 +10,26 @@
 #pragma once
 
 #include "CAD_0/sdf/field.hpp"
+#include "CAD_0/sdf/detail/validate.hpp"
 
 namespace CAD_0::sdf {
+
+// NOTE (ADR-0029 D5): every constructor below validates its inputs
+// and throws std::invalid_argument (bridge-style message: operator,
+// parameter, value, supported class, diagnosis, remedy). Constructors
+// are therefore NOT noexcept; sample() and the other query methods
+// keep theirs — no hot-path change.
 
 // Sphere of given radius centered at the origin.
 class SphereSDF final : public SDFNode {
 public:
-    explicit SphereSDF(float radius) noexcept : radius_(radius) {}
+    explicit SphereSDF(float radius) : radius_(radius) {
+        detail::require_positive(radius, "SphereSDF", "radius",
+            "a non-positive or non-finite radius inverts the field's sign "
+            "class (the 'inside' becomes the unbounded complement) and the "
+            "gradient divides by it (p / radius)",
+            "construct with radius > 0");
+    }
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {
         const math::Vec3f g = p / radius_;
@@ -38,7 +51,13 @@ private:
 // Axis-aligned box centered at the origin with half-extent `extent`.
 class BoxSDF final : public SDFNode {
 public:
-    explicit BoxSDF(math::Vec3f extent) noexcept : extent_(extent) {}
+    explicit BoxSDF(math::Vec3f extent) : extent_(extent) {
+        detail::require_positive_vec3(extent, "BoxSDF", "extent",
+            "a non-positive or non-finite half-extent makes the box "
+            "degenerate (empty or sign-inverted) and its bounds() empty",
+            "construct with a positive half-extent per axis (a full-size "
+            "box uses extent = full/2)");
+    }
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {
         const math::Vec3f q{std::abs(p.x) - extent_.x,
@@ -93,8 +112,17 @@ private:
 // using the analytic gradient (e.g. GPU shading, narrow-band MC).
 class CylinderSDF final : public SDFNode {
 public:
-    CylinderSDF(float radius, float height) noexcept
-        : radius_(radius), half_height_(height * 0.5f) {}
+    CylinderSDF(float radius, float height)
+        : radius_(radius), half_height_(height * 0.5f) {
+        detail::require_positive(radius, "CylinderSDF", "radius",
+            "a non-positive or non-finite radius inverts the field's sign "
+            "class and the gradient divides by it ((x,0,z)/rho)",
+            "construct with radius > 0");
+        detail::require_positive(height, "CylinderSDF", "height",
+            "a non-positive or non-finite height makes the cylinder "
+            "degenerate (empty slab) and its bounds() flat",
+            "construct with height > 0");
+    }
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {
         // 2D cross-section: d = (rho - r, |y| - half_h)
@@ -159,7 +187,22 @@ private:
 // Torus with major radius R and minor radius r, in the XZ plane.
 class TorusSDF final : public SDFNode {
 public:
-    TorusSDF(float R, float r) noexcept : R_(R), r_(r) {}
+    TorusSDF(float R, float r) : R_(R), r_(r) {
+        // ADR-0029 D5, minimal-list principle: r > R (a spindle torus)
+        // is LEGAL and deliberately unchecked — the offset field and
+        // its box remain valid for it. Only the contract-breaking
+        // class (non-finite, non-positive) is rejected.
+        detail::require_positive(R, "TorusSDF", "R",
+            "a non-positive or non-finite major radius inverts the field's "
+            "sign class (the tube sweeps the mirror complement)",
+            "construct with R > 0 and r > 0 — a spindle torus (r > R) is "
+            "legal and stays supported");
+        detail::require_positive(r, "TorusSDF", "r",
+            "a non-positive or non-finite minor radius makes the tube "
+            "empty and the gradient divide by it",
+            "construct with R > 0 and r > 0 — a spindle torus (r > R) is "
+            "legal and stays supported");
+    }
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {
         const math::Vec2f q{std::sqrt(p.x * p.x + p.z * p.z) - R_, p.y};
@@ -208,7 +251,16 @@ private:
 // (takes more steps but never overshoots).
 class ConeSDF final : public SDFNode {
 public:
-    ConeSDF(float r, float h) noexcept : r_(r), h_(h) {}
+    ConeSDF(float r, float h) : r_(r), h_(h) {
+        detail::require_positive(r, "ConeSDF", "r",
+            "a non-positive or non-finite base radius inverts the field's "
+            "sign class",
+            "construct with r > 0");
+        detail::require_positive(h, "ConeSDF", "h",
+            "a non-positive or non-finite height makes the cone degenerate "
+            "(empty or flat) and bounds() empty",
+            "construct with h > 0");
+    }
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {
         const float rho = std::sqrt(p.x * p.x + p.z * p.z);
@@ -264,11 +316,31 @@ private:
 // Capsule (line + radius) from point a to b.
 class CapsuleSDF final : public SDFNode {
 public:
-    CapsuleSDF(math::Vec3f a, math::Vec3f b, float r) noexcept
+    CapsuleSDF(math::Vec3f a, math::Vec3f b, float r)
         : a_(a), b_(b), r_(r) {
         // Precompute the segment direction and length.
         const math::Vec3f d = b_ - a_;
         length_sq_ = d.length_sq();
+        // ADR-0029 D5: a = b is LEGAL (degenerates to a sphere behind
+        // the explicit std::max(length_sq_, 1e-12) guard in sample()) —
+        // do not legislate taste; reject only the contract-breaking
+        // class (non-finite endpoints, non-positive radius).
+        detail::require_finite_vec3(a, "CapsuleSDF", "a",
+            "a non-finite endpoint puts the segment off the number line: "
+            "sample(), bounds() and the gradient are NaN/garbage for "
+            "every query",
+            "construct with finite endpoints (a = b is allowed — it "
+            "degenerates to a sphere behind an explicit guard)");
+        detail::require_finite_vec3(b, "CapsuleSDF", "b",
+            "a non-finite endpoint puts the segment off the number line: "
+            "sample(), bounds() and the gradient are NaN/garbage for "
+            "every query",
+            "construct with finite endpoints (a = b is allowed — it "
+            "degenerates to a sphere behind an explicit guard)");
+        detail::require_positive(r, "CapsuleSDF", "r",
+            "a non-positive or non-finite radius inverts the field's sign "
+            "class (the 'inside' becomes the unbounded complement)",
+            "construct with radius > 0");
     }
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {

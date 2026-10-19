@@ -5,6 +5,7 @@ set(CAD_0_SDF_HEADERS
     include/CAD_0/sdf/primitives.hpp
     include/CAD_0/sdf/operators.hpp
     include/CAD_0/sdf/transforms.hpp
+    include/CAD_0/sdf/detail/validate.hpp
     include/CAD_0/sdf/evaluate.hpp
     include/CAD_0/sdf/mesh_extract.hpp
 )

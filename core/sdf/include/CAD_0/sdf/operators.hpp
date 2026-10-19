@@ -16,6 +16,7 @@
 #pragma once
 
 #include "CAD_0/sdf/field.hpp"
+#include "CAD_0/sdf/detail/validate.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -29,16 +30,45 @@ namespace CAD_0::sdf {
 class UnionSDF final : public SDFNode {
 public:
     UnionSDF(std::unique_ptr<SDFNode> a, std::unique_ptr<SDFNode> b) {
+        // ADR-0029 D5: the silent null-drop — sdf_union(empty_body, x)
+        // used to evaluate as x, losing an operand without a trace — is
+        // now the loud error it always should have been.
+        detail::require_non_null(a, "UnionSDF", "operand a",
+            "the two-operand union used to drop null children silently, "
+            "so an empty operand side went missing without a trace",
+            "pass two constructed bodies; an empty SDFBody has no root "
+            "to union");
+        detail::require_non_null(b, "UnionSDF", "operand b",
+            "the two-operand union used to drop null children silently, "
+            "so an empty operand side went missing without a trace",
+            "pass two constructed bodies; an empty SDFBody has no root "
+            "to union");
         children_.reserve(2);
-        if (a) children_.push_back(std::move(a));
-        if (b) children_.push_back(std::move(b));
+        children_.push_back(std::move(a));
+        children_.push_back(std::move(b));
     }
 
     // N-ary construction (used by native-format deserialization to rebuild
     // a flattened union exactly as it was saved; min-union is associative
-    // so this is semantically identical to folding pairs).
+    // so this is semantically identical to folding pairs). ADR-0029 D5:
+    // non-empty and all non-null — the min over an empty list has no
+    // field to evaluate and a null child is dereferenced on sample().
     explicit UnionSDF(std::vector<std::unique_ptr<SDFNode>> children)
-        : children_(std::move(children)) {}
+        : children_(std::move(children)) {
+        if (children_.empty())
+            detail::throw_invalid("UnionSDF", "children",
+                "be a non-empty list of SDF children", "0 children",
+                "an empty union has no field to evaluate — the min over "
+                "nothing is undefined",
+                "pass at least one constructed child; fold pairwise unions "
+                "when building incrementally");
+        for (std::size_t i = 0; i < children_.size(); ++i)
+            detail::require_non_null(children_[i], "UnionSDF",
+                "children[" + std::to_string(i) + "]",
+                "a null child is dereferenced on sample() (undefined "
+                "behavior, not an empty field)",
+                "pass constructed children only");
+    }
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {
         if (children_.empty()) return SDFSample{1e30f, {}};
@@ -103,7 +133,18 @@ private:
 class IntersectionSDF final : public SDFNode {
 public:
     IntersectionSDF(std::unique_ptr<SDFNode> a, std::unique_ptr<SDFNode> b)
-        : a_(std::move(a)), b_(std::move(b)) {}
+        : a_(std::move(a)), b_(std::move(b)) {
+        // Validate the MEMBERS: the init list above has already moved
+        // the parameters, so `a`/`b` here would be moved-from nulls.
+        detail::require_non_null(a_, "IntersectionSDF", "operand a",
+            "sample() dereferences both operands on every query — a null "
+            "operand is undefined behavior, not an empty intersection",
+            "pass two constructed bodies");
+        detail::require_non_null(b_, "IntersectionSDF", "operand b",
+            "sample() dereferences both operands on every query — a null "
+            "operand is undefined behavior, not an empty intersection",
+            "pass two constructed bodies");
+    }
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {
         auto sa = a_->sample(p);
@@ -165,7 +206,17 @@ private:
 class SubtractionSDF final : public SDFNode {
 public:
     SubtractionSDF(std::unique_ptr<SDFNode> a, std::unique_ptr<SDFNode> b)
-        : a_(std::move(a)), b_(std::move(b)) {}
+        : a_(std::move(a)), b_(std::move(b)) {
+        // Validate the MEMBERS (the init list already moved the params).
+        detail::require_non_null(a_, "SubtractionSDF", "operand a",
+            "sample() dereferences both operands on every query — a null "
+            "operand is undefined behavior, not an empty difference",
+            "pass two constructed bodies (place the tool with translate)");
+        detail::require_non_null(b_, "SubtractionSDF", "operand b",
+            "sample() dereferences both operands on every query — a null "
+            "operand is undefined behavior, not an empty difference",
+            "pass two constructed bodies (place the tool with translate)");
+    }
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {
         auto sa = a_->sample(p);
@@ -304,7 +355,29 @@ private:
 class SmoothMinSDF final : public SDFNode {
 public:
     SmoothMinSDF(std::unique_ptr<SDFNode> a, std::unique_ptr<SDFNode> b, float k)
-        : a_(std::move(a)), b_(std::move(b)), k_(k) {}
+        : a_(std::move(a)), b_(std::move(b)), k_(k) {
+        // Validate the MEMBERS (the init list already moved the params).
+        detail::require_non_null(a_, "SmoothMinSDF", "operand a",
+            "sample() dereferences both operands on every query — a null "
+            "operand is undefined behavior, not an empty blend",
+            "pass two constructed bodies");
+        detail::require_non_null(b_, "SmoothMinSDF", "operand b",
+            "sample() dereferences both operands on every query — a null "
+            "operand is undefined behavior, not an empty blend",
+            "pass two constructed bodies");
+        // ADR-0029 D5: k >= 0. k = 0 is the documented hard min (the
+        // degenerate branch in sample() is deliberate and pinned); k < 0
+        // is rejected because the polynomial derivation assumes k > 0 —
+        // it used to silently coerce to the hard-min branch, a different
+        // operator than requested.
+        detail::require_non_negative(k, "SmoothMinSDF", "k",
+            "the polynomial blend derivation assumes k > 0: k < 0 silently "
+            "coerced to the hard-min branch (a different operator than "
+            "requested) and NaN k flows into the polynomial producing "
+            "NaN fields",
+            "k = 0 is the documented hard min (use it deliberately); "
+            "k > 0 is a smooth blend");
+    }
 
     SDFSample sample(const math::Vec3f& p) const noexcept override {
         const auto sa = a_->sample(p);

@@ -5,6 +5,7 @@
 #include "CAD_0/sdf/transforms.hpp"
 
 #include <cmath>
+#include <limits>
 
 using namespace CAD_0::sdf;
 using namespace CAD_0::math;
@@ -402,4 +403,140 @@ TEST_CASE("ConeSDF: scale(0.5, cone) FD max|grad| <= 1.05") {
     }
     INFO("max|grad FD| =", max_grad, " at (", worst.x, worst.y, worst.z, ")");
     CHECK(max_grad <= 1.05f);
+}
+
+// ===========================================================================
+// ADR-0029 D5 — construction-time validation. One TEST_CASE per node of
+// the D5 table: out-of-class input → std::invalid_argument with the
+// bridge-style message (operator, parameter, value, supported class,
+// diagnosis, remedy); borderline IN-class input → no exception.
+// ===========================================================================
+
+TEST_CASE("SphereSDF: construction rejects out-of-class radius (ADR-0029 D5)") {
+    for (float bad : {0.0f, -1.0f, -0.0f}) {
+        CHECK_THROWS_WITH_AS(make_sphere(bad),
+            doctest::Contains("SphereSDF: radius must be finite and > 0"),
+            std::invalid_argument);
+    }
+    CHECK_THROWS_WITH_AS(make_sphere(std::numeric_limits<float>::quiet_NaN()),
+        doctest::Contains("SphereSDF: radius must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_sphere(std::numeric_limits<float>::infinity()),
+        doctest::Contains("SphereSDF: radius must be finite and > 0"),
+        std::invalid_argument);
+    // The message carries the value, the diagnosis and the remedy.
+    CHECK_THROWS_WITH_AS(make_sphere(0.0f),
+        doctest::Contains("got 0.000000"), std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_sphere(0.0f),
+        doctest::Contains("Remedy: construct with radius > 0"),
+        std::invalid_argument);
+}
+
+TEST_CASE("BoxSDF: construction rejects non-positive extent (ADR-0029 D5)") {
+    // Zero / negative / non-finite half-extent, one axis at a time — the
+    // message must name the offending axis.
+    CHECK_THROWS_WITH_AS(make_box({0, 1, 1}),
+        doctest::Contains("BoxSDF: extent.x must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_box({1, -1, 1}),
+        doctest::Contains("BoxSDF: extent.y must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_box({1, 1, std::numeric_limits<float>::quiet_NaN()}),
+        doctest::Contains("BoxSDF: extent.z must be finite and > 0"),
+        std::invalid_argument);
+    // In-class: a positive extent never throws.
+    CHECK_NOTHROW(make_box({0.25f, 0.5f, 1.0f}));
+}
+
+TEST_CASE("CylinderSDF: construction rejects out-of-class radius/height (ADR-0029 D5)") {
+    CHECK_THROWS_WITH_AS(make_cylinder(0.0f, 2.0f),
+        doctest::Contains("CylinderSDF: radius must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_cylinder(-0.5f, 2.0f),
+        doctest::Contains("CylinderSDF: radius must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_cylinder(0.5f, 0.0f),
+        doctest::Contains("CylinderSDF: height must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_cylinder(0.5f, -2.0f),
+        doctest::Contains("CylinderSDF: height must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_cylinder(std::numeric_limits<float>::quiet_NaN(), 2.0f),
+        doctest::Contains("CylinderSDF: radius must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_NOTHROW(make_cylinder(0.5f, 2.0f));
+}
+
+TEST_CASE("TorusSDF: construction rejects non-positive R/r (ADR-0029 D5)") {
+    CHECK_THROWS_WITH_AS(make_torus(0.0f, 0.3f),
+        doctest::Contains("TorusSDF: R must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_torus(-1.0f, 0.3f),
+        doctest::Contains("TorusSDF: R must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_torus(1.0f, 0.0f),
+        doctest::Contains("TorusSDF: r must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_torus(1.0f, std::numeric_limits<float>::quiet_NaN()),
+        doctest::Contains("TorusSDF: r must be finite and > 0"),
+        std::invalid_argument);
+    // The remedy documents the deliberately-legal spindle class.
+    CHECK_THROWS_WITH_AS(make_torus(0.0f, 0.3f),
+        doctest::Contains("a spindle torus (r > R) is legal"),
+        std::invalid_argument);
+}
+
+TEST_CASE("ConeSDF: construction rejects out-of-class r/h (ADR-0029 D5)") {
+    CHECK_THROWS_WITH_AS(make_cone(0.0f, 1.0f),
+        doctest::Contains("ConeSDF: r must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_cone(1.0f, 0.0f),
+        doctest::Contains("ConeSDF: h must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_cone(-1.0f, 1.0f),
+        doctest::Contains("ConeSDF: r must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_cone(1.0f, -1.0f),
+        doctest::Contains("ConeSDF: h must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_NOTHROW(make_cone(1.0f, 2.0f));
+}
+
+TEST_CASE("CapsuleSDF: construction rejects non-finite endpoints and bad radius (ADR-0029 D5)") {
+    const float nan_f = std::numeric_limits<float>::quiet_NaN();
+    const float inf_f = std::numeric_limits<float>::infinity();
+    CHECK_THROWS_WITH_AS(make_capsule({nan_f, 0, 0}, {1, 0, 0}, 0.5f),
+        doctest::Contains("CapsuleSDF: a must be finite on every axis"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_capsule({0, 0, 0}, {1, inf_f, 0}, 0.5f),
+        doctest::Contains("CapsuleSDF: b must be finite on every axis"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_capsule({0, 0, 0}, {1, 0, 0}, 0.0f),
+        doctest::Contains("CapsuleSDF: r must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_THROWS_WITH_AS(make_capsule({0, 0, 0}, {1, 0, 0}, -0.5f),
+        doctest::Contains("CapsuleSDF: r must be finite and > 0"),
+        std::invalid_argument);
+    CHECK_NOTHROW(make_capsule({0, 0, 0}, {1, 0, 0}, 0.5f));
+}
+
+TEST_CASE("D5 borderline: in-class degenerate shapes stay legal (ADR-0029 D5)") {
+    // The minimal-list principle: close the door on the
+    // contract-breaking class, do NOT legislate taste.
+    //
+    // Capsule a = b: degenerates to a sphere behind the explicit
+    // std::max(length_sq_, 1e-12) guard in sample() — legal, and the
+    // field is exactly the sphere field.
+    auto degenerate = make_capsule({1, 2, 3}, {1, 2, 3}, 0.75f);
+    CHECK(degenerate.value({1, 2, 3}) == doctest::Approx(-0.75f));
+    CHECK(degenerate.value({1, 2, 3 + 0.75f}) == doctest::Approx(0.0f).epsilon(1e-5f));
+
+    // Spindle torus r > R: self-intersecting but the offset field and
+    // its box remain valid — legal and unchecked.
+    auto spindle = make_torus(1.0f, 2.5f);
+    CHECK(std::isfinite(spindle.value({0, 0, 0})));
+    CHECK(spindle.bounds().max.y == doctest::Approx(2.5f));
+
+    // The audit near-hit: sdf_scale(cone, 0.5) — in-class (s > 0).
+    CHECK_NOTHROW(sdf_scale(make_cone(1.0f, 2.0f), 0.5f));
 }

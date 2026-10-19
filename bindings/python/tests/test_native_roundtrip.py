@@ -165,6 +165,39 @@ def test_unknown_op_raises_explicitly():
         CAD_0.io.load(path, scene_mod.Scene())
 
 
+def test_out_of_class_scale_zero_raises_value_error():
+    """ADR-0029 D5: a scale s=0 node in a file is an explicit load error.
+
+    The constructor's std::invalid_argument joins the ADR-0007 explicit
+    error family and reaches the user radius (the Python binding) as
+    ValueError carrying the COMPLETE bridge-style message — operator,
+    parameter, value, supported class, diagnosis, remedy — not a bare
+    type. The load stays transactional: the scene is untouched.
+    """
+    path = Path(tempfile.mkdtemp(prefix="cad0_native_")) / "s0.CAD_0"
+    path.write_text(
+        '{"format": "CAD_0 native", "version": "0.1.0", '
+        '"scene": {"next_id": 2, "nodes": [{"id": 1, "body": {'
+        '"op": "scale", "s": 0.0, '
+        '"child": {"op": "sphere", "radius": 1.0}}}]}}'
+    )
+    scene = scene_mod.Scene()
+    scene.add_node("keep", sdf_mod.sphere(1.0))
+
+    with pytest.raises(ValueError) as excinfo:
+        CAD_0.io.load(path, scene)
+    msg = str(excinfo.value)
+    # The full message: operator, parameter, supported class, value...
+    assert "ScaleSDF: scale factor s must be finite and > 0, got 0.000000" in msg
+    # ...diagnosis (why s <= 0 is outside the describable class)...
+    assert "flips the field's sign" in msg
+    # ...and the remedy.
+    assert "Remedy: scale by s > 0" in msg
+    # Transactional: the failed load left the scene untouched.
+    assert scene.size() == 1
+    assert scene.node_at(0).name == "keep"
+
+
 def test_incompatible_version_raises_with_no_migrator():
     path = Path(tempfile.mkdtemp(prefix="cad0_native_")) / "v2.CAD_0"
     path.write_text(
