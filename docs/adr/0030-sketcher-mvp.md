@@ -26,6 +26,27 @@ now asserts the gesture semantics. Two one-sentence amendments ride
 along at their sites (D2's chain-closure timing, D4's loader error
 split) — declared in D5's preamble, not smuggled.
 
+**Revision 2 (2026-10-20, the complete review applied).** D1, D2,
+D4 and D5.1–D5.2 are accepted as written. D3 is accepted WITH one
+blocking correction, applied here: the sampled self-certification
+is necessary but NOT sufficient — a transversal crossing between
+two entities, landing between checkpoints, lets the zero-set
+deviate from the drawn contour while every sample passes; the
+extrusion then yields a valid solid that is NOT the drawn one,
+silently. D3 closes it with a pairwise entity-intersection check:
+the samples keep the EXPECTED SIDE, the pairwise check keeps the
+zero-set COMPLETE along the active spans — together sufficient,
+either alone is not; the closed counterexample (a hole circle
+crossing an outer segment mid-span) is in the text in the lie
+format, and the validation table gains the check's row. D6's
+condition is applied: a failure-regime property family whose
+generator's range INCLUDES deep notches and transversal crossings,
+asserting their construction-time rejection — plus the liveness of
+the conforming members. One consequence line rides along at its
+site (D2): entity addressing by (FeatureId, index) is honest until
+an entity references another — stable entity IDs are the solver
+ADR's declared prerequisite, not a retrofit.
+
 ## Context
 
 ADR-0027 D1 named this increment: *"The sketcher (2D profiles,
@@ -335,26 +356,73 @@ now in 3D:
   wider narrow band than strictly needed — the same over-estimate
   `IntersectionSDF::bounds()` already makes today).
 - **The failure regime, closed at construction (lie #5 — the one that
-  breaks the SIGN, not the metric).** The max-composition equals the
-  profile **iff the profile is really the intersection of the entity
-  regions**. The case that violates it: a concave entity (hole circle
-  or concave arc) whose FULL circle swallows legitimate parts of the
-  profile — e.g. a notch deeper than the profile is wide. Then the
-  max classifies those parts outside: not an understated distance, a
-  WRONG SIGN. Closure, constructive: **the contour is
-  self-certifying** — every joint vertex and every entity's interior
-  sample point (midpoint of the segment/arc, circle center excluded)
-  must evaluate to the expected side of the composed field (joints:
-  |f| ≤ joint tolerance; midpoints of boundary entities: |f| ≤ arc's
-  sagitta-scaled tolerance... stated exactly: a boundary entity's
-  midpoint must be ON the zero-set, i.e. |f| within the curvature
-  tolerance of the entity's own discretization). A contour that lies
-  about being the boundary fails loudly at construction with the
-  entity and point named — `std::invalid_argument`, the ADR-0029 D5
-  family, joined by the loader's error path for free. Plus the
-  structural checks: endpoints of consecutive entities coincide (the
-  chain closes), every chain is closed, entity parameters finite,
-  radii > 0, arc sweep in (0, 2π), distance > 0, direction ∈ {+1, −1}.
+  breaks the SIGN, not the metric — and the review's catch, lie
+  #5b).** The max-composition equals the profile **iff the profile
+  is really the intersection of the entity regions**. The case that
+  violates it: a concave entity (hole circle or concave arc) whose
+  FULL circle swallows legitimate parts of the profile — e.g. a
+  notch deeper than the profile is wide. Then the max classifies
+  those parts outside: not an understated distance, a WRONG SIGN.
+  Closure, constructive — TWO instruments, each covering exactly
+  what the other cannot:
+  - **The samples cover the EXPECTED SIDE.** Every joint vertex and
+    every boundary entity's interior sample point (the segment/arc
+    midpoint; a full circle samples a point of its own curve — the
+    center, strictly inside the disc, is excluded) must evaluate to
+    the expected side of the composed field (joints: |f| ≤ joint
+    tolerance; midpoints: ON the zero-set, |f| within the curvature
+    tolerance of the entity's own discretization). A contour that
+    lies about being the boundary at its own checkpoints fails
+    loudly at construction with the entity and point named —
+    `std::invalid_argument`, the ADR-0029 D5 family, joined by the
+    loader's error path for free.
+  - **The pairwise intersection check covers the COMPLETENESS of
+    the zero-set along the active spans.** **Lie #5b (the review's
+    catch): "joints + midpoints certify the contour."** Necessary,
+    not sufficient: a TRANSVERSAL CROSSING between two entities,
+    landing strictly between a checkpoint and the next, deviates
+    the zero-set from the drawn contour without failing any
+    sample. The closed counterexample, the lie's anatomy: an
+    outer-chain segment crossed mid-span by a hole circle's curve,
+    the crossing point strictly between the segment's joint and its
+    midpoint — the joints evaluate on their expected side, the
+    midpoint evaluates on the zero-set (it lies outside the invaded
+    stretch), every sample PASSES, and yet the composed zero-set
+    along that segment is the hole's arc, not the drawn line: the
+    extrusion yields a VALID solid that is NOT the drawn one —
+    silently, the exact failure this section exists to make loud.
+    The closure: at construction, EVERY pair of entities is checked
+    for intersection — segment–segment (the 2×2 parametric solve,
+    closed form; the parallel degenerate case is already excluded by
+    p₀ ≠ p₁), segment–circle (substitute the segment's parametric
+    point into |P − C|² = r², a quadratic in t whose roots in
+    [0, 1] are the crossings), circle–circle (‖C₁ − C₂‖ against
+    r₁ + r₂ and |r₁ − r₂|) — with ARCS participating as the
+    ANGULAR SPAN of their circle: a crossing counts only where it
+    lands inside the arc's active span (a circle's span is full).
+    Exact, closed form, O(n²) in the sketch's entity count — a
+    cold path: construction and load, never per sample.
+    Intersections are legal ONLY at a DECLARED SHARED JOINT of the
+    chain (the connectivity the recipe already carries, D5.3):
+    adjacent entities meet at their joint and nowhere else. Every
+    other crossing — a tangent one included — is
+    `std::invalid_argument` naming BOTH entities and the crossing
+    point, the ADR-0029 D5 family; the loader inherits it for free.
+    Together, and only together, the two instruments are
+    SUFFICIENT: the samples pin the expected side at the
+    checkpoints, the pairwise check pins the zero-set's
+    completeness along the active spans between them — the crossing
+    counterexample is the shape that lives in that gap, and it is
+    refused at construction.
+  Plus the structural checks (unchanged): endpoints of consecutive
+  entities coincide (the chain closes), every chain is closed,
+  entity parameters finite, radii > 0, arc sweep in (0, 2π),
+  distance > 0, direction ∈ {+1, −1}.
+
+  *(The house lesson, stated here two sections above where D6
+  exercises it: a property whose range avoids the regime is vacuous
+  — the failure-regime family must GENERATE the crossings it
+  asserts the rejection of.)*
 
 **The validation table (the D5-of-0029 equivalent — new rows):**
 
@@ -362,7 +430,8 @@ now in 3D:
 |---|---|---|---|---|---|---|---|
 | `Halfplane2D` (segment) | s·((P−p₀)·n̂) | everywhere | — | 1 | s·n̂ | unbounded half-box | endpoints finite, p₀≠p₁ |
 | `Disc2D` (circle/arc) | ±(|P−C|−r) | everywhere | — | 1 | ±(P−C)/\|P−C\| | [C±r]² | C finite, r > 0 |
-| `ProfileSDF` | max of entities | active boundary, interior near it | convex corners 1/sin(θ/2); notch shadows | 1 (proof above) | winning branch, normalized | intersection of entity bounds | chain closure; joints+midpoints self-certify; bounded result |
+| `ProfileSDF` | max of entities | active boundary, interior near it | convex corners 1/sin(θ/2); notch shadows | 1 (proof above) | winning branch, normalized | intersection of entity bounds | chain closure; samples certify the expected side; pairwise intersections certify zero-set completeness; bounded result |
+| `SketchEntitySet` (construction check — structural, not a field node) | — | pairwise entity intersections, exact closed form: seg–seg (2×2 parametric solve), seg–circle (quadratic in t, roots in [0, 1]), circle–circle (‖C₁ − C₂‖ vs r₁ + r₂ and \|r₁ − r₂\|); arcs participate as their circle's angular span | — | — | — | — | O(n²) in the sketch's entities, cold path (construction/load, never per sample); crossings legal ONLY at declared shared joints; every other crossing, tangent included → `std::invalid_argument` naming both entities and the point |
 | `SlabZ` | \|z−d/2\|−d/2 | everywhere | — | 1 | (0,0,±1) | z-range | d > 0 finite |
 | `ExtrudeSDF` | max(profile, slab) | interior; active faces | horizontal edges ≤ √2 | 1 | winning branch, normalized | bounds₂D × z-range | via children |
 
@@ -684,7 +753,10 @@ by the UI; the UI keeps no second copy of the rules.
   next gesture begins.
 - **Rejected at the command**: Extrude on a sketch with open chains →
   the command is refused and the open entities are NAMED in the
-  message (the 0029 habit: name the offender). Extrude dialog:
+  message (the 0029 habit: name the offender). Extrude on a sketch
+  with a mid-span crossing → refused with BOTH crossing entities and
+  the crossing point named (D3's pairwise check — same clause, same
+  predicate, one opinion). Extrude dialog:
   distance ≤ 0 or non-finite → OK is refused with the message.
 - **Rejected at the text edit**: r ≤ 0, NaN, empty → the field
   refuses; the previous value stands.
@@ -803,7 +875,21 @@ C++:
   profile REJECTED at construction with the entity named (the loud
   error, not the silent sign flip); ring profile (outer circle +
   hole circle) evaluates the annulus with exact sign on a stratified
-  grid (band × slice, the 0029 habit).
+  grid (band × slice, the 0029 habit). **The failure-regime
+  property family (revision 2's condition — the regime IN the
+  generator's range):** a seeded generator whose member range
+  INCLUDES deep notches (concave entities whose circles swallow
+  profile width) AND transversal crossings (hole circles and
+  concave arcs whose curves cross outer-chain segments mid-span —
+  D3's counterexample manufactured on purpose); the assertion is
+  the pairwise check REJECTING each such member at construction,
+  both entities and the crossing point named. The liveness side,
+  same family: conforming members (no crossing off a declared
+  joint, samples on the expected side) PASS the complete
+  certification. The house lesson of D3, two sections above,
+  exercised here: a property whose range avoids the regime is
+  vacuous — this family's generator manufactures the crossings its
+  assertion rejects.
 - **Extraction contracts on extruded profiles (the old contract
   works):** extruded disc = cylinder topology at the same grid
   resolution — **same MC configuration (signs at grid points agree,
@@ -861,7 +947,11 @@ Python / bindings:
   - *Definition state*: an open chain renders under-defined (the
     pinned amber/dash; the state derived from recipe connectivity);
     Extrude refused with the open entities named; after an accepted
-    coincidence closes the chain → Extrude succeeds.
+    coincidence closes the chain → Extrude succeeds. A crossed
+    sketch (a hole circle over an outer segment, the crossing
+    mid-span) → Extrude refused with both entities and the crossing
+    point named; after the hole is dragged clear → Extrude
+    succeeds (the same refusal/recovery shape, asserted once).
   - *The draft's end-to-end flow stands*: create sketch → circle →
     extrude → subtract from a box → the hole is in the tree and the
     Debug report shows χ = 0, genus 1; radius edit propagates
@@ -960,12 +1050,22 @@ those subjects.
 - A third `NodeKind` touches every kind-dispatch in the tree
   (`update_meshes`, bindings, serializer, app loops — an audited but
   real surface; the Mesh-kind precedent says the skips are cheap).
-- The contour self-certification is sampled (joints + entity
-  midpoints), not exhaustive: a pathological profile whose
-  violation lives strictly between samples could pass construction
-  with a locally wrong sign. Declared honestly; the sampling points
-  are ON the entities themselves, where the claim is strongest, and
-  the property families probe the composed sign on grids.
+- Entity addressing by (FeatureId of the sketch, index in the
+  chain) is honest only while no entity references another entity —
+  today none does (no consumer exists). The future solver binds
+  entity-to-entity, and a mid-chain insert shifts every later
+  index: stable entity IDs are the solver ADR's declared
+  prerequisite, not a retrofit (D2's address, its consequence
+  stated).
+- The contour certification is two-voiced (revision 2): the
+  samples (joints + midpoints) pin the expected side at the
+  checkpoints, the pairwise intersection check pins the zero-set's
+  completeness along the active spans between them. What sampling
+  alone left open — a violation living strictly between samples,
+  the review's catch — is exactly the shape the pairwise check
+  refuses; the sufficiency of the two together is argued in D3's
+  counterexample, and the property families probe both voices live
+  (the crossings rejected, the conforming members alive).
 - The format chain grows again (three migrator hops by now); each
   hop is a no-op but the chain must be walked and tested forever.
 
@@ -990,10 +1090,10 @@ implementation phase must **measure and freeze** (the house method):
 - The v0.4 golden bytes, after the writer is deterministic by
   construction.
 
-If implementation finds the sampled self-certification missing a
-real failure shape (a profile that passes construction with a wrong
-sign somewhere), the sampling rule is amended in place — the
-loud-error class never silently widens.
+If implementation finds the two-voiced certification (samples +
+pairwise intersections) missing a real failure shape (a profile
+that passes construction with a wrong sign somewhere), the rule is
+amended in place — the loud-error class never silently widens.
 
 ## References
 
