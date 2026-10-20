@@ -82,16 +82,20 @@ def run_git(*args: str) -> str:
     ).stdout
 
 
-def commit_subjects(spec: str) -> list[tuple[str, str, bool]]:
+def commit_subjects(spec: str, single: bool = True) -> list[tuple[str, str, bool]]:
     """Ritorna [(sha, subject, is_merge)] per la specifica data.
 
     "A..B" e' un range; qualunque altra cosa (SHA, HEAD) e' UN commit:
-    git log <spec> seguirebbe tutta la storia di quell'oggetto.
+    git log <spec> seguirebbe tutta la storia di quell'oggetto, quindi
+    di default il log si ferma a -1. Con single=False (modo --all) si
+    segue invece tutta la storia raggiungibile, root compresa.
     """
     if ".." in spec:
         out = run_git("log", "--format=%H%x1f%s%x1f%P", spec)
-    else:
+    elif single:
         out = run_git("log", "-1", "--format=%H%x1f%s%x1f%P", spec)
+    else:
+        out = run_git("log", "--format=%H%x1f%s%x1f%P", spec)
     result = []
     for line in out.splitlines():
         if not line:
@@ -116,10 +120,11 @@ def main(argv: list[str]) -> int:
         print(f"PASS: {subject!r}" if reason is None else f"FAIL: {subject!r} — {reason}")
         return 0 if reason is None else 1
 
-    spec = "HEAD" if argv[0] == "--all" else argv[0]
+    is_all = argv[0] == "--all"
+    spec = "HEAD" if is_all else argv[0]
 
     try:
-        commits = commit_subjects(spec)
+        commits = commit_subjects(spec, single=not is_all)
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or "").strip() or f"git log {spec} fallito"
         print(f"errore: {detail}", file=sys.stderr)

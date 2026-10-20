@@ -1,0 +1,38 @@
+fix(subject-lint): --all esaminava solo HEAD invece di tutta la storia
+
+FASE 0 (caso a, dal log reale): run #84 (67d16ea "bozza sketch",
+12 < 15) e #85 (3aeef4b "Riepilogo:", 10 < 15) rosse SOLO sul job
+subject-lint; build-and-test 3/3 verde. Meccanica verificata sulla
+run #85: range giudicato 67d16ea..3aeef4b, riprodotto localmente
+byte-esatto con lo script identico (SHA256 5f30d0a0); merge skip,
+fallback force-push = warning, fetch-depth 0 — nessun bug di gate.
+Storia NON riscritta: la X si sana con questa push (il range
+giudicato sarà 3aeef4b..HEAD = questa sola commit).
+
+BUG (classe b, emerso durante quella diagnosi): --all promette
+"tutta la storia (solo report)" nel docstring ma giudicava UN solo
+commit: main() traduceva --all in spec="HEAD" e commit_subjects()
+applicava git log -1 a ogni spec non-range, così il report di
+storia elencava 1 commit invece di 71.
+
+FIX: commit_subjects(spec, single=True) di default; --all ora
+passa single=False e git log segue tutta la storia raggiungibile
+da HEAD, root compresa. Le modalità da gate — range della push,
+SHA singolo (nuovo ramo / fallback force-push), --explain — non
+cambiano di un bit: il giudizio CI resta identico.
+
+VERIFICHE (matrice completa, vecchio vs nuovo script): range
+67d16ea..3aeef4b → output identico, exit 1 (riproduce la run #85);
+SHA singolo e HEAD → output identico; --explain identico.
+--all: da 1 commit esaminato a 71 (merge saltati: 0): 29 conformi
+/ 42 non conformi — il report d'introduzione era 29/40 su 69
+soggetti; le due non conformi in più sono "bozza sketch" e
+"Riepilogo:". Exit 1 in --all = report della storia, come da
+docstring; la storia passata non si tocca. py_compile OK
+(3.12; nessun costrutto nuovo, compatibilità 3.10 invariata).
+Superficie toccata: solo questo script — tool di CI, l'unico
+riferimento al di fuori di sé è il workflow (git grep); nessun
+impatto su superficie build/test, provata verde 3/3 dalle run #85.
+
+Auto-dimostrazione: questa push sarà giudicata sul range
+3aeef4b..HEAD = questa sola commit, soggetto conforme → CI verde.
