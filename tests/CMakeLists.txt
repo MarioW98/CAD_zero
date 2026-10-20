@@ -16,6 +16,9 @@ set(CAD_0_TEST_SOURCES
     unit/sdf/test_transforms.cpp
     unit/sdf/test_evaluate.cpp
     unit/sdf/test_mesh_extract.cpp
+    unit/sdf/test_sketch2d_entities.cpp
+    unit/sdf/test_sketch2d_profile.cpp
+    unit/sdf/test_sketch2d_extrude.cpp
     unit/io/test_stl.cpp
     unit/io/test_obj.cpp
     unit/io/test_threemf.cpp

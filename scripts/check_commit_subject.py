@@ -5,7 +5,8 @@ Regola (deriva dai 69 soggetti realmente usati nella storia del repo,
 v. report nella commit che introduce questo script):
 
   un soggetto e' CONFORME se e solo se
-    1. non e' un "tag puro" (U2, f.1, p1, 0027-....md, 5, ...);
+    1. non e' un "tag puro" (U2, f.1, p1, 0027-....md, docs/adr, 5, ...):
+       nemmeno un percorso di file e' una descrizione;
     2. NON inizia con uno starter vuoto (fix, fixing, various, check,
        end, init, upd, update, clean, rewrote, minor, majr) seguito
        da spazio, '/' o fine stringa (case-sensitive, come la regex
@@ -47,6 +48,13 @@ TAG_ONLY_PATTERNS = [
     # subject = nome di file e basta ("0027-phase-f-....md")
     (r"^[A-Za-z0-9_./\\-]+\.(md|txt|zip|py|cpp|hpp|h|cc|cxx|sh|json|yml|yaml|cmake|inl)$",
      "nome di file, non un soggetto"),
+    # subject = percorso e basta ("docs/adr", "src/core/sdf"), con o
+    # senza estensione: contiene '/' ed e' SOLO quello. Un soggetto che
+    # nomina un percorso dentro una frase ("correzione ... stl/obj ecc")
+    # ha spazi e parole: non matcha e resta giudicato dal resto delle
+    # regole. Un percorso non e' una descrizione.
+    (r"^[A-Za-z0-9_.\-]+(/[A-Za-z0-9_.\-]+)+/?$",
+     "percorso di file, non una descrizione"),
 ]
 
 # Starter vuoti: parole che nella storia compaiono solo in soggetti

@@ -283,3 +283,33 @@ Regressione dedicata:
    è il feedback veloce sul dev box — il gate autoritativo resta
    l'import 3.10 della CI, che il checker non sostituisce (su 3.10 la
    tokenizzazione interna delle f-string non è osservabile).
+
+## Consegna (delivery handoff)
+
+Regola **permanente**, entrata in vigore alla terza occorrenza dello
+stesso incidente — tre volte di fila file la cui funzione era
+descrivere la consegna sono finiti nell'albero:
+
+* `dbeac3e`: `ISTRUZIONI_PUSH_CI_VERDE.txt` + `commit_msg.txt`
+  committati insieme al fix che dovevano accompagnare;
+* `b37ac0d`: la rimozione lascia sul terreno una copia di
+  `check_commit_subject.py` in radice (duplicato di `scripts/`);
+* `0c9c958`: di nuovo `ISTRUZIONI_PUSH_ADR0030_REV2.txt` +
+  `commit_msg.txt` committati.
+
+La regola:
+
+1. **Il pacco di consegna contiene SOLO file di contenuto del repo,
+   nelle loro posizioni finali.** Nessun file il cui scopo è
+   descrivere la consegna entra nel pacco — e quindi non entra
+   nell'albero.
+2. **Le istruzioni di push/commit vivono SOLO nel rapporto finale in
+   chat** di chi consegna: comandi, range attesi, verifica CI.
+3. **Il messaggio di commit viene dato come TESTO da incollare**
+   (`git commit -m "..."`), mai come file: `commit_msg.txt` e simili
+   sono vietati.
+
+Strumento pratico conforme: `git archive` dell'albero verificato
+(solo contenuti, posizioni finali) come pacchetto, istruzioni nel
+rapporto in chat. La storia non si riscrive per sanare un pacco non
+conforme: si corregge la consegna successiva.

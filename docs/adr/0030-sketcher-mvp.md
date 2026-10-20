@@ -2,6 +2,18 @@
 
 ## Status
 
+**Accepted (2026-10-20, Revision 2).** The review outcome, recorded
+in the Revision 2 paragraph below, IS the acceptance: D1, D2, D4 and
+D5.1–D5.2 accepted as written; D3 accepted WITH its blocking
+correction applied (the pairwise entity-intersection check alongside
+the samples — together sufficient, either alone not); D6's condition
+applied (the failure-regime property family); the D2 consequence
+line (stable entity IDs as the solver ADR's declared prerequisite)
+at its site. No further corrections. Implementation proceeds one
+commit per coherent unit, CI green after each; Unit 1 is the 2D
+kernel and the extrusion — core/sdf + tests only, no scene, no
+format, no UI in this unit.
+
 **Draft (2026-10-20).** Docs-only commit, in attesa di review — the
 ADR-first pattern of ADR-0026/0027: this document argues the decisions
 BEFORE any code exists (the Phase F-2 opening move). Zero code, zero
