@@ -613,6 +613,15 @@ std::string serialize_document(const scene::Scene& s, const NativeCamera& cam,
             n.emplace_back("kind", JsonValue("mesh"));
             n.emplace_back("mesh", JsonValue(JsonObject{})
                                       .set("blob", JsonValue(mesh_blob_id(node))));
+        } else if (node.kind == scene::NodeKind::Sketch) {
+            // v0.3 has no sketch payload section: refuse loudly (a
+            // null body deref would crash; an empty body would lie).
+            // The sketch/extrude format is v0.4 (ADR-0030 D4).
+            throw std::runtime_error(
+                "native format: cannot serialize the Sketch-kind node \"" +
+                node.name + "\" (#" + std::to_string(node.id) +
+                ") - the sketch payload is a v0.4 concern (ADR-0030 D4); "
+                "v0.3 serializes Sdf and Mesh nodes only");
         } else {
             if (!node.builder.empty())
                 n.emplace_back("builder", JsonValue(node.builder));
@@ -625,13 +634,15 @@ std::string serialize_document(const scene::Scene& s, const NativeCamera& cam,
             //   "operation": { "type": "subtract", "target": 2,
             //                  "tool": 3, "params": { "offset_x": … } }
             if (node.operation) {
+                if (node.operation->type != scene::OperationType::Subtract)
+                    throw std::runtime_error(
+                        "native format: cannot serialize an Extrude "
+                        "operation - v0.3 serializes subtract recipes only; "
+                        "the extrude recipe is v0.4 (ADR-0030 D4)");
                 JsonValue op(JsonObject{});
                 op.as_object().emplace_back(
                     "type",
-                    JsonValue(node.operation->type ==
-                                  scene::OperationType::Subtract
-                                  ? "subtract"
-                                  : "?"));
+                    JsonValue("subtract"));
                 op.as_object().emplace_back(
                     "target",
                     JsonValue(static_cast<double>(node.operation->target)));
@@ -971,12 +982,19 @@ ParsedDocument parse_document(std::string_view text,
         if (has_ops) {
             for (const auto& n : doc.nodes) {
                 if (!n.operation) continue;
-                if (n.operation->target == n.id || n.operation->tool == n.id)
-                    throw std::runtime_error(
-                        "native format: node " + std::to_string(n.id) +
-                        " operation references ITSELF ("
-                        "target/tool == own id) — structurally corrupt "
-                        "(ADR-0027 D2)");
+                // The self-reference pre-check, over the RECIPE'S ROLE
+                // LIST (the D2 generalization — an Extrude referencing
+                // itself as its own sketch is caught here, exactly as a
+                // Subtract referencing itself as its own target).
+                const auto roles = scene::recipe_roles(*n.operation);
+                for (std::size_t role = 0; role < roles.size(); ++role)
+                    if (roles[role] == n.id)
+                        throw std::runtime_error(
+                            "native format: node " + std::to_string(n.id) +
+                            " operation references ITSELF (" +
+                            scene::recipe_role_name(*n.operation, role) +
+                            " == own id) — structurally corrupt "
+                            "(ADR-0027 D2)");
             }
             scene::rebuild_document_operations(doc.nodes);
         }

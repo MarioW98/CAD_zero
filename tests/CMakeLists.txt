@@ -26,6 +26,7 @@ set(CAD_0_TEST_SOURCES
     unit/scene/test_builders.cpp
     unit/scene/test_mesh_nodes.cpp
     unit/scene/test_operations.cpp
+    unit/scene/test_sketch_scene.cpp
     unit/viewport/test_camera.cpp
     unit/viewport/test_command_stack.cpp
     unit/viewport/test_selection.cpp

@@ -498,7 +498,8 @@ TEST_CASE("Certificate: an unbounded profile is refused — 'does not close'") {
 TEST_CASE("Property: |f| <= d(P, contour) — the theorem, live (seeded)") {
     // A 1-Lipschitz field vanishing on the contour cannot over-reach
     // its own zero-set: the composed profile is exactly such a field.
-    Prng prng(0x5EED2D01u);
+    const std::uint32_t seed = 0x5EED2D01u;
+    Prng prng(seed);
     int checked = 0;
     for (int member = 0; member < 12; ++member) {
         const float x0 = prng.frange(-2.0f, 0.0f), x1 = prng.frange(0.5f, 2.0f);
@@ -516,7 +517,8 @@ TEST_CASE("Property: |f| <= d(P, contour) — the theorem, live (seeded)") {
                           prng.frange(y0 - 0.5f, y1 + 0.5f)};
             const float f = prof.sample(p).value;
             const float d = contour_distance(chains, p);
-            INFO("member ", member, " pt ", pt, " f=", f, " d=", d);
+            INFO("seed=", seed, " iter=", member, " pt=", pt,
+                 " f=", f, " d=", d);
             CHECK(std::abs(f) <= d + 1e-5f);
             ++checked;
         }
@@ -525,7 +527,8 @@ TEST_CASE("Property: |f| <= d(P, contour) — the theorem, live (seeded)") {
 }
 
 TEST_CASE("Property: L = 1 — pairwise slopes never exceed the distance") {
-    Prng prng(0x5EED2D02u);
+    const std::uint32_t seed = 0x5EED2D02u;
+    Prng prng(seed);
     int checked = 0;
     for (int member = 0; member < 8; ++member) {
         const std::vector<SketchChain> chains{
@@ -537,7 +540,8 @@ TEST_CASE("Property: L = 1 — pairwise slopes never exceed the distance") {
             const float df = prof.sample(p).value - prof.sample(q).value;
             const float d = (p - q).length();
             if (d < 1e-3f) continue;
-            INFO("member ", member, " pt ", pt, " |df|=", std::abs(df), " d=", d);
+            INFO("seed=", seed, " iter=", member, " pt=", pt,
+                 " |df|=", std::abs(df), " d=", d);
             CHECK(std::abs(df) <= d + 1e-5f);
             ++checked;
         }
@@ -551,7 +555,8 @@ TEST_CASE("Property: gradient vs FD, component-wise (seam scope documented)") {
     // the max-seam (joints, span ends) are excluded by margin, counted,
     // and the liveness floor asserts the exclusions did not eat the
     // family (the box/intersect precedent of test_operators).
-    Prng prng(0x5EED2D03u);
+    const std::uint32_t seed = 0x5EED2D03u;
+    Prng prng(seed);
     const float h = 1e-3f;
     int compared = 0, skipped = 0;
     const std::vector<SketchChain> chains{rect_chain(-1.0f, -0.6f, 1.4f, 0.9f)};
@@ -580,6 +585,10 @@ TEST_CASE("Property: gradient vs FD, component-wise (seam scope documented)") {
         // Budget: FD roundoff ~ eps*|f|/2h ~ 1e-4 at |f|~2, truncation
         // ~ h^2 ~ 1e-6; the failures this must catch (a wrong branch or
         // a missing sign) are O(1) — 2e-3 leaves two orders of margin.
+        INFO("seed=", seed, " iter=", pt, " p=(", p.x, ", ", p.y,
+             ") margin=", margin, " clearance=", clearance,
+             " gx=", s.gradient.x, " fdx=", fdx,
+             " gy=", s.gradient.y, " fdy=", fdy);
         CHECK(std::abs(s.gradient.x - fdx) <= 2e-3f);
         CHECK(std::abs(s.gradient.y - fdy) <= 2e-3f);
         ++compared;
@@ -588,97 +597,255 @@ TEST_CASE("Property: gradient vs FD, component-wise (seam scope documented)") {
     CHECK(skipped < 192);  // the exclusions did not eat the family
 }
 
-TEST_CASE("Property: the failure-regime family — crossings IN range, "
-           "rejections with names, conforming liveness (revision 2's condition)") {
+TEST_CASE("Property: the failure-regime family — notches and crossings IN "
+           "range, rejections with names, conforming liveness (revision 2's "
+           "condition, D6 complete)") {
     // The house lesson (D3, exercised here): a property whose range
     // avoids the regime is vacuous. The generator's member range
-    // INCLUDES hole circles that cross the outer segments mid-span
-    // (lie #5b manufactured on purpose) AND holes that sit clear —
-    // the former must be rejected at construction with both entities
-    // and the point named, the latter must construct.
-    Prng prng(0xB0D5EEDu);
+    // INCLUDES every failure shape D6 names, each manufactured on
+    // purpose and classified by an INDEPENDENT oracle before the
+    // kernel is asked anything:
+    //   * deep notches — hole circles whose discs swallow the profile
+    //     width (every segment midpoint covered): the samples
+    //     instrument refuses, the entity named (the loud error, not
+    //     the silent sign flip);
+    //   * transversal crossings — hole circles whose curves cross the
+    //     outer segments mid-span (lie #5b): the pairwise instrument
+    //     refuses when the checkpoints are clean (the pure anatomy),
+    //     the samples otherwise — both loud, both named;
+    //   * ARC crossings — a concave arc closing the left side of a CW
+    //     rectangle, its curve crossing the top segment mid-span: the
+    //     arc edition of lie #5b, pure pairwise (the arc's circle
+    //     through (0,0) and (0,1) meets y=1 again at x=2c, strictly
+    //     between the joint and the midpoint);
+    // and the conforming sides — clear circles and D-shapes — must
+    // PASS the complete certification: the refusals were about the
+    // regimes, never the entity kinds.
+    const std::uint32_t seed = 0xB0D5EEDu;
+    Prng prng(seed);
     int crossing_members = 0, conforming_members = 0, pure_pairwise_members = 0;
-    for (int member = 0; member < 40; ++member) {
-        const std::vector<SketchChain> outer{rect_chain(-1.0f, -0.5f, 1.0f, 0.5f)};
-        const Vec2f c{prng.frange(-1.2f, 1.2f), prng.frange(-0.7f, 0.7f)};
-        const float r = prng.frange(0.1f, 0.55f);
-        const std::vector<SketchChain> chains{
-            outer[0], SketchChain{{sketch_circle(c, r, /*hole=*/true)}}};
+    int notch_members = 0, arc_crossed = 0, arc_conforming = 0;
+    for (int member = 0; member < 80; ++member) {
+        switch (prng.int_below(4)) {
+        case 0: {
+            // --- the circle band: the outer rectangle + one hole ----
+            const std::vector<SketchChain> outer{rect_chain(-1.0f, -0.5f, 1.0f, 0.5f)};
+            const float cx = prng.frange(-1.2f, 1.2f);
+            const float cy = prng.frange(-0.7f, 0.7f);
+            const float r = prng.frange(0.1f, 0.55f);
+            const std::vector<SketchChain> chains{
+                outer[0], SketchChain{{sketch_circle({cx, cy}, r, /*hole=*/true)}}};
 
-        // Regime classification, INDEPENDENT of the kernel: does the
-        // circle's curve cross any of the four segments?
-        bool crosses = false;
-        std::vector<Vec2f> expected;
-        for (const auto& e : outer[0].entities) {
-            const float dmin = point_segment_distance(c, e.segment.a, e.segment.b);
-            const float dmax = std::max((c - e.segment.a).length(),
-                                        (c - e.segment.b).length());
-            if (dmin <= r && r <= dmax) {
-                crosses = true;
-                // Roots on this segment (independent quadratic).
-                const Vec2f d = e.segment.b - e.segment.a;
-                const Vec2f ac = e.segment.a - c;
-                const float A = d.dot(d), B = 2.0f * d.dot(ac),
-                            C = ac.dot(ac) - r * r;
-                const float disc = B * B - 4.0f * A * C;
-                if (disc >= 0.0f) {
-                    const float sq = std::sqrt(disc);
-                    for (const float t : {(-B - sq) / (2.0f * A), (-B + sq) / (2.0f * A)})
-                        if (t >= 0.0f && t <= 1.0f)
-                            expected.push_back(e.segment.a + d * t);
+            // Regime classification, INDEPENDENT of the kernel: does
+            // the circle's curve cross any of the four segments?
+            bool crosses = false;
+            std::vector<Vec2f> expected;
+            for (const auto& e : outer[0].entities) {
+                const float dmin = point_segment_distance({cx, cy}, e.segment.a, e.segment.b);
+                const float dmax = std::max((Vec2f{cx, cy} - e.segment.a).length(),
+                                            (Vec2f{cx, cy} - e.segment.b).length());
+                if (dmin <= r && r <= dmax) {
+                    crosses = true;
+                    // Roots on this segment (independent quadratic).
+                    const Vec2f d = e.segment.b - e.segment.a;
+                    const Vec2f ac = e.segment.a - Vec2f{cx, cy};
+                    const float A = d.dot(d), B = 2.0f * d.dot(ac),
+                                C = ac.dot(ac) - r * r;
+                    const float disc = B * B - 4.0f * A * C;
+                    if (disc >= 0.0f) {
+                        const float sq = std::sqrt(disc);
+                        for (const float t : {(-B - sq) / (2.0f * A), (-B + sq) / (2.0f * A)})
+                            if (t >= 0.0f && t <= 1.0f)
+                                expected.push_back(e.segment.a + d * t);
+                    }
                 }
             }
-        }
-        // Conforming: the hole sits strictly inside the rectangle.
-        const bool inside = c.x + r < 1.0f && c.x - r > -1.0f &&
-                            c.y + r < 0.5f && c.y - r > -0.5f;
+            // Conforming: the hole sits strictly inside the rectangle.
+            const bool inside = cx + r < 1.0f && cx - r > -1.0f &&
+                                cy + r < 0.5f && cy - r > -0.5f;
 
-        if (crosses) {
-            ++crossing_members;
-            // Which instrument SHOULD fire? Independent oracle over the
-            // certificate's own checkpoints: if some checkpoint is
-            // already violated, the samples fire (and name it); if all
-            // checkpoints are clean, ONLY the pairwise can catch the
-            // crossing — the pure lie-#5b anatomy. Both are loud; the
-            // family asserts the right one per member.
-            bool checkpoints_clean = true;
-            for (const Vec2f& cp : certificate_checkpoints(chains))
-                if (std::abs(oracle_composed(chains, cp)) > kSampleTol) {
-                    checkpoints_clean = false;
-                    break;
+            INFO("seed=", seed, " iter=", member, " band=circle",
+                 " c=(", cx, ", ", cy, ") r=", r,
+                 " crosses=", crosses, " inside=", inside);
+            if (crosses) {
+                ++crossing_members;
+                // Which instrument SHOULD fire? Independent oracle over
+                // the certificate's own checkpoints: if some checkpoint
+                // is already violated, the samples fire (and name it);
+                // if all checkpoints are clean, ONLY the pairwise can
+                // catch the crossing — the pure lie-#5b anatomy. Both
+                // are loud; the family asserts the right one per
+                // member.
+                bool checkpoints_clean = true;
+                for (const Vec2f& cp : certificate_checkpoints(chains))
+                    if (std::abs(oracle_composed(chains, cp)) > kSampleTol) {
+                        checkpoints_clean = false;
+                        break;
+                    }
+                if (checkpoints_clean) ++pure_pairwise_members;
+                INFO("check: crossing members are refused at construction "
+                     "(pairwise when the checkpoints are clean, samples "
+                     "otherwise — both entities and the point named)");
+                try {
+                    ProfileSDF prof(chains);
+                    (void)prof;
+                    FAIL("expected std::invalid_argument for a crossing member");
+                } catch (const std::invalid_argument& e) {
+                    const std::string msg = e.what();
+                    if (checkpoints_clean) {
+                        // Pure lie #5b: only the pairwise instrument can refuse.
+                        CHECK(msg.find("declared shared joints") != std::string::npos);
+                        CHECK(msg.find("circle[chain 1 #0]") != std::string::npos);
+                        CHECK(msg.find("segment[chain 0 #") != std::string::npos);
+                        REQUIRE(!expected.empty());
+                        const auto points = parse_message_points(msg);
+                        bool found = false;
+                        for (const Vec2f& p : points)
+                            for (const Vec2f& x : expected)
+                                if ((p - x).length() < 1e-3f) found = true;
+                        CHECK(found); // the crossing point is named
+                    } else {
+                        // The samples instrument caught the violated checkpoint.
+                        CHECK(msg.find("must vanish") != std::string::npos);
+                    }
                 }
-            if (checkpoints_clean) ++pure_pairwise_members;
+            } else {
+                // No crossing: a hole strictly inside, or clear of the
+                // rectangle entirely — either way the drawn contour is
+                // the boundary and the profile must certify.
+                ++conforming_members;
+                INFO("check: conforming members pass the complete certification");
+                CHECK_NOTHROW(ProfileSDF{chains});
+            }
+            break;
+        }
+        case 1: {
+            // --- the deep-notch band: the hole's disc swallows the ---
+            // profile width (every segment midpoint covered) — D6's
+            // "concave entities whose circles swallow profile width".
+            const float cx = prng.frange(-0.08f, 0.08f);
+            const float cy = prng.frange(-0.08f, 0.08f);
+            const float r = prng.frange(1.13f, 1.25f);
+            const std::vector<SketchChain> chains{
+                rect_chain(-1.0f, -0.5f, 1.0f, 0.5f),
+                SketchChain{{sketch_circle({cx, cy}, r, /*hole=*/true)}}};
+            // Independent oracle: every midpoint strictly inside the
+            // disc (the declared ranges guarantee it — max distance
+            // from c to the midpoints is sqrt(1.08^2 + 0.08^2) < 1.13
+            // <= r, so the f > 0 margin at the first failing
+            // checkpoint is at least ~0.04, four orders past tol).
+            bool covers_all = true;
+            for (const Vec2f m : {Vec2f{1, 0}, Vec2f{-1, 0}, Vec2f{0, 0.5f},
+                                  Vec2f{0, -0.5f}})
+                if (!((Vec2f{cx, cy} - m).length() < r)) covers_all = false;
+            INFO("seed=", seed, " iter=", member, " band=notch",
+                 " c=(", cx, ", ", cy, ") r=", r, " covers_all=", covers_all);
+            CHECK(covers_all); // the regime is IN the range, on purpose
+            INFO("check: deep-notch members are refused by the samples "
+                 "instrument, the entity named (the loud error, not the "
+                 "silent sign flip)");
             try {
                 ProfileSDF prof(chains);
                 (void)prof;
-                FAIL("expected std::invalid_argument for a crossing member");
+                FAIL("expected std::invalid_argument for a deep-notch member");
             } catch (const std::invalid_argument& e) {
                 const std::string msg = e.what();
-                if (checkpoints_clean) {
-                    // Pure lie #5b: only the pairwise instrument can refuse.
-                    CHECK(msg.find("declared shared joints") != std::string::npos);
-                    CHECK(msg.find("circle[chain 1 #0]") != std::string::npos);
-                    CHECK(msg.find("segment[chain 0 #") != std::string::npos);
-                    REQUIRE(!expected.empty());
-                    const auto points = parse_message_points(msg);
-                    bool found = false;
-                    for (const Vec2f& p : points)
-                        for (const Vec2f& x : expected)
-                            if ((p - x).length() < 1e-3f) found = true;
-                    CHECK(found); // the crossing point is named
-                } else {
-                    // The samples instrument caught the violated checkpoint.
-                    CHECK(msg.find("must vanish") != std::string::npos);
-                }
+                CHECK(msg.find("must vanish") != std::string::npos);
+                CHECK(msg.find("segment[chain 0 #") != std::string::npos);
             }
-        } else if (inside) {
-            ++conforming_members;
-            CHECK_NOTHROW(ProfileSDF{chains});
+            ++notch_members;
+            break;
+        }
+        case 2: {
+            // --- the arc-crossing band: the arc edition of lie #5b ---
+            // A CW rectangle whose left side is a CONCAVE (hole) arc
+            // sweeping the right major way from (0,0) to (0,1): the
+            // arc's curve re-crosses the top and bottom segments
+            // strictly between their joints and midpoints.
+            const float c = prng.frange(0.15f, 0.60f);
+            const float R = std::sqrt(c * c + 0.25f);
+            const float start = std::atan2(-0.5f, -c); // (0,0) seen from (c, 0.5)
+            const float end = std::atan2(0.5f, -c);    // (0,1) seen from (c, 0.5)
+            float sweep = end - start;
+            if (sweep <= 0.0f) sweep += 2.0f * kPi;
+            const std::vector<SketchChain> crossed{SketchChain{{
+                sketch_arc({c, 0.5f}, R, /*hole=*/true, start, sweep),
+                sketch_segment({0.0f, 1.0f}, {3.0f, 1.0f}, /*interior_left=*/false),
+                sketch_segment({3.0f, 1.0f}, {3.0f, 0.0f}, /*interior_left=*/false),
+                sketch_segment({3.0f, 0.0f}, {0.0f, 0.0f}, /*interior_left=*/false)}}};
+            // Independent anatomy, part 1 — every checkpoint of the
+            // certificate is clean: only the pairwise can catch this
+            // shape (the arc's mid-span sits at (c+R, 0.5), inside the
+            // strip; the segment midpoints and the (3, y) joints are
+            // outside the disc for c < 0.75).
+            bool checkpoints_clean = true;
+            for (const Vec2f& cp : certificate_checkpoints(crossed))
+                if (std::abs(oracle_composed(crossed, cp)) > kSampleTol) {
+                    checkpoints_clean = false;
+                    break;
+                }
+            // Part 2 — the expected crossing, computed independently:
+            // the circle through (0,0) and (0,1) centred at (c, 0.5)
+            // meets y=1 at x = c ± sqrt(R^2 − 0.25) = c ± c — the
+            // joint x=0 and the mid-span x=2c.
+            const Vec2f expected{2.0f * c, 1.0f};
+            INFO("seed=", seed, " iter=", member, " band=arc-crossed",
+                 " c=", c, " R=", R, " sweep=", sweep,
+                 " checkpoints_clean=", checkpoints_clean);
+            CHECK(checkpoints_clean);
+            INFO("check: crossed-arc members are refused by the PAIRWISE "
+                 "instrument — the arc and the segment named, the crossing "
+                 "point (2c, 1) named");
+            try {
+                ProfileSDF prof(crossed);
+                (void)prof;
+                FAIL("expected std::invalid_argument for a crossed-arc member");
+            } catch (const std::invalid_argument& e) {
+                const std::string msg = e.what();
+                CHECK(msg.find("declared shared joints") != std::string::npos);
+                CHECK(msg.find("arc[chain 0 #0]") != std::string::npos);
+                CHECK(msg.find("segment[chain 0 #1]") != std::string::npos); // the top
+                const auto points = parse_message_points(msg);
+                bool found = false;
+                for (const Vec2f& p : points)
+                    if ((p - expected).length() < 1e-3f) found = true;
+                CHECK(found); // the crossing point is named
+            }
+            ++arc_crossed;
+            break;
+        }
+        default: {
+            // --- the arc-conforming band: seeded D-shapes (the ------
+            // pinned shape of the field tests, scaled and re-domed).
+            const float L = prng.frange(0.8f, 2.2f);
+            const float k = prng.frange(-0.6f, 0.6f);
+            const float R = std::sqrt((L * 0.5f) * (L * 0.5f) + k * k);
+            const float start = std::atan2(-k, L * 0.5f);  // (L/2, 0)
+            const float end = std::atan2(-k, -L * 0.5f);   // (−L/2, 0)
+            float sweep = end - start;
+            if (sweep <= 0.0f) sweep += 2.0f * kPi;
+            const std::vector<SketchChain> dshape{SketchChain{{
+                sketch_segment({-L * 0.5f, 0.0f}, {L * 0.5f, 0.0f},
+                               /*interior_left=*/true),
+                sketch_arc({0.0f, k}, R, /*hole=*/false, start, sweep)}}};
+            INFO("seed=", seed, " iter=", member, " band=arc-conforming",
+                 " L=", L, " k=", k, " R=", R, " sweep=", sweep);
+            INFO("check: conforming arc members (D-shapes) pass the "
+                 "complete certification");
+            CHECK_NOTHROW(ProfileSDF{dshape});
+            ++arc_conforming;
+            break;
+        }
         }
     }
-    // Liveness: the generator actually produced both regimes — and the
-    // pure pairwise anatomy is IN its range (the house lesson).
+    // Liveness: the generator actually produced every regime — the
+    // pure pairwise anatomy is IN its range, the notches are IN its
+    // range, and the conforming sides of every entity kind are too
+    // (the house lesson).
     CHECK(crossing_members >= 5);
     CHECK(conforming_members >= 5);
     CHECK(pure_pairwise_members >= 1);
+    CHECK(notch_members >= 3);
+    CHECK(arc_crossed >= 3);
+    CHECK(arc_conforming >= 3);
 }

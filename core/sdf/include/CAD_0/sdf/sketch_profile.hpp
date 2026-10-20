@@ -115,6 +115,47 @@ struct SketchChain {
     std::vector<SketchEntity> entities;
 };
 
+// --- The definition-state predicates (ADR-0030 D2 revision 1, D5.5) ---
+//
+// Is a chain CLOSED? The sketch node's visible state (an open chain is
+// a legal, flagged editing state), the extrude's closure precondition
+// and the canvas's definition-state badge all ask THIS one function —
+// the kernel and the UI share one opinion, by construction. The
+// judgment is the certificate's own coincidence rule (kJointCoincidenceTol
+// over consecutive endpoints, the closing joint included), so a chain
+// this predicate calls closed is exactly a chain validate_chain_structure
+// accepts, and one it calls open is refused at materialization with
+// the gap named.
+inline bool chain_is_closed(const SketchChain& c) noexcept {
+    const auto& ents = c.entities;
+    if (ents.empty()) return false; // nothing drawn: nothing closed
+    if (ents.size() == 1)
+        return ents[0].kind == SketchEntity::Kind::Circle; // closes on itself
+    // A circle has no endpoints to connect: inside a multi-entity chain
+    // it can never close (the certificate's structural refusal).
+    for (const auto& e : ents)
+        if (e.kind == SketchEntity::Kind::Circle) return false;
+    for (std::size_t i = 0; i < ents.size(); ++i) {
+        const SketchEntity& a = ents[i];
+        const SketchEntity& b = ents[(i + 1) % ents.size()];
+        const math::Vec2f a_end =
+            a.kind == SketchEntity::Kind::Segment ? a.segment.b : arc_end_point(a.arc);
+        const math::Vec2f b_start =
+            b.kind == SketchEntity::Kind::Segment ? b.segment.a : arc_start_point(b.arc);
+        if ((a_end - b_start).length() > kJointCoincidenceTol) return false;
+    }
+    return true;
+}
+
+// The sketch's definition state: every chain closed (an empty sketch
+// is not closed — there is no contour to extrude).
+inline bool all_chains_closed(const std::vector<SketchChain>& chains) noexcept {
+    if (chains.empty()) return false;
+    for (const auto& c : chains)
+        if (!chain_is_closed(c)) return false;
+    return true;
+}
+
 namespace sketch_detail {
 
 inline std::string fmt_pt(const math::Vec2f& p) {

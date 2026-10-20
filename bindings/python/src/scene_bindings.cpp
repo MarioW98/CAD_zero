@@ -6,6 +6,8 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/function.h>
 #include <nanobind/stl/unique_ptr.h>
+#include <nanobind/stl/tuple.h>
+#include <nanobind/stl/vector.h>
 
 #include "CAD_0/scene/scene.hpp"
 #include "CAD_0/scene/builders.hpp"
@@ -15,11 +17,50 @@
 #include "CAD_0/sdf/primitives.hpp"
 #include "CAD_0/sdf/operators.hpp"
 #include "CAD_0/sdf/transforms.hpp"
+#include "CAD_0/sdf/sketch_entities.hpp"
+#include "CAD_0/sdf/sketch_profile.hpp"
 #include "CAD_0/math/vec.hpp"
 #include "CAD_0/math/quat.hpp"
 
+#include <tuple>
+
 namespace nb = nanobind;
 using namespace CAD_0;
+
+namespace {
+
+// 2-tuple -> Vec2f for the sketch entity factories (Vec2f is not a
+// bound class; the canvas authors entities in plain (x, y) tuples).
+math::Vec2f as_vec2(const std::tuple<float, float>& t) {
+    return math::Vec2f{std::get<0>(t), std::get<1>(t)};
+}
+nb::tuple vec2_to_tuple(const math::Vec2f& p) {
+    return nb::make_tuple(p.x, p.y);
+}
+
+// The recipe as a plain dict — the subtract's shape (Phase F) or the
+// extrude's (ADR-0030 D2), dispatched on the type. Read-only from
+// Python: edits go through the scene entries (the recipe and the body
+// never drift apart).
+nb::dict operation_to_dict(const scene::OperationRecipe& r) {
+    nb::dict d;
+    if (r.type == scene::OperationType::Extrude) {
+        d["type"] = "extrude";
+        d["sketch"] = r.sketch;
+        d["distance"] = r.distance;
+        d["direction"] = r.direction;
+    } else {
+        d["type"] = "subtract";
+        d["target"] = r.target;
+        d["tool"] = r.tool;
+        d["offset_x"] = r.offset_x;
+        d["offset_y"] = r.offset_y;
+        d["offset_z"] = r.offset_z;
+    }
+    return nb::dict(d);
+}
+
+} // namespace
 
 void bind_scene(nb::module_& m) {
     auto scene_mod = m.def_submodule("scene", "Scene management");
@@ -44,11 +85,12 @@ void bind_scene(nb::module_& m) {
         // was subtracted.
         .def_rw("name", &scene::SceneNode::name)
         .def_ro("visible", &scene::SceneNode::visible)
-        // Node kind (ADR-0002 honest dispatch): "sdf" or "mesh".
-        // Python code that assumes an SDF body MUST check this first —
-        // a Mesh node has no body to evaluate, no params, no factory.
+        // Node kind (ADR-0002 honest dispatch): "sdf", "mesh" or
+        // "sketch". Python code that assumes an SDF body MUST check
+        // this first — a Mesh node has no body to evaluate, a Sketch
+        // node is 2D data with no body and no mesh at all.
         .def_prop_ro("kind", [](const scene::SceneNode& n) {
-            return n.kind == scene::NodeKind::Mesh ? "mesh" : "sdf";
+            return scene::node_kind_name(n.kind);
         })
         // Mesh-kind payload: THE geometry (imported STL/OBJ).
         .def_prop_ro("mesh", [](const scene::SceneNode& n) -> const sdf::TriangleMesh& {
@@ -113,29 +155,27 @@ void bind_scene(nb::module_& m) {
                                              "\" must be number, string or bool");
             }
         }, nb::arg("params"))
-        // ---- Operation provenance (Phase F, ADR-0027 D2) ----
+        // ---- Operation provenance (Phase F, ADR-0027 D2; ADR-0030 D2) ----
         // The recipe as a plain dict (None when the node is not an
-        // operation): {"type": "subtract", "target": id, "tool": id,
-        // "offset_x"/"offset_y"/"offset_z": float}. Read-only from
-        // Python: edits go through Scene.set_operation_offset (which
-        // re-materializes through the DAG pass — the recipe and the
-        // body never drift apart).
+        // operation): subtract -> {"type": "subtract", "target": id,
+        // "tool": id, "offset_x"/"offset_y"/"offset_z": float};
+        // extrude -> {"type": "extrude", "sketch": id, "distance":
+        // float, "direction": ±1}. Read-only from Python: edits go
+        // through the Scene entries (which re-materialize through the
+        // DAG pass — the recipe and the body never drift apart).
         .def_prop_ro("operation", [](const scene::SceneNode& n) -> nb::object {
             if (!n.operation) return nb::none();
-            nb::dict d;
-            d["type"] = n.operation->type == scene::OperationType::Subtract
-                            ? "subtract" : "?";
-            d["target"] = n.operation->target;
-            d["tool"] = n.operation->tool;
-            d["offset_x"] = n.operation->offset_x;
-            d["offset_y"] = n.operation->offset_y;
-            d["offset_z"] = n.operation->offset_z;
-            return nb::object(d);
+            return nb::object(operation_to_dict(*n.operation));
         })
         // The visible dangling state: an operand was deleted; the node
         // keeps its last materialized body and reports the error
         // (Scene.operation_error carries the actionable message).
-        .def_ro("operand_missing", &scene::SceneNode::operand_missing);
+        .def_ro("operand_missing", &scene::SceneNode::operand_missing)
+        // The visible PENDING state (ADR-0030 D2 revision 1): the
+        // sketch operand exists but its profile does not certify (an
+        // edit opened the chain). The last materialized body is kept;
+        // Scene.operation_error carries the certificate's message.
+        .def_ro("operation_pending", &scene::SceneNode::operation_pending);
 
     // ---- Parametric builder registry (single source of truth) -----------
     //
@@ -210,6 +250,52 @@ void bind_scene(nb::module_& m) {
         return scene::find_builder(tag) != nullptr;
     }, nb::arg("tag"));
 
+    // ---- Sketch entities + chains (ADR-0030 D2/D3) ------------------
+    //
+    // The 2D recipe structures the canvas (unit 4) authors and the
+    // property panel reads. Entities are addressed by (chain, index)
+    // in the sketch node's payload — never by geometric match
+    // (ADR-0005).
+    nb::class_<sdf::SketchEntity>(scene_mod, "SketchEntity")
+        .def_prop_ro("kind", [](const sdf::SketchEntity& e) {
+            switch (e.kind) {
+            case sdf::SketchEntity::Kind::Segment: return "segment";
+            case sdf::SketchEntity::Kind::Circle:  return "circle";
+            case sdf::SketchEntity::Kind::Arc:     return "arc";
+            }
+            return "?";
+        });
+
+    scene_mod.def("sketch_segment",
+        [](const std::tuple<float, float>& a, const std::tuple<float, float>& b,
+           bool interior_left) {
+            return sdf::sketch_segment(as_vec2(a), as_vec2(b), interior_left);
+        },
+        nb::arg("a"), nb::arg("b"), nb::arg("interior_left") = true,
+        "A segment entity: the half-plane bounded by the line through "
+        "a and b, interior on the left of a->b by default.");
+    scene_mod.def("sketch_circle",
+        [](const std::tuple<float, float>& center, float radius, bool hole) {
+            return sdf::sketch_circle(as_vec2(center), radius, hole);
+        },
+        nb::arg("center"), nb::arg("radius"), nb::arg("hole") = false,
+        "A circle entity: the disc (hole=False) or its complement "
+        "(hole=True — the ring's hole).");
+    scene_mod.def("sketch_arc",
+        [](const std::tuple<float, float>& center, float radius, bool hole,
+           float start_angle, float sweep) {
+            return sdf::sketch_arc(as_vec2(center), radius, hole, start_angle, sweep);
+        },
+        nb::arg("center"), nb::arg("radius"), nb::arg("hole") = false,
+        nb::arg("start_angle"), nb::arg("sweep"),
+        "An arc entity: the curved half-plane (disc or complement) of "
+        "the CCW span [start_angle, start_angle + sweep)." );
+
+    nb::class_<sdf::SketchChain>(scene_mod, "SketchChain")
+        .def(nb::init<std::vector<sdf::SketchEntity>>(), nb::arg("entities"),
+             "An ordered chain of entities, connected "
+             "endpoint-to-endpoint (a single circle closes itself).");
+
     // Scene
     nb::class_<scene::Scene>(scene_mod, "Scene")
         .def(nb::init<>())
@@ -224,6 +310,102 @@ void bind_scene(nb::module_& m) {
             return s.add_node(name, std::move(mesh));
         }, nb::arg("name"), nb::arg("mesh"))
         .def("remove_node", &scene::Scene::remove_node, nb::arg("id"))
+        // ---- Sketch nodes (ADR-0030 D2, unit 2) ----
+        //
+        // The sketch surface the canvas (unit 4) and the tests drive:
+        // creation (with or without initial chains), the entity
+        // editing primitives, the readable payload, and the derived
+        // definition state. An open chain is a legal editing state —
+        // the certificate runs at the extrude, never here.
+        .def("add_sketch_node",
+             [](scene::Scene& s, const std::string& name) {
+                 return s.add_sketch_node(name);
+             },
+             nb::arg("name") = "",
+             "Create an empty sketch node (kind = \"sketch\"): 2D entity "
+             "chains on the world XY plane — no body, no mesh, no "
+             "factory. Returns the new node id.")
+        .def("add_sketch_node",
+             [](scene::Scene& s, const std::string& name,
+                std::vector<sdf::SketchChain> chains) {
+                 return s.add_sketch_node(name, std::move(chains));
+             },
+             nb::arg("name"), nb::arg("chains"),
+             "Create a sketch node with initial chains. Returns the new "
+             "node id.")
+        .def("restore_sketch_node",
+             [](scene::Scene& s, std::uint32_t id, const std::string& name,
+                std::vector<sdf::SketchChain> chains) {
+                 return s.restore_sketch_node(id, name, std::move(chains));
+             },
+             nb::arg("node_id"), nb::arg("name"), nb::arg("chains"),
+             "Re-create a sketch node with a PINNED id (command redo "
+             "of a sketch create/delete). Raises RuntimeError if the id "
+             "is in use — never a silent rebind.")
+        .def("sketch_add_entity",
+             &scene::Scene::sketch_add_entity,
+             nb::arg("id"), nb::arg("chain"), nb::arg("entity"),
+             "Append an entity to a chain (chain == the current chain "
+             "count opens a new chain). Raises RuntimeError on a "
+             "non-sketch node.")
+        .def("sketch_set_entity",
+             &scene::Scene::sketch_set_entity,
+             nb::arg("id"), nb::arg("chain"), nb::arg("index"),
+             nb::arg("entity"),
+             "Replace an entity (a parameter edit). Entities are "
+             "addressed by (chain, index).")
+        .def("sketch_remove_entity",
+             &scene::Scene::sketch_remove_entity,
+             nb::arg("id"), nb::arg("chain"), nb::arg("index"),
+             "Delete an entity; removing the last entity of a chain "
+             "leaves the empty chain (a legal editing state).")
+        .def("sketch_closed", &scene::Scene::sketch_closed, nb::arg("id"),
+             "The visible definition state: True when every chain is "
+             "closed (an empty sketch is not closed). Derived, never "
+             "stored — the extrude's closure precondition.")
+        .def("sketch_chains",
+             [](const scene::Scene& s, std::uint32_t id) -> nb::list {
+                 const scene::SceneNode* n = s.get_node(id);
+                 if (n == nullptr || n->kind != scene::NodeKind::Sketch)
+                     throw std::runtime_error(
+                         "sketch_chains: node " + std::to_string(id) +
+                         " is not a sketch (ADR-0002 honest dispatch)");
+                 nb::list chains;
+                 for (const auto& c : n->sketch) {
+                     nb::list ents;
+                     for (const auto& e : c.entities) {
+                         nb::dict d;
+                         switch (e.kind) {
+                         case sdf::SketchEntity::Kind::Segment:
+                             d["kind"] = "segment";
+                             d["a"] = vec2_to_tuple(e.segment.a);
+                             d["b"] = vec2_to_tuple(e.segment.b);
+                             d["interior_left"] = e.segment.interior_left;
+                             break;
+                         case sdf::SketchEntity::Kind::Circle:
+                             d["kind"] = "circle";
+                             d["center"] = vec2_to_tuple(e.circle.center);
+                             d["radius"] = e.circle.radius;
+                             d["hole"] = e.circle.hole;
+                             break;
+                         case sdf::SketchEntity::Kind::Arc:
+                             d["kind"] = "arc";
+                             d["center"] = vec2_to_tuple(e.arc.center);
+                             d["radius"] = e.arc.radius;
+                             d["hole"] = e.arc.hole;
+                             d["start_angle"] = e.arc.start_angle;
+                             d["sweep"] = e.arc.sweep;
+                             break;
+                         }
+                         ents.append(d);
+                     }
+                     chains.append(ents);
+                 }
+                 return chains;
+             },
+             nb::arg("id"),
+             "The sketch payload as [[entity dict, ...], ...] — the "
+             "panel/canvas read surface.")
         .def("get_node", [](scene::Scene& s, std::uint32_t id) -> scene::SceneNode* {
             return s.get_node_mut(id);
         }, nb::arg("id"), nb::rv_policy::reference_internal)
@@ -325,6 +507,46 @@ void bind_scene(nb::module_& m) {
              "redo of create/delete). Builder tag + params are "
              "re-attached by the caller. Raises RuntimeError if the id "
              "is in use.")
+        // ---- Extrude (ADR-0030 D2, unit 2) ----
+        //
+        // The extrude's scene surface, mirroring the subtract's:
+        // creation from a LIVE sketch (closure is the precondition —
+        // an open sketch raises the certificate's ValueError, nothing
+        // is written), id-pinned re-creation for the command redo.
+        // The recipe edits (distance/direction) go through unit 4's
+        // dialog entries; the canvas does not exist yet.
+        .def("add_extrude_node",
+             [](scene::Scene& s, const std::string& name,
+                std::uint32_t sketch_id, float distance, int direction) {
+                 scene::OperationRecipe r;
+                 r.type = scene::OperationType::Extrude;
+                 r.sketch = sketch_id;
+                 r.distance = distance;
+                 r.direction = direction;
+                 return s.add_operation_node(name, r);
+             },
+             nb::arg("name") = "", nb::arg("sketch"),
+             nb::arg("distance") = 1.0f, nb::arg("direction") = 1,
+             "Create an extrude operation from a LIVE closed sketch, "
+             "materialized as the prism body (SlabZ-bounded). Raises "
+             "ValueError for an open/uncertifiable sketch (nothing "
+             "written), RuntimeError for a missing or non-sketch "
+             "operand. Returns the new node id.")
+        .def("restore_extrude_node",
+             [](scene::Scene& s, std::uint32_t node_id, const std::string& name,
+                std::uint32_t sketch_id, float distance, int direction) {
+                 scene::OperationRecipe r;
+                 r.type = scene::OperationType::Extrude;
+                 r.sketch = sketch_id;
+                 r.distance = distance;
+                 r.direction = direction;
+                 return s.restore_operation_node(node_id, name, r);
+             },
+             nb::arg("node_id"), nb::arg("name"), nb::arg("sketch"),
+             nb::arg("distance") = 1.0f, nb::arg("direction") = 1,
+             "Re-create an extrude operation node with a PINNED id "
+             "(command redo). Raises RuntimeError if the id is in use "
+             "or the sketch is missing — never a silent rebind.")
         .def("rebuild_operations",
              [](scene::Scene& s) {
                  const scene::OperationRebuildResult r =
@@ -334,12 +556,16 @@ void bind_scene(nb::module_& m) {
                  nb::list dang;
                  for (const auto id : r.dangling) dang.append(id);
                  out["dangling"] = dang;
+                 nb::list pend;
+                 for (const auto id : r.pending) pend.append(id);
+                 out["pending"] = pend;
                  return out;
              },
              "The DAG rebuild pass: re-materialize every operation node "
              "from the current operand bodies (topological order). "
-             "Returns {\"rebuilt\": count, \"dangling\": [ids]}. Raises "
-             "RuntimeError on cyclic references (structurally corrupt).")
+             "Returns {\"rebuilt\": count, \"dangling\": [ids], "
+             "\"pending\": [ids]}. Raises RuntimeError on cyclic "
+             "references (structurally corrupt).")
         .def("set_operation_offset",
              [](scene::Scene& s, std::uint32_t node_id,
                 float ox, float oy, float oz) {
@@ -349,6 +575,14 @@ void bind_scene(nb::module_& m) {
                          "set_operation_offset: node " +
                          std::to_string(node_id) +
                          " is not an operation node");
+                 if (n->operation->type != scene::OperationType::Subtract)
+                     throw std::runtime_error(
+                         "set_operation_offset: node " +
+                         std::to_string(node_id) +
+                         " is an extrude operation - the tool offset is "
+                         "a subtract field (the extrude placement is "
+                         "the recipe's distance/direction, ADR-0030 "
+                         "D2)");
                  n->operation->offset_x = ox;
                  n->operation->offset_y = oy;
                  n->operation->offset_z = oz;
@@ -359,6 +593,9 @@ void bind_scene(nb::module_& m) {
                  nb::list dang;
                  for (const auto id : r.dangling) dang.append(id);
                  out["dangling"] = dang;
+                 nb::list pend;
+                 for (const auto id : r.pending) pend.append(id);
+                 out["pending"] = pend;
                  return out;
              },
              nb::arg("node_id"), nb::arg("offset_x"), nb::arg("offset_y"),

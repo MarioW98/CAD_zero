@@ -47,6 +47,14 @@ struct OperationRebuildResult {
     // Operation nodes currently dangling (an operand id has no live
     // node). Their last materialized body is retained for display.
     std::vector<std::uint32_t> dangling;
+
+    // Operation nodes currently PENDING (ADR-0030 D2 revision 1): the
+    // operand exists but the profile does not certify — an edit
+    // opened the chain or crossed entities. Like dangling, the last
+    // materialized body is retained and operation_error() carries the
+    // certificate's actionable message; recovery is the next edit
+    // (close the chain) away, not a re-pick.
+    std::vector<std::uint32_t> pending;
 };
 
 namespace detail {
@@ -75,9 +83,12 @@ inline OperationRebuildResult rebuild_operations_core(
     if (ops.empty()) return result;
 
     // Topological order over the operation subgraph (Kahn). Edges run
-    // operand-operation -> dependent-operation; a self-reference
-    // (target/tool == own id) contributes a self-loop and is caught by
-    // the same cycle check.
+    // operand-operation -> dependent-operation over the RECIPE'S OWN
+    // ROLE LIST (the D2 generalization: {target, tool} was the Phase F
+    // hardcode; the subtract's two roles and the extrude's one are
+    // instances of recipe_roles); a self-reference (an operand id ==
+    // own id) contributes a self-loop and is caught by the same cycle
+    // check.
     std::map<std::uint32_t, std::size_t> index;  // op id -> ops index
     for (std::size_t i = 0; i < ops.size(); ++i) index.emplace(ops[i], i);
 
@@ -86,7 +97,7 @@ inline OperationRebuildResult rebuild_operations_core(
     for (std::size_t i = 0; i < ops.size(); ++i) {
         const SceneNode* n = find(ops[i]);
         const OperationRecipe& r = *n->operation;
-        for (const std::uint32_t operand : {r.target, r.tool}) {
+        for (const std::uint32_t operand : recipe_roles(r)) {
             const auto it = index.find(operand);
             if (it == index.end()) continue;  // not an operation: ready
             dependents[it->second].push_back(i);
@@ -125,27 +136,61 @@ inline OperationRebuildResult rebuild_operations_core(
         const std::uint32_t id = ops[i];
         SceneNode* n = find(id);
         const OperationRecipe& r = *n->operation;
-        const SceneNode* t = find(r.target);
-        const SceneNode* w = find(r.tool);
 
-        if (t == nullptr || w == nullptr) {
+        // Resolve the operands over the recipe's role list.
+        std::vector<const SceneNode*> operands;
+        bool missing = false;
+        for (const std::uint32_t rid : recipe_roles(r)) {
+            const SceneNode* op = find(rid);
+            if (op == nullptr) {
+                missing = true;
+                break;
+            }
+            operands.push_back(op);
+        }
+
+        if (missing) {
             // Dangling — visible, never silent: keep the last good body
             // (for the loader: the file body — exactly the cached
             // last-good state ADR-0027 D4 defines), flag it, report it.
-            // No rebind, no guess, no geometric-signature fallback.
+            // No rebind, no guess, no geometric-signature fallback. A
+            // stale pending message would lie about a sketch that is
+            // no longer there — it goes too.
             if (!n->operand_missing) {
                 n->operand_missing = true;
+                n->operation_pending = false;
+                n->operation_pending_error.clear();
                 if (notify) notify(id);
             }
             result.dangling.push_back(id);
             continue;
         }
 
-        n->body = materialize_operation(r, t->body, w->body);
-        n->mesh_dirty = true;
-        n->operand_missing = false;
-        if (notify) notify(id);
-        ++result.rebuilt;
+        // All operands present: re-materialize. The extrude's
+        // certificate can REFUSE the current sketch (an edit opened
+        // the chain, or crossed entities): the refusal is the VISIBLE
+        // PENDING STATE — last good body kept, the certificate's own
+        // message (entities and points named) carried — NEVER a throw:
+        // one pending node must not kill the document-wide pass (the
+        // same philosophy as dangling, extended to the extrude's
+        // precondition).
+        try {
+            n->body = materialize_operation(r, operands);
+            n->mesh_dirty = true;
+            n->operand_missing = false;
+            n->operation_pending = false;
+            n->operation_pending_error.clear();
+            if (notify) notify(id);
+            ++result.rebuilt;
+        } catch (const std::invalid_argument& e) {
+            if (!n->operation_pending || n->operand_missing) {
+                n->operation_pending = true;
+                if (notify) notify(id);
+            }
+            n->operand_missing = false;
+            n->operation_pending_error = e.what();
+            result.pending.push_back(id);
+        }
     }
     return result;
 }
@@ -170,24 +215,35 @@ inline OperationRebuildResult rebuild_operations(Scene& s) {
         nodes, [&s](std::uint32_t id) { s.mark_dirty(id); });
 }
 
-// The actionable dangling message for the property panel / tree
-// (ADR-0027 D2): empty when the node is not a dangling operation.
-// Names the missing operand by id and role, and the two remedies the
-// state actually admits (undo the deletion — the operand returns with
-// its original id — or delete the operation). Never a suggestion to
+// The actionable dangling/pending message for the property panel /
+// tree (ADR-0027 D2 + ADR-0030 D2 revision 1): empty when the node is
+// a healthy operation. The PENDING case carries the certificate's own
+// message (entities and points named, remedy included — unit 1's
+// error paths, inherited for free). The DANGLING case names every
+// missing operand by id and role, and the two remedies the state
+// actually admits (undo the deletion — the operand returns with its
+// original id — or delete the operation). Never a suggestion to
 // "pick another operand": references are never re-picked.
 inline std::string operation_error(const Scene& s, std::uint32_t id) {
     const SceneNode* n = s.get_node(id);
-    if (n == nullptr || !n->operation || !n->operand_missing) return {};
+    if (n == nullptr || !n->operation) return {};
+
+    if (n->operation_pending && !n->operand_missing)
+        return "the sketch does not certify - " + n->operation_pending_error;
+
+    if (!n->operand_missing) return {};
 
     const OperationRecipe& r = *n->operation;
-    const bool target_missing = s.get_node(r.target) == nullptr;
-    const bool tool_missing = s.get_node(r.tool) == nullptr;
     std::string out = "operand ";
-    if (target_missing)
-        out += "#" + std::to_string(r.target) + " (target)";
-    if (target_missing && tool_missing) out += " and ";
-    if (tool_missing) out += "#" + std::to_string(r.tool) + " (tool)";
+    bool first = true;
+    const auto roles = recipe_roles(r);
+    for (std::size_t role = 0; role < roles.size(); ++role) {
+        if (s.get_node(roles[role]) != nullptr) continue;
+        if (!first) out += " and ";
+        first = false;
+        out += "#" + std::to_string(roles[role]) + " (" +
+               recipe_role_name(r, role) + ")";
+    }
     out += " was deleted - undo its deletion, or delete this operation "
            "(references are never re-picked automatically)";
     return out;
