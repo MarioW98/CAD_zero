@@ -11,7 +11,12 @@ v. report nella commit che introduce questo script):
        end, init, upd, update, clean, rewrote, minor, majr) seguito
        da spazio, '/' o fine stringa (case-sensitive, come la regex
        della traccia: "Fix f-string Python 3.10" passa);
-    3. è lungo almeno MIN_LENGTH caratteri (dopo lo strip).
+    3. NON inizia con un'etichetta di progresso (intro, bozza,
+       riepilogo, unita'/Unita' N) seguita da spazio, '/' o fine
+       stringa (case-insensitive): dice la FASE, non il contenuto —
+       "intro kernel 2d" era 15 caratteri esatti e passava col solo
+       controllo lunghezza (run #90): il gap che questa regola chiude;
+    4. è lungo almeno MIN_LENGTH caratteri (dopo lo strip).
 
   Gli starter vuoti sono le parole che nella storia del repo
   compaiono SOLO in soggetti-progress-marker ("fix", "fix 3",
@@ -28,6 +33,7 @@ Uso:
   check_commit_subject.py A..B            # un range (es. i commit pushati)
   check_commit_subject.py --all           # tutta la storia (solo report)
   check_commit_subject.py --explain "..." # classifica una stringa
+  check_commit_subject.py --commit-msg F  # il file del messaggio (hook git)
 
 Exit code: 0 se tutti i commit esaminati passano, 1 altrimenti
 (con --all l'exit code riflette la storia: e' un report, non un gate).
@@ -61,6 +67,18 @@ TAG_ONLY_PATTERNS = [
 # progress-marker. Ciascuna e' documentata nel report d'introduzione.
 BANNED_STARTERS = r"^(fix|fixing|various|check|end|init|upd|update|clean|rewrote|minor|majr)(\s|/|$)"
 
+# Etichette di progresso: intro/bozza/riepilogo/unita'. Nella storia del
+# repo compaiono SOLO in soggetti non conformi — "bozza sketch" (run #84),
+# "Riepilogo:" (run #85), "Unità 2 sketch" (run #91) e "intro kernel 2d"
+# (run #90: 15 caratteri esatti, PASSAVA col solo controllo lunghezza —
+# il gap che questa regola chiude). Sono la versione in parole dei tag
+# "U2"/"u3": dicono la fase del lavoro, non il contenuto. Stessa
+# metodologia di derivazione degli starter vuoti (parole che in storia
+# compaiono solo in soggetti non conformi). Case-insensitive perche' le
+# occorrenze storiche includono "Unità" e "Riepilogo" capitalizzati e
+# nessun soggetto conforme contiene queste parole in alcun caso.
+PROGRESS_LABELS = r"(?i)^(intro|bozza|riepilogo|unit[àa])(\s|/|$)"
+
 
 def check_subject(subject: str) -> str | None:
     """Ritorna None se il soggetto e' conforme, altrimenti il motivo."""
@@ -77,6 +95,9 @@ def check_subject(subject: str) -> str | None:
 
     if re.match(BANNED_STARTERS, s):
         return "starter vuoto (fix/various/check/end/...): il soggetto non dice niente"
+
+    if re.match(PROGRESS_LABELS, s):
+        return "etichetta di progresso (intro/bozza/riepilogo/unità N): la fase non è il contenuto"
 
     if len(s) < MIN_LENGTH:
         return f"troppo corto ({len(s)} < {MIN_LENGTH} caratteri)"
@@ -116,7 +137,7 @@ def commit_subjects(spec: str, single: bool = True) -> list[tuple[str, str, bool
 def main(argv: list[str]) -> int:
     if not argv:
         print(__doc__)
-        print("uso: check_commit_subject.py HEAD | A..B | --all | --explain 'subject'")
+        print("uso: check_commit_subject.py HEAD | A..B | --all | --explain 'subject' | --commit-msg FILE")
         return 2
 
     if argv[0] == "--explain":
@@ -127,6 +148,35 @@ def main(argv: list[str]) -> int:
         reason = check_subject(subject)
         print(f"PASS: {subject!r}" if reason is None else f"FAIL: {subject!r} — {reason}")
         return 0 if reason is None else 1
+
+    if argv[0] == "--commit-msg":
+        # uso da hook git (scripts/git-hooks/commit-msg): il file contiene
+        # il messaggio, il soggetto e' la prima riga non vuota non-commento.
+        # Stesso giudice, stessa funzione della CI: una sola regola, una
+        # sola implementazione — l'hook non puo' divergere dal gate.
+        if len(argv) != 2:
+            print("--commit-msg richiede esattamente un percorso (uso da hook git)")
+            return 2
+        try:
+            with open(argv[1], encoding="utf-8") as fh:
+                lines = fh.read().splitlines()
+        except OSError as exc:
+            print(f"errore: lettura {argv[1]}: {exc}", file=sys.stderr)
+            return 2
+        subject = ""
+        for line in lines:
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#"):
+                subject = stripped
+                break
+        reason = check_subject(subject)
+        if reason is None:
+            return 0
+        print(f"FAIL: {subject!r} — {reason}")
+        print("commit bloccato PRIMA della push: correggi il soggetto (--amend)")
+        print("e riprova. Regola e derivazione: docstring di questo script")
+        print("e CONTRIBUTING.md. La CI giudichera' comunque il range pushato.")
+        return 1
 
     is_all = argv[0] == "--all"
     spec = "HEAD" if is_all else argv[0]

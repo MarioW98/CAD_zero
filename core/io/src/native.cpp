@@ -9,6 +9,7 @@
 #include "CAD_0/scene/operations.hpp"
 #include "CAD_0/sdf/operators.hpp"
 #include "CAD_0/sdf/primitives.hpp"
+#include "CAD_0/sdf/sketch_extrude.hpp"
 #include "CAD_0/sdf/transforms.hpp"
 
 #include <algorithm>
@@ -82,6 +83,25 @@ const bool kMigrator0203Registered [[maybe_unused]] = [] {
     return true;
 }();
 
+// The 0.3.0 -> 0.4.0 migrator (ADR-0030 D4): a deliberate CONTENT
+// no-op. v0.3.0 documents carry no sketch fields — the v0.3 writer
+// refused Sketch-kind nodes and Extrude recipes LOUDLY (they are the
+// v0.4 payload), so there is nothing to rewrite: a sketch section or
+// an extrude recipe in a file that still declares 0.3.0 is an
+// anachronism the READER rejects at the payload (the version check
+// there). The entry exists so the chain
+// 0.1.0 → 0.2.0 → 0.3.0 → 0.4.0 is explicit, registered, and
+// exercised by all three frozen goldens on every CI run — the
+// stricter-than-letter rule (a different MAJOR.MINOR without a
+// registered migrator fails explicitly) holds again.
+const bool kMigrator0304Registered [[maybe_unused]] = [] {
+    register_migrator(NativeVersion{0, 3, 0}, NativeVersion{0, 4, 0},
+                      [](json::JsonValue&) {
+                          // no-op by design — see ADR-0030 D4.
+                      });
+    return true;
+}();
+
 std::string version_to_string(const NativeVersion& v) {
     return std::to_string(v.major) + "." + std::to_string(v.minor) + "." +
            std::to_string(v.patch);
@@ -113,6 +133,22 @@ math::Vec3f json_to_vec3(const JsonValue& v, const char* field) {
     };
 }
 
+math::Vec2f json_to_vec2(const JsonValue& v, const char* field) {
+    if (!v.is_array() || v.as_array().size() != 2)
+        type_error(std::string("2-element array for field \"") + field + "\"", v);
+    return math::Vec2f{
+        static_cast<float>(require_number(v.at(0), field)),
+        static_cast<float>(require_number(v.at(1), field)),
+    };
+}
+
+JsonValue vec2_to_json(const math::Vec2f& p) {
+    return JsonValue(JsonArray{
+        JsonValue(static_cast<double>(p.x)),
+        JsonValue(static_cast<double>(p.y)),
+    });
+}
+
 JsonValue vec3_to_json(const math::Vec3f& p) {
     return JsonValue(JsonArray{
         JsonValue(static_cast<double>(p.x)),
@@ -139,6 +175,208 @@ JsonValue quat_to_json(const math::Quatf& q) {
         JsonValue(static_cast<double>(q.y)),
         JsonValue(static_cast<double>(q.z)),
     });
+}
+
+// ---- Sketch entities (ADR-0030 D4: the v0.4 payload) ------------------------
+//
+// The recipe IS the payload: each entity serializes its type, its
+// EXPLICIT parameters and its orientation bit — the exact fields the
+// kernel's constructors consume, nothing derived (arc endpoints are
+// computed, never stored; a 1-ulp libm difference lands inside the
+// joint coincidence tolerance, never on the other side of a check).
+// The reader validates the PARAMETER CLASS only (finite, radius > 0,
+// sweep in (0, 2π), p0 != p1) — the D3 construction checks, the
+// loud-load-error family: a hand-edited NaN-class radius must not
+// reach the kernel. The full certificate (pairwise intersections,
+// chain closure) is MATERIALIZATION-time by design (ADR-0030 D2
+// revision 1) — an open chain is a legal, visibly-flagged editing
+// state. The SAME helpers serve two sites: the sketch node's payload
+// (where = "sketch node N") and the extrude's cached body (where =
+// "the extrude's cached body") — one shape, one validation, no drift.
+
+JsonValue sketch_entity_to_json(const sdf::SketchEntity& e) {
+    using Kind = sdf::SketchEntity::Kind;
+    switch (e.kind) {
+    case Kind::Segment: {
+        const sdf::SketchSegment& s = e.segment;
+        return JsonValue(JsonObject{})
+            .set("type", JsonValue("segment"))
+            .set("a", vec2_to_json(s.a))
+            .set("b", vec2_to_json(s.b))
+            .set("interior_left", JsonValue(s.interior_left));
+    }
+    case Kind::Circle: {
+        const sdf::SketchCircle& c = e.circle;
+        return JsonValue(JsonObject{})
+            .set("type", JsonValue("circle"))
+            .set("center", vec2_to_json(c.center))
+            .set("radius", JsonValue(static_cast<double>(c.radius)))
+            .set("hole", JsonValue(c.hole));
+    }
+    case Kind::Arc: {
+        const sdf::SketchArc& a = e.arc;
+        return JsonValue(JsonObject{})
+            .set("type", JsonValue("arc"))
+            .set("center", vec2_to_json(a.center))
+            .set("radius", JsonValue(static_cast<double>(a.radius)))
+            .set("hole", JsonValue(a.hole))
+            .set("start_angle", JsonValue(static_cast<double>(a.start_angle)))
+            .set("sweep", JsonValue(static_cast<double>(a.sweep)));
+    }
+    }
+    throw std::logic_error("sketch_entity_to_json: unknown entity kind");
+}
+
+// A finite float from a JSON number, for the entity parameter class:
+// JSON has no NaN/Infinity literals, but a huge number overflows the
+// float cast to infinity — that overflow is exactly the corruption
+// this catches (the only door JSON leaves open to the NaN class).
+float require_finite_entity_number(const JsonValue& v, const char* field,
+                                   const std::string& where,
+                                   std::size_t entity_index) {
+    if (!v.is_number())
+        type_error(std::string("number for entity field \"") + field + "\"", v);
+    const double d = v.as_number();
+    // The FLOAT is the stored class: a huge-but-finite double (1e300)
+    // overflows the cast to infinity. For a STANDALONE sketch the
+    // kernel's own Disc2D/Halfplane2D checks never run (no
+    // materialization ever happens) — this check is the only line of
+    // defense, so it judges the class that will actually be stored.
+    const float f = static_cast<float>(d);
+    if (!std::isfinite(f))
+        throw std::runtime_error(
+            "native format: " + where + " entity #" +
+            std::to_string(entity_index) + ": field \"" + field +
+            "\" is not finite — parameter-class corruption (the ADR-0029 "
+            "family): the field would poison every query the kernel "
+            "makes of it. Remedy: fix the value in the file.");
+    return f;
+}
+
+void require_finite_vec2(const math::Vec2f& p, const char* field,
+                         const std::string& where, std::size_t entity_index) {
+    if (!std::isfinite(p.x) || !std::isfinite(p.y))
+        throw std::runtime_error(
+            "native format: " + where + " entity #" +
+            std::to_string(entity_index) + ": field \"" + field +
+            "\" must be finite — parameter-class corruption (the ADR-0029 "
+            "family). Remedy: fix the coordinates in the file.");
+}
+
+sdf::SketchEntity parse_sketch_entity(const JsonValue& v,
+                                      const std::string& where,
+                                      std::size_t entity_index) {
+    if (!v.is_object())
+        type_error("object for sketch entity", v);
+    const JsonValue& type_v = v.at("type");
+    if (!type_v.is_string())
+        type_error("string for sketch entity \"type\"", type_v);
+    const std::string type = type_v.as_string();
+
+    if (type == "segment") {
+        const math::Vec2f a = json_to_vec2(v.at("a"), "a");
+        const math::Vec2f b = json_to_vec2(v.at("b"), "b");
+        const bool interior_left = v.at("interior_left").as_bool();
+        // The parameter class of Halfplane2D's construction checks:
+        // finite endpoints (the cast through double can overflow to
+        // infinity — checked here, on the stored class) and p0 != p1.
+        require_finite_vec2(a, "a", where, entity_index);
+        require_finite_vec2(b, "b", where, entity_index);
+        const math::Vec2f d = b - a;
+        if (!(d.length_sq() > 0.0f))
+            throw std::runtime_error(
+                "native format: " + where + " entity #" +
+                std::to_string(entity_index) + " (segment): endpoints must "
+                "satisfy p0 != p1 — a degenerate segment has no normal to "
+                "orient (the ADR-0029 family). Remedy: give the segment "
+                "non-zero length.");
+        return sdf::sketch_segment(a, b, interior_left);
+    }
+    if (type == "circle") {
+        const math::Vec2f center = json_to_vec2(v.at("center"), "center");
+        const float radius = require_finite_entity_number(
+            v.at("radius"), "radius", where, entity_index);
+        const bool hole = v.at("hole").as_bool();
+        require_finite_vec2(center, "center", where, entity_index);
+        if (!(radius > 0.0f))
+            throw std::runtime_error(
+                "native format: " + where + " entity #" +
+                std::to_string(entity_index) + " (circle): radius must be "
+                "> 0, got " + std::to_string(radius) +
+                " — a non-positive radius degenerates the disc (the "
+                "ADR-0029 family). Remedy: fix the radius in the file.");
+        return sdf::sketch_circle(center, radius, hole);
+    }
+    if (type == "arc") {
+        const math::Vec2f center = json_to_vec2(v.at("center"), "center");
+        const float radius = require_finite_entity_number(
+            v.at("radius"), "radius", where, entity_index);
+        const bool hole = v.at("hole").as_bool();
+        const float start_angle = require_finite_entity_number(
+            v.at("start_angle"), "start_angle", where, entity_index);
+        const float sweep = require_finite_entity_number(
+            v.at("sweep"), "sweep", where, entity_index);
+        require_finite_vec2(center, "center", where, entity_index);
+        if (!(radius > 0.0f))
+            throw std::runtime_error(
+                "native format: " + where + " entity #" +
+                std::to_string(entity_index) + " (arc): radius must be "
+                "> 0, got " + std::to_string(radius) +
+                " — a non-positive radius degenerates the arc (the "
+                "ADR-0029 family). Remedy: fix the radius in the file.");
+        // The kernel's own form (SketchEntitySet: finite and in
+        // (0, 2π) vs kTwoPi) mirrored at load — same constant, same
+        // boundaries, no drift.
+        if (!(sweep > 0.0f && sweep < sdf::kTwoPi))
+            throw std::runtime_error(
+                "native format: " + where + " entity #" +
+                std::to_string(entity_index) + " (arc): sweep must lie in "
+                "(0, 2π) radians, got " + std::to_string(sweep) +
+                " — a full turn is a circle, a non-positive sweep is no "
+                "arc at all (the ADR-0029 family). Remedy: fix the sweep "
+                "in the file.");
+        return sdf::sketch_arc(center, radius, hole, start_angle, sweep);
+    }
+    throw std::runtime_error(
+        "native format: " + where + " entity #" +
+        std::to_string(entity_index) + " has an unknown entity type \"" +
+        type + "\" (this build reads \"segment\", \"circle\" and \"arc\"; "
+        "the file was likely written by a newer CAD_0 version — "
+        "ADR-0030 D4)");
+}
+
+// The chains array, shared by the sketch node's payload
+// ("sketch": { "chains": [...] }) and the extrude's cached body
+// ("op": "extrude", "chains": [...]) — one shape, one validation.
+std::vector<sdf::SketchChain> parse_sketch_chains(const JsonValue& chains_v,
+                                                  const std::string& where) {
+    if (!chains_v.is_array())
+        type_error("array for \"chains\"", chains_v);
+    std::vector<sdf::SketchChain> chains;
+    chains.reserve(chains_v.as_array().size());
+    for (const JsonValue& cv : chains_v.as_array()) {
+        if (!cv.is_object())
+            type_error("object for sketch chain", cv);
+        const JsonValue& entities_v = cv.at("entities");
+        if (!entities_v.is_array())
+            type_error("array for sketch chain \"entities\"", entities_v);
+        sdf::SketchChain chain;
+        chain.entities.reserve(entities_v.as_array().size());
+        for (const JsonValue& ev : entities_v.as_array())
+            chain.entities.push_back(
+                parse_sketch_entity(ev, where, chain.entities.size()));
+        chains.push_back(std::move(chain));
+    }
+    return chains;
+}
+
+std::vector<sdf::SketchChain> parse_sketch_payload(const JsonValue& node_v,
+                                                   std::uint32_t node_id) {
+    const JsonValue& sk = node_v.at("sketch");
+    if (!sk.is_object())
+        type_error("object for node \"sketch\"", sk);
+    return parse_sketch_chains(
+        sk.at("chains"), "sketch node " + std::to_string(node_id));
 }
 
 // ---- Mesh blob headers (ADR-0007a) -----------------------------------------
@@ -364,6 +602,31 @@ JsonValue serialize_node_impl(const sdf::SDFNode& n) {
             .set("k", tw->twist_k())
             .set("child", serialize_node_impl(*tw->wrapped()));
     }
+    if (auto* ex = dynamic_cast<const sdf::ExtrudeSDF*>(&n)) {
+        // v0.4.0 (ADR-0030 D4): the extrude's cached body — the recipe's
+        // materialized prism. The chains carry the sketch payload's own
+        // shape (the last-good geometry keeps its provenance: the
+        // self-contained-files clause, the dangling state's display
+        // body). The recipe on the NODE stays the source of truth; this
+        // tree is the cache it explains.
+        JsonArray chains;
+        chains.reserve(ex->profile().entity_set().chains().size());
+        for (const sdf::SketchChain& c : ex->profile().entity_set().chains()) {
+            JsonArray entities;
+            entities.reserve(c.entities.size());
+            for (const sdf::SketchEntity& e : c.entities)
+                entities.push_back(sketch_entity_to_json(e));
+            chains.push_back(JsonValue(JsonObject{})
+                                  .set("entities",
+                                       JsonValue(std::move(entities))));
+        }
+        return JsonValue(JsonObject{})
+            .set("op", "extrude")
+            .set("chains", JsonValue(std::move(chains)))
+            .set("distance", JsonValue(static_cast<double>(ex->distance())))
+            .set("direction",
+                 JsonValue(static_cast<double>(ex->direction())));
+    }
     throw std::runtime_error(
         "native format: cannot serialize SDF node of type '" + n.describe() +
         "' — no native-format serializer registered for this node type");
@@ -424,6 +687,39 @@ std::unique_ptr<sdf::SDFNode> deserialize_node_impl(const JsonValue& v, int dept
             static_cast<float>(require_number(require_field(v, "r"), "r")));
     if (op == "plane")
         return std::make_unique<PlaneSDF>();
+    if (op == "extrude") {
+        // v0.4.0 (ADR-0030 D4): the cached prism — chains in the sketch
+        // payload's own shape + the slab parameters. The construction
+        // certificate runs inside ExtrudeSDF's constructor
+        // (construction-time validation, the ADR-0029 family): a
+        // corrupt cached profile is a loud load error, exactly as a
+        // corrupt cached primitive would be. The parameter class is
+        // validated first, with the recipe's own messages.
+        std::vector<SketchChain> chains =
+            parse_sketch_chains(require_field(v, "chains"),
+                                "the extrude's cached body");
+        const double distance =
+            require_number(require_field(v, "distance"), "distance");
+        const float distance_f = static_cast<float>(distance);
+        // The FLOAT is the stored class (see the recipe path's note).
+        if (!std::isfinite(distance_f) || distance_f <= 0.0f)
+            throw std::runtime_error(
+                "native format: the extrude's cached body \"distance\" must "
+                "be finite and > 0, got " + std::to_string(distance) +
+                " — a non-positive or non-finite extrusion distance "
+                "degenerates the slab (the ADR-0029 family). Remedy: fix "
+                "the value in the file.");
+        const double direction =
+            require_number(require_field(v, "direction"), "direction");
+        if (direction != 1.0 && direction != -1.0)
+            throw std::runtime_error(
+                "native format: the extrude's cached body \"direction\" must "
+                "be +1 or -1 (±Z), got " + std::to_string(direction) +
+                " — the MVP extrudes along the world Z axis only "
+                "(ADR-0030 D2). Remedy: fix the value in the file.");
+        return std::make_unique<ExtrudeSDF>(
+            std::move(chains), distance_f, static_cast<int>(direction));
+    }
     if (op == "union") {
         const JsonValue& children = require_field(v, "children");
         if (!children.is_array())
@@ -614,14 +910,27 @@ std::string serialize_document(const scene::Scene& s, const NativeCamera& cam,
             n.emplace_back("mesh", JsonValue(JsonObject{})
                                       .set("blob", JsonValue(mesh_blob_id(node))));
         } else if (node.kind == scene::NodeKind::Sketch) {
-            // v0.3 has no sketch payload section: refuse loudly (a
-            // null body deref would crash; an empty body would lie).
-            // The sketch/extrude format is v0.4 (ADR-0030 D4).
-            throw std::runtime_error(
-                "native format: cannot serialize the Sketch-kind node \"" +
-                node.name + "\" (#" + std::to_string(node.id) +
-                ") - the sketch payload is a v0.4 concern (ADR-0030 D4); "
-                "v0.3 serializes Sdf and Mesh nodes only");
+            // v0.4.0 (ADR-0030 D4): the 2D document — ordered chains of
+            // typed entities. Each entity carries its type, its EXPLICIT
+            // parameters and its orientation bit (the recipe is the
+            // payload; arc endpoints are derived, never stored). No
+            // builder, no params, no body, no mesh (ADR-0002 honest
+            // dispatch: a sketch is 2D data, never faked as an SDF).
+            JsonArray chains;
+            chains.reserve(node.sketch.size());
+            for (const sdf::SketchChain& c : node.sketch) {
+                JsonArray entities;
+                entities.reserve(c.entities.size());
+                for (const sdf::SketchEntity& e : c.entities)
+                    entities.push_back(sketch_entity_to_json(e));
+                chains.push_back(
+                    JsonValue(JsonObject{})
+                        .set("entities", JsonValue(std::move(entities))));
+            }
+            n.emplace_back("kind", JsonValue("sketch"));
+            n.emplace_back("sketch",
+                JsonValue(JsonObject{})
+                    .set("chains", JsonValue(std::move(chains))));
         } else {
             if (!node.builder.empty())
                 n.emplace_back("builder", JsonValue(node.builder));
@@ -634,33 +943,55 @@ std::string serialize_document(const scene::Scene& s, const NativeCamera& cam,
             //   "operation": { "type": "subtract", "target": 2,
             //                  "tool": 3, "params": { "offset_x": … } }
             if (node.operation) {
-                if (node.operation->type != scene::OperationType::Subtract)
-                    throw std::runtime_error(
-                        "native format: cannot serialize an Extrude "
-                        "operation - v0.3 serializes subtract recipes only; "
-                        "the extrude recipe is v0.4 (ADR-0030 D4)");
                 JsonValue op(JsonObject{});
-                op.as_object().emplace_back(
-                    "type",
-                    JsonValue("subtract"));
-                op.as_object().emplace_back(
-                    "target",
-                    JsonValue(static_cast<double>(node.operation->target)));
-                op.as_object().emplace_back(
-                    "tool",
-                    JsonValue(static_cast<double>(node.operation->tool)));
-                op.as_object().emplace_back(
-                    "params",
-                    JsonValue(JsonObject{})
-                        .set("offset_x",
-                             JsonValue(static_cast<double>(
-                                 node.operation->offset_x)))
-                        .set("offset_y",
-                             JsonValue(static_cast<double>(
-                                 node.operation->offset_y)))
-                        .set("offset_z",
-                             JsonValue(static_cast<double>(
-                                 node.operation->offset_z))));
+                if (node.operation->type == scene::OperationType::Subtract) {
+                    op.as_object().emplace_back(
+                        "type",
+                        JsonValue("subtract"));
+                    op.as_object().emplace_back(
+                        "target",
+                        JsonValue(static_cast<double>(node.operation->target)));
+                    op.as_object().emplace_back(
+                        "tool",
+                        JsonValue(static_cast<double>(node.operation->tool)));
+                    op.as_object().emplace_back(
+                        "params",
+                        JsonValue(JsonObject{})
+                            .set("offset_x",
+                                 JsonValue(static_cast<double>(
+                                     node.operation->offset_x)))
+                            .set("offset_y",
+                                 JsonValue(static_cast<double>(
+                                     node.operation->offset_y)))
+                            .set("offset_z",
+                                 JsonValue(static_cast<double>(
+                                     node.operation->offset_z))));
+                } else {
+                    // v0.4.0 (ADR-0030 D4): the extrude recipe — the
+                    // exact ADR shape: { "type": "extrude",
+                    // "sketch": 12, "params": { "distance": 2.0,
+                    // "direction": 1 } }. The recipe is the source of
+                    // truth; the materialized prism serialized in
+                    // "body" is the cache (self-contained files, the
+                    // dangling state's last-good geometry — every
+                    // D4-of-0027 clause carries over).
+                    op.as_object().emplace_back(
+                        "type",
+                        JsonValue("extrude"));
+                    op.as_object().emplace_back(
+                        "sketch",
+                        JsonValue(static_cast<double>(
+                            node.operation->sketch)));
+                    op.as_object().emplace_back(
+                        "params",
+                        JsonValue(JsonObject{})
+                            .set("distance",
+                                 JsonValue(static_cast<double>(
+                                     node.operation->distance)))
+                            .set("direction",
+                                 JsonValue(static_cast<double>(
+                                     node.operation->direction))));
+                }
                 n.emplace_back("operation", std::move(op));
             }
         }
@@ -805,9 +1136,11 @@ ParsedDocument parse_document(std::string_view text,
         scene::SceneNode node;
         node.id = static_cast<std::uint32_t>(require_number(node_v.at("id"), "id"));
 
-        // Node kind (FASE 2): absent -> Sdf (v0.1.0/v0.2.0 SDF nodes stay
-        // byte-identical); "mesh" -> an imported-geometry node; anything
-        // else is an explicit error (honest dispatch, ADR-0002).
+        // Node kind: absent -> Sdf (v0.1.0/v0.2.0 SDF nodes stay
+        // byte-identical); "mesh" -> an imported-geometry node;
+        // "sketch" -> the 2D document layer (v0.4.0, ADR-0030 D4);
+        // anything else is an explicit error (honest dispatch,
+        // ADR-0002).
         std::string mesh_ref; // blob id for Mesh-kind nodes
         if (const JsonValue* kind_v = node_v.find("kind")) {
             if (!kind_v->is_string())
@@ -826,28 +1159,51 @@ ParsedDocument parse_document(std::string_view text,
                     throw std::runtime_error(
                         "native format: node " + std::to_string(node.id) +
                         " has an empty mesh blob reference");
+            } else if (kind == "sketch") {
+                node.kind = scene::NodeKind::Sketch;
+                // v0.4.0 payload (ADR-0030 D4). A sketch section in a
+                // file whose ORIGINAL version predates 0.4.0 is an
+                // anachronism: the v0.3 writer refused Sketch nodes
+                // loudly, so no legitimate file carries one — the file
+                // is not what its version claims.
+                if (file_version.major == 0 && file_version.minor < 4)
+                    throw std::runtime_error(
+                        "native format: node " + std::to_string(node.id) +
+                        " is a \"sketch\" node but the file declares " +
+                        version_to_string(file_version) +
+                        " — sketch nodes are the v0.4.0 payload (ADR-0030 "
+                        "D4) and no " + version_to_string(file_version) +
+                        " writer ever emitted one: the file is not what "
+                        "its version claims");
             } else {
                 throw std::runtime_error(
                     "native format: unknown node \"kind\" \"" + kind +
-                    "\" (this build reads Sdf nodes and \"mesh\" nodes; the "
-                    "file was likely written by a newer CAD_0 version)");
+                    "\" (this build reads Sdf, \"mesh\" and \"sketch\" "
+                    "nodes; the file was likely written by a newer "
+                    "CAD_0 version)");
             }
         }
 
         if (node.kind == scene::NodeKind::Sdf) {
             node.mesh_dirty = true; // re-tessellate SDF caches after load
         } else {
-            node.mesh_dirty = false; // the Mesh payload IS final — never
-                                     // re-tessellated (update_meshes skips)
+            node.mesh_dirty = false; // Mesh: the payload IS final — never
+                                     // re-tessellated. Sketch: no mesh at
+                                     // all (update_meshes skips by kind).
         }
 
         if (const JsonValue* name = node_v.find("name")) {
             if (!name->is_string()) type_error("string for node \"name\"", *name);
             node.name = name->as_string();
         } else {
-            node.name = node.kind == scene::NodeKind::Mesh
-                            ? "Mesh_" + std::to_string(node.id)
-                            : "Shape_" + std::to_string(node.id);
+            switch (node.kind) {
+            case scene::NodeKind::Mesh:
+                node.name = "Mesh_" + std::to_string(node.id); break;
+            case scene::NodeKind::Sketch:
+                node.name = "Sketch_" + std::to_string(node.id); break;
+            default:
+                node.name = "Shape_" + std::to_string(node.id); break;
+            }
         }
 
         if (const JsonValue* vis = node_v.find("visible")) {
@@ -885,6 +1241,31 @@ ParsedDocument parse_document(std::string_view text,
             continue;
         }
 
+        if (node.kind == scene::NodeKind::Sketch) {
+            // v0.4.0 (ADR-0030 D4): the sketch payload. No builder, no
+            // params, no body, no operation, no mesh — those belong to
+            // the SDF/Mesh representations, and a sketch carrying any
+            // of them is the same never-mix corruption a mesh node
+            // with SDF fields is. The payload parse validates the
+            // PARAMETER CLASS of every entity (finite, radius > 0,
+            // sweep in (0, 2π), p0 != p1) loudly — the full certificate
+            // (pairwise intersections, chain closure) is
+            // materialization-time by design (ADR-0030 D2 revision 1):
+            // an open chain is a legal, visibly-flagged editing state.
+            for (const char* leftover :
+                 {"builder", "params", "body", "operation", "mesh"})
+                if (node_v.find(leftover))
+                    throw std::runtime_error(
+                        std::string("native format: node ") +
+                        std::to_string(node.id) + " is a \"sketch\" node "
+                        "but carries a non-sketch field \"" + leftover +
+                        "\" — the representations never mix (ADR-0002 "
+                        "honest dispatch; a sketch is 2D data)");
+            node.sketch = parse_sketch_payload(node_v, node.id);
+            doc.nodes.push_back(std::move(node));
+            continue;
+        }
+
         if (const JsonValue* builder = node_v.find("builder")) {
             if (!builder->is_string()) type_error("string for node \"builder\"", *builder);
             node.builder = builder->as_string();
@@ -917,13 +1298,28 @@ ParsedDocument parse_document(std::string_view text,
             const std::string type = type_v.as_string();
             if (type == "subtract") {
                 recipe.type = scene::OperationType::Subtract;
+            } else if (type == "extrude") {
+                // v0.4.0 (ADR-0030 D4). Same anachronism rule as the
+                // sketch payload: no pre-0.4 writer ever emitted an
+                // extrude recipe (they refused loudly).
+                if (file_version.major == 0 && file_version.minor < 4)
+                    throw std::runtime_error(
+                        "native format: node " + std::to_string(node.id) +
+                        " carries an \"extrude\" recipe but the file "
+                        "declares " + version_to_string(file_version) +
+                        " — extrude recipes are the v0.4.0 payload "
+                        "(ADR-0030 D4) and no " +
+                        version_to_string(file_version) +
+                        " writer ever emitted one: the file is not what "
+                        "its version claims");
+                recipe.type = scene::OperationType::Extrude;
             } else {
                 throw std::runtime_error(
                     "native format: node " + std::to_string(node.id) +
                     " has an unknown operation type \"" + type +
-                    "\" (this build reads \"subtract\"; the file was "
-                    "likely written by a newer CAD_0 version — "
-                    "ADR-0027 D4)");
+                    "\" (this build reads \"subtract\" and \"extrude\"; "
+                    "the file was likely written by a newer CAD_0 version "
+                    "— ADR-0027 D4 / ADR-0030 D4)");
             }
 
             const auto operand_id =
@@ -942,24 +1338,69 @@ ParsedDocument parse_document(std::string_view text,
                             "(got " + std::to_string(d) + ")");
                     return static_cast<std::uint32_t>(d);
                 };
-            recipe.target = operand_id(op_v->at("target"), "target");
-            recipe.tool = operand_id(op_v->at("tool"), "tool");
+            if (recipe.type == scene::OperationType::Subtract) {
+                recipe.target = operand_id(op_v->at("target"), "target");
+                recipe.tool = operand_id(op_v->at("tool"), "tool");
 
-            // Offsets live under "params" (the ADR-0027 D4 shape);
-            // each defaults to 0 when absent (the same field tolerance
-            // PATCH files rely on — a writer always emits all three).
-            if (const JsonValue* prm = op_v->find("params")) {
-                if (!prm->is_object())
-                    type_error("object for operation \"params\"", *prm);
-                if (const JsonValue* v = prm->find("offset_x"))
-                    recipe.offset_x =
-                        static_cast<float>(require_number(*v, "offset_x"));
-                if (const JsonValue* v = prm->find("offset_y"))
-                    recipe.offset_y =
-                        static_cast<float>(require_number(*v, "offset_y"));
-                if (const JsonValue* v = prm->find("offset_z"))
-                    recipe.offset_z =
-                        static_cast<float>(require_number(*v, "offset_z"));
+                // Offsets live under "params" (the ADR-0027 D4 shape);
+                // each defaults to 0 when absent (the same field tolerance
+                // PATCH files rely on — a writer always emits all three).
+                if (const JsonValue* prm = op_v->find("params")) {
+                    if (!prm->is_object())
+                        type_error("object for operation \"params\"", *prm);
+                    if (const JsonValue* v = prm->find("offset_x"))
+                        recipe.offset_x =
+                            static_cast<float>(require_number(*v, "offset_x"));
+                    if (const JsonValue* v = prm->find("offset_y"))
+                        recipe.offset_y =
+                            static_cast<float>(require_number(*v, "offset_y"));
+                    if (const JsonValue* v = prm->find("offset_z"))
+                        recipe.offset_z =
+                            static_cast<float>(require_number(*v, "offset_z"));
+                }
+            } else {
+                // Extrude (v0.4.0, ADR-0030 D4): the recipe's own fields —
+                // { "sketch": 12, "params": { "distance": 2.0,
+                // "direction": 1 } }. The parameter class mirrors the
+                // kernel's own construction checks (SlabZ): distance
+                // finite and > 0, direction exactly ±1 — corruption of
+                // this class is a loud load error, never a default.
+                recipe.sketch = operand_id(op_v->at("sketch"), "sketch");
+                if (const JsonValue* prm = op_v->find("params")) {
+                    if (!prm->is_object())
+                        type_error("object for operation \"params\"", *prm);
+                    if (const JsonValue* v = prm->find("distance")) {
+                        const double d = require_number(*v, "distance");
+                        const float f = static_cast<float>(d);
+                        // The FLOAT is the stored class: a huge-but-finite
+                        // double (1e300) overflows the cast to infinity —
+                        // caught here, never left to the kernel.
+                        if (!std::isfinite(f) || f <= 0.0f)
+                            throw std::runtime_error(
+                                "native format: node " +
+                                std::to_string(node.id) +
+                                " operation \"distance\" must be finite and "
+                                "> 0, got " + std::to_string(d) +
+                                " — a non-positive or non-finite extrusion "
+                                "distance degenerates the slab (the "
+                                "ADR-0029 family). Remedy: fix the value "
+                                "in the file.");
+                        recipe.distance = f;
+                    }
+                    if (const JsonValue* v = prm->find("direction")) {
+                        const double d = require_number(*v, "direction");
+                        if (d != 1.0 && d != -1.0)
+                            throw std::runtime_error(
+                                "native format: node " +
+                                std::to_string(node.id) +
+                                " operation \"direction\" must be +1 or -1 "
+                                "(±Z), got " + std::to_string(d) +
+                                " — the MVP extrudes along the world Z axis "
+                                "only (ADR-0030 D2). Remedy: fix the value "
+                                "in the file.");
+                        recipe.direction = static_cast<int>(d);
+                    }
+                }
             }
             node.operation = recipe;
         }
@@ -995,6 +1436,34 @@ ParsedDocument parse_document(std::string_view text,
                             scene::recipe_role_name(*n.operation, role) +
                             " == own id) — structurally corrupt "
                             "(ADR-0027 D2)");
+                // The operand-KIND check (ADR-0002 honest dispatch): an
+                // operand of the wrong kind is structurally corrupt in
+                // the same family as a self-reference — no writer can
+                // produce it (creation validates kinds; a node's kind
+                // never mutates). The materializer would read the wrong
+                // payload (an empty body, an empty chain list) and
+                // either crash or lie: refuse before that, by role.
+                for (std::size_t role = 0; role < roles.size(); ++role) {
+                    const scene::SceneNode* operand = nullptr;
+                    for (const auto& cand : doc.nodes)
+                        if (cand.id == roles[role]) { operand = &cand; break; }
+                    if (operand == nullptr) continue; // dangling: the
+                        // visible state, judged by the rebuild pass —
+                        // the KIND of an absent operand is unknowable.
+                    if (operand->kind !=
+                        scene::recipe_operand_kind(*n.operation, role))
+                        throw std::runtime_error(
+                            "native format: node " + std::to_string(n.id) +
+                            " operation operand " +
+                            std::to_string(roles[role]) + " (role " +
+                            scene::recipe_role_name(*n.operation, role) +
+                            ") must be a " +
+                            scene::node_kind_name(
+                                scene::recipe_operand_kind(*n.operation, role)) +
+                            "-kind node — structurally corrupt (ADR-0002 "
+                            "honest dispatch: the materializer would read "
+                            "the wrong payload)");
+                }
             }
             scene::rebuild_document_operations(doc.nodes);
         }

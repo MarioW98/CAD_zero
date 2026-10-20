@@ -56,12 +56,13 @@ def saved_path(scene):
     return path
 
 
-def test_native_version_is_030():
-    # 0.3.0: operation recipes on Sdf nodes (ADR-0027 D4 — the Phase F
-    # boolean feature). The constant is built from the C++ kNativeVersion,
-    # never hardcoded on the Python side. History: 0.2.0 was the binary
-    # blob container (ADR-0007a).
-    assert CAD_0.io.NATIVE_VERSION == "0.3.0"
+def test_native_version():
+    # The constant is built from the C++ kNativeVersion, never hardcoded
+    # on the Python side. History: 0.2.0 was the binary blob container
+    # (ADR-0007a); 0.3.0 the operation recipes (ADR-0027 D4); 0.4.0 the
+    # sketcher's document layer — sketch nodes and extrude recipes
+    # (ADR-0030 D4).
+    assert CAD_0.io.NATIVE_VERSION == "0.4.0"
 
 
 def test_roundtrip_scene_and_metadata(saved_path):

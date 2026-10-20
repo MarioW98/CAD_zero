@@ -6,11 +6,23 @@
 // Coverage per the feature plan:
 //   * round-trip: SDF evaluation is BIT-IDENTICAL after save/load
 //   * golden v0.1.0 (frozen legacy fixture): loads through the
-//     migrator CHAIN (0.1.0 → 0.2.0 → 0.3.0); SDF values bit-identical
+//     migrator CHAIN (0.1.0 → 0.2.0 → 0.3.0 → 0.4.0); SDF values
+//     bit-identical
 //   * golden v0.2.0: loads through the 0.2.0 → 0.3.0 migrator; the
-//     migrated re-serialization is byte-identical to a fresh v0.3 save
+//     migrated re-serialization is byte-identical to a fresh save of
+//     the current build
 //   * golden v0.3.0: the pierced-box document with an operation recipe;
-//     extraction report χ = 0 / genus 1 (ADR-0027's MVP shape)
+//     migrates with an identical extraction report (χ = 0 / genus 1,
+//     ADR-0027's MVP shape)
+//   * golden v0.4.0 (ADR-0030 D4): the parametric hole — a sketch, an
+//     extrude recipe, a subtract consuming them; extraction χ = 0 /
+//     genus 1; byte-identical round-trip
+//   * v0.4 sketch payload: parameter-class corruption is a loud load
+//     error; an open chain loads as the legal editing state with its
+//     extrude in the visible PENDING state; a missing sketch is the
+//     visible DANGLING state; operand-kind mismatches, self-references
+//     and pre-v0.4 anachronisms are explicit load errors; stale cached
+//     extrude bodies are caught by the pass-2 rebuild
 //   * container framing: magic/legacy detection, length validation,
 //     truncation errors
 //   * "raw" blob codec: bit-exact round-trips (incl. -0.0/denormals)
@@ -144,6 +156,15 @@ std::filesystem::path golden_v3_path() {
            "native_v0_3_0.CAD_0";
 }
 
+std::filesystem::path golden_v4_path() {
+    // The v0.4.0 golden (ADR-0030 D4): the parametric-hole document —
+    // a sketch, an extrude consuming it, a subtract consuming them
+    // both. The MVP use case, frozen: "draw a circle, extrude it,
+    // subtract it from a box".
+    return std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
+           "native_v0_4_0.CAD_0";
+}
+
 // The pierced-box scene of the v0.3.0 golden (ADR-0027's MVP shape):
 // box (id 1, builder, extent (1,1,1)), cylinder (id 2, builder, r=0.25
 // h=3 — the through-hole tool along Y), subtract operation (id 3,
@@ -185,6 +206,61 @@ scene::Scene make_pierced_scene() {
     return s;
 }
 
+// The parametric-hole scene of the v0.4.0 golden (ADR-0030's use
+// case): draw a circle, extrude it, subtract it from a box — the
+// through-hole is PARAMETRIC now (the sketch is its provenance, not a
+// builder cylinder). Geometry: the circle r=0.25 at the origin,
+// extruded 3 units +Z (the prism spans z in [0, 3]), consumed by the
+// subtract with offset_z = -1.5 — the tool spans z in [-1.5, 1.5],
+// the same through-hole the v0.3 golden cut with a primitive.
+scene::Scene make_parametric_hole_scene() {
+    scene::Scene s;
+    {
+        std::vector<sdf::SketchChain> chains;
+        chains.push_back({{sdf::sketch_circle(
+            math::Vec2f{0.0f, 0.0f}, 0.25f, false)}});
+        const std::uint32_t id =
+            s.add_sketch_node("Hole_Sketch", std::move(chains));
+        REQUIRE(id == 1);
+    }
+    {
+        scene::OperationRecipe r;
+        r.type = scene::OperationType::Extrude;
+        r.sketch = 1;
+        r.distance = 3.0f;
+        r.direction = 1;
+        const std::uint32_t id = s.add_operation_node("Extrude", r);
+        REQUIRE(id == 2);
+    }
+    {
+        scene::SceneNode n;
+        n.id = 3;
+        n.name = "Box";
+        n.builder = "box";
+        n.params = {{"extent_x", 1.0f}, {"extent_y", 1.0f},
+                    {"extent_z", 1.0f}};
+        n.body = sdf::make_box(math::Vec3f{1.0f, 1.0f, 1.0f});
+        s.restore_node(std::move(n));
+    }
+    {
+        scene::OperationRecipe r;
+        r.type = scene::OperationType::Subtract;
+        r.target = 3;
+        r.tool = 2;
+        r.offset_z = -1.5f;
+        const std::uint32_t id = s.add_operation_node("Subtract", r);
+        REQUIRE(id == 4);
+    }
+    // The operands are hidden in-app (the operation is the display) —
+    // and the golden freezes exactly that state (the v0.3 golden's
+    // own convention).
+    s.set_visible(1, false);
+    s.set_visible(2, false);
+    s.set_visible(3, false);
+    s.set_next_id(5);
+    return s;
+}
+
 // The embedded mesh of the v0.2.0 golden: a regular octahedron — 6
 // vertices, 8 triangles, deterministic to the last bit. Normals are the
 // positions themselves (every vertex is a unit vector).
@@ -222,15 +298,16 @@ std::string read_file(const std::filesystem::path& p) {
 
 TEST_SUITE("io native format") {
 
-TEST_CASE("version constant + migrator chain (ADR-0007/0007a/0027)") {
+TEST_CASE("version constant + migrator chain (ADR-0007/0007a/0027/0030)") {
     CHECK(native::kNativeVersion.major == 0);
-    CHECK(native::kNativeVersion.minor == 3);
+    CHECK(native::kNativeVersion.minor == 4);
     CHECK(native::kNativeVersion.patch == 0);
-    // The registered chain: 0.1.0 -> 0.2.0 (ADR-0007a, no-op) and
-    // 0.2.0 -> 0.3.0 (ADR-0027 D4, content no-op).
-    CHECK(native::migrator_count() == 2);
+    // The registered chain: 0.1.0 -> 0.2.0 (ADR-0007a, no-op),
+    // 0.2.0 -> 0.3.0 (ADR-0027 D4, content no-op) and
+    // 0.3.0 -> 0.4.0 (ADR-0030 D4, content no-op).
+    CHECK(native::migrator_count() == 3);
 
-    const auto v = native::parse_version("0.3.0");
+    const auto v = native::parse_version("0.4.0");
     CHECK(v == native::kNativeVersion);
 
     CHECK_THROWS_WITH_AS(native::parse_version("0.1"),
@@ -394,12 +471,12 @@ TEST_CASE("golden v0.2.0: loads through the 0.2→0.3 migrator; migrated save ==
     const std::filesystem::path tmp =
         std::filesystem::temp_directory_path() / "cad0_golden_v2_check.CAD_0";
 
-    // (a) The fresh v0.3.0 save of the canonical scene + meshes (the
+    // (a) The fresh save of the canonical scene + meshes (the
     // reference bytes for (c)).
     native::save_file(tmp, make_canonical_scene(),
                       make_canonical_camera(), make_golden_meshes());
-    const std::string fresh_v3 = read_file(tmp);
-    CHECK(fresh_v3.find("\"version\": \"0.3.0\"") != std::string::npos);
+    const std::string fresh_save = read_file(tmp);
+    CHECK(fresh_save.find("\"version\": \"0.4.0\"") != std::string::npos);
     std::filesystem::remove(tmp);
 
     // (b) Load the golden: the 0.2.0 → 0.3.0 migrator runs, framing,
@@ -423,11 +500,11 @@ TEST_CASE("golden v0.2.0: loads through the 0.2→0.3 migrator; migrated save ==
           sample_grid(make_canonical_scene().node_at(0)->body, 7));
 
     // (c) Re-serialize the loaded (migrated) document: byte-identical
-    // to the fresh v0.3.0 save — the migrator loses nothing, and the
-    // drift detector (blob offsets, JSON determinism, endian-stable
+    // to the fresh save — the migrator loses nothing, and the drift
+    // detector (blob offsets, JSON determinism, endian-stable
     // encoding) keeps working across the bump.
     native::save_file(tmp, s, doc.camera, doc.meshes);
-    CHECK(read_file(tmp) == fresh_v3);
+    CHECK(read_file(tmp) == fresh_save);
     std::filesystem::remove(tmp);
 }
 
@@ -480,17 +557,28 @@ TEST_CASE("operations: v0.3 round-trip is byte-identical (pierced box)") {
           sample_grid(s.get_node(3)->body, 7));
 }
 
-TEST_CASE("golden v0.3.0: pierced box with recipe - extraction chi=0 genus=1") {
+TEST_CASE("golden v0.3.0: pierced box with recipe - migrates, extraction chi=0 genus=1") {
     // Regeneration mode (maintainer-only, never active in CI):
     //   CAD_0_GENERATE_GOLDEN=1 ./CAD_0_tests
     // rewrites the v0.3.0 golden after an INTENTIONAL format change
     // (companion ADR required per ADR-0007).
+    //
+    // NOTE (ADR-0030 D4 bump): the golden BYTES still declare 0.3.0 —
+    // frozen history. The current writer emits 0.4.0, so the pre-0.4
+    // "fresh save == golden bytes" check is replaced by its honest
+    // successor (the same one the v0.2.0 golden test adopted at the
+    // 0.3 bump): the MIGRATED document re-serializes to exactly the
+    // bytes a fresh v0.4.0 save of the same scene produces. The
+    // extraction report — the D6 clause — is asserted IDENTICAL below
+    // (same T13 pins the v0.3 golden always carried).
     if (const char* env = std::getenv("CAD_0_GENERATE_GOLDEN");
         env && std::string_view(env) == "1") {
         std::filesystem::create_directories(golden_v3_path().parent_path());
-        native::save_file(golden_v3_path(), make_pierced_scene(),
-                          make_canonical_camera());
-        MESSAGE("golden file (re)written: ", golden_v3_path().string());
+        // A v0.3.0 golden must be written by a v0.3.0 writer — frozen
+        // history, exactly like the v0.2.0 one: regenerating it with a
+        // v0.4.0 writer would falsify the fixture's own version.
+        MESSAGE("golden v0.3.0 is FROZEN (ADR-0030 D4): regeneration "
+                "refused by a v0.4.0 writer");
         return;
     }
 
@@ -500,12 +588,27 @@ TEST_CASE("golden v0.3.0: pierced box with recipe - extraction chi=0 genus=1") {
     const std::string golden = read_file(gp);
     CHECK(golden.find("\"version\": \"0.3.0\"") != std::string::npos);
 
-    // (a) The fresh save of the pierced-box scene IS the golden bytes.
     const std::filesystem::path tmp =
         std::filesystem::temp_directory_path() / "cad0_golden_v3_check.CAD_0";
+
+    // (a) The migrated golden re-serializes to exactly the bytes a
+    // fresh v0.4.0 save of the same scene produces — the migrator
+    // (0.3.0 → 0.4.0, content no-op) loses nothing, and the drift
+    // detector survives the bump.
     native::save_file(tmp, make_pierced_scene(), make_canonical_camera());
-    CHECK(read_file(tmp) == golden);
+    const std::string fresh_v4 = read_file(tmp);
+    CHECK(fresh_v4.find("\"version\": \"0.4.0\"") != std::string::npos);
     std::filesystem::remove(tmp);
+
+    const native::ParsedDocument doc = native::load_file(gp);
+    {
+        scene::Scene s;
+        native::ParsedDocument doc_copy = doc;
+        native::install_document(s, std::move(doc_copy));
+        native::save_file(tmp, s, doc.camera);
+        CHECK(read_file(tmp) == fresh_v4);
+        std::filesystem::remove(tmp);
+    }
 
     // (b) The golden carries the recipe in the ADR-0027 D4 shape.
     CHECK(golden.find("\"operation\"") != std::string::npos);
@@ -514,8 +617,9 @@ TEST_CASE("golden v0.3.0: pierced box with recipe - extraction chi=0 genus=1") {
     // (c) Load: the operation node is intact and NOT dangling; the
     // extraction report on its body is the ADR-0027 MVP contract —
     // the first genus > 0 document in the repository's history:
-    // χ = 0, genus 1, closed-orientable.
-    const native::ParsedDocument doc = native::load_file(gp);
+    // χ = 0, genus 1, closed-orientable — IDENTICAL across the 0.4
+    // bump (the D6 clause: "the v0.3 golden migrates with an identical
+    // extraction report").
     REQUIRE(doc.nodes.size() == 3);
     const scene::SceneNode* op = &doc.nodes[2];
     REQUIRE(op->id == 3);
@@ -538,6 +642,511 @@ TEST_CASE("golden v0.3.0: pierced box with recipe - extraction chi=0 genus=1") {
     CHECK(rep.vertex_count == 15104);
     CHECK(rep.edge_count == 45312);
     CHECK(rep.face_count == 30208);
+}
+
+// ---------------------------------------------------------------------------
+// v0.4.0 — the sketcher's document layer (ADR-0030 D4)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("golden v0.4.0: the parametric hole - sketch, extrude, subtract; chi=0 genus=1") {
+    // Regeneration mode (maintainer-only, never active in CI):
+    //   CAD_0_GENERATE_GOLDEN=1 ./CAD_0_tests
+    // rewrites the v0.4.0 golden after an INTENTIONAL format change
+    // (companion ADR required per ADR-0007).
+    if (const char* env = std::getenv("CAD_0_GENERATE_GOLDEN");
+        env && std::string_view(env) == "1") {
+        std::filesystem::create_directories(golden_v4_path().parent_path());
+        native::save_file(golden_v4_path(), make_parametric_hole_scene(),
+                          make_canonical_camera());
+        MESSAGE("golden file (re)written: ", golden_v4_path().string());
+        return;
+    }
+
+    const std::filesystem::path gp = golden_v4_path();
+    const std::string missing = "golden file missing: " + gp.string();
+    REQUIRE_MESSAGE(std::filesystem::exists(gp), missing);
+    const std::string golden = read_file(gp);
+    CHECK(golden.find("\"version\": \"0.4.0\"") != std::string::npos);
+
+    // (a) The fresh save of the parametric-hole scene IS the golden
+    // bytes (the writer is the current one — no bump in between).
+    const std::filesystem::path tmp =
+        std::filesystem::temp_directory_path() / "cad0_golden_v4_check.CAD_0";
+    native::save_file(tmp, make_parametric_hole_scene(), make_canonical_camera());
+    CHECK(read_file(tmp) == golden);
+    std::filesystem::remove(tmp);
+
+    // (b) The golden carries the v0.4 payload in the ADR-0030 D4
+    // shape: the sketch node, the extrude recipe, the subtract recipe.
+    CHECK(golden.find("\"kind\": \"sketch\"") != std::string::npos);
+    CHECK(golden.find("\"type\": \"circle\"") != std::string::npos);
+    CHECK(golden.find("\"type\": \"extrude\"") != std::string::npos);
+    CHECK(golden.find("\"type\": \"subtract\"") != std::string::npos);
+
+    // (c) Load: four nodes, every recipe intact, nothing dangling or
+    // pending. The sketch's entity data is bit-exact; the extrude's
+    // recipe is the source of truth; the subtract consumed the
+    // extrude (itself re-materialized from the sketch — pass 2
+    // propagates in one pass).
+    const native::ParsedDocument doc = native::load_file(gp);
+    REQUIRE(doc.nodes.size() == 4);
+
+    const scene::SceneNode* sk = &doc.nodes[0];
+    REQUIRE(sk->id == 1);
+    REQUIRE(sk->kind == scene::NodeKind::Sketch);
+    REQUIRE(sk->sketch.size() == 1);
+    REQUIRE(sk->sketch[0].entities.size() == 1);
+    REQUIRE(sk->sketch[0].entities[0].kind ==
+            sdf::SketchEntity::Kind::Circle);
+    CHECK(sk->sketch[0].entities[0].circle.center ==
+          math::Vec2f{0.0f, 0.0f});
+    CHECK(sk->sketch[0].entities[0].circle.radius == 0.25f);
+    CHECK(sk->sketch[0].entities[0].circle.hole == false);
+    CHECK(sdf::chain_is_closed(sk->sketch[0]));
+
+    const scene::SceneNode* ex = &doc.nodes[1];
+    REQUIRE(ex->id == 2);
+    REQUIRE(ex->kind == scene::NodeKind::Sdf);
+    REQUIRE(ex->operation.has_value());
+    CHECK(ex->operation->type == scene::OperationType::Extrude);
+    CHECK(ex->operation->sketch == 1);
+    CHECK(ex->operation->distance == 3.0f);
+    CHECK(ex->operation->direction == 1);
+    CHECK_FALSE(ex->operand_missing);
+    CHECK_FALSE(ex->operation_pending);
+    // The extrude's body IS the prism (re-materialized by pass 2 from
+    // the recipe, deterministically — a stale cache would not survive).
+    CHECK(std::string(ex->body.root()->describe())
+              .rfind("extrude(", 0) == 0);
+
+    const scene::SceneNode* box = &doc.nodes[2];
+    REQUIRE(box->id == 3);
+    CHECK(box->builder == "box");
+
+    const scene::SceneNode* sub = &doc.nodes[3];
+    REQUIRE(sub->id == 4);
+    REQUIRE(sub->operation.has_value());
+    CHECK(sub->operation->type == scene::OperationType::Subtract);
+    CHECK(sub->operation->target == 3);
+    CHECK(sub->operation->tool == 2);
+    CHECK(sub->operation->offset_z == -1.5f);
+    CHECK_FALSE(sub->operand_missing);
+
+    // next_id and the operand visibility round-trip exactly.
+    CHECK(doc.next_id == 5);
+    CHECK_FALSE(sk->visible);
+    CHECK_FALSE(ex->visible);
+    CHECK_FALSE(box->visible);
+
+    // (d) The extraction report on the final body: the parametric hole
+    // is genus 1 — the SAME topological contract as the v0.3 pierced
+    // box, now reached through the sketcher's path (D6's clause).
+    bridge::SdfToBrepOptions opts;
+    opts.march_resolution = 48;
+    const bridge::SdfToBrepReport rep =
+        bridge::sdf_to_brep_report(sub->body, opts);
+    CHECK(rep.fit == "faceted");
+    CHECK(rep.chi == 0);
+    CHECK(rep.orientable);
+    CHECK(rep.genus_derived);
+    CHECK(rep.genus == 1);
+    CHECK(rep.loops);
+    // The pins (frozen on the golden, re-run bit-identical — the T13
+    // discipline). They are EXACTLY the v0.3 golden's own pins: the
+    // extrude-prism field (max of disc and slab) has the same
+    // isosurface as the builder cylinder's, so the parametric path
+    // and the primitive path extract the SAME manifold — the
+    // strongest possible statement that the sketcher changes nothing
+    // about the geometry it reproduces.
+    CHECK(rep.vertex_count == 15104);
+    CHECK(rep.edge_count == 45312);
+    CHECK(rep.face_count == 30208);
+
+    // (e) Bit-stability: the same body, re-extracted, is identical
+    // (the T13b discipline).
+    const bridge::SdfToBrepReport rep2 =
+        bridge::sdf_to_brep_report(sub->body, opts);
+    CHECK(rep2.vertex_count == rep.vertex_count);
+    CHECK(rep2.edge_count == rep.edge_count);
+    CHECK(rep2.face_count == rep.face_count);
+    CHECK(rep2.chi == rep.chi);
+}
+
+TEST_CASE("sketch: v0.4 round-trip is byte-identical (parametric hole)") {
+    scene::Scene s = make_parametric_hole_scene();
+    const native::NativeCamera cam = make_canonical_camera();
+
+    const std::filesystem::path a =
+        std::filesystem::temp_directory_path() / "cad0_sketch_rt_a.CAD_0";
+    const std::filesystem::path b =
+        std::filesystem::temp_directory_path() / "cad0_sketch_rt_b.CAD_0";
+
+    native::save_file(a, s, cam);
+    const native::ParsedDocument doc = native::load_file(a);
+    scene::Scene s2;
+    native::install_document(s2, native::ParsedDocument(doc));
+    native::save_file(b, s2, doc.camera);
+    CHECK(read_file(a) == read_file(b));
+
+    std::filesystem::remove(a);
+    std::filesystem::remove(b);
+
+    // The sketch payload survived the cycle exactly (bit-level): the
+    // chains, the entity kinds, every parameter and orientation bit.
+    const scene::SceneNode* sk2 = s2.get_node(1);
+    REQUIRE(sk2 != nullptr);
+    REQUIRE(sk2->kind == scene::NodeKind::Sketch);
+    REQUIRE(sk2->sketch.size() == 1);
+    REQUIRE(sk2->sketch[0].entities.size() == 1);
+    CHECK(sk2->sketch[0].entities[0].kind ==
+          sdf::SketchEntity::Kind::Circle);
+    CHECK(sk2->sketch[0].entities[0].circle.center ==
+          math::Vec2f{0.0f, 0.0f});
+    CHECK(sk2->sketch[0].entities[0].circle.radius == 0.25f);
+    CHECK(sk2->sketch[0].entities[0].circle.hole == false);
+
+    // The recipes survived exactly (source of truth).
+    const scene::SceneNode* ex2 = s2.get_node(2);
+    REQUIRE(ex2->operation.has_value());
+    CHECK(ex2->operation->type == scene::OperationType::Extrude);
+    CHECK(ex2->operation->sketch == 1);
+    CHECK(ex2->operation->distance == 3.0f);
+    CHECK(ex2->operation->direction == 1);
+
+    const scene::SceneNode* sub2 = s2.get_node(4);
+    REQUIRE(sub2->operation.has_value());
+    CHECK(sub2->operation->offset_z == -1.5f);
+
+    // Ids, next_id and visibility round-trip exactly.
+    CHECK(s2.next_id() == 5);
+    CHECK_FALSE(s2.get_node(1)->visible);
+    CHECK_FALSE(s2.get_node(2)->visible);
+    CHECK_FALSE(s2.get_node(3)->visible);
+
+    // The materialized bodies are bit-identical to the fresh
+    // construction (pass 2 rebuilt from the recipes — deterministically).
+    CHECK(sample_grid(s2.get_node(4)->body, 7) ==
+          sample_grid(s.get_node(4)->body, 7));
+    CHECK(sample_grid(s2.get_node(2)->body, 7) ==
+          sample_grid(s.get_node(2)->body, 7));
+}
+
+TEST_CASE("sketch: parameter-class corruption is a loud load error (ADR-0029 family)") {
+    const auto sketch_doc =
+        [](const char* entities, const char* version = "0.4.0") {
+            return std::string("{\"format\": \"CAD_0 native\", \"version\": \"") +
+                   version +
+                   "\", \"scene\": { \"next_id\": 2, \"nodes\": ["
+                   "  { \"id\": 1, \"name\": \"S\", \"kind\": \"sketch\","
+                   "    \"sketch\": { \"chains\": [ { \"entities\": [ " +
+                   std::string(entities) + " ] } ] } }"
+                   " ] } }";
+        };
+
+    // radius <= 0 (the NaN radius's integer sibling: JSON has no NaN
+    // literal, but the class is the same — a non-positive radius
+    // degenerates the disc).
+    CHECK_THROWS_WITH_AS(native::parse_document(sketch_doc(
+        "{ \"type\": \"circle\", \"center\": [0.0, 0.0], \"radius\": 0.0,"
+        " \"hole\": false }")),
+        doctest::Contains("radius must be > 0"), std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(sketch_doc(
+        "{ \"type\": \"circle\", \"center\": [0.0, 0.0], \"radius\": -0.25,"
+        " \"hole\": false }")),
+        doctest::Contains("radius must be > 0"), std::runtime_error);
+    // A huge-but-parseable number overflows the FLOAT cast to infinity
+    // (the parser itself rejects anything beyond double range first —
+    // "number out of range" — so 1e300 is the class's representative:
+    // a finite double that ceases to be a finite float).
+    CHECK_THROWS_WITH_AS(native::parse_document(sketch_doc(
+        "{ \"type\": \"circle\", \"center\": [0.0, 0.0], \"radius\": 1e300,"
+        " \"hole\": false }")),
+        doctest::Contains("not finite"), std::runtime_error);
+    // The same overflow through the CENTER components.
+    CHECK_THROWS_WITH_AS(native::parse_document(sketch_doc(
+        "{ \"type\": \"circle\", \"center\": [1e300, 0.0], \"radius\": 0.25,"
+        " \"hole\": false }")),
+        doctest::Contains("must be finite"), std::runtime_error);
+    // Degenerate segment (p0 == p1).
+    CHECK_THROWS_WITH_AS(native::parse_document(sketch_doc(
+        "{ \"type\": \"segment\", \"a\": [0.0, 0.0], \"b\": [0.0, 0.0],"
+        " \"interior_left\": true }")),
+        doctest::Contains("p0 != p1"), std::runtime_error);
+    // Degenerate arc sweeps: zero, negative, a full turn.
+    CHECK_THROWS_WITH_AS(native::parse_document(sketch_doc(
+        "{ \"type\": \"arc\", \"center\": [0.0, 0.0], \"radius\": 0.25,"
+        " \"hole\": false, \"start_angle\": 0.0, \"sweep\": 0.0 }")),
+        doctest::Contains("sweep must lie in (0, 2"), std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(sketch_doc(
+        "{ \"type\": \"arc\", \"center\": [0.0, 0.0], \"radius\": 0.25,"
+        " \"hole\": false, \"start_angle\": 0.0, \"sweep\": -1.0 }")),
+        doctest::Contains("sweep must lie in (0, 2"), std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(sketch_doc(
+        "{ \"type\": \"arc\", \"center\": [0.0, 0.0], \"radius\": 0.25,"
+        " \"hole\": false, \"start_angle\": 0.0,"
+        " \"sweep\": 6.283185307179586 }")),
+        doctest::Contains("sweep must lie in (0, 2"), std::runtime_error);
+    // Unknown entity type.
+    CHECK_THROWS_WITH_AS(native::parse_document(sketch_doc(
+        "{ \"type\": \"spline\", \"a\": [0.0, 0.0], \"b\": [1.0, 0.0] }")),
+        doctest::Contains("unknown entity type"), std::runtime_error);
+    // A sketch node never carries the other representations' fields.
+    CHECK_THROWS_WITH_AS(native::parse_document(
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.4.0\","
+        " \"scene\": { \"next_id\": 2, \"nodes\": ["
+        "  { \"id\": 1, \"name\": \"S\", \"kind\": \"sketch\","
+        "    \"body\": { \"op\": \"box\", \"extent\": [1.0, 1.0, 1.0] },"
+        "    \"sketch\": { \"chains\": [ { \"entities\": ["
+        "      { \"type\": \"circle\", \"center\": [0.0, 0.0],"
+        "        \"radius\": 0.25, \"hole\": false } ] } ] } }"
+        " ] } }"),
+        doctest::Contains("non-sketch field"), std::runtime_error);
+}
+
+TEST_CASE("sketch: an open chain loads as the legal editing state; its extrude is the visible pending state") {
+    // The loader SPLITS the two (D5's preamble amendment, D4's clause):
+    // the sketch loads — an open chain is legal, visibly-flagged 2D
+    // data (revision 1) — while the extrude's materialization refuses
+    // (chain closure is the extrude's precondition): visible PENDING
+    // state, the file body kept, the certificate's own message
+    // carried. NOT a load error: recovery is the next edit (close the
+    // chain) away.
+    const std::string text = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.4.0",
+      "scene": {
+        "next_id": 3,
+        "nodes": [
+          { "id": 1, "name": "Open_Sketch", "kind": "sketch",
+            "sketch": { "chains": [ { "entities": [
+              { "type": "segment", "a": [0.0, 0.0], "b": [1.0, 0.0],
+                "interior_left": true },
+              { "type": "segment", "a": [1.0, 0.0], "b": [1.0, 1.0],
+                "interior_left": true }
+            ] } ] } },
+          { "id": 2, "name": "Extrude",
+            "body": { "op": "box", "extent": [1.0, 1.0, 1.0] },
+            "operation": { "type": "extrude", "sketch": 1,
+                           "params": { "distance": 2.0, "direction": 1 } } }
+        ]
+      }
+    })JSON";
+
+    const native::ParsedDocument doc = native::parse_document(text);
+    REQUIRE(doc.nodes.size() == 2);
+
+    const scene::SceneNode* sk = &doc.nodes[0];
+    REQUIRE(sk->id == 1);
+    REQUIRE(sk->kind == scene::NodeKind::Sketch);
+    REQUIRE(sk->sketch.size() == 1);
+    // The legal editing state: the chain is OPEN, by the kernel's own
+    // predicate (the one opinion the sketch node, the extrude's
+    // precondition and the canvas share).
+    CHECK(sdf::chain_is_closed(sk->sketch[0]) == false);
+
+    const scene::SceneNode* ex = &doc.nodes[1];
+    REQUIRE(ex->id == 2);
+    REQUIRE(ex->operation.has_value());
+    CHECK(ex->operation->type == scene::OperationType::Extrude);
+    // The visible PENDING state — not dangling (the sketch EXISTS),
+    // not healthy (the certificate refused).
+    CHECK(ex->operation_pending);
+    CHECK_FALSE(ex->operand_missing);
+    // The file body is kept (the last-good cache).
+    CHECK(ex->body.root() != nullptr);
+    CHECK(std::string(ex->body.root()->describe()).rfind("box(", 0) == 0);
+    // The pending error carries the certificate's own message (the
+    // gap named, the remedy included).
+    CHECK(ex->operation_pending_error.find("chain open") !=
+          std::string::npos);
+    CHECK(ex->operation_pending_error.find("Remedy") !=
+          std::string::npos);
+}
+
+TEST_CASE("sketch: a missing sketch operand loads with the visible dangling state") {
+    // v0.4 file whose extrude references sketch 99, which does not
+    // exist: the load SUCCEEDS (the document opens), the extrude
+    // keeps its FILE body (the last-good display geometry) and enters
+    // the visible dangling state — never a load error, never a rebind.
+    const std::string text = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.4.0",
+      "scene": {
+        "next_id": 3,
+        "nodes": [
+          { "id": 1, "name": "Extrude",
+            "body": { "op": "box", "extent": [1.0, 1.0, 1.0] },
+            "operation": { "type": "extrude", "sketch": 99,
+                           "params": { "distance": 2.0, "direction": 1 } } }
+        ]
+      }
+    })JSON";
+
+    const native::ParsedDocument doc = native::parse_document(text);
+    REQUIRE(doc.nodes.size() == 1);
+    const scene::SceneNode* ex = &doc.nodes[0];
+    REQUIRE(ex->operation.has_value());
+    CHECK(ex->operation->sketch == 99);
+    CHECK(ex->operand_missing);
+    CHECK_FALSE(ex->operation_pending);
+    CHECK(ex->body.root() != nullptr);
+    CHECK(std::string(ex->body.root()->describe()).rfind("box(", 0) == 0);
+}
+
+TEST_CASE("sketch: extrude self-reference and operand-kind mismatch are explicit load errors") {
+    // Self-reference: the extrude is its own sketch.
+    const std::string selfref = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.4.0",
+      "scene": { "next_id": 2, "nodes": [
+        { "id": 1, "name": "Ouroboros",
+          "body": { "op": "box", "extent": [1.0, 1.0, 1.0] },
+          "operation": { "type": "extrude", "sketch": 1,
+                         "params": { "distance": 2.0, "direction": 1 } } }
+      ] }
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(selfref),
+        doctest::Contains("references ITSELF"), std::runtime_error);
+
+    // Operand-kind mismatch, both directions: an extrude consuming an
+    // Sdf node, a subtract consuming a Sketch node. Structurally
+    // corrupt — no writer can produce either (creation validates
+    // kinds; a node's kind never mutates) — and the materializer
+    // would read the wrong payload (an empty chain list, an empty
+    // body). Explicit, by role.
+    const std::string ex_of_sdf = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.4.0",
+      "scene": { "next_id": 3, "nodes": [
+        { "id": 1, "name": "Box",
+          "body": { "op": "box", "extent": [1.0, 1.0, 1.0] } },
+        { "id": 2, "name": "Extrude",
+          "body": { "op": "box", "extent": [1.0, 1.0, 1.0] },
+          "operation": { "type": "extrude", "sketch": 1,
+                         "params": { "distance": 2.0, "direction": 1 } } }
+      ] }
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(ex_of_sdf),
+        doctest::Contains("must be a sketch-kind node"), std::runtime_error);
+
+    const std::string sub_of_sketch = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.4.0",
+      "scene": { "next_id": 3, "nodes": [
+        { "id": 1, "name": "S", "kind": "sketch",
+          "sketch": { "chains": [ { "entities": [
+            { "type": "circle", "center": [0.0, 0.0], "radius": 0.25,
+              "hole": false } ] } ] } },
+        { "id": 2, "name": "Subtract",
+          "body": { "op": "box", "extent": [1.0, 1.0, 1.0] },
+          "operation": { "type": "subtract", "target": 1, "tool": 1 } }
+      ] }
+    })JSON";
+    CHECK_THROWS_WITH_AS(native::parse_document(sub_of_sketch),
+        doctest::Contains("must be a sdf-kind node"), std::runtime_error);
+}
+
+TEST_CASE("sketch: extrude recipe parameter-class corruption is a loud load error") {
+    const auto extrude_doc = [](const char* params) {
+        return std::string(R"JSON({
+          "format": "CAD_0 native", "version": "0.4.0",
+          "scene": { "next_id": 3, "nodes": [
+            { "id": 1, "name": "S", "kind": "sketch",
+              "sketch": { "chains": [ { "entities": [
+                { "type": "circle", "center": [0.0, 0.0], "radius": 0.25,
+                  "hole": false } ] } ] } },
+            { "id": 2, "name": "Extrude",
+              "body": { "op": "box", "extent": [1.0, 1.0, 1.0] },
+              "operation": { "type": "extrude", "sketch": 1,
+                             "params": { )JSON") +
+               std::string(params) + " } } } ] } }";
+    };
+
+    CHECK_THROWS_WITH_AS(native::parse_document(extrude_doc(
+        "\"distance\": 0.0, \"direction\": 1")),
+        doctest::Contains("distance\" must be finite and > 0"),
+        std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(extrude_doc(
+        "\"distance\": -2.0, \"direction\": 1")),
+        doctest::Contains("distance\" must be finite and > 0"),
+        std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(extrude_doc(
+        "\"distance\": 1e300, \"direction\": 1")),
+        doctest::Contains("distance\" must be finite and > 0"),
+        std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(extrude_doc(
+        "\"distance\": 2.0, \"direction\": 0")),
+        doctest::Contains("direction\" must be +1 or -1"),
+        std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(extrude_doc(
+        "\"distance\": 2.0, \"direction\": 2")),
+        doctest::Contains("direction\" must be +1 or -1"),
+        std::runtime_error);
+}
+
+TEST_CASE("sketch: pre-v0.4 anachronisms are explicit load errors") {
+    // A sketch payload or an extrude recipe in a file that DECLARES a
+    // pre-0.4 version: no writer of that version ever emitted one (the
+    // v0.3 writer refused loudly) — the file is not what its version
+    // claims. The migrator is a content no-op and cannot bless it.
+    const std::string sketch_in_v03 =
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.3.0\","
+        " \"scene\": { \"next_id\": 2, \"nodes\": ["
+        "  { \"id\": 1, \"name\": \"S\", \"kind\": \"sketch\","
+        "    \"sketch\": { \"chains\": [ { \"entities\": ["
+        "      { \"type\": \"circle\", \"center\": [0.0, 0.0],"
+        "        \"radius\": 0.25, \"hole\": false } ] } ] } }"
+        " ] } }";
+    CHECK_THROWS_WITH_AS(native::parse_document(sketch_in_v03),
+        doctest::Contains("not what its version claims"), std::runtime_error);
+
+    const std::string extrude_in_v03 =
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.3.0\","
+        " \"scene\": { \"next_id\": 3, \"nodes\": ["
+        "  { \"id\": 1, \"name\": \"Box\","
+        "    \"body\": { \"op\": \"box\", \"extent\": [1.0, 1.0, 1.0] } },"
+        "  { \"id\": 2, \"name\": \"Extrude\","
+        "    \"body\": { \"op\": \"box\", \"extent\": [1.0, 1.0, 1.0] },"
+        "    \"operation\": { \"type\": \"extrude\", \"sketch\": 1,"
+        "                     \"params\": { \"distance\": 2.0,"
+        "                                  \"direction\": 1 } } }"
+        " ] } }";
+    CHECK_THROWS_WITH_AS(native::parse_document(extrude_in_v03),
+        doctest::Contains("not what its version claims"), std::runtime_error);
+}
+
+TEST_CASE("sketch: a stale cached extrude body is caught by the pass-2 rebuild") {
+    // The file's cached body disagrees with the recipe (the sketch is
+    // a circle r=0.5, the cache says a plain box). Pass 2
+    // re-materializes from the recipe: the loaded body must be the
+    // extrude prism, not the stale box cache.
+    const std::string stale = R"JSON({
+      "format": "CAD_0 native",
+      "version": "0.4.0",
+      "scene": {
+        "next_id": 3,
+        "nodes": [
+          { "id": 1, "name": "S", "kind": "sketch",
+            "sketch": { "chains": [ { "entities": [
+              { "type": "circle", "center": [0.0, 0.0], "radius": 0.5,
+                "hole": false } ] } ] } },
+          { "id": 2, "name": "Extrude",
+            "body": { "op": "box", "extent": [1.0, 1.0, 1.0] },
+            "operation": { "type": "extrude", "sketch": 1,
+                           "params": { "distance": 2.0, "direction": 1 } } }
+        ]
+      }
+    })JSON";
+
+    const native::ParsedDocument doc = native::parse_document(stale);
+    REQUIRE(doc.nodes.size() == 2);
+    const scene::SceneNode* ex = &doc.nodes[1];
+    REQUIRE(ex->id == 2);
+    // The rebuild won: the body is the extrude prism (per the recipe),
+    // not the stale plain-box cache the file carried.
+    CHECK(std::string(ex->body.root()->describe()).rfind("extrude(", 0) == 0);
+    CHECK_FALSE(ex->operand_missing);
+    CHECK_FALSE(ex->operation_pending);
 }
 
 TEST_CASE("operations: file with a missing operand loads with the error state") {

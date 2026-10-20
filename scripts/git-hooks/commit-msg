@@ -1,0 +1,34 @@
+#!/bin/sh
+# commit-msg hook — il giudice dei soggetti, a tempo di commit.
+#
+# La CI (.github/workflows/ci-linux.yml, job subject-lint) giudica il
+# range dei commit pushati: quando un soggetto non conforme arriva in
+# main, la X e' gia' consumata — il soggetto e' immutabile senza
+# riscrittura della storia (4 occorrenze: run #84, #85, #89, #91).
+# Questo hook porta lo STESSO giudice — il checker versionato
+# (scripts/check_commit_subject.py): stessa funzione, stessa regola,
+# una sola fonte di verita' — un momento prima: il commit non
+# conforme non nasce.
+#
+# Installazione (una volta per clone):
+#   sh scripts/install_git_hooks.sh
+#
+# Bypass d'emergenza: git commit --no-verify. La CI resta l'unica
+# porta: il soggetto verra' comunque giudicato al momento della push.
+
+# I merge sono fuori dal contratto (subject generato da git, non scelto
+# dall'autore): stessa policy del gate in CI.
+if [ -f "$(git rev-parse --git-path MERGE_HEAD)" ]; then
+    exit 0
+fi
+
+root=$(git rev-parse --show-toplevel) || exit 1
+
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "commit-msg: python3 non trovato: impossibile giudicare il soggetto." >&2
+    echo "             Il giudice: scripts/check_commit_subject.py" >&2
+    echo "             (regola e derivazione: CONTRIBUTING.md)." >&2
+    exit 1
+fi
+
+exec python3 "$root/scripts/check_commit_subject.py" --commit-msg "$1"

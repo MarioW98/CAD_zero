@@ -80,23 +80,26 @@ struct NativeVersion {
     }
 };
 
-// The version this build reads and writes. 0.3.0: operation recipes
-// on Sdf nodes (ADR-0027 D4 — the Phase F boolean feature). The
-// migrator chain upgrades older documents: 0.1.0 → 0.2.0 (ADR-0007a,
-// no-op) and 0.2.0 → 0.3.0 (ADR-0027 D4, content no-op — v0.2
-// documents carry no operation fields).
-inline constexpr NativeVersion kNativeVersion{0, 3, 0};
+// The version this build reads and writes. 0.4.0: the sketcher's
+// document layer (ADR-0030 D4) — Sketch-kind nodes with their entity
+// chains, and Extrude recipes on Sdf nodes. The migrator chain
+// upgrades older documents: 0.1.0 → 0.2.0 (ADR-0007a, no-op),
+// 0.2.0 → 0.3.0 (ADR-0027 D4, content no-op) and 0.3.0 → 0.4.0
+// (ADR-0030 D4, content no-op — v0.3 documents carry no sketch
+// fields; the v0.3 writer refused Sketch nodes loudly).
+inline constexpr NativeVersion kNativeVersion{0, 4, 0};
 
 // A Migrator transforms a parsed JSON document from `from_version` to
 // `to_version`. Registered in a chain indexed by the version pair. The
-// registered steps today: the no-op 0.1.0 → 0.2.0 upgrade (ADR-0007a)
-// and the no-op 0.2.0 → 0.3.0 upgrade (ADR-0027 D4). Any file whose
+// registered steps today: the no-op 0.1.0 → 0.2.0 upgrade (ADR-0007a),
+// the no-op 0.2.0 → 0.3.0 upgrade (ADR-0027 D4) and the no-op
+// 0.3.0 → 0.4.0 upgrade (ADR-0030 D4). Any file whose
 // MAJOR.MINOR differs from the current version and has no registered
 // chain of steps fails with an explicit error.
 using Migrator = std::function<void(json::JsonValue&)>;
 
 void register_migrator(NativeVersion from, NativeVersion to, Migrator m);
-std::size_t migrator_count() noexcept; // test hook: 2 (0.1→0.2, 0.2→0.3)
+std::size_t migrator_count() noexcept; // test hook: 3 (0.1→0.2, 0.2→0.3, 0.3→0.4)
 
 // Parse "MAJOR.MINOR.PATCH" (e.g. "0.1.0"). Throws std::runtime_error
 // with an explicit message on malformed input.
