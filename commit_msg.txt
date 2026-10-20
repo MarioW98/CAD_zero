@@ -1,0 +1,68 @@
+docs(ADR-0030): revisione 2 dalla review — D3 completezza zero-set via check pairwise, D6 property del regime di fallimento, D2 stable entity IDs
+
+Revisione completa applicata al draft: D1, D2, D4, D5.1-D5.2
+accettati; D3 accettato CON la correzione blocking applicata; la
+condizione D6 applicata; una riga di conseguenza D2. Blocco
+Revision 2 aggiunto allo Status con l'esito integro.
+
+CORREZIONE D3 (blocking) — la self-certification campionata era
+necessaria ma non sufficiente: un incrocio trasversale tra due
+entita', caduto tra un checkpoint e il prossimo, lascia lo zero-set
+deviare dal contorno disegnato senza far fallire ne' giunti ne'
+midpoint; l'estrusione produce un solido valido ma NON quello
+disegnato, silenziosamente. Chiusa in tre punti:
+- lie #5 ora dichiara DUE strumenti, ognuno copre cio' che l'altro
+  non puo': i campioni (giunti + midpoint) coprono il LATO ATTESO;
+  il check pairwise di intersezione copre la COMPLETEZZA dello
+  zero-set lungo gli span attivi — insieme sufficienti, i midpoint
+  da soli no.
+- lie #5b col controesempio CHIUSO nel testo (formato bugia
+  0029/0030): segmento di catena outer attraversato mid-span dalla
+  curva di un cerchio-hole, incrocio strettamente tra giunto e
+  midpoint — i giunti dal lato atteso, il midpoint sullo zero-set,
+  ogni campione PASSA, eppure lo zero-set lungo quel segmento e'
+  l'arco del hole: solido valido, non quello disegnato.
+- check pairwise specificato: seg-seg (2x2 parametrico, forma
+  chiusa), seg-cerchio (quadratica in t, radici in [0,1]),
+  cerchio-cerchio (norma(C1-C2) vs r1+r2 e |r1-r2|), archi come
+  span angolare del loro cerchio; esatto, O(n^2) entita', cold path
+  (costruzione e load, mai per sample); intersezioni legali SOLO ai
+  giunti condivisi dichiarati della catena; ogni altro incrocio,
+  tangente incluso, = std::invalid_argument col nome delle DUE
+  entita' e il punto d'incrocio (famiglia D5 di ADR-0029, il loader
+  la eredita' gratis). Riga SketchEntitySet aggiunta alla tabella
+  di validazione D3 + cella ProfileSDF aggiornata (expected side /
+  zero-set completeness).
+
+CONDIZIONE D6 — family property del regime di fallimento: membri
+generati CON notch profondi E incroci trasversali nel range del
+generatore (il controesempio D3 fabbricato apposta), asserzione =
+rifiuto pairwise alla costruzione con entita' e punto nominati;
+liveness: i membri conformi passano la certificazione completa.
+La lezione di casa enunciata in D3, due sezioni sopra D6 dove e'
+esercitata: una property il cui range evita il regime e' vacua.
+
+RIGA D2 (conseguenze) — l'indirizzo (FeatureId, index) delle
+entita' e' onesto finche' nessuna entita' ne referenzia un'altra
+(oggi: nessun consumer); il solver futuro vincola entita' a entita'
+e un insert mid-chain sposta gli indici: stable entity IDs sono il
+prerequisito dichiarato dell'ADR del solver, non un retrofit.
+
+COERENZA (dichiarata, non smuggled): Consequences ed Experiments
+aggiornati al rischio ora chiuso (il vecchio "violation strictly
+between samples" e' esattamente cio' che il pairwise rifiuta); D5.5
+rejected-at-command e il D6 smoke ricevono il rifiuto crossing con
+nomi delle due entita' e punto (stessa clausola, predicato unico
+kernel/UI, la stessa forma rifiuto/recupero asserita una volta).
+
+Superficie: SOLO docs/adr/0030-sketcher-mvp.md (1015 -> 1115 righe,
++134/-34). Docs-only: nessun codice toccato -> suite intoccata per
+costruzione, nessuna regressione possibile, goldens non coinvolti.
+Auto-dimostrazione: il range di questa push (b37ac0d..HEAD) = questa
+sola commit, soggetto conforme (verificato, PASS) -> subject-lint
+verde; sanera' anche il rosso attuale di "-msg e instr" (12 < 15).
+CI verificata dall'utente dopo la push.
+
+STOP dopo questa commit: l'implementazione dell'MVP parte solo dopo
+l'accettazione di questa revisione (una commit per unita', CI verde
+dopo ognuna, come da ADR).

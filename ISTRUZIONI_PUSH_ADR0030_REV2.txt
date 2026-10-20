@@ -1,0 +1,76 @@
+CAD_zero — ADR-0030 REVISIONE 2 (review completa applicata)
+============================================================
+
+COSA CONTIENE QUESTO ZIP
+------------------------
+L'albero completo del repo alla commit 0e42365, figlia diretta di
+b37ac0d "-msg e instr" (l'attuale origin/main). Rispetto a b37ac0d
+c'è UNA sola differenza di contenuto:
+
+  docs/adr/0030-sketcher-mvp.md  (1015 -> 1115 righe, +134/-34)
+
+    - Status: blocco Revision 2 (esito integro della review).
+    - D3, correzione blocking applicata: lie #5 ora dichiara DUE
+      strumenti — i campioni (giunti+midpoint) coprono il LATO
+      ATTESO, il check pairwise di intersezione copre la COMPLETEZZA
+      dello zero-set lungo gli span attivi; insieme sufficienti,
+      i midpoint da soli no. Lie #5b col controesempio CHIUSO nel
+      testo (cerchio-hole che attraversa un segmento outer tra
+      giunto e midpoint: tutti i campioni passano, il solido è
+      valido ma non è quello disegnato). Check pairwise: seg-seg,
+      seg-cerchio, cerchio-cerchio (archi come span angolare),
+      esatto in forma chiusa, O(n^2) entità (cold path);
+      intersezioni legali SOLO ai giunti condivisi dichiarati,
+      ogni altro incrocio = std::invalid_argument con nomi delle
+      due entità e punto (famiglia D5 di ADR-0029, loader gratis).
+      Riga SketchEntitySet nella tabella di validazione + cella
+      ProfileSDF aggiornata.
+    - D6, condizione applicata: failure-regime property family col
+      regime NEL range del generatore (notch profondi + incroci
+      trasversali fabbricati apposta), asserzione = rifiuto
+      pairwise; liveness dei membri conformi. Lezione di casa
+      enunciata in D3 (due sezioni sopra D6): una property il cui
+      range evita il regime è vacua.
+    - D2, riga nelle conseguenze: (FeatureId, index) è onesto
+      finché nessuna entità ne referenzia un'altra; stable entity
+      IDs = prerequisito dichiarato dell'ADR del solver.
+    - Coerenza dichiarata: Consequences/Experiments aggiornati al
+      rischio ora chiuso; D5.5 e il D6 smoke ricevono il rifiuto
+      crossing (predicato unico kernel/UI).
+
+PERCHÉ IL BADGE È ROSSO ADESSO (e come torna verde)
+---------------------------------------------------
+La commit b37ac0d "-msg e instr" (12 < 15 caratteri) è stata
+respinta dal subject-lint: run rossa. La push di questa commit
+viene giudicata sul range b37ac0d..0e42365 = SOLO questa commit,
+soggetto conforme (già verificato localmente, exit 0) → CI verde.
+
+VIA CONSIGLIATA (dal tuo clone, che è a b37ac0d)
+-------------------------------------------------
+  1. copia dallo zip il file docs/adr/0030-sketcher-mvp.md
+     nel tuo clone (è l'UNICO file cambiato);
+  2. git add docs/adr/0030-sketcher-mvp.md
+  3. git commit -F commit_msg.txt        # NON cambiare il soggetto
+  4. git push
+  5. verifica: gh run list --limit 3     → atteso tutto verde
+
+VIA ALTERNATIVA — BUNDLE (commit già pronta, identica byte per byte)
+--------------------------------------------------------------------
+Accanto allo zip: CAD_zero_adr0030_rev2.bundle, contiene la commit
+0e42365 con subject e body esatti. Dal clone a b37ac0d:
+
+  git pull --ff-only <percorso>/CAD_zero_adr0030_rev2.bundle main
+  git push
+
+Se il --ff-only rifiuta, il tuo main è andato oltre b37ac0d:
+fermati e usa la via consigliata. Scegli UNA via, non entrambe.
+
+NOTA (leftover innocuo, NON toccato da questa commit docs-only)
+---------------------------------------------------------------
+Nel repo (radice) c'è una copia di check_commit_subject.py
+lasciata dalla commit "-msg e instr": nessuno la esegue (il
+workflow usa scripts/check_commit_subject.py). Se vuoi rimuoverla,
+fallo in una futura commit legittima con soggetto descrittivo.
+
+STOP: come da traccia, l'implementazione dell'MVP parte solo dopo
+l'accettazione di questa revisione.
