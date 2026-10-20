@@ -6,6 +6,35 @@ on:
   pull_request:
 
 jobs:
+  # Commit subject lint — la regola dei soggetti descrittivi
+  # (scripts/check_commit_subject.py). Giudica SOLO i commit del range
+  # pushato / del PR: la storia pre-lint non si tocca. Skip dei merge
+  # (subject generato da git/GitHub, non scelto dall'autore).
+  subject-lint:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # serve l'intera storia: il range pushato può includere
+          # commit più vecchi della shallow clone di default
+          fetch-depth: 0
+
+      - name: Commit subject lint (range dei commit pushati)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            RANGE="${{ github.sha }}"   # nuovo ramo: solo la punta
+          else
+            RANGE="${{ github.event.before }}..${{ github.sha }}"
+          fi
+          # force-push che ha cancellato "before": fallback alla punta
+          if ! git cat-file -e "${RANGE%%..*}^{commit}" 2>/dev/null; then
+            echo "::warning::range non risolvibile (${RANGE}), fallback al singolo commit"
+            RANGE="${{ github.sha }}"
+          fi
+          python3 scripts/check_commit_subject.py "$RANGE"
+
   build-and-test:
     runs-on: ubuntu-22.04
     strategy:

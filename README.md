@@ -243,6 +243,7 @@ See [docs/architecture/overview.md](docs/architecture/overview.md) for the full 
 | [0027](docs/adr/0027-phase-f-boolean-feature-slice.md) | Phase F boolean feature slice: operation nodes in the tree, FeatureId-referenced operands, id-stable undo/redo, `.CAD_0` v0.3 operation recipes |
 | [0028](docs/adr/0028-sdf-bounds-smooth-blend-dilation.md) | SmoothMinSDF bounds() dilates by k/8 per blend level (the k/16 field dip, conservatively converted); the stratified positivity property closes the thin-shell blind spot |
 | [0029](docs/adr/0029-twist-warp-contract.md) | **The twist warp contract (implemented)**: cylinder-AABB bounds (k-blind proof, √2 on-axis cost), the σ(k, r) Lipschitz closed form, the full chain-rule gradient with the y shear; construction-time validation across the 16-node table; property closure with anti-revolution liveness guards, the σ k-sweep, and twisted bridge extractions under the full contract set |
+| [0030](docs/adr/0030-sketcher-mvp.md) | **The sketcher MVP (draft — Phase F-2, ADR-first)**: typed 2D entities (segments, circles, arcs) as a third node kind, extrude as an operation node with the subtract's genealogy, the 2D field semantics derived to the ADR-0029 standard (max-composition: sign and zero-set exact, Lipschitz 1 proved, the conservative gap named), `.CAD_0` v0.4 — the constraint solver explicitly deferred with its entry criterion |
 
 ## Testing, determinism, CI
 
