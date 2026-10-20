@@ -15,6 +15,17 @@ that composes it is max. The min is the union — it appears here only
 as a rejected alternative and as the future hierarchical composition
 (out of scope, with its entry criterion stated).
 
+**Revision 1 (2026-10-20, same day, pre-implementation): D5 rewritten.**
+The draft's D5 was a UI/UX sketch — entities entered through
+property-panel dialogs, dragging deferred, snapping deferred to the
+solver era. The review direction replaces it with a BINDING
+interaction specification: direct manipulation is the outer face, the
+recipe is the real object — every graphical gesture is a write of
+parameters into the sketch node's recipe (D5.1–D5.8). D6's UI smoke
+now asserts the gesture semantics. Two one-sentence amendments ride
+along at their sites (D2's chain-closure timing, D4's loader error
+split) — declared in D5's preamble, not smuggled.
+
 ## Context
 
 ADR-0027 D1 named this increment: *"The sketcher (2D profiles,
@@ -146,7 +157,11 @@ re-designed.
   payload is the entity list + the contour: an ordered chain of typed
   entities, each carrying its parameters, connected endpoint-to-
   endpoint; a profile may carry exactly one outer chain plus hole
-  chains (the ring of D6) — every chain closed.
+  chains (the ring of D6) — every chain closed **at materialization:
+  closure is the extrude's precondition and the visible definition
+  state's target, not the sketch node's right to exist (an open chain
+  is a legal, visibly-flagged editing state — revision 1, declared in
+  D5's preamble)**.
 - **World XY, and only world XY, for the MVP.** The plane choice is
   not cosmetic: D3 declares Lipschitz = 1 *because* the profile field
   is evaluated in the same frame it is authored in, with no
@@ -373,7 +388,10 @@ again.
   migrator fails explicitly.
 - **Loader, two passes, unchanged protocol.** Pass 1 parses all
   nodes (sketch entities validated per the D3 construction checks —
-  a corrupt sketch is a loud load error, the ADR-0029 family). Pass 2
+  parameter-class corruption, the NaN radius or r ≤ 0 kind, is a loud
+  load error, the ADR-0029 family; an OPEN chain loads as revision
+  1's legal editing state, its extrude pending in the visible error —
+  the loader splits the two, as D5's preamble declares). Pass 2
   validates references: a missing sketch operand → the extrude keeps
   its file body and enters the visible dangling state (not a load
   error); cycle or self-reference → explicit load error.
@@ -389,55 +407,387 @@ files (not self-contained); sketch-as-blob (the entities must be
 JSON-visible for the migrator chain and for diffability — the same
 reason the operation recipe is JSON).
 
-### D5. UI/UX MVP — and the CLI use case that defines the phase
+### D5. Interaction specification (binding) — direct manipulation is the outer face, the recipe is the real object
 
-**Choice.**
+**What this revision is.** The draft's D5 was a UI/UX sketch: entities
+entered through property-panel dialogs, dragging deferred, snapping
+deferred to the solver era. This revision replaces it with a **binding
+interaction specification**: every clause below is normative for MVP
+unit 4 — the unit is done when the clauses hold, and D6's smoke asserts
+them. The governing principle, stated once and applied everywhere:
 
-- **Canvas 2D for the sketch** — a new widget (QPainter, no GL): the
-  world XY plane seen from +Z, the entity chain drawn per entity
-  type, the selected entity highlighted. Creating a sketch (Create →
-  Sketch) opens it; entities are added by the property panel
-  (entity dialogs) and selected by click. **Selection = nearest
-  entity within a pixel tolerance, measured with the per-entity
-  EXACT formulas** (point-segment distance, |P−C|−r, the clamped
-  arc distance) — never with the composed field (D3's honesty rule:
-  the field is not a measuring stick).
-- **Parametric editing**: the selected entity's parameters route to
-  the generic property panel (the registry consumer pattern — zero
-  new panel code); edits mark the sketch changed and the DAG pass
-  re-materializes every dependent (extrude → subtract → extraction),
-  the established propagation.
-- **Dialogo Extrude**: with a sketch node selected, Edit → Extrude
-  opens the minimal dialog (distance, direction ±Z; defaults
-  1.0/+Z). OK creates the operation node — a top-level row "Extrude
-  (Sketch#N)", Type column "FEAT" — and the prism appears in the
-  viewport through the ordinary MC path (zero renderer work; the
-  sketch stays in the tree, selectable, and has no 3D presence to
-  hide).
-- **The CLI of the phase — the use case the user must be able to
-  run:** *sketch a circle → extrude it → subtract it from a box =
-  the parametric hole, by the book.* Delivered as a bindings example
-  (`examples/sketch_hole.py`) exercising the whole stack: entity
-  creation on a sketch node, the extrude recipe, the subtract
-  referencing the extrude's FeatureId, an edit of the circle's
-  radius propagating bit-identically through the chain, a v0.4
-  save/load round-trip, and the genus-1 extraction report of the
-  pierced box. This combines F-1 and F-2 and touches naming, DAG,
-  format and bridge — the phase's acceptance demo.
-- **Deferred with entry criteria (not just "later"):**
-  - *Snapping* — enters when the constraint solver's ADR opens
-    (snap without constraints is eye-candy that lies about
-    precision; the honest MVP is exact typed entities).
-  - *Visual grid* — cosmetic only, explicitly NON-magnetic until
-    snapping exists; may land earlier as pure decoration if trivial.
-  - *Fine picking (curve-hit refinement, box-select, drag)* — enters
-    when real sketches carry enough entities that click ambiguity
-    exists (MVP: nearest-within-tolerance).
+> **Direct manipulation is the outer face; the recipe is the real
+> object.** Every graphical gesture is a write of parameters into the
+> sketch node's recipe. No free geometric state exists that the
+> document cannot rewrite.
 
-**Rejected alternatives:** GL canvas (a second rendering stack for
-zero MVP value); sketch-on-face (needs arbitrary planes + subshape
-stability — out of scope below); a dedicated sketch editor window
-(owns the node, fights the tree — the canvas is a VIEW of the node).
+This is the ADR-0005 discipline at 2D granularity. As silent rebind is
+forbidden, so is the silent constraint: nothing graphical may change a
+value the user did not see and accept. The canvas (the new QPainter
+widget, no GL — the draft's rendering decision stands; the world XY
+plane seen from +Z) shows exactly one of three things: (a) a rendering
+of recipe parameters, (b) a transient preview of the gesture in
+progress, (c) an acceptance glyph for a suggestion (D5.4). There is no
+fourth thing; a fourth thing is a bug.
+
+**Two one-sentence amendments folded at their sites** (this ADR's
+facts-over-drafts habit, applied to itself): D2's "every chain closed"
+becomes the EXTRUDE's precondition and the definition state's target —
+not the sketch node's right to exist, or progressive drawing is
+impossible (an open chain is a legal, visibly-flagged editing state);
+D4's loader splits its error — parameter-class corruption is a loud
+load error, an open chain loads as the same legal editing state with
+the extrude pending in its visible error. Closure moved from "the
+sketch must be born closed" to "the extrude demands closure and the
+canvas shows the distance to it" — the natural shape of drawing.
+
+#### D5.1 Creation — drawn on the canvas, with named parameters
+
+**Choice.** Entities are drawn directly on the canvas — never entered
+through dialogs. The gestures, pinned:
+
+| Entity | Gesture (pinned) | Parameters written (the names, as serialized — D4) |
+|---|---|---|
+| **segment** | press at A, drag (live rubber-band A → cursor), release at B | `x0, y0, x1, y1` |
+| **circle** | press at C (the center), drag, release — r = ‖release − C‖ | `cx, cy, r` |
+| **arc** | press at C, drag, release — fixes r and a₀ = arg(release − C); move (live sweep preview from a₀); click — fixes a₁ = arg(cursor) | `cx, cy, r, a0, a1` |
+
+Angles in radians, CCW positive — the document's own numbers; no
+undeclared unit conversion anywhere in the pipeline (a degrees display
+is D5.7's: a declared presentation change, never a hidden transform).
+
+- **Live preview during the gesture** — the rubber band, the growing
+  circle, the sweeping arc: rendering only, the parameter table
+  untouched. The preview is category (b) of the principle; it writes
+  nothing.
+- **Cancelable**: ESC or right-click during the gesture aborts it — no
+  entity, no write, no undo entry. An abort is not an undo: there is
+  nothing to undo.
+- **Completed gesture = entity with parameters AND names**: the
+  gesture's values land in the recipe 1:1 and appear in the property
+  panel under the serialized names of the table. The names are part of
+  this specification — a parameter without a name cannot be routed,
+  edited, serialized or addressed. The panel keeps its TEXT role (the
+  registry consumer pattern, zero new panel code — that part of the
+  draft survives); what dies is the dialog as the CREATION path.
+- **New circles are OUTER contours by a declared default**: the chain
+  role (outer / hole — D3's disc vs complement orientation) is a
+  recipe parameter, created as outer and togglable per chain in the
+  panel, with a distinct aspect per role (D5.3's table) so the default
+  is VISIBLE, not silent. Auto-classification by geometric containment
+  ("a circle inside the outer chain must be a hole") is rejected
+  below: it is exactly the silent write this ADR forbids — orientation
+  decided by position.
+
+**Rejected alternatives:**
+
+- *Property-panel dialogs as the creation path (the draft's own text)*
+  — form-filling geometry: no gesture, no preview, nowhere for the
+  coincidence suggestions to live. The panel keeps text editing
+  (D5.2); creation moves to the canvas.
+- *Free polyline capture (click-click-click, one entity per session)*
+  — the typed-entities decision (D1) verbatim: a polyline has no
+  radius to edit; it would also force an entity-splitting pass with
+  its own silent choices.
+- *Arc by three points (start–mid–end)* — writes derived parameters:
+  center and radius are solved from the points inside the gesture and
+  the user never sees them being written; the center–radius–angles
+  gesture writes exactly the recipe's parameters, 1:1. Three-points
+  remains a legitimate future gesture (D5.7) provided it displays the
+  derived values before the write.
+- *A dedicated sketch editor window owning the node* — rejected in the
+  draft, reconfirmed by the principle: the canvas is a VIEW of the
+  node (D5.6), not an application around it.
+
+#### D5.2 In-place editing — handles are parameters
+
+**Choice.** Selection first, the draft's honest rule unchanged:
+**click picks the nearest entity within 10 px, measured with the
+per-entity EXACT formulas** (point–segment distance, |P − C| − r, the
+clamped arc distance) — never the composed field (D3's honesty rule:
+the field is not a measuring stick). The selected entity shows its
+handles and routes its parameters to the panel. Then, editing:
+
+| Entity | Handle | Parameter(s) written |
+|---|---|---|
+| segment | endpoint 0 / endpoint 1 | `x0, y0` / `x1, y1` |
+| circle | center | `cx, cy` |
+| circle | radius point (cx + r, cy) | `r` |
+| arc | center | `cx, cy` |
+| arc | radius point (mid-angle) | `r` |
+| arc | endpoint at a₀ / endpoint at a₁ | `a0` / `a1` (r held) |
+
+- **Dragging a handle modifies the corresponding parameter(s)**, and
+  the dependents regenerate in the DAG as always. Commit at release:
+  during the drag the canvas shows the preview (category (b)); on
+  release the parameters are written, the sketch is marked changed,
+  and the DAG pass re-materializes every dependent — the established
+  propagation (extrude → subtract → extraction) — as ONE undo entry.
+  ESC during the drag aborts it: parameters untouched.
+- **Double-click on a dimension = text edit of the value**: on an
+  endpoint handle, the inline edit of that point's coordinates; on the
+  circle/arc radius label, the edit of `r`. The rule for what is
+  text-editable is pinned: **a dimension is editable if and only if
+  its edit writes named recipe parameters with no hidden anchor
+  choice**. The radius qualifies (it writes r). A displayed LENGTH
+  (measured, read-only — the exact formulas again) does not: writing
+  it requires choosing which endpoint stays fixed — an interaction
+  decision, not a parameter write; it stays out with its criterion
+  (D5.7). Gesture and text write the SAME named parameter through the
+  SAME route — one truth, two affordances.
+- **Never floating geometry**: nothing persistent exists on the canvas
+  that is not a rendering of recipe parameters. If it is drawn and
+  survives the gesture, it is in the recipe; if it is not in the
+  recipe, it disappears with the gesture. A handle belongs to exactly
+  ONE entity: two connected entities share an endpoint by VALUE (their
+  coordinates are equal, D5.4), so dragging either endpoint can break
+  the coincidence — the no-solver cost, paid visibly as the definition
+  state re-opens (D5.3), never papered over.
+
+**Rejected alternatives:**
+
+- *Continuous write during the drag (live DAG regen per frame)* — N
+  regenerations and a burst of undo frames for one user intent;
+  enters only with its measured criterion (D5.7).
+- *Moving the shared endpoint of both entities (a mini-solver inside
+  the drag)* — two systems of truth (values and propagated relations),
+  exactly what D1 excludes; the coincidence is values, and its
+  breakage is visible.
+- *Entity-wide transforms (move/rotate with a pivot)* — writes all an
+  entity's parameters at once from an implicit pivot; deferred to
+  D5.7 (the pivot must become an explicit, visible choice first).
+
+#### D5.3 Visible definition state — and why the extrude does not care how you got there
+
+**Choice.** In the no-solver regime, "under-defined" has one honest
+meaning: CONNECTIVITY, not missing constraints. The operational
+definition, pinned:
+
+- An entity endpoint is **connected** when its coordinates coincide
+  (within the joint tolerance of the D3 construction checks) with an
+  endpoint of an adjacent entity in the same chain.
+- A chain is **closed** when every entity in it is connected into a
+  loop — a circle IS a closed single-entity chain.
+- The sketch is **fully defined** when it carries exactly one outer
+  chain and every chain (outer and holes) is closed. Anything else —
+  a free endpoint, an open chain — is **under-defined**, and looks it:
+
+| Canvas element | Pinned aspect |
+|---|---|
+| background | #1E1E1E, flat |
+| entity in a closed chain, outer role | #FFFFFF, solid, 2 px |
+| entity in a closed chain, hole role | #7E57C2, solid, 2 px |
+| under-defined entity (free endpoint / open chain) | #E8A33D, dash [6, 3], 2 px — wins over the role color |
+| selected entity | #4FC1FF, solid, 3 px, with 6×6 px square handles |
+| gesture preview | #9AA0A6, dash [2, 2], 1 px |
+| suggestion glyph | #4FC1FF, 5 px circle marker + the value it would write, as text |
+| grid | #3A3F44 dots, 1 world-unit pitch (fixed — D5.7) |
+| rejection message | #FF6E6E text in the canvas status bar, persisting until the next gesture |
+
+The aspect table is normative: the state is computed from the recipe
+(connectivity of the written values), the aspect is a pure function of
+the state, and the smoke asserts the pair. The amber is a worklight,
+not a judgment: it says "the extrude would reject this as it stands"
+(D5.5) — nothing about the approach being wrong.
+
+**The invariant under it**: a profile extruded from a valid sketch does
+not depend on how the definition was reached. The D3 field is a
+function of the final parameter values alone — same recipe state,
+same prism, bit-identical (ADR-0014) — whether that state was reached
+by gesture, by text, by drag, or by file. D6 asserts this as the
+via-agnostic property: the same state reached two ways, the same
+bytes out.
+
+**Rejected alternatives:**
+
+- *No visible state (all entities alike)* — the user discovers the
+  open profile at the extrude, the latest and most expensive moment;
+  the amber exists to move that discovery to the cheapest one.
+- *A three-state traffic light (under / partially / over)* — without a
+  solver there is no "over", and "partially" would say what "loose"
+  already says.
+- *Badge counts instead of color ("2 free endpoints")* — readable but
+  not LOCAL: the state must be seen on the entity that carries it.
+
+#### D5.4 Suggestions, never silent applications
+
+**Choice.** During a gesture, alignment candidates are computed and
+OFFERED — never applied. The MVP candidate set, pinned (thresholds in
+screen pixels, converted to world units at the current zoom):
+
+| Candidate | Condition (at the cursor) | If accepted, writes |
+|---|---|---|
+| horizontal | ‖Δy‖ < 6 px between the gesture's anchor and the cursor | `y1 = y0` (the anchor's value) |
+| vertical | ‖Δx‖ < 6 px | `x1 = x0` |
+| endpoint coincidence | cursor within 8 px of an existing entity endpoint | the new endpoint = that endpoint's coordinates (equal values) |
+| grid point | cursor within 6 px of a grid point (1-unit pitch) | the quantized coordinates |
+
+- The active candidate (the nearest) renders as the glyph — category
+  (c) of the principle — WITH the value it would write, as text:
+  seeing what you accept is the rule.
+- **Acceptance is an explicit act**: hold SHIFT at the release/click
+  that completes the gesture → the candidate's values are written.
+  Complete without SHIFT → the pointer's raw values are written,
+  verbatim. No threshold exists below which the snap happens by
+  itself. A declared default (the circle's outer role) is not a silent
+  application; an undeclared geometric inference (containment,
+  near-horizontal auto-flatten) is one, and is forbidden.
+- **Accepted = explicit parameters, not constraints.** The horizontal
+  suggestion accepted writes `y1 = y0` as two numbers that happen to
+  be equal — D1 UNCHANGED: no relation is stored, no propagation is
+  armed. Dragging the endpoint later can break the alignment; nothing
+  objects, nothing repairs — the honest no-solver cost, and any such
+  break is visible as a state change. The coincidence suggestion has
+  a second, STRUCTURAL effect: the new entity is appended to the chain
+  of the entity it connects to (the chain is recipe structure — D2);
+  that appending is what closes contours.
+- This is the naming rule extended to 2D: **as the silent rebind is
+  forbidden, so is the silent constraint**. The full SOLVER
+  (persistent relations, DOF counting, repair on edit) stays deferred
+  exactly as D1 deferred it; when its ADR opens, these glyphs become
+  the display of its constraints — the vocabulary is already the
+  honest one.
+
+**Rejected alternatives:**
+
+- *Auto-snap below threshold (the common 2D-editor default)* — writes
+  values the user never confirmed; the 2D form of the silent rebind,
+  and the reason this subsection exists. It also lies about precision
+  in the draft's old direction — coordinates that look intentional
+  when they are accidental.
+- *Context-menu candidate selection* — interrupts the gesture; a menu
+  is a commit, not an offer.
+- *TAB cycling through candidates* — legitimate, deferred with its
+  criterion (D5.7): only when real usage shows the nearest-candidate
+  rule picking wrong often enough to matter.
+
+#### D5.5 Validation at construction, also in UI — the gesture never completes an out-of-class state
+
+**Choice.** The Extrude command: with a sketch node selected, Edit →
+Extrude opens the minimal dialog (distance, direction ±Z; defaults
+1.0/+Z); OK creates the operation node — a top-level row "Extrude
+(Sketch#N)", Type column "FEAT" — and the prism appears through the
+ordinary MC path, zero renderer work. The ADR-0029 D5 error class —
+construction-time rejection — is raised to the gesture layer: the same
+class, the same predicates, ONE opinion. The kernel's construction
+checks (D3's table: p₀ ≠ p₁, r > 0, sweep ∈ (0, 2π), finite
+parameters, d > 0, closure at materialization) are exposed and called
+by the UI; the UI keeps no second copy of the rules.
+
+- **Rejected at the gesture**: degenerate release (press ≈ release: a
+  segment below the gesture threshold), r ≈ 0 (release on the
+  center), degenerate sweep (a₁ within the sweep threshold of a₀, or
+  at ≥ 2π − that), degenerate drag in editing (the radius point onto
+  the center). No entity is created, no parameter changes, and the
+  rejection is VISIBLE: the message in the canvas status bar (#FF6E6E,
+  the pinned channel), naming the refused value, persisting until the
+  next gesture begins.
+- **Rejected at the command**: Extrude on a sketch with open chains →
+  the command is refused and the open entities are NAMED in the
+  message (the 0029 habit: name the offender). Extrude dialog:
+  distance ≤ 0 or non-finite → OK is refused with the message.
+- **Rejected at the text edit**: r ≤ 0, NaN, empty → the field
+  refuses; the previous value stands.
+- The gesture threshold (what counts as degenerate) is 2 px at the
+  current zoom — DISTINCT from the suggestion thresholds (6/8 px):
+  suggestions may offer, only degeneracy refuses. A value that is
+  merely ugly but in-class (a very short segment drawn slowly) is
+  ACCEPTED — the UI judges class, never taste.
+
+**Rejected alternatives:**
+
+- *Accept-then-fix (create the entity, silently correct the value)* —
+  a silent write by definition; it also creates the very out-of-class
+  state it was supposed to prevent.
+- *A UI-side rulebook (the UI's own validation code)* — divergence is
+  the certainty: the UI accepting what the kernel rejects, or
+  vice versa; the single source is the point.
+
+#### D5.6 The canvas is a node like the others
+
+**Choice.** The 2D canvas is a VIEW of the sketch node — nothing more,
+with exactly the privileges of nothing more:
+
+- **Opening**: Create → Sketch, or double-click on the sketch's row in
+  the feature tree. The node lives in the tree with its genealogy and
+  its dangling state EXACTLY as the subtract's operands do (ADR-0027
+  D2, inherited verbatim by D2 of this ADR): deleting a sketch
+  referenced by an extrude SUCCEEDS, the extrude enters the visible
+  dangling state — tree row flagged, property panel actionable, last
+  body kept, display continues — never silence. The open canvas view
+  of the deleted sketch CLOSES: the node is gone; undo recovers it,
+  id-stable, and the view can be reopened.
+- **One view per sketch** at a time (MVP). Closing the view commits
+  NOTHING — there is nothing to commit: every completed gesture
+  already wrote. That is the principle; closing just stops looking.
+- **View state is not document state**: pan and zoom are transient,
+  live nowhere in the recipe; a reopened sketch fits its content.
+  (Per-session persistence may come later — D5.7 — never into the
+  file.)
+- **Undo granularity = the gesture**: a completed creation is one
+  entry, a released drag is one entry, a text edit is one entry, an
+  aborted anything is zero entries. The command stack stays the
+  single history; the canvas keeps no private one.
+- **Forbidden, explicitly** (the parallel-document list): persistent
+  geometric canvas state beyond the recipe; a draft buffer between
+  the gesture and the write; sketch data in any file but the
+  `.CAD_0`; a second editing truth — the canvas and the panel always
+  show the same recipe, the panel being the text view of what the
+  canvas shows graphically.
+
+**Rejected alternatives:** the dedicated editor window (fights the
+tree, owns the node — rejected in the draft, reconfirmed by the
+principle); the draft-then-commit buffer (a document beside the
+document — the F-1 lesson at 2D granularity); multi-view sync (doubles
+every write path for a scenario the MVP does not have — D5.7).
+
+#### D5.7 What stays out of this specification, each with its entry criterion
+
+- **Fine snapping** (midpoint, intersection, tangent, perpendicular
+  display) — enters when the solver's ADR opens (these are its
+  constraint vocabulary) or when measured open-profile rejection rates
+  show base coincidence insufficient in practice.
+- **Configurable grid** (pitch, subdivisions) — enters when measured
+  usage shows the 1-unit pitch useless in the working domain
+  (sub-millimeter or tens-of-meters parts) and the requests recur.
+- **Degrees display** — a declared presentation toggle over radians;
+  enters with the first real sketch session (cosmetic, but it is a
+  conversion and it will be labeled).
+- **Entity-wide transforms** (move/rotate an entity with a visible
+  pivot) — enters when per-parameter editing proves too slow for real
+  profiles; the pivot must be an explicit, visible choice (the anchor
+  rule of D5.2).
+- **Derived-dimension inline editing** (segment length, Δx/Δy) —
+  enters per dimension once its anchor semantics is written down
+  (which endpoint stays fixed) and requested; today they are read-only
+  measures.
+- **Live regeneration during the drag** — enters when the measured
+  regeneration latency makes release-commit feedback inadequate for
+  the workflow.
+- **Arbitrary work planes / profiles on faces of bodies** — unchanged,
+  D2's and the out-of-scope section's criteria (the frame-change
+  derivation to the 0029 standard; subshape stability).
+- **Graphic timeline** — enters when real documents carry enough
+  features that the flat tree + genealogy stops answering "what
+  consumed what, in which order" at a glance; until then the tree IS
+  the timeline.
+- **Multi-view of one sketch** — enters with collaboration or
+  dual-monitor demand; one write path until then.
+- **TAB candidate cycling** — enters when the nearest-candidate rule
+  mispicks in practice.
+
+#### D5.8 The CLI of the phase — unchanged, and still the acceptance demo
+
+*Sketch a circle → extrude it → subtract it from a box = the parametric
+hole, by the book* — delivered as `examples/sketch_hole.py`, exercising
+the whole stack: entity creation on a sketch node, the extrude
+recipe, the subtract referencing the extrude's FeatureId, an edit of
+the circle's radius propagating bit-identically through the chain, a
+v0.4 save/load round-trip, and the genus-1 extraction report of the
+pierced box. This combines F-1 and F-2 and touches naming, DAG, format
+and bridge. The example and the canvas are the two faces of the same
+recipe: the example proves the document model, the canvas proves the
+interaction model, D6 asserts both.
 
 ### D6. Test plan (contracts, not coverage)
 
@@ -477,18 +827,47 @@ C++:
   migrates with an identical extraction report; v0.1/v0.2/v0.3
   goldens byte-immutable; a dangling-sketch file loads with the
   error state; cyclic/self-reference → explicit load error; a
-  corrupt sketch entity (NaN radius, open chain) → the ADR-0029
-  family error, named.
+  corrupt sketch entity (NaN radius, r ≤ 0) → the ADR-0029
+  family error, named; an open chain → loads as revision 1's legal
+  editing state (D5's amendment), the extrude pending in its
+  visible error.
 
 Python / bindings:
 
 - The report and scene surfaces the dialog and example need; the
   sketch/extrude surfaces mirror the subtract's.
-- **UI smoke (offscreen, the established driver):** create sketch →
-  add circle → extrude → subtract from a box → the hole is in the
-  tree and the Debug report shows χ = 0, genus 1; radius edit
-  propagates (report follows); delete sketch → dangling row; undo →
-  recovered, same ids; save/load round-trip with the same report.
+- **UI smoke (offscreen, the established driver) — gesture semantics
+  asserted (D5's clauses, each mapped to a test):**
+  - *Creation*: an injected press–drag–release draws a segment → the
+    entity exists WITH the expected parameters (the gesture's values
+    in the named fields, 1:1); same for the circle, and for the arc's
+    two-phase gesture (radius+start, then sweep+end).
+  - *In-place edit*: endpoint drag released → the parameters changed
+    AND the dependent DAG re-materialized; the same final state
+    reached by text edit produces the bit-identical prism — the
+    via-agnostic property of D5.3 (ADR-0014 across interaction
+    paths).
+  - *Suggestion refused* (release without SHIFT, a candidate under
+    threshold active): the recipe holds the pointer's raw values,
+    byte-for-byte — no hidden write. *Suggestion accepted* (with
+    SHIFT): the candidate's values, explicit; the chain structure
+    updated on an accepted coincidence.
+  - *Out-of-class input during the gesture* (degenerate release,
+    r = 0, degenerate sweep): NO entity created, the rejection
+    message visible in the pinned channel (the canvas status bar),
+    the recipe byte-identical to before the gesture.
+  - *Abort*: ESC mid-gesture → no entity, no undo entry; ESC
+    mid-drag → parameters unchanged.
+  - *Definition state*: an open chain renders under-defined (the
+    pinned amber/dash; the state derived from recipe connectivity);
+    Extrude refused with the open entities named; after an accepted
+    coincidence closes the chain → Extrude succeeds.
+  - *The draft's end-to-end flow stands*: create sketch → circle →
+    extrude → subtract from a box → the hole is in the tree and the
+    Debug report shows χ = 0, genus 1; radius edit propagates
+    (report follows); delete sketch → dangling row; undo →
+    recovered, same ids; save/load round-trip with the same report;
+    undo is gesture-granular (LIFO over creations and edits).
 - Python 3.10 f-string checker clean on every touched file.
 
 ## Proposed MVP — the parametric hole, end-to-end
@@ -503,11 +882,15 @@ Python / bindings:
    commands; the dangling state for a missing sketch. (scene)
 3. **Format (D4)** — v0.4 writer/reader (two-pass), the 0.3 → 0.4
    migrator, the v0.4 golden, the old goldens immutable. (io)
-4. **App + CLI (D5)** — the canvas 2D widget, the Extrude dialog,
-   entity params in the property panel, `examples/sketch_hole.py`,
-   the UI smoke suite, the genus-1 report on the parametric hole.
-   (app + bindings; splits into two commits at implementation time
-   if the canvas and the example pull in different directions)
+4. **App + CLI (D5)** — the canvas 2D widget implementing the D5
+   interaction clauses (gesture creation, in-place editing, definition
+   state, acceptable suggestions, construction-time rejection — the
+   whole binding specification), the Extrude dialog, entity params in
+   the property panel, `examples/sketch_hole.py`, the UI smoke suite
+   asserting the gesture semantics, the genus-1 report on the
+   parametric hole. (app + bindings; splits into two commits at
+   implementation time if the canvas and the example pull in different
+   directions)
 
 Zero renderer changes. The v0.1/v0.2/v0.3 goldens are immutable. One
 commit per unit, CI green after each — and the subject-lint gate of
@@ -540,7 +923,12 @@ those subjects.
   a second sketch).
 - **Revolve / loft / sweep** — each a different 2D→3D semantics;
   amendments with their own derivations when a consumer exists.
-- **Snapping, magnetic grid, fine picking** — D5's entry criteria.
+- **Snapping (fine), magnetic grid, fine picking** — D5.7's entry
+  criteria. The base suggestion set (horizontal/vertical, endpoint
+  coincidence, grid point — offered, never auto-applied) and the
+  in-place drag are IN this MVP, per D5.4/D5.2.
+- **Graphic timeline** — D5.7's entry criterion (the flat tree +
+  genealogy remains the honest reading of consumption order).
 - **Hierarchical feature-tree display** — reconfirmed F-2 polish.
 - **Param-edit undo** (the pre-existing `set_param` gap, unchanged
   by this phase; noted in 0027 and still open).
