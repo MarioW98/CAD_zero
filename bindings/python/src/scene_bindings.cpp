@@ -296,6 +296,29 @@ void bind_scene(nb::module_& m) {
              "An ordered chain of entities, connected "
              "endpoint-to-endpoint (a single circle closes itself).");
 
+    // ---- D5.5: the kernel's per-entity class checks, exposed for the
+    // canvas's gesture/text validation (unit 4). ONE opinion: the UI
+    // calls the kernel's predicates, it keeps no second copy of the
+    // rules.
+    scene_mod.def("sketch_entity_error",
+        [](const sdf::SketchEntity& e) -> std::string {
+            try {
+                sdf::validate_sketch_entity(e);
+                return "";
+            } catch (const std::invalid_argument& ex) {
+                return std::string(ex.what());
+            }
+        },
+        nb::arg("entity"),
+        "The per-entity construction checks of D3's table "
+        "(endpoints finite and p0 != p1; center finite and "
+        "r > 0; arc sweep finite in (0, 2π)) — the SAME "
+        "predicates the SketchEntitySet certificate runs. "
+        "Returns the kernel's error message, or an empty "
+        "string when the entity is in class (ADR-0030 D5.5: "
+        "the gesture/text validation calls the kernel, never "
+        "a UI-side rulebook).");
+
     // Scene
     nb::class_<scene::Scene>(scene_mod, "Scene")
         .def(nb::init<>())
@@ -406,6 +429,31 @@ void bind_scene(nb::module_& m) {
              nb::arg("id"),
              "The sketch payload as [[entity dict, ...], ...] — the "
              "panel/canvas read surface.")
+        // ---- D5.3: per-chain closure, the kernel's single opinion ——
+        // the same chain_is_closed behind sketch_closed and the
+        // extrude's closure precondition. The canvas's amber aspect
+        // derives from this, never from a UI-side connectivity copy.
+        .def("sketch_chain_closed",
+             [](const scene::Scene& s, std::uint32_t id,
+                std::size_t chain) {
+                 const scene::SceneNode* n = s.get_node(id);
+                 if (n == nullptr || n->kind != scene::NodeKind::Sketch)
+                     throw std::runtime_error(
+                         "sketch_chain_closed: node " +
+                         std::to_string(id) +
+                         " is not a sketch (ADR-0002 honest dispatch)");
+                 if (chain >= n->sketch.size())
+                     throw std::runtime_error(
+                         "sketch_chain_closed: chain index " +
+                         std::to_string(chain) + " is past the end (the "
+                         "sketch has " +
+                         std::to_string(n->sketch.size()) + " chains)");
+                 return sdf::chain_is_closed(n->sketch[chain]);
+             },
+             nb::arg("id"), nb::arg("chain"),
+             "The definition state of ONE chain (chain_is_closed, "
+             "the kernel's single opinion). The canvas's amber "
+             "aspect derives from this.")
         .def("get_node", [](scene::Scene& s, std::uint32_t id) -> scene::SceneNode* {
             return s.get_node_mut(id);
         }, nb::arg("id"), nb::rv_policy::reference_internal)

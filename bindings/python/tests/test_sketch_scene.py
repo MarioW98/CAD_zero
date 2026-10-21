@@ -249,6 +249,55 @@ def test_entity_edit_propagates_to_dependent_subtract():
     assert val(s.get_node(hole).body, 0.3, 0.0, 0.0) == pytest.approx(0.5, abs=1e-6)
 
 
+def test_entity_class_checks_and_per_chain_closure():
+    """The D5.5/D5.3 surfaces unit 4's canvas calls.
+
+    sketch_entity_error: the kernel's own per-entity construction
+    checks (one opinion — the certificate runs the same predicates;
+    the UI keeps no second copy of the rules). sketch_chain_closed:
+    the per-chain closure the canvas's amber aspect derives from,
+    the same chain_is_closed behind sketch_closed and the extrude's
+    closure precondition.
+    """
+    # In class: empty string, no exception.
+    assert scene.sketch_entity_error(
+        sketch_segment((-1.0, -0.5), (1.0, 0.5), True)) == ""
+    assert scene.sketch_entity_error(
+        scene.sketch_circle((0.0, 0.0), 0.25, False)) == ""
+    assert scene.sketch_entity_error(
+        scene.sketch_arc((0.0, 0.0), 1.0, False, 0.0, 1.5)) == ""
+
+    # Out of class: the kernel's own message, the refused value named.
+    assert "p0 != p1" in scene.sketch_entity_error(
+        sketch_segment((0.5, 0.5), (0.5, 0.5), True))
+    assert "radius" in scene.sketch_entity_error(
+        scene.sketch_circle((0.0, 0.0), 0.0, False))
+    sweep_err = scene.sketch_entity_error(
+        scene.sketch_arc((0.0, 0.0), 1.0, False, 0.0, 0.0))
+    assert "sweep" in sweep_err and "(0, 2" in sweep_err
+
+    # Per-chain closure: the open chain flags, the closed one does
+    # not; the sketch-wide state is the conjunction (sketch_closed).
+    s = scene.Scene()
+    sid = s.add_sketch_node("S", three_side_chains())
+    s.sketch_add_entity(sid, 1, sketch_circle((0.0, 0.0), 0.2, True))
+    assert not s.sketch_chain_closed(sid, 0)   # the three-side chain
+    assert s.sketch_chain_closed(sid, 1)       # the hole circle
+    assert not s.sketch_closed(sid)
+    s.sketch_add_entity(sid, 0,
+                        sketch_segment((-1.0, 0.5), (-1.0, -0.5), True))
+    assert s.sketch_chain_closed(sid, 0)
+    assert s.sketch_closed(sid)
+
+    # Honest dispatch: a non-sketch node and a past-the-end chain
+    # refuse loudly (never a silent guess).
+    box = s.add_node("Box", CAD_0.sdf.box(V3(1.0, 1.0, 1.0)))
+    with pytest.raises(RuntimeError, match="is not a sketch"):
+        s.sketch_chain_closed(box, 0)
+    with pytest.raises(RuntimeError, match="past the end"):
+        s.sketch_chain_closed(sid, 7)
+
+
 def test_extrude_command_undo_redo_same_ids():
     stack = CAD_0.commands.CommandStack(64)
     s = scene.Scene()

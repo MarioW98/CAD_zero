@@ -364,6 +364,69 @@ TEST_CASE("Certificate: a degenerate arc sweep is refused with the value") {
     }
 }
 
+TEST_CASE("validate_sketch_entity: the shared per-entity class checks "
+          "(ADR-0030 D5.5)") {
+    // The standalone entry the UI's gesture/text validation calls: the
+    // SAME predicates the certificate runs (one opinion, no UI-side
+    // rulebook). A throw names the refused value; a return = in class.
+    CHECK_NOTHROW(validate_sketch_entity(
+        sketch_segment({-1.0f, -0.5f}, {1.0f, 0.5f}, true)));
+    CHECK_NOTHROW(validate_sketch_entity(
+        sketch_circle({0.0f, 0.0f}, 0.25f, false)));
+    CHECK_NOTHROW(validate_sketch_entity(
+        sketch_arc({0.0f, 0.0f}, 1.0f, false, 0.0f, 1.5f)));
+
+    // p0 == p1 — the Halfplane2D construction check, verbatim.
+    try {
+        validate_sketch_entity(
+            sketch_segment({0.5f, 0.5f}, {0.5f, 0.5f}, true));
+        FAIL("expected std::invalid_argument");
+    } catch (const std::invalid_argument& e) {
+        CHECK(std::string(e.what()).find("p0 != p1") != std::string::npos);
+    }
+    // Non-finite endpoint — the same check's finiteness clause.
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    try {
+        validate_sketch_entity(
+            sketch_segment({nan, 0.0f}, {1.0f, 0.0f}, true));
+        FAIL("expected std::invalid_argument");
+    } catch (const std::invalid_argument& e) {
+        CHECK(std::string(e.what()).find("finite") != std::string::npos);
+    }
+    // r <= 0 — the Disc2D construction check, verbatim.
+    for (const float bad_r : {0.0f, -1.0f, nan}) {
+        try {
+            validate_sketch_entity(sketch_circle({0.0f, 0.0f}, bad_r, false));
+            FAIL("expected std::invalid_argument");
+        } catch (const std::invalid_argument& e) {
+            CHECK(std::string(e.what()).find("radius") != std::string::npos);
+        }
+    }
+    // Degenerate sweep — the shared predicate (the certificate's own
+    // message shape, the standalone's naming context).
+    for (const float bad_sweep : {0.0f, 2.0f * kPi, -0.5f, nan}) {
+        try {
+            validate_sketch_entity(
+                sketch_arc({0.0f, 0.0f}, 1.0f, false, 0.25f, bad_sweep));
+            FAIL("expected std::invalid_argument");
+        } catch (const std::invalid_argument& e) {
+            CHECK(std::string(e.what()).find("sweep") != std::string::npos);
+            CHECK(std::string(e.what()).find("sketch entity") !=
+                  std::string::npos);
+        }
+    }
+    // An arc with a degenerate radius AND a good sweep: the sweep runs
+    // first (the certificate's stage order), but either way the value
+    // is named — here the sweep is fine, the radius refuses.
+    try {
+        validate_sketch_entity(
+            sketch_arc({0.0f, 0.0f}, 0.0f, false, 0.25f, 1.5f));
+        FAIL("expected std::invalid_argument");
+    } catch (const std::invalid_argument& e) {
+        CHECK(std::string(e.what()).find("radius") != std::string::npos);
+    }
+}
+
 TEST_CASE("Certificate: a flipped segment fails its own checkpoint "
            "(the samples instrument)") {
     // Square with the top segment's orientation flipped: the chain still

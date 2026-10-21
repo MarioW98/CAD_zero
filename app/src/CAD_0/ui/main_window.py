@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QStatusBar,
+    QTabWidget,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from .viewport_widget import ViewportWidget
 from .property_panel import PropertyPanel
+from .sketch_canvas import SketchCanvas, make_entity, params_from_entity
 
 # Simple feature tree (no QAbstractItemModel for now — just QTreeWidget)
 from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem, QAbstractItemView
@@ -150,10 +152,27 @@ class MainWindow(QMainWindow):
     # ----- Setup -----
 
     def _setup_central_widget(self) -> None:
+        # The central area is a tab stack: the 3D viewport plus one
+        # VIEW per open sketch canvas (ADR-0030 D5.6 — the canvas is a
+        # view of the node, one per sketch at a time; closing a tab
+        # commits NOTHING, every completed gesture already wrote).
         self._viewport = ViewportWidget(self)
-        self.setCentralWidget(self._viewport)
         if self._scene is not None:
             self._viewport.set_scene(self._scene)
+        self._tabs = QTabWidget(self)
+        self._tabs.addTab(self._viewport, "3D View")
+        self._tabs.setTabsClosable(True)
+        # The 3D view is the document's face: its close request is
+        # ignored (_on_tab_close_requested guards index 0 — PySide6
+        # exposes no per-tab closable, and the tabButton() swap is
+        # not bound); sketch tabs close their view.
+        self._tabs.tabCloseRequested.connect(self._on_tab_close_requested)
+        self.setCentralWidget(self._tabs)
+        # node_id -> the open SketchCanvas view (one per sketch).
+        self._sketch_views = {}
+        # (sketch_id, chain, index) of the entity selected on a
+        # canvas — the panel's entity context (None = node context).
+        self._selected_entity = None
 
     def _setup_dock_widgets(self) -> None:
         # Simple QTreeWidget for the feature tree. ExtendedSelection
@@ -245,6 +264,20 @@ class MainWindow(QMainWindow):
                 action.triggered.connect(
                     lambda checked, t=tag: self._create_registered(t))
                 create_menu.addAction(action)
+            create_menu.addSeparator()
+            # A sketch is a node KIND, not a builder (ADR-0030 D2): its
+            # own Create entry, opening the canvas view (D5.6).
+            sketch_action = QAction("Create Ske&tch", self)
+            sketch_action.triggered.connect(self.on_create_sketch)
+            create_menu.addAction(sketch_action)
+
+        # ----- Feature menu -----
+        # The feature-creation commands: Extrude consumes a sketch and
+        # produces the prism operation node (ADR-0030 D5.5/D5.6).
+        feature_menu = self.menuBar().addMenu("&Feature")
+        self._extrude_action = QAction("&Extrude...", self)
+        self._extrude_action.triggered.connect(self.on_extrude)
+        feature_menu.addAction(self._extrude_action)
 
         # ----- Edit menu -----
         edit_menu = self.menuBar().addMenu("&Edit")
@@ -350,6 +383,8 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self) -> None:
         self._feature_tree.itemSelectionChanged.connect(self._on_tree_selection_changed)
+        self._feature_tree.itemDoubleClicked.connect(
+            self._on_tree_item_double_clicked)
         self._property_panel.parameter_changed.connect(self._on_parameter_changed)
 
     # ----- Slots -----
@@ -359,10 +394,13 @@ class MainWindow(QMainWindow):
             return
         if self._scene is not None:
             self._scene.clear()
+        for nid in list(self._sketch_views):
+            self._close_sketch_view(nid)
         self._node_params.clear()
         self._node_types.clear()
         self._feature_tree.clear()
         self._property_panel.clear()
+        self._selected_entity = None
         self._current_path = None
         self._dirty = False
         self._update_window_title()
@@ -498,27 +536,45 @@ class MainWindow(QMainWindow):
             node = self._scene.node_at(i)
             if node is None:
                 continue
-            # Operation nodes get their own Type column ("CSG", or
-            # "CSG!" in the visible dangling state — ADR-0027 D2).
+            # Operation nodes get their own Type column: "CSG" for a
+            # subtract, "FEAT" for an extrude (ADR-0030 D5.5), with
+            # the visible dangling "!" suffix (ADR-0027 D2).
             op = getattr(node, "operation", None)
             if op is not None:
-                type_label = "CSG!" if node.operand_missing else "CSG"
+                if op.get("type") == "extrude":
+                    base_label = "FEAT"
+                    type_key = "feat_extrude"
+                else:
+                    base_label = "CSG"
+                    type_key = "csg_subtract"
+                type_label = base_label + "!" if node.operand_missing \
+                    else base_label
+            elif node.kind == "sketch":
+                type_label = "Sketch"
+                type_key = None
             else:
                 type_label = "Mesh" if node.kind == "mesh" else "SDF"
+                type_key = None
             item = QTreeWidgetItem([node.name, type_label])
             item.setData(0, Qt.UserRole, node.id)
             self._feature_tree.addTopLevelItem(item)
+            if node.kind == "sketch":
+                # 2D data: no builder, no params — the entity payload
+                # is edited on the canvas / in the panel per entity.
+                continue
             if node.kind == "mesh":
                 # Imported geometry: no editing metadata, no defaults.
                 continue
             if op is not None:
-                # The operation's editable params are the placement
-                # offsets, straight from the restored recipe.
-                self._node_types[node.id] = "csg_subtract"
-                self._node_params[node.id] = {
-                    "offset_x": float(op["offset_x"]),
-                    "offset_y": float(op["offset_y"]),
-                    "offset_z": float(op["offset_z"])}
+                self._node_types[node.id] = type_key
+                if type_key == "feat_extrude":
+                    self._node_params[node.id] = {
+                        "distance": float(op["distance"])}
+                else:
+                    self._node_params[node.id] = {
+                        "offset_x": float(op["offset_x"]),
+                        "offset_y": float(op["offset_y"]),
+                        "offset_z": float(op["offset_z"])}
                 continue
             # Editing metadata survives the round-trip via the C++ node's
             # `builder` tag + `params` map (persisted by the native format).
@@ -599,6 +655,252 @@ class MainWindow(QMainWindow):
     def _refresh_viewport(self) -> None:
         """Re-tessellate and redraw."""
         self._viewport._refresh_meshes()
+
+    # ----- Sketch views (ADR-0030 D5.6: the canvas is a node view) -----
+
+    def on_create_sketch(self) -> None:
+        """Create → Sketch: the third node kind, undoable and
+        id-stable, then open its canvas view (the natural next act
+        after creating one)."""
+        if not self._has_kernel:
+            QMessageBox.warning(self, "No kernel", "C++ kernel not available.")
+            return
+        state = {"node_id": None}
+
+        def execute():
+            if state["node_id"] is None:
+                nid = self._scene.add_sketch_node("")
+            else:
+                nid = self._scene.restore_sketch_node(
+                    state["node_id"], "", [])
+            state["node_id"] = nid
+            node = self._scene.get_node(nid)
+            item = QTreeWidgetItem([node.name, "Sketch"])
+            item.setData(0, Qt.UserRole, nid)
+            self._feature_tree.addTopLevelItem(item)
+            self._refresh_viewport()
+
+        def undo():
+            nid = state["node_id"]
+            if nid is not None and self._scene.remove_node(nid):
+                self._close_sketch_view(nid)
+                self._remove_tree_row(nid)
+                self._property_panel.clear()
+                self._refresh_viewport()
+
+        if self._command_stack:
+            self._command_stack.push(execute, undo, "Create Sketch")
+        else:
+            execute()
+        self.open_sketch_view(state["node_id"])
+        self._status.showMessage(
+            f"Created {self._scene.get_node(state['node_id']).name} "
+            "— draw on the canvas (segment/circle/arc tools)", 4000)
+
+    def open_sketch_view(self, node_id: int) -> Optional[SketchCanvas]:
+        """Open (or focus) the canvas view of a sketch node — ONE view
+        per sketch at a time (D5.6). Double-click on the tree row and
+        Create → Sketch both land here."""
+        if not self._has_kernel or node_id is None:
+            return None
+        node = self._scene.get_node(node_id)
+        if node is None or node.kind != "sketch":
+            return None
+        view = self._sketch_views.get(node_id)
+        if view is not None:
+            self._tabs.setCurrentWidget(view)
+            return view
+        view = SketchCanvas(self._scene, self._command_stack, node_id,
+                            parent=self)
+        view.entity_selected.connect(self._on_canvas_entity_selected)
+        view.sketch_edited.connect(self._on_canvas_sketch_edited)
+        self._sketch_views[node_id] = view
+        self._tabs.addTab(view, f"Sketch: {node.name}")
+        self._tabs.setCurrentWidget(view)
+        return view
+
+    def _close_sketch_view(self, node_id: int) -> None:
+        """Close the view of a sketch (D5.6: closing commits NOTHING —
+        every completed gesture already wrote; it just stops looking)."""
+        view = self._sketch_views.pop(node_id, None)
+        if view is None:
+            return
+        if self._selected_entity is not None and \
+                self._selected_entity[0] == node_id:
+            self._selected_entity = None
+        index = self._tabs.indexOf(view)
+        if index >= 0:
+            self._tabs.removeTab(index)
+        view.deleteLater()
+
+    def _on_tab_close_requested(self, index: int) -> None:
+        if index <= 0:
+            return
+        widget = self._tabs.widget(index)
+        for nid, view in list(self._sketch_views.items()):
+            if view is widget:
+                self._close_sketch_view(nid)
+                return
+
+    def _on_tree_item_double_clicked(self, item, _column) -> None:
+        node_id = item.data(0, Qt.UserRole)
+        if node_id is None or not self._scene:
+            return
+        node = self._scene.get_node(node_id)
+        if node is not None and node.kind == "sketch":
+            self.open_sketch_view(node_id)
+
+    def _on_canvas_entity_selected(self, target) -> None:
+        """A canvas selected (or deselected) an entity: route its
+        named parameters to the panel (the registry consumer — zero
+        new panel code, D5.1)."""
+        if target is None:
+            self._selected_entity = None
+            self._on_tree_selection_changed()
+            return
+        chain, index = target
+        # Find which sketch's canvas emitted (the sender).
+        view = self.sender()
+        node_id = view.node_id() if view is not None else None
+        if node_id is None:
+            return
+        self._selected_entity = (node_id, chain, index)
+        chains = self._scene.sketch_chains(node_id)
+        e = chains[chain][index]
+        label = f"{e['kind']}[chain {chain} #{index}]"
+        self._property_panel.set_parameters(label, params_from_entity(e))
+
+    def _on_canvas_sketch_edited(self) -> None:
+        """A canvas committed a write: the recipe changed — refresh
+        the operation rows (dangling/pending state), the viewport and
+        the entity routing (the panel is a view of the recipe)."""
+        self._refresh_operation_rows()
+        self._refresh_viewport()
+        if self._selected_entity is not None:
+            node_id, chain, index = self._selected_entity
+            chains = self._scene.sketch_chains(node_id) \
+                if self._scene.get_node(node_id) is not None else []
+            if chain < len(chains) and index < len(chains[chain]):
+                e = chains[chain][index]
+                label = f"{e['kind']}[chain {chain} #{index}]"
+                self._property_panel.set_parameters(
+                    label, params_from_entity(e))
+
+    # ----- Extrude command (ADR-0030 D5.5/D5.6) -----
+
+    def on_extrude(self) -> None:
+        """Feature → Extrude: with a sketch node selected, the minimal
+        dialog (distance, direction ±Z; defaults 1.0/+Z). Anything
+        else is a visible warning, never a guess."""
+        if not self._has_kernel:
+            QMessageBox.warning(self, "No kernel", "C++ kernel not available.")
+            return
+        node = None
+        if self._selected_node_id is not None:
+            node = self._scene.get_node(self._selected_node_id)
+        if node is None or node.kind != "sketch":
+            QMessageBox.information(
+                self, "Extrude",
+                "Select a sketch node in the feature tree,\n"
+                "then Feature → Extrude.")
+            return
+        result = self._extrude_dialog(node)
+        if result is None:
+            return
+        distance, direction = result
+        self._do_extrude(node.id, distance, direction)
+
+    def _extrude_dialog(self, node):
+        """The minimal dialog: distance + direction. Returns
+        (distance, ±1) or None when cancelled. OK with distance <= 0
+        or non-finite is refused with the message (D5.5)."""
+        import math as _math
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"Extrude — {node.name}")
+        layout = QVBoxLayout(dlg)
+
+        row = QHBoxLayout()
+        spin = QDoubleSpinBox(dlg)
+        spin.setRange(-1.0e9, 1.0e9)
+        spin.setDecimals(6)
+        spin.setSingleStep(0.1)
+        spin.setValue(1.0)
+        combo = QComboBox(dlg)
+        combo.addItem("+Z")
+        combo.addItem("-Z")
+        row.addWidget(spin)
+        row.addWidget(combo)
+        layout.addLayout(row)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=dlg)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        layout.addWidget(buttons)
+
+        while True:
+            if dlg.exec() != QDialog.Accepted:
+                return None
+            d = spin.value()
+            if not _math.isfinite(d) or d <= 0.0:
+                QMessageBox.warning(
+                    dlg, "Extrude",
+                    f"Distance must be finite and > 0, got {d} — "
+                    "the slab would be empty or inverted.")
+                continue
+            return (d, 1 if combo.currentIndex() == 0 else -1)
+
+    def _do_extrude(self, sketch_id: int, distance: float,
+                    direction: int) -> Optional[int]:
+        """Dialog-free core: create the extrude operation from the
+        sketch (undoable, id-stable). The KERNEL's certificate is the
+        one opinion: an open chain, a mid-span crossing or a bad
+        distance refuses with the kernel's own message (naming the
+        offenders) and NOTHING is written — visible, never silent."""
+        sketch = self._scene.get_node(sketch_id)
+        sketch_name = sketch.name if sketch is not None else "?"
+        label = f"Extrude (Sketch#{sketch_id})"
+        state = {"op_id": None}
+
+        def execute():
+            if state["op_id"] is None:
+                try:
+                    nid = self._scene.add_extrude_node(
+                        label, sketch_id, distance, direction)
+                except (ValueError, RuntimeError) as exc:
+                    # The refusal is visible, with the kernel's own
+                    # words (the open entities are named inside).
+                    QMessageBox.critical(self, "Extrude", str(exc))
+                    return
+            else:
+                nid = self._scene.restore_extrude_node(
+                    state["op_id"], label, sketch_id, distance, direction)
+            state["op_id"] = nid
+            node = self._scene.get_node(nid)
+            if node is not None:
+                node.name = label
+            self._node_params[nid] = {"distance": float(distance)}
+            self._node_types[nid] = "feat_extrude"
+            item = QTreeWidgetItem([label, "FEAT"])
+            item.setData(0, Qt.UserRole, nid)
+            self._feature_tree.addTopLevelItem(item)
+            self._refresh_viewport()
+            self._status.showMessage(f"Created {label}", 3000)
+
+        def undo():
+            nid = state["op_id"]
+            if nid is not None and self._scene.remove_node(nid):
+                self._node_params.pop(nid, None)
+                self._node_types.pop(nid, None)
+                self._remove_tree_row(nid)
+                self._property_panel.clear()
+                self._refresh_viewport()
+
+        if self._command_stack:
+            self._command_stack.push(execute, undo, "Extrude")
+        else:
+            execute()
+        return state["op_id"]
 
     def _make_body(self, shape_type: str, params: dict):
         """Build an SDF body from a shape_type + params dict.
@@ -891,9 +1193,19 @@ class MainWindow(QMainWindow):
         shape_type = self._node_types.get(node_id, "")
         params = dict(self._node_params.get(node_id, {}))
         is_mesh = False
+        is_sketch = False
         node = self._scene.get_node(node_id)
         if node is not None and node.kind == "mesh":
             is_mesh = True
+        if node is not None and node.kind == "sketch":
+            # A sketch's recipe is its entity payload: snapshot the
+            # chains (dict form) for the id-stable undo — deleting a
+            # sketch referenced by an extrude SUCCEEDS, the extrude
+            # enters the visible dangling state, undo recovers it
+            # (D5.6).
+            is_sketch = True
+            sketch_payload = self._scene.sketch_chains(node_id)
+            sketch_name = node.name
         name = self._shape_display_name(shape_type) if shape_type else (
             node.name if node is not None else "")
         state = {"node_id": node_id, "tree_item_idx": None}
@@ -912,6 +1224,10 @@ class MainWindow(QMainWindow):
                 self._node_types.pop(nid, None)
                 self._remove_tree_row(nid)
                 self._property_panel.clear()
+                if is_sketch:
+                    # The open canvas view of the deleted sketch CLOSES
+                    # (D5.6: the node is gone; undo recovers it).
+                    self._close_sketch_view(nid)
                 # An operand deletion may dangle dependent operations:
                 # run the DAG pass and refresh their rows (visible
                 # state, never a silent rebind — ADR-0027 D2).
@@ -926,6 +1242,23 @@ class MainWindow(QMainWindow):
                 # Imported meshes are not re-creatable parametrically
                 # (pre-existing gap, unchanged by Phase F: delete of a
                 # mesh node is not undoable today).
+                return
+            if is_sketch:
+                # The sketch returns WITH ITS ORIGINAL ID and its full
+                # entity payload; the DAG pass recovers the dependents.
+                chains = self._chains_from_payload(sketch_payload)
+                self._scene.restore_sketch_node(nid, sketch_name, chains)
+                new_item = QTreeWidgetItem([sketch_name, "Sketch"])
+                new_item.setData(0, Qt.UserRole, nid)
+                idx = state.get("tree_item_idx")
+                if idx is not None and 0 <= idx <= self._feature_tree.topLevelItemCount():
+                    self._feature_tree.insertTopLevelItem(idx, new_item)
+                else:
+                    self._feature_tree.addTopLevelItem(new_item)
+                if self._has_kernel:
+                    self._scene.rebuild_operations()
+                    self._refresh_operation_rows()
+                self._refresh_viewport()
                 return
             # Re-create the node with its ORIGINAL id (id-stable undo,
             # ADR-0027 D2): restore-style insertion, then re-attach the
@@ -994,6 +1327,18 @@ class MainWindow(QMainWindow):
         item.setData(0, Qt.UserRole, new_id)
         self._feature_tree.addTopLevelItem(item)
         self._refresh_viewport()
+
+    def _chains_from_payload(self, payload):
+        """The readable chains payload (dicts) back into kernel
+        SketchChain objects — the delete-undo's re-creation material."""
+        import CAD_0
+        scene = CAD_0.scene
+        out = []
+        for chain in payload:
+            ents = [make_entity(e["kind"], params_from_entity(e))
+                    for e in chain]
+            out.append(scene.SketchChain(ents))
+        return out
 
     # ----- Boolean feature: CSG subtract (ADR-0027 D5) -----
 
@@ -1162,6 +1507,7 @@ class MainWindow(QMainWindow):
             self._command_stack.push(execute, undo, f"Subtract")
         else:
             execute()
+        return state["op_id"]
 
     def _remove_tree_row(self, node_id: int) -> None:
         """Remove the feature-tree row of a node id (helper shared by
@@ -1174,8 +1520,9 @@ class MainWindow(QMainWindow):
 
     def _refresh_operation_rows(self) -> None:
         """Refresh the operation rows' Type column from the live DAG
-        state: 'CSG' when healthy, 'CSG!' when dangling (the visible
-        error state — ADR-0027 D2: reported, never silently re-picked)."""
+        state: 'CSG'/'FEAT' when healthy, 'CSG!'/'FEAT!' when dangling
+        (the visible error state — ADR-0027 D2: reported, never
+        silently re-picked)."""
         if not self._scene:
             return
         for i in range(self._feature_tree.topLevelItemCount()):
@@ -1186,7 +1533,9 @@ class MainWindow(QMainWindow):
             node = self._scene.get_node(nid)
             if node is None or not getattr(node, "operation", None):
                 continue
-            it.setText(1, "CSG!" if node.operand_missing else "CSG")
+            base = "FEAT" if node.operation.get("type") == "extrude" \
+                else "CSG"
+            it.setText(1, base + "!" if node.operand_missing else base)
 
     def on_about(self) -> None:
         # License line: backed by the Apache-2.0 LICENSE at the repo
@@ -1377,6 +1726,7 @@ class MainWindow(QMainWindow):
             # lands here — the MainWindow-side id must be reset too,
             # not only the viewport highlight and the panel.
             self._selected_node_id = None
+            self._selected_entity = None
             self._viewport.set_selection(None)
             self._property_panel.clear()
             return
@@ -1391,6 +1741,9 @@ class MainWindow(QMainWindow):
             self._selected_node_id = None
             self._viewport.set_selection(None)
             return
+        # A node selection takes the panel back from any entity
+        # selection (the canvas's entity context is view state).
+        self._selected_entity = None
         # 3D highlight follows every selection change, whatever its
         # origin (viewport click, tree click, programmatic set).
         self._viewport.set_selection(node_id)
@@ -1401,16 +1754,35 @@ class MainWindow(QMainWindow):
             self._property_panel.set_readonly_fields(
                 node.name, self._mesh_info_fields(node))
             return
+        if node.kind == "sketch":
+            # The sketch node itself: read-only summary — the entity
+            # payload is addressed per entity (canvas selection).
+            chains = self._scene.sketch_chains(node_id)
+            entities = sum(len(c) for c in chains)
+            closed = "yes" if self._scene.sketch_closed(node_id) else \
+                "NO — open chains (the extrude would refuse)"
+            self._property_panel.set_readonly_fields(node.name, {
+                "Kind": "Sketch (world XY)",
+                "Chains": str(len(chains)),
+                "Entities": str(entities),
+                "Fully defined": closed,
+            })
+            return
         # Operation node (ADR-0027 D5): the placement offsets are the
         # editable params; the operand summary (names + ids) and any
-        # dangling error are read-only context below them.
+        # dangling error are read-only context below them. The
+        # extrude's editable surface is the recipe's distance
+        # (ADR-0030 D2).
         op = getattr(node, "operation", None)
         if op:
             params = self._node_params.get(node_id, {})
             if not params:
-                params = {"offset_x": float(op["offset_x"]),
-                          "offset_y": float(op["offset_y"]),
-                          "offset_z": float(op["offset_z"])}
+                if op.get("type") == "extrude":
+                    params = {"distance": float(op["distance"])}
+                else:
+                    params = {"offset_x": float(op["offset_x"]),
+                              "offset_y": float(op["offset_y"]),
+                              "offset_z": float(op["offset_z"])}
                 self._node_params[node_id] = params
             display_params = {k: float(v) for k, v in params.items()
                               if isinstance(v, (int, float))}
@@ -1431,11 +1803,20 @@ class MainWindow(QMainWindow):
         operand summary (names + ids) and, when dangling, the
         actionable error (ADR-0027 D2 — reported, never re-picked)."""
         fields = {}
-        for role in ("target", "tool"):
-            nid = op.get(role)
+        if op.get("type") == "extrude":
+            nid = op.get("sketch")
             operand = self._scene.get_node(nid) if nid is not None else None
             name = operand.name if operand is not None else "?"
-            fields[f"{role.capitalize()} operand"] = f"{name}  (id {nid})"
+            fields["Sketch operand"] = f"{name}  (id {nid})"
+            fields["Direction"] = "+Z" if op.get("direction", 1) == 1 \
+                else "-Z"
+        else:
+            for role in ("target", "tool"):
+                nid = op.get(role)
+                operand = self._scene.get_node(nid) if nid is not None \
+                    else None
+                name = operand.name if operand is not None else "?"
+                fields[f"{role.capitalize()} operand"] = f"{name}  (id {nid})"
         err = self._scene.operation_error(node_id)
         if err:
             fields["ERROR"] = err
@@ -1463,6 +1844,23 @@ class MainWindow(QMainWindow):
 
     def _on_parameter_changed(self, name: str, value) -> None:
         """Called when the user edits a parameter in the property panel."""
+        # A canvas entity's parameter (the sketch's recipe): the SAME
+        # route a released drag uses — one truth, two affordances
+        # (D5.2). The write validates through the kernel and lands as
+        # ONE undo entry; the panel re-routes from the recipe after.
+        if self._selected_entity is not None:
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                return
+            node_id, chain, index = self._selected_entity
+            view = self._sketch_views.get(node_id)
+            if view is not None:
+                view.edit_entity_params(
+                    chain, index, {name: value}, f"Set {name} = {value}")
+                self._on_canvas_sketch_edited()
+            return
+
         node_id = self._selected_node_id
         if node_id is None or node_id not in self._node_params:
             return
@@ -1473,9 +1871,14 @@ class MainWindow(QMainWindow):
 
         # Operation nodes: the editable surface is the placement — a
         # dedicated undoable command that reads the other two axes from
-        # the node's CURRENT recipe (source of truth, no UI copy).
-        if self._node_types.get(node_id) == "csg_subtract":
+        # the node's CURRENT recipe (source of truth, no UI copy). The
+        # extrude's surface is the recipe's distance (ADR-0030 D2).
+        node_type = self._node_types.get(node_id)
+        if node_type == "csg_subtract":
             self._push_operation_offset_command(node_id, name, value)
+            return
+        if node_type == "feat_extrude" and name == "distance":
+            self._push_extrude_distance_command(node_id, value)
             return
 
         old_value = self._node_params[node_id].get(name, 0.0)
@@ -1499,11 +1902,6 @@ class MainWindow(QMainWindow):
 
     def _push_operation_offset_command(self, node_id: int,
                                         axis: str, value: float) -> None:
-        """Undoable one-axis placement edit for an operation node
-        (ADR-0027 D5). The other two axes come from the node's CURRENT
-        recipe — the recipe is the source of truth and the UI keeps no
-        second copy (the registry-consistency guard holds: no parameter
-        tables in main_window.py)."""
         node = self._scene.get_node(node_id)
         op = node.operation if node is not None else None
         if op is None or axis not in ("offset_x", "offset_y", "offset_z"):
@@ -1529,6 +1927,45 @@ class MainWindow(QMainWindow):
         else:
             apply(value)
         self._status.showMessage(f"Set {axis} = {value}", 2000)
+
+    def _push_extrude_distance_command(self, node_id: int,
+                                        distance: float) -> None:
+        """Undoable distance edit for an extrude operation node: the
+        recipe is re-created with the SAME id (restore-style — the
+        references never rebind) and the DAG pass re-materializes the
+        prism and its dependents. The kernel's d > 0 check refuses a
+        non-positive distance visibly, nothing written."""
+        node = self._scene.get_node(node_id)
+        op = node.operation if node is not None else None
+        if op is None or op.get("type") != "extrude":
+            return
+        if not (distance > 0.0) or distance != distance:  # <= 0 or NaN
+            self._status.showMessage(
+                f"distance must be finite and > 0, got {distance} — "
+                "the previous value stands", 4000)
+            return
+        sketch_id = op["sketch"]
+        direction = op["direction"]
+        name = node.name
+        old_distance = float(op["distance"])
+
+        def apply(d: float) -> None:
+            self._scene.remove_node(node_id)
+            self._scene.restore_extrude_node(
+                node_id, name, sketch_id, d, direction)
+            self._scene.rebuild_operations()
+            self._node_params[node_id] = {"distance": float(d)}
+            self._refresh_operation_rows()
+            self._refresh_viewport()
+            self._mark_modified()
+
+        if self._command_stack:
+            self._command_stack.push(
+                lambda: apply(distance), lambda: apply(old_distance),
+                f"Set distance = {distance}")
+        else:
+            apply(distance)
+        self._status.showMessage(f"Set distance = {distance}", 2000)
 
     def _do_restore_param(self, node_id: int, name: str, old_value: float) -> None:
         """Legacy undo callback — kept for compatibility, unused after refactor."""

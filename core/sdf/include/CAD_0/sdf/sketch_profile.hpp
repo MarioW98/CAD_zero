@@ -171,6 +171,63 @@ inline float normalized_angle(float d) noexcept {
 
 } // namespace sketch_detail
 
+// --- The per-entity class checks, ONE shared opinion (ADR-0030 D5.5) ---
+//
+// D3's table rows for the SINGLE entity — endpoints finite and
+// p0 != p1 (Halfplane2D), center finite and r > 0 (Disc2D), arc
+// sweep finite in (0, 2π). The SketchEntitySet certificate runs
+// these during its construction stages; this standalone entry
+// exposes the SAME predicates to the UI's gesture/text validation
+// (D5.5: the canvas calls the kernel's checks, it keeps no second
+// copy of the rules). Throws std::invalid_argument with the
+// kernel's own message, naming the refused value.
+
+// The sweep predicate, parameterized by the message's context: the
+// certificate passes its own prefix and entity_name (byte-identical
+// messages to the pre-refactor ones), the standalone entry its own.
+inline void validate_arc_sweep(const SketchArc& arc,
+                                const std::string& prefix,
+                                const std::string& name) {
+    const float sweep = arc.sweep;
+    const float start = arc.start_angle;
+    if (!std::isfinite(start) || !std::isfinite(sweep) ||
+        sweep <= 0.0f || sweep >= kTwoPi)
+        throw std::invalid_argument(
+            prefix + ": arc sweep must be finite and in "
+            "(0, 2π), got sweep=" + std::to_string(sweep) +
+            " start=" + std::to_string(start) + " on " + name +
+            " — a degenerate sweep is an empty or full-circle "
+            "arc masquerading as a span (a full circle is the "
+            "Circle kind, an empty one is no entity at all). "
+            "Remedy: draw the arc with a non-degenerate sweep, "
+            "or use a circle entity.");
+}
+
+// The standalone per-entity validation: segment/circle/arc class
+// checks by CONSTRUCTING the kernel's own fields (the constructors
+// ARE the checks) plus the shared sweep predicate for arcs. A
+// throw names the refused value; a return means the entity is in
+// class (the certificate may still refuse the composed sketch on
+// structural, sampling or pairwise grounds — a different class).
+inline void validate_sketch_entity(const SketchEntity& e) {
+    switch (e.kind) {
+    case SketchEntity::Kind::Segment:
+        (void)Halfplane2D(e.segment.a, e.segment.b, e.segment.interior_left);
+        break;
+    case SketchEntity::Kind::Circle:
+        (void)Disc2D(e.circle.center, e.circle.radius, e.circle.hole);
+        break;
+    case SketchEntity::Kind::Arc: {
+        validate_arc_sweep(
+            e.arc, "sketch entity",
+            "arc center=" + sketch_detail::fmt_pt(e.arc.center) +
+                " r=" + std::to_string(e.arc.radius));
+        (void)Disc2D(e.arc.center, e.arc.radius, e.arc.hole);
+        break;
+    }
+    }
+}
+
 // --- SketchEntitySet ----------------------------------------------------
 //
 // The structural check + the complete construction certificate (the
@@ -297,20 +354,12 @@ private:
             for (std::size_t i = 0; i < chains_[c].entities.size(); ++i) {
                 const SketchEntity& e = chains_[c].entities[i];
                 if (e.kind != SketchEntity::Kind::Arc) continue;
-                const float sweep = e.arc.sweep;
-                const float start = e.arc.start_angle;
-                if (!std::isfinite(start) ||
-                    !std::isfinite(sweep) || sweep <= 0.0f || sweep >= kTwoPi)
-                    throw std::invalid_argument(
-                        "SketchEntitySet: arc sweep must be finite and in "
-                        "(0, 2π), got sweep=" + std::to_string(sweep) +
-                        " start=" + std::to_string(start) + " on " +
-                        entity_name(c, i) +
-                        " — a degenerate sweep is an empty or full-circle "
-                        "arc masquerading as a span (a full circle is the "
-                        "Circle kind, an empty one is no entity at all). "
-                        "Remedy: draw the arc with a non-degenerate sweep, "
-                        "or use a circle entity.");
+                // The shared predicate (D5.5): the certificate and the
+                // UI's standalone entry run the SAME check, with the
+                // certificate's naming context — byte-identical
+                // messages to the pre-refactor form.
+                validate_arc_sweep(e.arc, "SketchEntitySet",
+                                   entity_name(c, i));
             }
         }
     }
