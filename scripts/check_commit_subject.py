@@ -8,9 +8,11 @@ v. report nella commit che introduce questo script):
     1. non e' un "tag puro" (U2, f.1, p1, 0027-....md, docs/adr, 5, ...):
        nemmeno un percorso di file e' una descrizione;
     2. NON inizia con uno starter vuoto (fix, fixing, various, check,
-       end, init, upd, update, clean, rewrote, minor, majr) seguito
-       da spazio, '/' o fine stringa (case-sensitive, come la regex
-       della traccia: "Fix f-string Python 3.10" passa);
+       end, init, upd, update, clean, rewrote, minor, majr — e gli
+       equivalenti italiani correzione, sistemazione, modifica,
+       aggiornamento, plurali inclusi) seguito da spazio, '/' o fine
+       stringa (case-sensitive, come la regex della traccia:
+       "Fix f-string Python 3.10" passa);
     3. NON inizia con un'etichetta di progresso (intro, bozza,
        riepilogo, unita'/Unita' N) seguita da spazio, '/' o fine
        stringa (case-insensitive): dice la FASE, non il contenuto —
@@ -65,7 +67,24 @@ TAG_ONLY_PATTERNS = [
 
 # Starter vuoti: parole che nella storia compaiono solo in soggetti
 # progress-marker. Ciascuna e' documentata nel report d'introduzione.
-BANNED_STARTERS = r"^(fix|fixing|various|check|end|init|upd|update|clean|rewrote|minor|majr)(\s|/|$)"
+#
+# Equivalenti italiani (dopo la run #93): "correzione" apre 9 soggetti
+# storici, tutti marker — ma quello della run #93 aveva 10 caratteri ed
+# e' caduto sulla LUNGHEZZA solo per caso: il marker deve cadere come
+# marker, anche quando la lunghezza basterebbe ("correzione interfaccia
+# 1": 24 caratteri, in storia). sistemazione, modifica e aggiornamento
+# entrano per equivalenza con gli starter inglesi (fix, update, ...),
+# con i plurali: nessun soggetto conforme della storia inizia con
+# queste parole, in alcun caso. Stessa meccanica case-sensitive degli
+# inglesi: la forma buona ("fix(parser): ...", "docs: ...") non matcha
+# lo starter, e l'escape capitalizzato storico vale anche in italiano
+# ("Fix f-string Python 3.10" passa; passera' "Correzione del ...").
+BANNED_STARTERS = (
+    r"^(fix|fixing|various|check|end|init|upd|update|clean|rewrote|minor|majr"
+    r"|correzione|correzioni|sistemazione|sistemazioni"
+    r"|modifica|modifiche|aggiornamento|aggiornamenti)"
+    r"(\s|/|$)"
+)
 
 # Etichette di progresso: intro/bozza/riepilogo/unita'. Nella storia del
 # repo compaiono SOLO in soggetti non conformi — "bozza sketch" (run #84),
@@ -94,7 +113,7 @@ def check_subject(subject: str) -> str | None:
             return reason
 
     if re.match(BANNED_STARTERS, s):
-        return "starter vuoto (fix/various/check/end/...): il soggetto non dice niente"
+        return "starter vuoto (fix/various/correzione/modifica/...): il soggetto non dice niente"
 
     if re.match(PROGRESS_LABELS, s):
         return "etichetta di progresso (intro/bozza/riepilogo/unità N): la fase non è il contenuto"
