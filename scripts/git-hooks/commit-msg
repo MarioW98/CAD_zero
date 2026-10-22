@@ -4,7 +4,7 @@
 # La CI (.github/workflows/ci-linux.yml, job subject-lint) giudica il
 # range dei commit pushati: quando un soggetto non conforme arriva in
 # main, la X e' gia' consumata — il soggetto e' immutabile senza
-# riscrittura della storia (4 occorrenze: run #84, #85, #89, #91).
+# riscrittura della storia (9 occorrenze: run #84, #85, #89, #91-#96).
 # Questo hook porta lo STESSO giudice — il checker versionato
 # (scripts/check_commit_subject.py): stessa funzione, stessa regola,
 # una sola fonte di verita' — un momento prima: il commit non
@@ -15,6 +15,18 @@
 #
 # Bypass d'emergenza: git commit --no-verify. La CI resta l'unica
 # porta: il soggetto verra' comunque giudicato al momento della push.
+#
+# L'interprete e' PORTABILE (Linux, macOS, Windows): si provano in
+# ordine python3, python, "py -3". Ogni candidato deve RISPONDERE
+# (python3 --version con exit 0) prima di essere eseguito col giudice
+# in mano: su Windows "python" e "python3" possono essere lo stub
+# dello Store — un comando che ESISTE nel PATH ma che non esegue
+# Python (exit 9009) — e non va mai toccato. "py -3" e' il launcher
+# ufficiale di Windows e punta all'ultima Python 3 installata.
+# Se NESSUN candidato risponde: exit 1 con messaggio chiaro —
+# fail-closed, mai fail-open: un hook muto non giudica, la commit
+# nasce senza verdetto e la X ricade sulla CI (run #96: "case fix"
+# e' nata cosi' — 8 caratteri — con questo hook ridotto allo stub).
 
 # I merge sono fuori dal contratto (subject generato da git, non scelto
 # dall'autore): stessa policy del gate in CI.
@@ -23,12 +35,20 @@ if [ -f "$(git rev-parse --git-path MERGE_HEAD)" ]; then
 fi
 
 root=$(git rev-parse --show-toplevel) || exit 1
+judge="$root/scripts/check_commit_subject.py"
 
-if ! command -v python3 >/dev/null 2>&1; then
-    echo "commit-msg: python3 non trovato: impossibile giudicare il soggetto." >&2
-    echo "             Il giudice: scripts/check_commit_subject.py" >&2
-    echo "             (regola e derivazione: CONTRIBUTING.md)." >&2
+if python3 --version >/dev/null 2>&1; then
+    exec python3 "$judge" --commit-msg "$1"
+elif python --version >/dev/null 2>&1; then
+    exec python "$judge" --commit-msg "$1"
+elif py -3 --version >/dev/null 2>&1; then
+    exec py -3 "$judge" --commit-msg "$1"
+else
+    echo "commit-msg: nessun interprete Python risponde: provati python3, python, \"py -3\"." >&2
+    echo "             Impossibile giudicare il soggetto: $judge" >&2
+    echo "             Installa Python 3 (su Windows: python.org — porta anche il launcher" >&2
+    echo "             py.exe) oppure correggi il PATH, poi riprova la commit." >&2
+    echo "             Bypass d'emergenza documentato: git commit --no-verify — il giudizio" >&2
+    echo "             resta comunque alla CI, al momento della push." >&2
     exit 1
 fi
-
-exec python3 "$root/scripts/check_commit_subject.py" --commit-msg "$1"
