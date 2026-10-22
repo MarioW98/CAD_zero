@@ -138,6 +138,7 @@ class MainWindow(QMainWindow):
         self.menuBar().setNativeMenuBar(False)
         self.menuBar().setVisible(True)
         self._setup_toolbar()
+        self._setup_sketch_toolbar()
         self._setup_statusbar()
         self._connect_signals()
 
@@ -375,6 +376,59 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self._toggle_grid)
         toolbar.addAction(self._toggle_axes)
         self.addToolBar(toolbar)
+
+    def _setup_sketch_toolbar(self) -> None:
+        """The sketch tool selector — the wiring that REACHES what the
+        canvas already implements (ADR-0030 D5.1's gestures; the
+        diagnosis this closes: set_tool existed with zero call sites,
+        the status bar promised tools the UI never carried).
+
+        Four checkable actions — Select, Segment, Circle, Arc — with
+        the pinned shortcuts 1/2/3/4, an exclusive group (the active
+        tool is VISIBLE as the checked action), acting on the ACTIVE
+        sketch view only: each canvas view carries its own tool
+        (per-view state), the selector reflects the current view's
+        tool on every tab change and modifies only that view's. The
+        buttons call canvas.set_tool() and nothing else — every
+        gesture semantic below that call is the canvas's own.
+
+        With no sketch view as the current tab the selector is
+        HIDDEN (the declared choice: nothing to act on, no dead
+        chrome — and a hidden toolbar's shortcuts are inert too, so
+        1–4 mean nothing until a canvas is in front of the user).
+        """
+        from PySide6.QtGui import QActionGroup
+        self._tool_actions = {}
+        self._sketch_toolbar = QToolBar("Sketch Tools", self)
+        self._sketch_toolbar.setMovable(False)
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        tips = {
+            "select": "Select (1): pick an entity, drag its handles",
+            "segment": "Segment (2): press at A, drag, release at B",
+            "circle": "Circle (3): press at the centre, release on "
+                      "the rim",
+            "arc": "Arc (4): press-drag-release fixes r and a0, the "
+                  "click fixes a1",
+        }
+        for tool, key in (("select", "1"), ("segment", "2"),
+                          ("circle", "3"), ("arc", "4")):
+            act = QAction(tool.capitalize(), self, checkable=True)
+            act.setShortcut(QKeySequence(key))
+            act.setToolTip(tips[tool])
+            act.setStatusTip(tips[tool])
+            act.setActionGroup(group)
+            act.triggered.connect(
+                lambda checked, t=tool: self._on_tool_action(t))
+            self._sketch_toolbar.addAction(act)
+            self._tool_actions[tool] = act
+        self._tool_actions["select"].setChecked(True)
+        self.addToolBar(self._sketch_toolbar)
+        # No sketch view is open at startup: hidden (the choice above).
+        self._sketch_toolbar.setVisible(False)
+        # The selector follows the ACTIVE view: every tab change
+        # re-reflects visibility, the checked action and the hint.
+        self._tabs.currentChanged.connect(self._on_tab_changed)
 
     def _setup_statusbar(self) -> None:
         self._status = QStatusBar(self)
@@ -695,7 +749,8 @@ class MainWindow(QMainWindow):
         self.open_sketch_view(state["node_id"])
         self._status.showMessage(
             f"Created {self._scene.get_node(state['node_id']).name} "
-            "— draw on the canvas (segment/circle/arc tools)", 4000)
+            "— pick a tool on the sketch toolbar (1–4) and drag to draw",
+            4000)
 
     def open_sketch_view(self, node_id: int) -> Optional[SketchCanvas]:
         """Open (or focus) the canvas view of a sketch node — ONE view
@@ -717,6 +772,10 @@ class MainWindow(QMainWindow):
         self._sketch_views[node_id] = view
         self._tabs.addTab(view, f"Sketch: {node.name}")
         self._tabs.setCurrentWidget(view)
+        # Reflect the now-active view in the selector (currentChanged
+        # fires only when the tab actually changed — this also covers
+        # the already-current case; idempotent either way).
+        self._sync_sketch_selector()
         return view
 
     def _close_sketch_view(self, node_id: int) -> None:
@@ -731,6 +790,9 @@ class MainWindow(QMainWindow):
         index = self._tabs.indexOf(view)
         if index >= 0:
             self._tabs.removeTab(index)
+        # Re-reflect the active view (the closed tab may have been
+        # current: the selector follows whatever is in front now).
+        self._sync_sketch_selector()
         view.deleteLater()
 
     def _on_tab_close_requested(self, index: int) -> None:
@@ -785,6 +847,81 @@ class MainWindow(QMainWindow):
                 label = f"{e['kind']}[chain {chain} #{index}]"
                 self._property_panel.set_parameters(
                     label, params_from_entity(e))
+        # The write may have emptied the view again (an undo of the
+        # first entity): the empty-sketch hint follows the recipe.
+        view = self.sender()
+        if not isinstance(view, SketchCanvas):
+            view = None
+        if view is None and self._selected_entity is not None:
+            view = self._sketch_views.get(self._selected_entity[0])
+        self._update_empty_hint(view)
+
+    # ----- Sketch tool selector (the wiring that reaches D5.1) -----
+
+    EMPTY_SKETCH_HINT = (
+        "empty sketch — pick a tool (1 Select, 2 Segment, 3 Circle, "
+        "4 Arc) and drag to draw")
+
+    def _active_sketch_view(self) -> Optional[SketchCanvas]:
+        """The SketchCanvas of the CURRENT tab, or None (the 3D view
+        or no view at all): the one view the selector acts on."""
+        widget = self._tabs.currentWidget()
+        for view in self._sketch_views.values():
+            if view is widget:
+                return view
+        return None
+
+    def _on_tool_action(self, tool: str) -> None:
+        """A selector action fired (button click or pinned shortcut):
+        set the ACTIVE view's tool — set_tool() and nothing else; the
+        canvas owns every gesture semantic that follows it."""
+        view = self._active_sketch_view()
+        if view is not None:
+            view.set_tool(tool)
+
+    def _on_tab_changed(self, _index: int) -> None:
+        self._sync_sketch_selector()
+
+    def _sync_sketch_selector(self) -> None:
+        """Reflect the active view in the selector: toolbar visibility,
+        the checked action (the view's OWN tool — per-view state, the
+        canvas keeps it, the selector only mirrors it) and the
+        empty-sketch hint. Called on every tab change and on every
+        view open/close; idempotent."""
+        view = self._active_sketch_view()
+        self._sketch_toolbar.setVisible(view is not None)
+        if view is not None:
+            tool = view.tool()
+            for name, act in self._tool_actions.items():
+                act.setChecked(name == tool)
+            self._update_empty_hint(view)
+
+    def _update_empty_hint(self, view: Optional[SketchCanvas]) -> None:
+        """The empty-canvas hint — through the PINNED status channel
+        only (the canvas status bar, D5.3's aspect table / D5.5), no
+        new graphic element: while the view carries no entity, the
+        channel carries "pick a tool and drag to draw"; the first
+        gesture clears the channel (the canvas's own rule, nothing
+        added) and the hint returns if an undo empties the view
+        again. A refusal standing in the channel is never clobbered.
+
+        The canvas pins this channel but exposes no public setter —
+        and sketch_canvas.py is complete and untouched by this wiring:
+        the message is written to the channel's backing attribute
+        directly, the one bridge, exactly as narrow as the pinned
+        channel it serves.
+        """
+        if view is None or self._scene is None:
+            return
+        if self._scene.get_node(view.node_id()) is None:
+            return
+        chains = self._scene.sketch_chains(view.node_id())
+        if any(chain for chain in chains):
+            return
+        if view.status_message:
+            return  # a refusal (or the hint itself) holds the channel
+        view._status_message = self.EMPTY_SKETCH_HINT
+        view.update()
 
     # ----- Extrude command (ADR-0030 D5.5/D5.6) -----
 
