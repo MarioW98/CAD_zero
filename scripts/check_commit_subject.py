@@ -11,14 +11,27 @@ v. report nella commit che introduce questo script):
        end, init, upd, update, clean, rewrote, minor, majr — e gli
        equivalenti italiani correzione, sistemazione, modifica,
        aggiornamento, plurali inclusi) seguito da spazio, '/' o fine
-       stringa (case-sensitive, come la regex della traccia:
-       "Fix f-string Python 3.10" passa);
+       stringa;
     3. NON inizia con un'etichetta di progresso (intro, bozza,
        riepilogo, unita'/Unita' N) seguita da spazio, '/' o fine
-       stringa (case-insensitive): dice la FASE, non il contenuto —
-       "intro kernel 2d" era 15 caratteri esatti e passava col solo
-       controllo lunghezza (run #90): il gap che questa regola chiude;
+       stringa: dice la FASE, non il contenuto — "intro kernel 2d" era
+       15 caratteri esatti e passava col solo controllo lunghezza
+       (run #90): il gap che questa regola chiude;
     4. è lungo almeno MIN_LENGTH caratteri (dopo lo strip).
+
+  Il case e la forma Unicode non cambiano il difetto di un soggetto:
+  "FIX della build" difetta esattamente come "fix della build", e la
+  "à" precomposta vale la "A" + accento combinato (la forma
+  decomposta di "UNITÀ 4 ..." scappava all'etichetta di progresso:
+  la riproduzione che questa fix chiude). Le regole 1-3 giudicano
+  quindi la forma NORMALIZZATA del soggetto — NFC, poi casefold (v.
+  normalize_subject) — e i pattern sono scritti minuscoli. La regola
+  4 no: la lunghezza si misura sulla stringa originale, perche' il
+  casefold cambia la lunghezza di alcuni caratteri ("ß" -> "ss") e
+  un minimo di caratteri non ha case. Conseguenza dichiarata: la
+  lista storica pass/fail si aggiorna (l'escape capitalizzato "Fix
+  f-string Python 3.10" ora e' uno starter vuoto come il suo gemello
+  minuscolo), il giudizio sul difetto resta identico in ogni case.
 
   Gli starter vuoti sono le parole che nella storia del repo
   compaiono SOLO in soggetti-progress-marker ("fix", "fix 3",
@@ -44,24 +57,29 @@ Exit code: 0 se tutti i commit esaminati passano, 1 altrimenti
 import re
 import subprocess
 import sys
+import unicodedata
 
 MIN_LENGTH = 15
 
 # Tag puri: il soggetto e' SOLO un identificatore, zero contenuto.
+# I pattern sono MINUSCOLI perche' il match avviene sulla forma
+# normalizzata del soggetto (v. normalize_subject): "U2", "P12",
+# "V1.2", "README.MD" e "DOCS/ADR" cadono come i loro gemelli
+# minuscoli — la natura di un tag non cambia col case.
 TAG_ONLY_PATTERNS = [
-    (r"^[uU]\d+$", "tag di unita' (U2, u3, ...)"),
-    (r"^[pP]\d+$", "prefisso numerico nudo (p1, P12)"),
-    (r"^[a-z]?\d+[-.]\d+$", "versione numerica nuda (f.1, 2.3, p0-p1)"),
+    (r"^u\d+$", "tag di unita' (U2, u3, ...)"),
+    (r"^p\d+$", "prefisso numerico nudo (p1, P12)"),
+    (r"^[a-z]?\d+[-.]\d+$", "versione numerica nuda (f.1, 2.3, V1.2)"),
     (r"^\d+([ .-]\d+)*$", "solo cifre (5, 2 3, 1-2)"),
     # subject = nome di file e basta ("0027-phase-f-....md")
-    (r"^[A-Za-z0-9_./\\-]+\.(md|txt|zip|py|cpp|hpp|h|cc|cxx|sh|json|yml|yaml|cmake|inl)$",
+    (r"^[a-z0-9_./\\-]+\.(md|txt|zip|py|cpp|hpp|h|cc|cxx|sh|json|yml|yaml|cmake|inl)$",
      "nome di file, non un soggetto"),
     # subject = percorso e basta ("docs/adr", "src/core/sdf"), con o
     # senza estensione: contiene '/' ed e' SOLO quello. Un soggetto che
     # nomina un percorso dentro una frase ("correzione ... stl/obj ecc")
     # ha spazi e parole: non matcha e resta giudicato dal resto delle
     # regole. Un percorso non e' una descrizione.
-    (r"^[A-Za-z0-9_.\-]+(/[A-Za-z0-9_.\-]+)+/?$",
+    (r"^[a-z0-9_.\-]+(/[a-z0-9_.\-]+)+/?$",
      "percorso di file, non una descrizione"),
 ]
 
@@ -75,10 +93,13 @@ TAG_ONLY_PATTERNS = [
 # 1": 24 caratteri, in storia). sistemazione, modifica e aggiornamento
 # entrano per equivalenza con gli starter inglesi (fix, update, ...),
 # con i plurali: nessun soggetto conforme della storia inizia con
-# queste parole, in alcun caso. Stessa meccanica case-sensitive degli
-# inglesi: la forma buona ("fix(parser): ...", "docs: ...") non matcha
-# lo starter, e l'escape capitalizzato storico vale anche in italiano
-# ("Fix f-string Python 3.10" passa; passera' "Correzione del ...").
+# queste parole, in alcun caso. Il match e' sulla forma normalizzata
+# (v. normalize_subject): il case non distingue piu' niente — "FIX",
+# "Fix" e "fix" cadono nello stesso modo. La forma buona resta buona
+# in ogni case ("fix(parser): ...", "FIX(lint): ...", "docs: ..."):
+# i due punti non matchano lo starter, che vuole spazio, '/' o fine
+# stringa. L'escape capitalizzato storico ("Fix f-string Python
+# 3.10") muore qui: era un varco del case, non una forma buona.
 BANNED_STARTERS = (
     r"^(fix|fixing|various|check|end|init|upd|update|clean|rewrote|minor|majr"
     r"|correzione|correzioni|sistemazione|sistemazioni"
@@ -93,10 +114,28 @@ BANNED_STARTERS = (
 # il gap che questa regola chiude). Sono la versione in parole dei tag
 # "U2"/"u3": dicono la fase del lavoro, non il contenuto. Stessa
 # metodologia di derivazione degli starter vuoti (parole che in storia
-# compaiono solo in soggetti non conformi). Case-insensitive perche' le
-# occorrenze storiche includono "Unità" e "Riepilogo" capitalizzati e
-# nessun soggetto conforme contiene queste parole in alcun caso.
-PROGRESS_LABELS = r"(?i)^(intro|bozza|riepilogo|unit[àa])(\s|/|$)"
+# compaiono solo in soggetti non conformi). Come tutte le regole di
+# testo, il match e' sulla forma normalizzata: "UNITÀ 4" maiuscolo —
+# anche con la "à" scritta decomposta, che scappava — e' la stessa
+# etichetta di "unità 4".
+PROGRESS_LABELS = r"^(intro|bozza|riepilogo|unit[àa])(\s|/|$)"
+
+
+def normalize_subject(subject: str) -> str:
+    """La forma su cui le regole di TESTO giudicano: NFC, poi casefold.
+
+    Il difetto di un soggetto non cambia col case ("FIX della build"
+    difetta come "fix della build") e nemmeno con la forma Unicode
+    dell'accento ("UNITÀ" precomposta = "A" + accento combinato: la
+    forma decomposta scappava all'etichetta di progresso, chiusa
+    qui). I pattern sono scritti minuscoli e NFC: il match avviene
+    su questa forma.
+
+    La LUNGHEZZA no: resta misurata sulla stringa originale, perche'
+    il casefold cambia la lunghezza di alcuni caratteri ("ß" -> "ss")
+    e un minimo di caratteri non ha case.
+    """
+    return unicodedata.normalize("NFC", subject).casefold()
 
 
 def check_subject(subject: str) -> str | None:
@@ -107,15 +146,19 @@ def check_subject(subject: str) -> str | None:
         return "soggetto vuoto"
 
     # Prima la natura del soggetto (tag? starter vuoto?), poi la misura:
-    # "U2" e' bocciato COME TAG, non come stringa corta.
+    # "U2" e' bocciato COME TAG, non come stringa corta. La natura si
+    # giudica sulla forma normalizzata (il difetto non ha case); la
+    # misura sulla stringa originale (v. normalize_subject).
+    n = normalize_subject(s)
+
     for pattern, reason in TAG_ONLY_PATTERNS:
-        if re.match(pattern, s):
+        if re.match(pattern, n):
             return reason
 
-    if re.match(BANNED_STARTERS, s):
+    if re.match(BANNED_STARTERS, n):
         return "starter vuoto (fix/various/correzione/modifica/...): il soggetto non dice niente"
 
-    if re.match(PROGRESS_LABELS, s):
+    if re.match(PROGRESS_LABELS, n):
         return "etichetta di progresso (intro/bozza/riepilogo/unità N): la fase non è il contenuto"
 
     if len(s) < MIN_LENGTH:

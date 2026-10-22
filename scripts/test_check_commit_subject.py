@@ -14,10 +14,17 @@ commit-msg (stessa funzione check_subject, via --commit-msg) e la CI
      interfaccia 1" ha 24 caratteri ed e' un soggetto reale in storia);
   2. le regole pre-esistenti (starter inglesi, etichette di progresso,
      tag puri): l'estensione non le ha modificate;
-  3. la forma buona: l'estensione non azzanna i soggetti conformi —
-     "fix(lint): ..." passa (la parentesi non matcha lo starter), la
-     parola italiana DENTRO il soggetto non c'entra (la regola e' sullo
-     START), e l'escape capitalizzato storico vale anche in italiano.
+  3. la forma buona: il conventional commit passa in ogni case
+     ("fix(lint): ...", "FIX(lint): ..." — la parentesi non matcha lo
+     starter) e la parola italiana DENTRO il soggetto non c'entra (la
+     regola e' sullo START);
+  4. il case e la forma Unicode non cambiano il difetto: i MAIUSCOLI
+     ("UNITÀ 4", "FIX", "BOZZA", "CORREZIONE") cadono come i gemelli
+     minuscoli, la "à" decomposta come la precomposta, i tag/percorsi/
+     nomi di file maiuscoli come i minuscoli. Gli escape capitalizzati
+     storici ("Fix f-string Python 3.10", "Correzione del ...") muoiono
+     qui: la lista storica pass/fail si aggiorna — e' il comportamento
+     giusto — perche' il difetto resta esattamente quello.
 
 Uso:
   python3 scripts/test_check_commit_subject.py
@@ -27,6 +34,7 @@ Exit code: 0 se ogni caso esce come atteso, 1 altrimenti.
 
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 
 CHECKER = Path(__file__).resolve().parent / "check_commit_subject.py"
@@ -73,10 +81,38 @@ CASES = [
     # la parola italiana dentro il soggetto non c'entra: la regola e'
     # sullo START, non sulla presenza:
     ("docs: aggiornamento del contratto ADR-0029", True, None),
-    # case-sensitivity (la regex della traccia): l'escape capitalizzato
-    # vale anche in italiano:
-    ("Fix f-string Python 3.10", True, None),
-    ("Correzione del calcolo AABB del cilindro", True, None),
+    # --- 4. MAIUSCOLI e forma Unicode: il difetto non ha case ----------
+    # la riproduzione della fix: "UNITÀ 4 DI ADR-0030 — test" con la
+    # "À" DECOMPOSTA (A + accento combinato, quella che certi editor
+    # incollano) passava tutte le regole; la forma precomposta era
+    # gia' presa dal (?i). Ora NFC+casefold le giudica uguali:
+    ("UNITÀ 4", False, "etichetta di progresso"),
+    ("UNITÀ 4 DI ADR-0030 — test", False, "etichetta di progresso"),
+    (unicodedata.normalize("NFD", "UNITÀ 4 DI ADR-0030 — test"),
+     False, "etichetta di progresso"),
+    ("BOZZA", False, "etichetta di progresso"),
+    ("BOZZA del pannello proprietà del foro", False, "etichetta di progresso"),
+    ("INTRO del canvas dei gesti D5", False, "etichetta di progresso"),
+    ("FIX", False, "starter vuoto"),
+    ("FIX della regressione del lint dei soggetti", False, "starter vuoto"),
+    ("CORREZIONE", False, "starter vuoto"),
+    ("CORREZIONE dell'interfaccia di estrusione", False, "starter vuoto"),
+    ("Update dei golden del kernel", False, "starter vuoto"),
+    ("Sistemazione dei test della UI", False, "starter vuoto"),
+    # la natura non ha case nemmeno per versioni, percorsi e nomi di
+    # file: "0027-PHASE-F-BOOLEAN.MD" (23 caratteri) prima passava
+    # perche' l'estensione era minuscola:
+    ("V1.2", False, "versione numerica nuda"),
+    ("DOCS/ADR", False, "percorso di file"),
+    ("0027-PHASE-F-BOOLEAN.MD", False, "nome di file"),
+    # e la forma buona non ha case: il conventional maiuscolo passa
+    # (i due punti non matchano lo starter, in ogni case):
+    ("FIX(lint): subject rules are case-insensitive", True, None),
+    # gli escape capitalizzati STORICI muoiono qui: "Fix f-string
+    # Python 3.10" e' un soggetto reale della storia, ora non conforme
+    # come il suo gemello minuscolo — la lista storica si aggiorna:
+    ("Fix f-string Python 3.10", False, "starter vuoto"),
+    ("Correzione del calcolo AABB del cilindro", False, "starter vuoto"),
 ]
 
 
