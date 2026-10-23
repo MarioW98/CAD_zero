@@ -74,11 +74,13 @@ class ViewportWidget(QWidget):
         self._mesh_normals = None
         self._mesh_indices = None
         # Selection highlight state: node id -> (first tri, last tri) in
-        # the concatenated index buffer, plus the currently selected id.
-        # Populated by _refresh_meshes so _draw_meshes can repaint just
-        # the selected node's triangles in the highlight color.
+        # the concatenated index buffer, plus the selected ids. Extended
+        # selection: EVERY selected body is highlighted (the subtract's
+        # target AND tool), while _selected_node_id keeps the anchor
+        # (the single-selection surface the picking tests pin).
         self._node_ranges = {}
         self._selected_node_id = None
+        self._selected_node_ids: set = set()
 
     def _setup_ui(self) -> None:
         fmt = QSurfaceFormat()
@@ -271,9 +273,23 @@ class ViewportWidget(QWidget):
         tree selection changes (from a click OR from the tree itself) so
         the picked shape is visibly highlighted in 3D, not just in the
         tree/panel. Unknown ids (deleted nodes) simply draw nothing.
+
+        ``node_id`` may be a single id, None, or any iterable of ids:
+        the extended tree selection passes EVERY selected row, so both
+        bodies of a subtract pair light up — the highlight is a view
+        of the whole selection, not just its anchor. The anchor stays
+        readable as ``_selected_node_id`` (deterministically the
+        smallest id when several are selected).
         """
-        if self._selected_node_id != node_id:
-            self._selected_node_id = node_id
+        if node_id is None:
+            ids = set()
+        elif isinstance(node_id, (list, tuple, set, frozenset)):
+            ids = {i for i in node_id if i is not None}
+        else:
+            ids = {node_id}
+        if ids != self._selected_node_ids:
+            self._selected_node_ids = ids
+            self._selected_node_id = min(ids) if ids else None
             self._request_update()
 
     def set_show_axes(self, show: bool) -> None:
@@ -573,17 +589,19 @@ class _ViewportWindow(QOpenGLWindow):
         self._draw_tri_range(positions, normals, indices,
                              has_normals, 0, n_tris)
         # Selection highlight (visible feedback for "Click on shape |
-        # Select it"): repaint ONLY the selected node's triangles in
-        # amber, on top of the base pass. Same geometry, so the depth
-        # test (LEQUAL) lets the repaint win exactly where the shape is
-        # visible — no z-fighting, no halo.
-        sel = self._parent._selected_node_id
-        if sel is not None:
-            rng = self._parent._node_ranges.get(sel)
-            if rng is not None and rng[1] > rng[0]:
-                glColor3f(1.0, 0.62, 0.10)
-                self._draw_tri_range(positions, normals, indices,
-                                     has_normals, rng[0], rng[1])
+        # Select it"): repaint the SELECTED nodes' triangles in amber,
+        # on top of the base pass — every selected body of an extended
+        # selection, not just one (both operands of a subtract pair
+        # light up). Same geometry, so the depth test (LEQUAL) lets the
+        # repaint win exactly where the shape is visible — no
+        # z-fighting, no halo.
+        if self._parent._selected_node_ids:
+            glColor3f(1.0, 0.62, 0.10)
+            for sel in sorted(self._parent._selected_node_ids):
+                rng = self._parent._node_ranges.get(sel)
+                if rng is not None and rng[1] > rng[0]:
+                    self._draw_tri_range(positions, normals, indices,
+                                         has_normals, rng[0], rng[1])
 
     @staticmethod
     def _draw_tri_range(positions, normals, indices, has_normals,

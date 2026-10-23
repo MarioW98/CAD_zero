@@ -8,7 +8,7 @@ from __future__ import annotations
 import sys
 from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -835,7 +835,18 @@ class MainWindow(QMainWindow):
     def _on_canvas_sketch_edited(self) -> None:
         """A canvas committed a write: the recipe changed — refresh
         the operation rows (dangling/pending state), the viewport and
-        the entity routing (the panel is a view of the recipe)."""
+        the entity routing (the panel is a view of the recipe).
+
+        The panel refresh never destroys editors while one may still
+        be inside its own event handler (the typed-parameter
+        use-after-free: the recipe echo used to rebuild the rows from
+        INSIDE the spinbox's keyPressEvent, deleting the very editor
+        the stack was about to return into — QLineEdit::text() on a
+        freed object). Same entity showing → the editors' VALUES
+        update IN PLACE (no row destroyed, the committing editor
+        stays live); any other label → the rebuild is DEFERRED to the
+        next loop pass, when every event handler has returned.
+        """
         self._refresh_operation_rows()
         self._refresh_viewport()
         if self._selected_entity is not None:
@@ -845,8 +856,16 @@ class MainWindow(QMainWindow):
             if chain < len(chains) and index < len(chains[chain]):
                 e = chains[chain][index]
                 label = f"{e['kind']}[chain {chain} #{index}]"
-                self._property_panel.set_parameters(
-                    label, params_from_entity(e))
+                if self._property_panel.current_label() == label:
+                    # The same entity's surface: values only, in place.
+                    self._property_panel.update_values(
+                        params_from_entity(e))
+                else:
+                    # A different surface is showing: rebuild on the
+                    # NEXT loop pass — no widget dies while it may be
+                    # processing an event.
+                    QTimer.singleShot(
+                        0, self._deferred_entity_panel_refresh)
         # The write may have emptied the view again (an undo of the
         # first entity): the empty-sketch hint follows the recipe.
         view = self.sender()
@@ -855,6 +874,31 @@ class MainWindow(QMainWindow):
         if view is None and self._selected_entity is not None:
             view = self._sketch_views.get(self._selected_entity[0])
         self._update_empty_hint(view)
+
+    def _deferred_entity_panel_refresh(self) -> None:
+        """The next-pass panel rebuild for the selected entity.
+
+        Scheduled by _on_canvas_sketch_edited when the panel is not
+        showing the edited entity: by the time this runs, the event
+        loop has re-entered and every editor's event handler has
+        returned — a row rebuild can no longer delete a live
+        editor under its own stack. The refresh reads the CURRENT
+        selection at fire time, so it can never clobber a newer
+        selection with a stale snapshot.
+        """
+        if self._selected_entity is None or self._scene is None:
+            return
+        node_id, chain, index = self._selected_entity
+        if self._scene.get_node(node_id) is None:
+            return
+        chains = self._scene.sketch_chains(node_id)
+        if chain >= len(chains) or index >= len(chains[chain]):
+            return
+        e = chains[chain][index]
+        label = f"{e['kind']}[chain {chain} #{index}]"
+        if self._property_panel.current_label() != label:
+            self._property_panel.set_parameters(
+                label, params_from_entity(e))
 
     # ----- Sketch tool selector (the wiring that reaches D5.1) -----
 
@@ -1882,8 +1926,17 @@ class MainWindow(QMainWindow):
         # selection (the canvas's entity context is view state).
         self._selected_entity = None
         # 3D highlight follows every selection change, whatever its
-        # origin (viewport click, tree click, programmatic set).
-        self._viewport.set_selection(node_id)
+        # origin (viewport click, tree click, programmatic set) — and
+        # covers EVERY selected row of the extended selection: both
+        # bodies of a subtract pair light up, not just the anchor the
+        # panel routes on (the selection always worked; only the
+        # highlight ignored the rows past the first).
+        selected_ids = []
+        for it in items:
+            nid = it.data(0, Qt.UserRole)
+            if nid is not None:
+                selected_ids.append(nid)
+        self._viewport.set_selection(selected_ids)
         self._selected_node_id = node_id
         if node.kind == "mesh":
             # Imported geometry: read-only info (nothing parametric to
