@@ -1,0 +1,81 @@
+CAD_0 — Third-Party Notices
+===========================
+
+Copyright 2026 CAD_0 contributors
+
+This product, CAD_0 (https://github.com/MarioW98/CAD_zero), is
+licensed under the Apache License, Version 2.0 (see LICENSE).
+Per ADR-0013 (license compatibility), this file lists the
+third-party components CAD_0 depends on, bundles, or links, with
+their licenses.
+
+Scope of this file: what ships with CAD_0 or runs as part of it —
+the sources vendored in-tree, the C++ libraries fetched at build
+time and linked into the native extension, and the Python packages
+required at runtime by the installed extras. Development/build-only
+tools (pytest, pytest-xdist, mypy, ruff, black, scikit-build-core)
+are not distributed and are not listed here; the full inventory,
+including them and the per-component flags for closed-source
+derivatives, lives in
+docs/audits/2026-10-16-third-party-license-audit.md.
+
+Vendored in-tree
+----------------
+
+* Shewchuk robust geometric predicates
+  (third_party/robust_predicates/) — Public Domain, by declaration
+  of the author (http://www.cs.cmu.edu/~quake/robust.html).
+  The in-tree file is a project-written, non-adaptive fallback
+  stub crediting the original technique; the full implementation,
+  if vendored for production use, is public domain as well.
+* CPM.cmake (cmake/CPM.cmake) — MIT, (c) CPM.cmake contributors
+  (upstream 0.40.2). A build-time bootstrap that downloads CPM at
+  the first configure; not distributed in any artifact.
+
+C++ dependencies (fetched via CPM.cmake at configure time, pinned)
+-------------------------------------------------------------------
+
+* fmt 10.2.1 — MIT-style "{fmt} license",
+  (c) Victor Zverovich and {fmt} contributors. Formatting; linked
+  into the kernel libraries.
+* spdlog v1.14.1 — MIT, (c) Gabi Melman. Logging; linked into the
+  kernel libraries.
+* xsimd 12.1.1 — BSD-3-Clause, (c) Johan Mabille, Sylvain Corlay,
+  Wolf Vollprecht, Martin Renou, QuantStack, Serge Guelton. SIMD
+  evaluation; header-only.
+* nanobind v2.2.0 — BSD-3-Clause, (c) Wenzel Jakob. Builds the
+  Python extension when CAD_0_BUILD_PYTHON=ON.
+* doctest v2.4.12 — MIT, (c) Viktor Kirilov. Unit-test framework;
+  test-only (CAD_0_BUILD_TESTING), excluded from the distributed
+  extension.
+* oneTBB v2022.0.0 — Apache-2.0, (c) Intel Corporation and oneTBB
+  contributors. Optional thread pool, OFF by default; linked only
+  when the distributor enables CAD_0_USE_TBB=ON.
+
+Python runtime dependencies (installed via pip per pyproject.toml;
+not bundled in this repository)
+-------------------------------------------------------------------
+
+* numpy (>=1.24) — BSD-3-Clause, (c) NumPy Developers. Mesh arrays
+  in the bindings and the UI.
+* matplotlib (>=3.5) — Matplotlib License (BSD-style). Headless
+  viewer (bindings/python/CAD_0/viewer.py).
+* PySide6 (>=6.6.0, [ui] extra) — LGPL-3.0-only OR GPL-2.0-only OR
+  GPL-3.0-only (tri-licensed); CAD_0 consumes it under LGPL-3.0.
+  (c) The Qt Company Ltd. and PySide6 contributors; binds the Qt
+  libraries. The only copyleft in the tree. Compliance notes for
+  redistributors of the app: the app imports PySide6 dynamically
+  at runtime; end users must be able to replace the PySide6/Qt
+  libraries (the pip-installed wheels satisfy this naturally);
+  the PySide6/Qt license texts and this notice must accompany the
+  distribution; static linking of Qt is not permitted. The C++
+  kernel and the bindings do not touch Qt — the copyleft is
+  confined to the [ui] extra.
+* PyOpenGL (>=3.1.0, [ui] extra) — MIT. Viewport GL calls.
+* typer (>=0.12.0, [cli] extra) — MIT. Command-line interface.
+* rich (>=13.0.0, [cli] extra) — MIT. Command-line output.
+
+License texts for the components above are maintained by their
+upstream projects. CAD_0 redistributes its own sources plus the
+vendored files named in this notice only; pip dependencies are
+resolved at install time and keep their upstream licenses.

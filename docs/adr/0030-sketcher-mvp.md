@@ -2,6 +2,71 @@
 
 ## Status
 
+**Implemented (MVP complete, 2026-10-24).** Accepted 2026-10-20
+after the two revision rounds recorded below; the MVP landed as
+four units, each delivered with the full suite green. The
+validation, cited as it happened: the D6 suite covered the
+contracts (the kernel property families with the failure regime in
+range, the scene and format tests with the v0.4 golden, the
+offscreen UI smoke asserting the gesture semantics); the user's
+manual click-test covered the end-to-end experience — and caught
+the one defect the suite could not see: typing a value into the
+property panel crashed the window (a use-after-free — per-digit
+`keyboardTracking` fired a surface rebuild that destroyed the live
+editor mid-keystroke; the derivation, with the faulthandler
+stack, is in the fix commit on main, closed together with the
+regression that reproduces the crash offscreen). The parametric
+hole runs end-to-end: draw, extrude, subtract — then edit the
+circle's radius from the panel and watch the geometry regenerate.
+
+Delivery chronicle — short and honest:
+
+* **Unit 1 — the 2D kernel and the extrusion (D3):** the entity
+  fields, the max-composition, the extrusion slab, the
+  construction checks, the property families with the failure
+  regime in range.
+* **Unit 2 — the document layer (D2):** `NodeKind::Sketch` with
+  the entity payload and chains, `OperationType::Extrude` + recipe,
+  the role-list generalization of the rebuild pass, id-stable
+  commands, the dangling state.
+* **Unit 3 — the format (D4):** the v0.4 two-pass writer/reader,
+  the 0.3 → 0.4 migrator, the v0.4 golden — the older goldens
+  immutable.
+* **Unit 4 — the canvas and the gestures (D5, clause by clause),
+  the CLI use case (`examples/sketch_hole.py`, D5.8) and the
+  end-to-end smoke.**
+* **The revisions that shaped the record:** Revision 1 rewrote D5
+  from a UI/UX sketch into a binding interaction specification
+  (direct manipulation is the outer face, the recipe is the real
+  object); Revision 2 — the review's blocking correction — made
+  D3's contour certification two-voiced: the samples keep the
+  expected side at the checkpoints, the pairwise
+  entity-intersection check keeps the zero-set complete along the
+  active spans — together sufficient, either alone not.
+* **Still this phase, post-MVP:** the tool-selector wiring (four
+  actions, shortcuts 1–4, per-view state — the toolbar that
+  reaches D5.1, pinned by failing-first tests) and the property-
+  edit fix cited above (typed edits commit once — one modification,
+  one undo entry, per D5.2; the panel refresh never rebuilds the
+  live editor; the viewport highlights every body of the extended
+  selection).
+
+Verification found defects at every layer, and each was fixed in
+place before its delivery: on the kernel/bindings surface, the
+unit-4 pre-commit catches (a validation helper bound into the
+wrong class chain, a missing `self` — caught by the binding tests
+before delivery) and the iteration catches (float32/float64
+assertion precision, the closest-candidate suggestion rule that
+let the vertical glyph obscure endpoint coincidence, the
+transversal-crossing fixture proving the pairwise check bites,
+the default box tangency that made the use-case flow dishonest,
+the subtract semantics when the extrude is dangling); in the UI,
+the unwired tool selector (the status bar promised tools that did
+not exist until the wiring unit's failing-first tests pinned
+them) and — after the suite was green — the typed-edit
+use-after-free that only the user's hands could see (closed with
+the discriminating regression; see above).
+
 **Accepted (2026-10-20, Revision 2).** The review outcome, recorded
 in the Revision 2 paragraph below, IS the acceptance: D1, D2, D4 and
 D5.1–D5.2 accepted as written; D3 accepted WITH its blocking
