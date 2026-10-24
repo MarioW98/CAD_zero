@@ -88,7 +88,13 @@ struct SdfToBrepReport {
     std::size_t vertex_count{0};  // V
     std::size_t edge_count{0};    // E
     std::size_t face_count{0};    // F
-    std::int64_t chi{0};          // euler_characteristic: V - E + F
+    std::int64_t chi{0};          // euler_characteristic: V - E + F - H
+                                  // (ADR-0032 D3, G1 unit 1). H counts
+                                  // inner loops; every body the bridge
+                                  // produces today is disk-faced (H = 0
+                                  // — MC triangles, primitive faces), so
+                                  // every pinned report value is
+                                  // unchanged by the extension.
 
     // Structural contract (ADR-0022 §7 invariants 0–3, amended by
     // ADR-0027 D6): assembly correctness — the bridge's hard

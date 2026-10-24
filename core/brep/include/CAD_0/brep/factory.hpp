@@ -7,6 +7,13 @@
 // `link_radial_edges(*body)` to populate the radial-edge list mandated
 // by ADR-0012 and documented in ADR-0021 §4.
 //
+// Layer-2 contract (ADR-0032 D2.4 + D8, G1 unit 1): factory bodies
+// are EXACT mathematics — every entity's provenance is exact with
+// linear tolerance 0, the ProvenanceInfo default these constructors
+// write (an ideal constructed point needs no declaration; a SAMPLING
+// path must declare its bound — the bridge does, and per-path tests
+// pin both sides of that asymmetry).
+//
 #pragma once
 
 #include "CAD_0/brep/topology.hpp"

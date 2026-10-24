@@ -12,6 +12,7 @@
 #include "CAD_0/math/vec.hpp"
 #include "CAD_0/math/bbox.hpp"
 #include "CAD_0/math/tolerance.hpp"
+#include "CAD_0/brep/pcurve.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -36,6 +37,64 @@ using EdgeId = std::uint64_t;
 using FaceId = std::uint64_t;
 using ShellId = std::uint64_t;
 
+// ---------------------------------------------------------------------------
+// Layer-2 honesty — tolerance + provenance (ADR-0032 D2.4 + D8)
+// ---------------------------------------------------------------------------
+//
+// Every curve-carrying entity (vertex, edge, face) declares whether
+// its geometry is exact mathematics or a sample within a declared
+// linear bound. "Is this edge exact?" is a QUERY, not an
+// investigation — the field is the enforcement point:
+//
+//   * factories write exact (closed forms, tolerance 0) — the
+//     default below, which is the mathematical ideal of a
+//     constructed point;
+//   * the faceted bridge writes approximated with the grid tolerance
+//     it already declares (ADR-0026's declared-error culture, now a
+//     first-class field);
+//   * the booleans propagate the worst of their operands — a
+//     fragment of an approximated operand is a sample's descendant;
+//     the tolerance is inherited, never diluted;
+//   * no code path, UI surface, or export may present approximated
+//     geometry as exact (D8) — checked by tests, per path.
+//
+// The default is exact/0 deliberately: an ideal constructed point
+// needs no declaration, while a SAMPLING path must declare its bound
+// — the burden sits on the path that would otherwise lie, and the
+// per-path tests are the discipline that keeps it there.
+enum class Provenance : std::uint8_t {
+    Exact,        // closed-form mathematics; linear tolerance 0 by pairing
+    Approximated  // a sample within the declared linear tolerance (mm)
+};
+
+// The paired record: provenance kind + linear tolerance bound (mm —
+// the ToleranceAccumulator precedent of ADR-0004's math layer; the
+// kind is always Linear here, so a raw double carries it without a
+// redundant kind field).
+struct ProvenanceInfo {
+    Provenance kind{Provenance::Exact};
+    double linear_tolerance{0.0};  // mm; 0 iff Exact — validated
+
+    ProvenanceInfo() = default;
+
+    // Validates the pairing (the house's construction-time
+    // discipline — loud, never a silent clamp):
+    //   * Approximated demands a finite tolerance > 0: a sample with
+    //     a zero or non-finite bound would claim an exactness it does
+    //     not have — the lie this field exists to prevent;
+    //   * Exact demands tolerance == 0: the pairing IS the contract
+    //     (exact | approximated(tol), never a fuzzy middle).
+    // Throws std::invalid_argument naming the remedy.
+    ProvenanceInfo(Provenance k, double tol);
+
+    static ProvenanceInfo exact() noexcept { return {}; }
+    static ProvenanceInfo approximated(double tol) {
+        return ProvenanceInfo(Provenance::Approximated, tol);
+    }
+
+    bool is_exact() const noexcept { return kind == Provenance::Exact; }
+};
+
 // Vertex — a 3D point with an ID
 class Vertex {
 public:
@@ -45,9 +104,14 @@ public:
     void set_position(math::Vec3f p) noexcept { position_ = p; }
     VertexId id() const noexcept { return id_; }
     void set_id(VertexId id) noexcept { id_ = id; }
+    // Layer-2 (ADR-0032 D2.4): exact/0 unless a sampling path
+    // declares its bound.
+    const ProvenanceInfo& provenance() const noexcept { return provenance_; }
+    void set_provenance(ProvenanceInfo p) noexcept { provenance_ = p; }
 private:
     math::Vec3f position_{};
     VertexId id_{0};
+    ProvenanceInfo provenance_{};
 };
 
 // Edge — connects two vertices, has radial co-edges.
@@ -73,10 +137,15 @@ public:
     void add_coedge(const CoEdge* ce) { coedges_.push_back(ce); }
     void clear_coedges() noexcept { coedges_.clear(); }
     bool is_manifold() const noexcept { return coedges_.size() == 2; }
+    // Layer-2 (ADR-0032 D2.4 + D8): "is this edge exact?" — the
+    // query the exact-kernel rungs consume.
+    const ProvenanceInfo& provenance() const noexcept { return provenance_; }
+    void set_provenance(ProvenanceInfo p) noexcept { provenance_ = p; }
 private:
     VertexId v_[2]{0, 0};
     EdgeId id_{0};
     std::vector<const CoEdge*> coedges_;  // ADR-0012 radial-edge list; ADR-0021 ownership
+    ProvenanceInfo provenance_{};
 };
 
 // CoEdge — oriented use of an Edge within a Loop
@@ -90,9 +159,29 @@ public:
     void set_reversed(bool r) noexcept { reversed_ = r; }
     VertexId start_vertex(const std::vector<Edge>& edges) const;
     VertexId end_vertex(const std::vector<Edge>& edges) const;
+
+    // The p-curve (ADR-0032 D2.2): this co-edge's use of its edge,
+    // typed in the OWNING face's surface parameter domain, alongside
+    // the 3D edge reference above — the pair that defines an exact
+    // B-Rep. The type is the sketch kernel's own (pcurve.hpp, D2.1):
+    // a trimming loop and the sketch chain that produced it are the
+    // same code and cannot diverge. Conventions (direction, region
+    // side, faceted world) are pinned in pcurve.hpp.
+    //
+    // Returns nullptr when the co-edge carries no p-curve — the
+    // faceted world (bridge output, plane-per-triangle) never does;
+    // the provenance field distinguishes the worlds, never a guess.
+    // Unit 1 plants the field: no existing path writes a p-curve
+    // (the writers arrive with G1 units 3–4), and a test pins that.
+    const PCurve* p_curve() const noexcept {
+        return p_curve_ ? &*p_curve_ : nullptr;
+    }
+    void set_p_curve(PCurve c) noexcept { p_curve_ = std::move(c); }
+
 private:
     EdgeId edge_{0};
     bool reversed_{false};
+    std::optional<PCurve> p_curve_{};  // ADR-0032 D2.2; empty in the faceted world
 };
 
 // Loop — closed sequence of co-edges bounding a face
@@ -131,11 +220,16 @@ public:
     void set_id(FaceId id) noexcept { id_ = id; }
     bool forward() const noexcept { return forward_; }
     void set_forward(bool f) noexcept { forward_ = f; }
+    // Layer-2 (ADR-0032 D2.4 + D8): a faceted face declares its
+    // sampling bound; an analytic face reads exact/0.
+    const ProvenanceInfo& provenance() const noexcept { return provenance_; }
+    void set_provenance(ProvenanceInfo p) noexcept { provenance_ = p; }
 private:
     std::shared_ptr<SurfaceGeometry> surface_;
     std::vector<Loop> loops_;
     FaceId id_{0};
     bool forward_{true};
+    ProvenanceInfo provenance_{};
 };
 
 // Shell — set of connected faces
@@ -212,14 +306,60 @@ inline VertexId CoEdge::end_vertex(const std::vector<Edge>& edges) const {
 // not add further co-edges to existing loops.
 void link_radial_edges(BRepBody& body);
 
-// euler_characteristic — χ = V − E + F for the body's single shell.
-// For a closed manifold solid (e.g. make_box output) the result is 2.
-// Returns a signed 64-bit integer to avoid overflow on large meshes.
+// euler_characteristic — χ = V − E + F − H for the body's single
+// shell, with H the INNER-LOOP count (inner_loop_count below): every
+// loop beyond the first of each face, H = L − F over the total loop
+// count L. For a closed manifold solid of disk-faced bodies (H = 0)
+// the result is the classical V − E + F (e.g. make_box output: 2).
 //
-// Note: a torus represented as one periodic face has χ = 0 + 0 + 1 = 1,
-// which is the documented limitation of the MVP (the surface is not yet
-// bounded by a real seam wire — Phase D step (b)).
+// DERIVATION (ADR-0032 D3, from first principles; Mäntylä 1988
+// carries the generalized Euler-Poincaré relation for B-Reps with
+// holed faces). A closed surface decomposed into F faces, where face
+// f has b(f) boundary loops, has
+//
+//     χ = V − E + Σ_f (2 − b(f))
+//
+// — the face-wise characteristics glued along edges and vertices. A
+// disk face (one loop) contributes 2 − 1 = 1: the classical
+// V − E + F. An ANNULUS face (outer loop + one hole) contributes
+// 2 − 2 = 0: a pierced face is not a disk, and counting it as one
+// inflates χ by exactly its hole count. With L the total loop count
+// and H = L − F the inner-loop count:
+//
+//     χ = V − E + F − H = 2(S − G)      (Euler-Poincaré, loop term)
+//
+// THE COUNTEREXAMPLE (why the extension is not optional): the
+// annulus as ONE face — outer square loop (4 edges) + inner square
+// loop (4 edges) — has V = 8, E = 8, F = 1, H = 1. The disk-faced
+// formula reads 8 − 8 + 1 = 1, wrong: an annulus has χ = 0. The
+// extended formula reads 8 − 8 + 1 − 1 = 0, right. The guide case's
+// subtract produces exactly these holed faces (box minus a
+// through-hole: 12V / 17E / 7F / H=2 → χ = 0, genus 1, ADR-0032
+// D7.5), agreeing with the faceted report's χ = 0 as it must — same
+// topology, better geometry.
+//
+// BACKWARD COMPATIBILITY (proven by tests, not asserted): every body
+// the tree produces today is disk-faced — the bridge's triangles,
+// the factories' faces (the seam-wired sphere/cylinder faces are
+// disks precisely because the seam wire slits the periodic surface
+// open), the booleans' convex fragments — so H = 0 and every
+// existing pinned value is unchanged. A periodic surface WITHOUT a
+// seam wire (no sanctioned path produces one) would still
+// miscount: the seam wire is what makes a periodic face a disk.
+//
+// The count is POSITIONAL — every loop beyond each face's first,
+// independent of Loop::is_outer bookkeeping: a face's boundary
+// components are its loops, whatever a flag claims.
+//
+// Returns a signed 64-bit integer to avoid overflow on large meshes.
 std::int64_t euler_characteristic(const BRepBody& body) noexcept;
+
+// inner_loop_count — H, the inner-loop term of the extended
+// euler_characteristic: Σ_f max(0, loops(f) − 1). A disk-faced body
+// reads 0 (the backward-compatibility proof's own query); the
+// annulus reads 1; the guide case's two pierced faces read 2 (one
+// inner loop each). Pure integer arithmetic — ADR-0014 honored.
+std::int64_t inner_loop_count(const BRepBody& body) noexcept;
 
 // loops_are_closed — for every loop of every face, check that the end
 // vertex of co-edge i equals the start vertex of co-edge (i+1) mod n.

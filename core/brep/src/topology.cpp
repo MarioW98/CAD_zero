@@ -3,6 +3,10 @@
 // Implementation of:
 //   * ADR-0021 post-pass helpers (link_radial_edges, euler_characteristic,
 //     loops_are_closed);
+//   * ADR-0032 D3 (G1 unit 1): the inner-loop term H of the extended
+//     euler_characteristic (χ = V − E + F − H) and its query
+//     inner_loop_count;
+//   * ADR-0032 D2.4 (G1 unit 1): the ProvenanceInfo pairing validation;
 //   * ADR-0022 query operators (faces_around_edge, edges_around_vertex,
 //     faces_around_vertex, opposite_coedge, wireframe_edges,
 //     vertex_valence);
@@ -12,16 +16,45 @@
 //     compatibility wrapper (structural ∧ χ == 2 — the exact historical
 //     meaning).
 //
-// All functions here are integer ID arithmetic + raw pointer bookkeeping.
-// No floating-point evaluation happens here, so the determinism contract
-// (ADR-0014) is untouched.
+// All functions here are integer ID arithmetic + raw pointer bookkeeping,
+// except the ProvenanceInfo constructor's validation. No floating-point
+// evaluation happens here, so the determinism contract (ADR-0014) is
+// untouched.
 //
 #include "CAD_0/brep/topology.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <stdexcept>
 #include <utility>
 
 namespace CAD_0::brep {
+
+ProvenanceInfo::ProvenanceInfo(Provenance k, double tol)
+    : kind(k), linear_tolerance(tol) {
+    // The pairing validation (ADR-0032 D2.4): loud, actionable, never a
+    // silent clamp — the two lies the field exists to prevent are a
+    // sample claiming exactness and an exact entity hedging with a
+    // tolerance it does not have.
+    if (k == Provenance::Approximated && !(std::isfinite(tol) && tol > 0.0)) {
+        throw std::invalid_argument(
+            "ProvenanceInfo: approximated geometry demands a finite linear "
+            "tolerance > 0 (mm), got " + std::to_string(tol) +
+            " — a sample with a zero or non-finite bound claims an "
+            "exactness it does not have: that is the lie the provenance "
+            "field exists to prevent (ADR-0032 D2.4/D8). Remedy: declare "
+            "the sampling bound (e.g. the bridge's grid tolerance), or "
+            "construct exact().");
+    }
+    if (k == Provenance::Exact && tol != 0.0) {
+        throw std::invalid_argument(
+            "ProvenanceInfo: exact geometry pairs with tolerance 0, got " +
+            std::to_string(tol) +
+            " — the pairing IS the contract (exact | approximated(tol), "
+            "never a fuzzy middle). Remedy: construct exact(), or declare "
+            "the geometry approximated with its real bound.");
+    }
+}
 
 void link_radial_edges(BRepBody& body) {
     // Clear every existing radial entry (idempotent — safe to re-run after
@@ -46,11 +79,36 @@ void link_radial_edges(BRepBody& body) {
     }
 }
 
+std::int64_t inner_loop_count(const BRepBody& body) noexcept {
+    // H = L − F (ADR-0032 D3): every loop beyond the first of each
+    // face is a boundary component the disk-faced formula V − E + F
+    // silently assumes away. The count is positional — a face's
+    // boundary components are its loops, whatever the is_outer flag
+    // claims — and a loop-less face (no sanctioned path produces one)
+    // contributes 0 rather than a nonsensical −1.
+    std::int64_t H = 0;
+    for (const auto& face : body.solid.shell().faces()) {
+        const std::int64_t b =
+            static_cast<std::int64_t>(face.loops().size());
+        if (b > 1) {
+            H += b - 1;
+        }
+    }
+    return H;
+}
+
 std::int64_t euler_characteristic(const BRepBody& body) noexcept {
+    // χ = V − E + F − H (ADR-0032 D3): the Euler-Poincaré loop term
+    // the guide case's pierced faces force. The derivation, the
+    // annulus counterexample, and the backward-compatibility contract
+    // (every body the tree produces today is disk-faced, H = 0, no
+    // pinned value moves) live in the header docstring; the tests
+    // prove the compatibility body by body, golden by golden.
     const std::int64_t V = static_cast<std::int64_t>(body.vertex_count());
     const std::int64_t E = static_cast<std::int64_t>(body.edge_count());
     const std::int64_t F = static_cast<std::int64_t>(body.face_count());
-    return V - E + F;
+    const std::int64_t H = inner_loop_count(body);
+    return V - E + F - H;
 }
 
 bool loops_are_closed(const BRepBody& body) noexcept {

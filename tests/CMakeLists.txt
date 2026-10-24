@@ -35,6 +35,7 @@ set(CAD_0_TEST_SOURCES
     unit/brep/test_topology.cpp
     unit/brep/test_analytic_surfaces.cpp
     unit/brep/test_boolean.cpp
+    unit/brep/test_g1_data_model.cpp
     unit/bridge/test_bridge.cpp
     main.cpp
 )

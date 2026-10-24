@@ -2,6 +2,7 @@
 
 set(CAD_0_BREP_HEADERS
     include/CAD_0/brep/topology.hpp
+    include/CAD_0/brep/pcurve.hpp
     include/CAD_0/brep/analytic.hpp
     include/CAD_0/brep/curve.hpp
     include/CAD_0/brep/tessellate.hpp

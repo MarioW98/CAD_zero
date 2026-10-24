@@ -1063,7 +1063,38 @@ struct ClippedFace {
     Polygon polygon;
 };
 
-void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces, bool canonicalize) {
+// The worst of the operands' Layer-2 records (ADR-0032 D2.4 + D8,
+// G1 unit 1): if ANY entity of either operand is approximated, every
+// entity the operation creates is approximated with the MAXIMUM of
+// the declared bounds — a fragment of an approximated operand is a
+// sample's descendant; the tolerance is inherited, never diluted,
+// never averaged, and never silently reset to exact. Overstating a
+// bound is conservative honesty; understating it is the lie the
+// provenance field exists to prevent. Both operands fully exact →
+// exact (plane∩plane fragments of closed-form inputs stay
+// closed-form).
+ProvenanceInfo combined_provenance(const BRepBody& A, const BRepBody& B) {
+    bool any_approximated = false;
+    double max_tol = 0.0;
+    auto scan = [&](const BRepBody& b) {
+        const auto consider = [&](const ProvenanceInfo& p) {
+            if (!p.is_exact()) {
+                any_approximated = true;
+                max_tol = std::max(max_tol, p.linear_tolerance);
+            }
+        };
+        for (const auto& v : b.vertices) consider(v.provenance());
+        for (const auto& e : b.edges) consider(e.provenance());
+        for (const auto& f : b.solid.shell().faces()) consider(f.provenance());
+    };
+    scan(A);
+    scan(B);
+    return any_approximated ? ProvenanceInfo::approximated(max_tol)
+                             : ProvenanceInfo::exact();
+}
+
+void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces,
+                   bool canonicalize, const ProvenanceInfo& provenance) {
     auto& shell = result.solid.shell_mut();
 
     if (canonicalize) {
@@ -1207,6 +1238,20 @@ void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces, bo
         face.set_id(next_face_id++);
         shell.add_face(std::move(face));
     }
+
+    // Layer-2 (ADR-0032 D2.4, G1 unit 1): every entity the operation
+    // creates carries the combined record — set once, here, where
+    // every creation path (weld_vertex, get_or_create_edge, the face
+    // loop above) has already funneled through.
+    for (auto& v : result.vertices) {
+        v.set_provenance(provenance);
+    }
+    for (auto& e : result.edges) {
+        e.set_provenance(provenance);
+    }
+    for (auto& f : shell.faces_mut()) {
+        f.set_provenance(provenance);
+    }
     link_radial_edges(result);
 }
 
@@ -1304,7 +1349,8 @@ std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
         return result;  // empty body
     }
 
-    assemble_body(*result, clipped_faces, /*canonicalize=*/false);
+    assemble_body(*result, clipped_faces, /*canonicalize=*/false,
+                  combined_provenance(A, B));
     return result;
 }
 
@@ -1359,7 +1405,8 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
             clipped_faces.push_back(
                 {std::make_shared<PlaneSurface>(poly_A[0], n_A), poly_A});
         }
-        assemble_body(*result, clipped_faces, /*canonicalize=*/true);
+        assemble_body(*result, clipped_faces, /*canonicalize=*/true,
+                      combined_provenance(A, B));
         return result;
     }
 
@@ -1406,7 +1453,8 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
         return result;
     }
 
-    assemble_body(*result, clipped_faces, /*canonicalize=*/true);
+    assemble_body(*result, clipped_faces, /*canonicalize=*/true,
+                  combined_provenance(A, B));
     return result;
 }
 
@@ -1567,7 +1615,8 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
         return result;
     }
 
-    assemble_body(*result, clipped_faces, /*canonicalize=*/true);
+    assemble_body(*result, clipped_faces, /*canonicalize=*/true,
+                  combined_provenance(A, B));
     return result;
 }
 

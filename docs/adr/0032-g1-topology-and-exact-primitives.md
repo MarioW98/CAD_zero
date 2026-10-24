@@ -2,16 +2,20 @@
 
 ## Status
 
-**Draft (2026-10-25) — in review with the user, before the phase
-starts.** Daughter of ADR-0031 (accepted: road (a), all in
-house, forever — the G2 gate an internal checkpoint, not a
-fork). This draft pins G1's scope, data-model deltas, the
-Layer-1 invariant, the hard derivations (mass properties,
-plane∩cylinder), the discriminating test class, and the delivery
-units. Per the house method, the review closes with invariants
-and tests agreed **before** implementation begins; the document
-is structured so each D-section can be amended without
-rewriting the others.
+**Accepted (2026-10-25, closed in review) — D9's entry criterion
+met: invariants and discriminating tests agreed before implementation
+began.** Daughter of ADR-0031 (accepted: road (a), all in house,
+forever — the G2 gate an internal checkpoint, not a fork). This ADR
+pins G1's scope, data-model deltas, the Layer-1 invariant, the hard
+derivations (mass properties, plane∩cylinder), the discriminating
+test class, and the delivery units. Delivery follows the six units of
+D10, each landed standalone with the full suite green; **unit 1 (the
+data model, D2 + D3) has landed** — the p-curve vocabulary and field,
+the Layer-2 tolerance/provenance fields with the writers' honesty
+(bridge → approximated(grid tol), factories → exact/0, booleans →
+worst-of-operands propagation), and the extended
+`euler_characteristic` χ = V−E+F−H with its backward-compatibility
+proof on every body path and every golden.
 
 **No promise on G2 appears anywhere in this document.** G2 has
 no schedule, no scope here, and no implied commitment: its entry

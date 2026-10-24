@@ -56,6 +56,47 @@ namespace {
         "report this as a bridge bug.");
 }
 
+// The declared grid tolerance of the faceted path — the LINEAR bound
+// every extracted vertex carries (ADR-0032 D2.4 + D8, G1 unit 1).
+//
+// Derivation, from the extraction's own geometry: a crossing vertex
+// lies ON a grid edge of length h_axis = extent_axis / resolution,
+// between two samples of opposite sign; the true surface crossing
+// lies on the SAME edge (continuity), so the sample is within
+// h_axis of a true surface point. The body-wide bound is the worst
+// axis: h_max = max(padded extent) / resolution.
+//
+// The grid layout mirrors core/sdf/src/mesh_extract.cpp (bounds()
+// padded by 1% of extent, march_resolution points per axis) — the
+// same mirror discipline grid_min_abs_field applies at the bottom of
+// this file, and the same one the G1 unit-1 test replicates
+// independently: three copies cross-check each other, and a layout
+// change breaks the mirrors first, forcing a conscious sync instead
+// of a silent drift.
+double grid_linear_tolerance(const sdf::SDFBody& sdf_body,
+                              std::uint32_t res) {
+    if (res == 0) {
+        // Degenerate grid: the faceted path rejects resolution 0
+        // outright (throw_empty_surface), so this is unreachable on
+        // the success path — 0 mirrors grid_min_abs_field's honest
+        // defensive reading.
+        return 0.0;
+    }
+    math::Bboxf bx = sdf_body.bounds();
+    if (bx.empty()) {
+        // Unreachable after a successful extraction (marching_cubes
+        // on empty bounds yields no mesh and throws first);
+        // defensive.
+        return 0.0;
+    }
+    const math::Vec3f pad = bx.extent() * 0.01f;
+    bx.min = bx.min - pad;
+    bx.max = bx.max + pad;
+    const math::Vec3f ext = bx.extent();
+    const float h_max = std::max({ext.x, ext.y, ext.z});
+    return static_cast<double>(h_max) / static_cast<double>(res);
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -167,6 +208,24 @@ std::unique_ptr<brep::BRepBody> sdf_to_brep_faceted(
     if (!brep::is_closed_orientable(*body)) {
         shell.set_closed(false);
         throw_postcondition();
+    }
+
+    // Layer-2 honesty (ADR-0032 D2.4 + D8, G1 unit 1): every entity
+    // of the faceted extract is a SAMPLE and says so — approximated,
+    // with the declared grid tolerance as the linear bound. Set after
+    // the structural postcondition so a rejected body is discarded
+    // whole; the primitive-fitting path above writes no records at
+    // all, which is exact/0 — the factories' own contract.
+    const brep::ProvenanceInfo approx = brep::ProvenanceInfo::approximated(
+        grid_linear_tolerance(sdf_body, opts.march_resolution));
+    for (auto& v : body->vertices) {
+        v.set_provenance(approx);
+    }
+    for (auto& e : body->edges) {
+        e.set_provenance(approx);
+    }
+    for (auto& f : shell.faces_mut()) {
+        f.set_provenance(approx);
     }
     return body;
 }
