@@ -210,6 +210,7 @@ See [docs/architecture/overview.md](docs/architecture/overview.md) for the full 
 | **D** | **Radial-edge B-Rep topology (ADR-0012), query operators, seam wires, convex booleans (union/subtract/intersect) with slab decomposition, T-junction subdivision** | ✅ done ([ADR-0021](docs/adr/0021-brep-topology-data-structure.md)–[0025](docs/adr/0025-proper-greiner-hormann.md)) |
 | E | SDF → B-Rep extraction under hard topology contracts ([ADR-0026](docs/adr/0026-sdf-brep-bridge.md)); inverse bridge: documented stub, future ADR | ✅ done |
 | **F** | **Modeling: boolean feature slice in the tree + `.CAD_0` v0.3 operation recipes ([ADR-0027](docs/adr/0027-phase-f-boolean-feature-slice.md)); sketcher MVP — typed 2D profiles, extrude as a feature, `.CAD_0` v0.4 ([ADR-0030](docs/adr/0030-sketcher-mvp.md))** | ▶️ in progress |
+| **G** | **The exact B-Rep kernel — the great fork ([ADR-0031](docs/adr/0031-exact-brep-kernel.md), draft under review): build / adopt OCCT / hybrid; G1 exact primitives + mass properties from the solid, G2 exact booleans + the first fillet (the fork gate), G3 free surfaces** | ⚪ proposed |
 | H | STEP AP203 MVP (ADR-0010) | planned |
 
 ## Key architectural decisions
@@ -247,6 +248,7 @@ See [docs/architecture/overview.md](docs/architecture/overview.md) for the full 
 | [0028](docs/adr/0028-sdf-bounds-smooth-blend-dilation.md) | SmoothMinSDF bounds() dilates by k/8 per blend level (the k/16 field dip, conservatively converted); the stratified positivity property closes the thin-shell blind spot |
 | [0029](docs/adr/0029-twist-warp-contract.md) | **The twist warp contract (implemented)**: cylinder-AABB bounds (k-blind proof, √2 on-axis cost), the σ(k, r) Lipschitz closed form, the full chain-rule gradient with the y shear; construction-time validation across the 16-node table; property closure with anti-revolution liveness guards, the σ k-sweep, and twisted bridge extractions under the full contract set |
 | [0030](docs/adr/0030-sketcher-mvp.md) | **The sketcher MVP (implemented)**: typed 2D entities (segments, circles, arcs) as a third node kind, extrude as an operation node with the subtract's genealogy, the 2D field semantics derived to the ADR-0029 standard (max-composition: sign and zero-set exact, Lipschitz 1 proved, the conservative gap named), `.CAD_0` v0.4 — the constraint solver explicitly deferred with its entry criterion |
+| [0031](docs/adr/0031-exact-brep-kernel.md) | **The exact B-Rep kernel — the great fork (draft, under review)**: build in house / adopt OCCT / hybrid, priced honestly side by side with failure modes named; the pinned data model (p-curves on loops, the three-layer tolerance discipline, Euler-Poincaré promoted to kernel invariant); the hard problems with strategies (SSI exact-where-possible with declared subdivision fallback, tolerance-honest booleans, fillet degeneracies, NURBS trimming); the G1/G2/G3 ladder with the fork gate armed at G2; the recipe-spine migration (SDF positioned, not killed; `.CAD_0` extends via MINOR bump) |
 
 ## Testing, determinism, CI
 
