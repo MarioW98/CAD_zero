@@ -485,8 +485,18 @@ TEST_CASE("G1-U1 D3: backward compatibility — every factory body is disk-faced
         {"make_cylinder", b::make_cylinder(0.5f, 2.0f)},
         {"make_tetrahedron", b::make_tetrahedron()},
     };
-    for (auto& [name, body] : bodies) {
-        CAPTURE(name);
+    // CAPTURE(name) on the binding is the one construct the CI's
+    // clang-14 column rejects: doctest's INFO/CAPTURE expand to a
+    // deferred-context LAMBDA ([&](std::ostream*) { ... }), and a
+    // structured binding is not lambda-capturable on clang <= 15
+    // (P1091 capture of bindings landed in clang 16). gcc 11 takes
+    // it, which is why every gcc job was green while linux-clang
+    // failed to build. Iterate the pair by member so the same file
+    // compiles on every compiler of the matrix; the other three
+    // binding loops below follow the same shape for the same reason.
+    for (auto& entry : bodies) {
+        CAPTURE(entry.first);
+        const auto& body = entry.second;
         // Every face has exactly ONE loop — the disk-faced proof at
         // the loop level. The seam-wired sphere (2V/1E/1F) and
         // cylinder (4V/5E/3F) faces are disks precisely because the
@@ -672,9 +682,11 @@ TEST_CASE("G1-U1 D8: factories write exact, tolerance 0") {
         {"make_cylinder", b::make_cylinder(1.0f, 3.0f)},
         {"make_tetrahedron", b::make_tetrahedron()},
     };
-    for (auto& [name, body] : bodies) {
-        CAPTURE(name);
-        CHECK(all_entities_exact(*body));
+    for (auto& entry : bodies) {
+        // Binding member, not a structured binding — the clang-14
+        // CAPTURE note at the factory loop above applies here too.
+        CAPTURE(entry.first);
+        CHECK(all_entities_exact(*entry.second));
     }
 }
 
@@ -686,9 +698,10 @@ TEST_CASE("G1-U1 D8: the bridge's primitive path writes exact — closed forms, 
         {"box", s::make_box(Vec3f{1, 1, 1})},
         {"cylinder", s::make_cylinder(0.5f, 2.0f)},
     };
-    for (auto& [name, sdf_body] : fixtures) {
-        CAPTURE(name);
-        auto body = br::sdf_to_brep(sdf_body, opts);
+    for (auto& entry : fixtures) {
+        // Binding member — the clang-14 CAPTURE note above applies.
+        CAPTURE(entry.first);
+        auto body = br::sdf_to_brep(entry.second, opts);
         REQUIRE(body != nullptr);
         CHECK(all_entities_exact(*body));
     }
@@ -844,9 +857,10 @@ TEST_CASE("G1-U1: unit 1 writes no p-curves — every existing path leaves the f
         {"make_sphere", b::make_sphere(1.0f)},
         {"make_cylinder", b::make_cylinder(0.5f, 2.0f)},
     };
-    for (auto& [name, body] : factories) {
-        CAPTURE(name);
-        CHECK(body_has_no_p_curves(*body));
+    for (auto& entry : factories) {
+        // Binding member — the clang-14 CAPTURE note above applies.
+        CAPTURE(entry.first);
+        CHECK(body_has_no_p_curves(*entry.second));
     }
 
     // The bridge, both paths:
