@@ -2,21 +2,68 @@
 
 ## Status
 
-**Draft (2026-10-24) — proposed for the user's review.** This ADR
-decides nothing by itself. It defines a fork and pins the substance
-that survives the fork: the data model, the tolerance semantics, the
-hard problems with strategies, the phase ladder, and the migration.
-The fork decision — build the exact kernel in house, adopt OCCT, or
-split the difference — belongs to the user, taken after review with
-the house method (pinned invariants and discriminating tests named
-**before** any phase starts). No implementation ships from this
-document; it is the input to the review, not the output of a phase.
+**Accepted (2026-10-25) — road (a): all in house, forever.** The
+fork this document presented is closed at acceptance: no OCCT,
+no third-party CAD kernel, ever. The G2 gate survives as an
+internal checkpoint only (estimate vs. progress), not as a fork.
+The decision, the license constraint pinned into ADR-0003 in the
+same act, and the user's motivation verbatim are recorded in
+§ "Decision on acceptance" below. D1 stands as the honest price
+list that was weighed; D2's proposal was (c1) with the gate
+armed — the user chose (a), which D2 explicitly named as
+consistent with this document.
+
+Drafted 2026-10-24, reviewed and decided by the user 2026-10-25.
+No implementation ships from this document; the first daughter
+(ADR-0032, G1) is drafted and enters the user's review before
+any phase starts — the house method: invariants and
+discriminating tests pinned **before** the phase begins.
 
 What this ADR is to the roadmap: the master decision for **Phase G**
 (the "B-Rep advanced" line the phase plan has carried since the
 overview document — fillet, chamfer, shell, NURBS booleans), split
-here into the ladder G1 / G2 / G3 with an explicit fork gate between
-G1 and G2 where the cost curve breaks.
+here into the ladder G1 / G2 / G3; the fork gate the draft placed
+between G1 and G2 is closed by the decision — the gate position
+remains, as a checkpoint.
+
+## Decision on acceptance (2026-10-25)
+
+The user's decision, on review of the draft:
+
+1. **Strada (a): TUTTO in casa, per sempre.** The fork-gate of
+   G2 is closed at the start: no OCCT, no third-party kernel
+   adoption, ever. The G2 gate remains only as an internal
+   checkpoint (stima vs avanzamento), not as a fork.
+2. **The license constraint**, pinned in ADR-0003 as an amendment
+   in the same act: third parties only under licenses without
+   usage limits (public domain, MIT, BSD, Apache-2.0, zlib,
+   ISC, …). GPL, LGPL, and licenses with exceptions: out.
+3. **The motivation, recorded verbatim (the user's words):**
+
+   > indipendenza completa del progetto; andatura lenta oggi,
+   > più rapida in prospettiva; i costi di (a) — G2 in casa =
+   > anni, non mesi — accettati consapevolmente, con i modi di
+   > fallimento di D1 e le contromisure della scala (ogni fase
+   > consegnabile da sola, valore visibile a ogni gradino).
+
+   Complete independence of the project; a slow pace today, a
+   faster one in perspective; the costs of road (a) — G2 in
+   house means years, not months — consciously accepted,
+   together with D1's failure modes and the ladder's
+   countermeasures (every phase deliverable on its own, visible
+   value at every step).
+
+What the decision changes in this document: D2 records the
+outcome (its proposal stood; the user chose the pure-sovereignty
+outcome it named); D5's G2 entry criterion is amended in place
+(fork re-decision → internal checkpoint); the Consequences
+reflect the accepted state. What it does not change: D1's price
+list and failure modes (the record of what was weighed — the
+countermeasure the motivation itself cites), D3/D4
+(road-independent by design, now binding on the house road), D6
+(the migration and the SDF boundary hold unchanged). A companion
+orientation document — the platform vision the decision serves —
+is recorded in `docs/architecture/platform-vision.md`.
 
 ## Context — position, stated honestly
 
@@ -394,6 +441,14 @@ pure (the sovereignty argument is the project's founding sentence),
 or reject the ladder's shape entirely. All four outcomes are
 consistent with this document; the review exists to pick one.
 
+**Outcome (2026-10-25):** the user chose road (a) — pure, the gate
+closed at the start. Of the four outcomes this section declared
+consistent with the document, the founding-sentence one: complete
+independence, the costs of the cliff accepted consciously. The
+derivation above stands as the record of what was weighed; the
+G2 gate it proposed to arm is disarmed to an internal checkpoint
+by the decision (D5's entry criterion, amended in place).
+
 ### D3. The data model — pinned, road-independent
 
 This section is the substance the user's order pins: it holds on
@@ -655,11 +710,18 @@ method; this ADR fixes the ladder, not the details.
   pinned to a golden with its tie-break documented (the
   failure-regime-in-range discipline of ADR-0030 D6, applied to
   geometry).
-- **Entry criterion.** G1 landed **and the fork re-decision taken**
-  — the G2 gate is where D1's price list meets G1's measured
-  reality (the robustness data of our analytic subset, the real
-  cost of the adapter seam, the CI delta of an OCCT spike). This
-  ADR arms that gate; it does not pre-decide it.
+- **Entry criterion.** G1 landed. *(Amended on acceptance,
+  2026-10-25 — the original criterion read: "G1 landed **and the
+  fork re-decision taken** — the G2 gate is where D1's price list
+  meets G1's measured reality (the robustness data of our
+  analytic subset, the real cost of the adapter seam, the CI
+  delta of an OCCT spike). This ADR arms that gate; it does not
+  pre-decide it." The fork is closed by the decision — road (a),
+  all in house, forever, the license whitelist of the amended
+  ADR-0003 closing the adoption road as policy. The gate survives
+  as an internal checkpoint only: G1's measured effort and
+  robustness data against this ADR's estimates, re-baselining the
+  G2 plan — never re-opening the build-vs-adopt question.)*
 - **Guide case — the first fillet.** A constant-radius fillet on a
   box's vertical edge: three planar faces retire, a cylindrical
   face and four new edges are born, χ stays 2, and the mass
@@ -747,26 +809,32 @@ historical version):
 
 ## Consequences
 
-- **If accepted:** Phase G gains the G1/G2/G3 ladder with the fork
-  gate armed at G2's entry; the D3 data model, tolerance layers,
-  and Euler-Poincaré contract become binding on every future
-  geometry ADR; the first daughter ADR (G1) can be drafted for
-  review. The README roadmap gains its Phase G line.
-- **If amended:** the ladder's shape, the gate's placement, or the
-  proposal in D2 — the review exists to do exactly this, and the
-  document is structured so each D-section can be revised without
-  rewriting the others.
-- **What this ADR explicitly does NOT do:** no implementation, no
-  ADR-0003 amendment (that act belongs to the user, taken with this
-  document as the briefing), no NOTICE change (the OCCT entry
-  materializes only if a road with OCCT in scope is chosen — then
-  it is mechanical, per the ADR-0013 method), no CI change, no
-  dependency addition of any kind.
-- **What every road shares:** the SDF boundary of D6 (display,
-  preview, evaluation, organic modeling — positioned, not killed);
-  the D3 data model; the invariant discipline; and the honest
-  statement that the parametric spine — recipes, naming, history —
-  is and stays this house's, whatever computes the geometry.
+- **On acceptance (2026-10-25):** Phase G runs the G1/G2/G3
+  ladder on road (a) — all in house, forever; the G2 gate is an
+  internal checkpoint (estimate vs. progress), never a fork. The
+  D3 data model, tolerance layers, and Euler-Poincaré contract
+  bind every future geometry ADR. The daughter ADR-0032 (G1) is
+  drafted and enters the user's review; no phase starts before
+  that review closes. ADR-0003 is amended in the same act (the
+  license whitelist); the NOTICE does not change (no new
+  dependency — road (a) adds none, ever, by policy).
+- **The countermeasures the motivation cites are commitments:**
+  every phase deliverable on its own, visible value at every
+  step — the ladder's design, enforced by the delivery-unit
+  discipline of the daughter ADRs; and the D1 failure modes stay
+  named and watched (the perpetual prototype, tolerance-semantics
+  creep, opportunity cost) with the ladder as their structural
+  answer.
+- **What this ADR still does not do:** no implementation, no CI
+  change, no dependency addition (road (a) forbids the last by
+  policy now).
+- **What every road shares, this one too:** the SDF boundary of
+  D6 (display, preview, evaluation, organic modeling —
+  positioned, not killed); the D3 data model; the invariant
+  discipline; and the parametric spine — recipes, naming,
+  history — that stays this house's, whatever computes the
+  geometry. On road (a) what computes the geometry is this
+  house too.
 
 ## References
 

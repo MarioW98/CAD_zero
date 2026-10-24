@@ -2,7 +2,7 @@
 
 CAD_0 is a **dual-representation CAD kernel** — both SDF (signed distance fields) and B-Rep (boundary representation) are first-class peers. There is no "primary" representation that the other is converted into; the user works in whichever domain fits the design problem.
 
-This document is the entry point to the architecture. Deeper topics are covered in dedicated files under `docs/architecture/` and `docs/adr/`.
+This document is the entry point to the architecture. Deeper topics are covered in dedicated files under `docs/architecture/` and `docs/adr/`. The platform vision — the kernel as the geometric core of a broader CAE platform (preprocessor, parametric vehicle geometry, aerodynamic analysis) — is recorded in [platform-vision.md](platform-vision.md): an orientation document, explicitly not a scope commitment.
 
 ## Top-level diagram
 
@@ -118,7 +118,7 @@ This is enforced by code review.
 - **Phase D** — B-Rep MVP (topology + analytic + boolean)
 - **Phase E** — Bridge SDF ↔ B-Rep
 - **Phase F** — Modeling parametrico (sketch + feature tree)
-- **Phase G** — B-Rep advanced (fillet, chamfer, shell, NURBS booleans)
+- **Phase G** — The exact B-Rep kernel, all in house ([ADR-0031](../adr/0031-exact-brep-kernel.md), accepted): G1 exact primitives + exact mass properties ([ADR-0032](../adr/0032-g1-topology-and-exact-primitives.md), draft in review), G2 exact booleans + the first constant-radius fillet, G3 free surfaces (loft, sweep, blend — the vehicle-geometry rung of the platform vision)
 - **Phase H** — Full IO suite + native format versioning
 
 See the original plan document (proposal) for the full breakdown.
