@@ -1275,7 +1275,14 @@ TEST_CASE("G1-U3 landing: the extrude node owns BOTH materializations, bridge to
           fresh.sample({0.5f, 0.25f, 1.5f}).value);
 }
 
-TEST_CASE("G1-U3 landing: the honesty chain — the extruded prism says exact, the subtracted body says approximated") {
+TEST_CASE("G1-U3 landing: the honesty chain — the extruded prism says exact, the out-of-class subtract records its refusal") {
+    // (G1 unit 4 amended this test's last clause: the subtract's exact
+    // side LANDED. This scene's target is a PLAIN ExtrudeSDF node —
+    // not an exact operation, not a recognizable primitive — so the
+    // subtract's operand resolution refuses and the refusal is
+    // recorded. The in-class shape (a factory box target) materializes
+    // exact and is pinned by unit 4's own suite; the bridge extract
+    // of the SDF side stays faceted/approximated either way.)
     CAD_0::scene::Scene sc;
     // The guide case's shape: a box, a circle sketch, the extrude,
     // the subtract consuming the extrude's SDF side.
@@ -1302,12 +1309,14 @@ TEST_CASE("G1-U3 landing: the honesty chain — the extruded prism says exact, t
     REQUIRE(ex->hybrid != nullptr);
     check_exact_provenance(*ex->hybrid->brep);
 
-    // The subtract: consumes the SDF side; its exact chain ENDS here
-    // today (unit 4's subtract is not built). The node carries NO
-    // exact B-Rep and no refusal (it is not an extrude) — no new lie
-    // is permitted.
+    // The subtract: the SDF side stands (the display path); the exact
+    // side REFUSED — the plain ExtrudeSDF target is neither an exact
+    // operation nor a recognizable primitive, and the refusal says so
+    // (the honest absence record, never a silent absence and never a
+    // lie).
     CHECK(dn->hybrid == nullptr);
-    CHECK(dn->hybrid_refusal.empty());
+    REQUIRE_FALSE(dn->hybrid_refusal.empty());
+    CHECK(dn->hybrid_refusal.find("exact B-Rep") != std::string::npos);
 
     // The bridge extract of the subtracted body: faceted,
     // approximated with the declared grid tolerance (the unit-1 rules

@@ -38,6 +38,7 @@ set(CAD_0_TEST_SOURCES
     unit/brep/test_g1_data_model.cpp
     unit/brep/test_g1_unit2_pcurves.cpp
     unit/brep/test_g1_unit3_extrude.cpp
+    unit/brep/test_g1_unit4_subtract.cpp
     unit/bridge/test_bridge.cpp
     main.cpp
 )

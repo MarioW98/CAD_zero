@@ -9,7 +9,7 @@ forever — the G2 gate an internal checkpoint, not a fork). This ADR
 pins G1's scope, data-model deltas, the Layer-1 invariant, the hard
 derivations (mass properties, plane∩cylinder), the discriminating
 test class, and the delivery units. Delivery follows the six units of
-D10, each landed standalone with the full suite green; **units 1–3
+D10, each landed standalone with the full suite green; **units 1–4
 have landed**:
 
 * **Unit 1 (the data model, D2 + D3)** — the p-curve vocabulary and
@@ -81,6 +81,63 @@ have landed**:
   u-sign (the hole side's outward normal is −radial: u runs the
   reversed azimuth there) — the second real use of the pinned
   conventions, landed as the first one was: fixed and documented.
+
+* **Unit 4 (the exact subtract, D5 + D7)** — the exact chain crosses
+  its first intersection between curved surfaces, the phase's most
+  supervised step. `brep::exact_subtract` materializes A \ (B +
+  offset) on the pinned G1 class (A convex planar-faced with the
+  ⊥/∥ orientation gate — an oblique target face refuses naming the
+  angle; B a Z-axis prism of the D6 class — the Y-axis primitive
+  cylinder refuses naming its axis; both operands exact — the
+  booleans consume exactness, the unit-1 finding made a gate). The
+  SSI entry of D5 (`ssi_plane_cylinder`) carries the three
+  orientations' typed mathematics: ⊥ the circle with the Line2 v=h
+  on the cylinder's domain (the hole case), ∥ the line pair / the
+  tangent double line / the empty case, oblique REFUSED with the
+  angle (the sinusoid p-curve is G3's table, never smuggled in).
+  The through-hole's new topology lands as pinned: the pierced
+  faces GAIN inner loops (the intersection circle split at the
+  seam pair, ADR-0023's pattern), the surviving wall is the
+  cylindrical patch BETWEEN the circles (the seam's two co-edges in
+  the one loop, XOR satisfied), the tool's caps die — a flush cap
+  ABSORBS (the coplanar dedup rule, the counts unchanged) — and
+  the guide case's table reads 12V/17E/7F/H=2 → χ=0 genus 1,
+  agreeing with the faceted report (same topology, better
+  geometry). The general formula holds for every tool profile the
+  extrude authors (V=V_A+2n, E=E_A+3n, F=F_A+n, H=2, χ=0 for
+  every n; the circle is the seam-wired special case, a prism
+  target included). The degenerate classes carry their pinned
+  dispositions: coplanar ABSORBED (golden), the tangential wall
+  REFUSED by the deterministic canonical-key tie-break (golden on
+  the chosen disposition), the crossing circle and the blind hole
+  REFUSED with actionable errors naming the remedy (goldens), the
+  swallow REFUSED, the miss the EXACT COPY of A. **One convention
+  discovered, landed as the order demanded (fix and document, not
+  work around): the surviving wall keeps the prism's PHYSICAL
+  window walk, re-framed by the flipped orientation — it reads
+  REGION-ON-RIGHT (interior_left=false) in its own domain, because
+  the pierced faces' inner loops must read CCW for the Arc2
+  vocabulary (CCW sweeps only) and the radial-edge XOR ties the
+  two walks together: one requirement, seen from both sides (the
+  unit-3 material-right precedent, applied to a lateral face).
+  The inner loops' region bits are FLIPPED from the caps' (the
+  arcs carry hole=true, the segments interior_left=false — the
+  material is outside the profile now; the walk direction follows
+  each pierced face's own frame parity, exactly the caps' walks).**
+  The subtract node owns BOTH materializations (the HybridBody,
+  bridge tolerance 0, the SDF still feeding display); the operands'
+  B-Reps resolve through their own hybrids or the bridge's
+  primitive path — one resolution, no second opinion. The v0.4
+  golden, in class, materializes the exact subtract ON LOAD
+  (12/17/7/2; the new exact pins live in the unit's suite; the
+  SDF-side report pins are unchanged — they pin the display/bridge
+  path, which did not move); the v0.3 golden STAYS faceted
+  honestly — its tool is the Y-axis primitive cylinder, not a D6
+  prism, and the refusal is recorded on the node (the class is the
+  class; "col motivo scritto" cuts both ways). The SDF/display
+  goldens are bit-identical (verified, git-clean); the radius and
+  offset edit cycles regenerate BOTH materializations
+  bit-identically (ADR-0014).
 
 **No promise on G2 appears anywhere in this document.** G2 has
 no schedule, no scope here, and no implied commitment: its entry

@@ -19,6 +19,10 @@ target_link_libraries(CAD_0_scene INTERFACE
     # the node owns the exact B-Rep materialization beside its SDF, so
     # the scene layer includes brep/extrude.hpp + shape_bodies.hpp.
     CAD_0_brep
+    # G1 unit 4 (ADR-0032 D7): the subtract node's exact side resolves
+    # its operands' B-Reps through the bridge's primitive path (the
+    # factory bodies) — one resolution definition, no second copy.
+    CAD_0_bridge
     # NOTE: scene is header-only and does NOT include io headers. The old
     # CAD_0_io link here was vestigial and created a dependency cycle with
     # io/native.cpp (which serializes scenes) — removed.

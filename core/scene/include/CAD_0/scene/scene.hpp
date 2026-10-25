@@ -29,6 +29,8 @@
 #include "CAD_0/sdf/sketch_profile.hpp"
 #include "CAD_0/sdf/sketch_extrude.hpp"
 #include "CAD_0/brep/extrude.hpp"
+#include "CAD_0/brep/subtract.hpp"
+#include "CAD_0/bridge/sdf_to_brep.hpp"
 #include "CAD_0/geometry/shape_bodies.hpp"
 #include "CAD_0/math/vec.hpp"
 #include "CAD_0/math/mat.hpp"
@@ -429,26 +431,81 @@ inline sdf::SDFBody materialize_operation(
 
 using SceneChangeCallback = std::function<void(SceneChange, std::uint32_t)>;
 
+// materialize_subtract_hybrid — THE EXACT SIDE (G1 unit 4,
+// ADR-0032 D7): the subtract's second materialization. The node
+// becomes ADR-0002's HybridBody exactly as the extrude's does —
+// owning BOTH representations, bridge tolerance 0, NOT a conversion.
+// The operand B-Reps resolve in priority order: the operand's OWN
+// hybrid (an exact operation — the extrude's prism, a prior exact
+// subtract) or the bridge's primitive path (a factory body — the
+// fitted box); anything else refuses with the actionable reason and
+// the SDF display path stands (the class check inside exact_subtract
+// adds the geometry-level refusals — oblique, crossing, blind,
+// tangential, swallow, non-convex — each naming its remedy).
+// `sdf_twin` is the recipe's freshly materialized SDF body (the
+// caller's n.body): the hybrid's SDF member is its deep clone.
+inline std::unique_ptr<geometry::HybridBody>
+materialize_subtract_hybrid(const OperationRecipe& r,
+                            const SceneNode& target,
+                            const SceneNode& tool,
+                            const sdf::SDFBody& sdf_twin) {
+    const auto resolve = [](const SceneNode& n,
+                            const char* what) {
+        if (n.hybrid != nullptr && n.hybrid->brep != nullptr)
+            return std::make_unique<brep::BRepBody>(*n.hybrid->brep);
+        auto prim = bridge::sdf_to_brep_primitive(n.body);
+        if (prim != nullptr) return prim;
+        throw std::invalid_argument(
+            std::string("materialize_subtract_hybrid: the ") + what +
+            "'s exact B-Rep is not available - the operand node is "
+            "neither an exact operation (an extrude, an in-class "
+            "subtract) nor a recognizable primitive (the bridge's "
+            "primitive path serves the sphere, the box and the "
+            "cylinder). Remedy: model the operand as one of those, or "
+            "accept the faceted path (the SDF materialization "
+            "stands).");
+    };
+    auto a = resolve(target, "target");
+    auto b = resolve(tool, "tool");
+    auto brep_body = brep::exact_subtract(
+        *a, *b, math::Vec3f{r.offset_x, r.offset_y, r.offset_z},
+        brep::kSubtractTolerance);
+    // BRepWithSDFShell: the exact B-Rep is the properties/export
+    // truth, the SDF the display envelope (ADR-0031 D6's division).
+    // The accumulator stays ZERO: nothing was converted.
+    return std::make_unique<geometry::HybridBody>(
+        std::make_unique<sdf::SDFBody>(sdf_twin), std::move(brep_body),
+        geometry::HybridRole::BRepWithSDFShell,
+        math::ToleranceAccumulator{});
+}
+
 // attach_operation_hybrid — the no-drift hook shared by creation,
 // the DAG rebuild pass and the loader's pass 2 (the Phase F rule:
 // one definition, every caller). For an Extrude recipe the exact
 // side is attempted AFTER the SDF materialized: a refusal (the
 // exact class boundary) is RECORDED — the SDF display path stands,
-// the absence is queryable, never a guess and never a lie. For any
-// other recipe the exact side is cleared: the subtract's exact
-// chain ends at its operands today (unit 4's subtract is not built;
-// its bridge extract stays faceted/approximated — the honesty chain
-// of ADR-0032 D8).
+// the absence is queryable, never a guess and never a lie. For a
+// Subtract recipe (G1 unit 4) the same protocol: the operands'
+// exact B-Reps resolve (their own hybrids, or the bridge's
+// primitive path), the class check runs inside exact_subtract, and
+// a refusal is recorded with the actionable reason — the v0.3
+// golden's own shape (the Y-axis primitive cylinder tool) STAYS on
+// the faceted path with the reason written, exactly as the order's
+// honesty demands. For any other recipe the exact side is cleared
+// (none exists today).
 inline void attach_operation_hybrid(
     SceneNode& n, const OperationRecipe& r,
     const std::vector<const SceneNode*>& operands) {
-    if (r.type != OperationType::Extrude) {
-        n.hybrid.reset();
-        n.hybrid_refusal.clear();
-        return;
-    }
     try {
-        n.hybrid = materialize_extrude_hybrid(r, operands.at(0)->sketch);
+        switch (r.type) {
+        case OperationType::Extrude:
+            n.hybrid = materialize_extrude_hybrid(r, operands.at(0)->sketch);
+            break;
+        case OperationType::Subtract:
+            n.hybrid = materialize_subtract_hybrid(r, *operands.at(0),
+                                                   *operands.at(1), n.body);
+            break;
+        }
         n.hybrid_refusal.clear();
     } catch (const std::invalid_argument& e) {
         // The exact-B-Rep class boundary: the SDF materialization

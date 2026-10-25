@@ -128,6 +128,10 @@ public:
 
     float radius() const noexcept { return radius_; }
     float height() const noexcept { return half_height_ * 2.0f; }
+    // The placement origin (G1 unit 4: translate_body re-anchors the
+    // analytic surfaces through their own accessors — one table, no
+    // second frame copy).
+    const math::Vec3f& origin() const noexcept { return origin_; }
 
 private:
     float radius_;
@@ -235,6 +239,8 @@ public:
     }
 
     float radius() const noexcept { return radius_; }
+    // The placement origin (G1 unit 4: translate_body's table).
+    const math::Vec3f& origin() const noexcept { return origin_; }
 
 private:
     float radius_;
@@ -271,6 +277,8 @@ public:
 
     float base_radius() const noexcept { return base_radius_; }
     float height() const noexcept { return height_; }
+    // The placement origin (G1 unit 4: translate_body's table).
+    const math::Vec3f& origin() const noexcept { return origin_; }
 
 private:
     float base_radius_;
@@ -308,6 +316,8 @@ public:
 
     float major_radius() const noexcept { return R_; }
     float minor_radius() const noexcept { return r_; }
+    // The placement origin (G1 unit 4: translate_body's table).
+    const math::Vec3f& origin() const noexcept { return origin_; }
 
 private:
     float R_, r_;

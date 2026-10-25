@@ -258,10 +258,15 @@ def test_honesty_chain_prism_exact_subtracted_approximated():
     assert q["exact"] is True
     assert q["linear_tolerance"] == 0.0
 
-    # The subtracted node carries NO exact B-Rep today (unit 4's
-    # subtract is not built) and no refusal (it is not an extrude).
+    # (G1 unit 4 amended this clause: the subtract's exact side
+    # LANDED. This scene's tool spans z in [1, 5] against the box's
+    # [-1.5, 1.5] - a BLIND hole, and the exact subtract refuses it
+    # honestly: the actionable reason is recorded, the SDF display
+    # path stands. The in-class through-hole materializes exact and
+    # is pinned by unit 4's own suite.)
     assert dn.exact_brep is None
-    assert dn.hybrid_refusal == ""
+    assert "BLIND" in dn.hybrid_refusal
+    assert "Remedy" in dn.hybrid_refusal
 
     # Its bridge extract stays faceted/approximated — the honesty
     # chain, unchanged (the unit-1 provenance rules propagate the

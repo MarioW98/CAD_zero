@@ -1073,25 +1073,9 @@ struct ClippedFace {
 // provenance field exists to prevent. Both operands fully exact →
 // exact (plane∩plane fragments of closed-form inputs stay
 // closed-form).
-ProvenanceInfo combined_provenance(const BRepBody& A, const BRepBody& B) {
-    bool any_approximated = false;
-    double max_tol = 0.0;
-    auto scan = [&](const BRepBody& b) {
-        const auto consider = [&](const ProvenanceInfo& p) {
-            if (!p.is_exact()) {
-                any_approximated = true;
-                max_tol = std::max(max_tol, p.linear_tolerance);
-            }
-        };
-        for (const auto& v : b.vertices) consider(v.provenance());
-        for (const auto& e : b.edges) consider(e.provenance());
-        for (const auto& f : b.solid.shell().faces()) consider(f.provenance());
-    };
-    scan(A);
-    scan(B);
-    return any_approximated ? ProvenanceInfo::approximated(max_tol)
-                             : ProvenanceInfo::exact();
-}
+// combined_provenance was hoisted to the topology post-pass helpers
+// (G1 unit 4: the exact subtract and the polygon booleans share the
+// ONE worst-of definition — the no-drift rule at the entity level).
 
 void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces,
                    bool canonicalize, const ProvenanceInfo& provenance) {

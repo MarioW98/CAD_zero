@@ -79,6 +79,29 @@ void link_radial_edges(BRepBody& body) {
     }
 }
 
+ProvenanceInfo combined_provenance(const BRepBody& a, const BRepBody& b) {
+    // The worst-of rule (ADR-0032 D2.4 + D8, unit 1's boolean
+    // discipline, hoisted here by unit 4 so every exact consumer
+    // shares the ONE definition — the no-drift rule at the entity
+    // level). Pure record arithmetic, no geometry.
+    bool any_approximated = false;
+    double max_tol = 0.0;
+    const auto consider = [&](const ProvenanceInfo& p) {
+        if (!p.is_exact()) {
+            any_approximated = true;
+            max_tol = std::max(max_tol, p.linear_tolerance);
+        }
+    };
+    for (const auto& v : a.vertices) consider(v.provenance());
+    for (const auto& e : a.edges) consider(e.provenance());
+    for (const auto& f : a.solid.shell().faces()) consider(f.provenance());
+    for (const auto& v : b.vertices) consider(v.provenance());
+    for (const auto& e : b.edges) consider(e.provenance());
+    for (const auto& f : b.solid.shell().faces()) consider(f.provenance());
+    return any_approximated ? ProvenanceInfo::approximated(max_tol)
+                             : ProvenanceInfo::exact();
+}
+
 std::int64_t inner_loop_count(const BRepBody& body) noexcept {
     // H = L − F (ADR-0032 D3): every loop beyond the first of each
     // face is a boundary component the disk-faced formula V − E + F

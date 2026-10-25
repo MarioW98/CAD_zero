@@ -32,6 +32,10 @@ target_include_directories(CAD_0_io
         # require the brep include path too (the same direct-list
         # pattern this target already uses for scene/).
         ${CMAKE_SOURCE_DIR}/core/brep/include
+        # G1 unit 4: scene.hpp now includes bridge/sdf_to_brep.hpp (the
+        # subtract's operand resolution) — the bridge include path joins
+        # the direct list (the unit-3 pattern for brep/).
+        ${CMAKE_SOURCE_DIR}/core/bridge/include
     PRIVATE
         ${CMAKE_BINARY_DIR}/include
         ${CMAKE_SOURCE_DIR}/core/math/include

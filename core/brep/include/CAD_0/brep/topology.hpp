@@ -361,6 +361,19 @@ std::int64_t euler_characteristic(const BRepBody& body) noexcept;
 // inner loop each). Pure integer arithmetic — ADR-0014 honored.
 std::int64_t inner_loop_count(const BRepBody& body) noexcept;
 
+// combined_provenance — the worst of two operands' Layer-2 records
+// (ADR-0032 D2.4 + D8, hoisted to the post-pass helpers by G1 unit 4
+// so the exact subtract and the polygon booleans share ONE
+// definition): if ANY entity of either operand is approximated, the
+// combination is approximated with the MAXIMUM of the declared
+// bounds — a fragment of an approximated operand is a sample's
+// descendant; the tolerance is inherited, never diluted, never
+// averaged, never silently reset to exact. Both operands fully
+// exact → exact. Overstating a bound is conservative honesty;
+// understating it is the lie the provenance field exists to prevent.
+ProvenanceInfo combined_provenance(const BRepBody& a,
+                                    const BRepBody& b);
+
 // loops_are_closed — for every loop of every face, check that the end
 // vertex of co-edge i equals the start vertex of co-edge (i+1) mod n.
 // Returns false on the first violation. Used by tests as a regression
