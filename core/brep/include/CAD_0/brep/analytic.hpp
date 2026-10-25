@@ -43,6 +43,12 @@
 // authored, with their own discriminating pins — not before (an
 // untested flip of surfaces nobody trims would be exactly the
 // silent drift the house forbids).
+//
+// G1 UNIT 3 ADDS the extrude's own cylinder (below): the sketch
+// plane is the world XY, the extrusion runs along ±Z, so the arc
+// lateral faces live on cylinders whose axis is Z — a different
+// placement from the primitive factory's axis-Y CylinderSurface
+// (whose goldens and pins stay untouched; G1 does not unify them).
 #pragma once
 
 #include "CAD_0/brep/topology.hpp"
@@ -127,6 +133,80 @@ private:
     float radius_;
     float half_height_;
     math::Vec3f origin_;
+};
+
+// CylinderZ — the EXTRUDE's cylinder (G1 unit 3): axis = world Z
+// through (cx, cy) — the sketch plane's own normal, the direction the
+// prism grows in. u = the azimuth AROUND THE AXIS signed by u_sign,
+// v = the height above z_base (evaluate(u, v) = (cx + R cos(s·u),
+// cy + R sin(s·u), z_base + v)); ∂u×∂v = s·radial — right-handed
+// around the outward normal BY CONSTRUCTION, both signs:
+//
+//   * s = +1 (u = the CCW azimuth): the SOLID side — the fillet arcs
+//     (hole = false, the disc material) and the solid circle's wall,
+//     whose outward normal is +radial;
+//   * s = -1 (u = the reversed azimuth): the HOLE side — the notch
+//     faces and the hole walls, whose outward normal is -radial (the
+//     material lies outside the cylinder). The frame rule forces the
+//     flip: (∂u×∂v)·n_outward > 0 admits no other sign, and the
+//     wall's material-on-left window walk then runs CCW in (u, v)
+//     exactly as the solid's does (the domain rectangle "Δθ × h" of
+//     ADR-0032 D6, θ measured in the walk's own azimuth direction).
+//
+// The seam meridian is u = 0 ≡ u ∓ 2π = the +X direction from the
+// axis (the discipline CylinderSurface's u = 0 follows on its own
+// frame). The window handedness, the u-sign table and the seam
+// placement are pinned by tests/unit/brep/test_g1_unit3_extrude.cpp.
+class CylinderZSurface : public SurfaceGeometry {
+public:
+    CylinderZSurface(math::Vec2f axis_center, float radius, float z_base,
+                     int u_sign)
+        : center_(axis_center), radius_(radius), z_base_(z_base),
+          u_sign_(u_sign == 1 ? 1.0f : -1.0f) {}
+
+    math::Vec3f evaluate(float u, float v) const override {
+        const float phi = u_sign_ * u;
+        const float c = std::cos(phi), s = std::sin(phi);
+        return {center_.x + radius_ * c,
+                center_.y + radius_ * s,
+                z_base_ + v};
+    }
+
+    math::Vec3f normal(float u, float) const override {
+        // s·radial(phi): the SAME sign as ∂u×∂v — the outward normal
+        // the frame rule pins (+radial on the solid side, −radial on
+        // the hole side, where "outward" points INTO the hole, away
+        // from the material).
+        const float phi = u_sign_ * u;
+        return {u_sign_ * std::cos(phi), u_sign_ * std::sin(phi), 0.0f};
+    }
+
+    const char* type_name() const override { return "cylinder"; }
+    math::Bboxf bounds() const override {
+        // The full-cylinder box (the patch trim lives in the loops,
+        // not the surface): z unbounded above z_base — the extrude's
+        // span is carried by the trimming window [0, h].
+        math::Bboxf b = math::Bboxf::universe();
+        b.min.x = center_.x - radius_;
+        b.max.x = center_.x + radius_;
+        b.min.y = center_.y - radius_;
+        b.max.y = center_.y + radius_;
+        b.min.z = z_base_;
+        return b;
+    }
+
+    math::Vec2f axis_center() const noexcept { return center_; }
+    float radius() const noexcept { return radius_; }
+    float z_base() const noexcept { return z_base_; }
+    // The u direction's sign (+1 CCW azimuth, -1 reversed) — the
+    // reader-facing declaration of the frame-rule flip above.
+    float u_sign() const noexcept { return u_sign_; }
+
+private:
+    math::Vec2f center_;
+    float radius_;
+    float z_base_;
+    float u_sign_;
 };
 
 // Sphere: radius R centered at origin.

@@ -19,6 +19,7 @@
 #include "CAD_0/sdf/transforms.hpp"
 #include "CAD_0/sdf/sketch_entities.hpp"
 #include "CAD_0/sdf/sketch_profile.hpp"
+#include "CAD_0/brep/topology.hpp"
 #include "CAD_0/math/vec.hpp"
 #include "CAD_0/math/quat.hpp"
 
@@ -175,7 +176,32 @@ void bind_scene(nb::module_& m) {
         // sketch operand exists but its profile does not certify (an
         // edit opened the chain). The last materialized body is kept;
         // Scene.operation_error carries the certificate's message.
-        .def_ro("operation_pending", &scene::SceneNode::operation_pending);
+        .def_ro("operation_pending", &scene::SceneNode::operation_pending)
+        // ---- The exact side (G1 unit 3, ADR-0032 D6) ------------------
+        // The extrude node's exact B-Rep materialization — the
+        // HybridBody's B-Rep member (bridge tolerance 0: the same
+        // solid, dual NATIVE materializations). None for every other
+        // node and for the out-of-class profiles (a hole-side arc),
+        // whose actionable reason `hybrid_refusal` carries. The
+        // returned handle is the SAME opaque BRepBody type the
+        // bridge returns: inspect it with CAD_0.brep.face_count /
+        // CAD_0.brep.face_query — the unit-2 query surface reads the
+        // prism's faces, loops and p-curves end-to-end from Python.
+        .def_prop_ro("exact_brep",
+            [](const scene::SceneNode& n) -> const brep::BRepBody* {
+                return n.hybrid ? n.hybrid->brep.get() : nullptr;
+            },
+            nb::rv_policy::reference_internal,
+            "The node's exact B-Rep (an opaque CAD_0.bridge.BRepBody)\n"
+            "or None. Present for extrude operations whose profile is\n"
+            "inside the exact class; inspect via CAD_0.brep.face_query.")
+        .def_prop_ro("hybrid_refusal",
+            [](const scene::SceneNode& n) {
+                return n.hybrid_refusal;
+            },
+            "The actionable reason the exact B-Rep refused to\n"
+            "materialize (empty string when it did not): the honest\n"
+            "absence record — the SDF display path always stands.");
 
     // ---- Parametric builder registry (single source of truth) -----------
     //

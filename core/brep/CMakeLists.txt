@@ -7,6 +7,7 @@ set(CAD_0_BREP_HEADERS
     include/CAD_0/brep/curve.hpp
     include/CAD_0/brep/tessellate.hpp
     include/CAD_0/brep/factory.hpp
+    include/CAD_0/brep/extrude.hpp
     include/CAD_0/brep/query.hpp
     include/CAD_0/brep/boolean.hpp
     include/CAD_0/brep/detail/boolean_test_hooks.hpp

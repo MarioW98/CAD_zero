@@ -180,6 +180,14 @@ inline OperationRebuildResult rebuild_operations_core(
             n->operand_missing = false;
             n->operation_pending = false;
             n->operation_pending_error.clear();
+            // The exact side re-materializes with the body (G1 unit
+            // 3, ADR-0032 D6): the same no-drift rule — this pass,
+            // creation and the loader's pass 2 share ONE definition.
+            // A class refusal is recorded on the node (the SDF
+            // display path stands); a pending profile never reaches
+            // here, so the last good hybrid is kept with the last
+            // good body.
+            attach_operation_hybrid(*n, r, operands);
             if (notify) notify(id);
             ++result.rebuilt;
         } catch (const std::invalid_argument& e) {

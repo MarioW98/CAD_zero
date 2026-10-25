@@ -28,6 +28,8 @@
 #include "CAD_0/sdf/mesh_extract.hpp"
 #include "CAD_0/sdf/sketch_profile.hpp"
 #include "CAD_0/sdf/sketch_extrude.hpp"
+#include "CAD_0/brep/extrude.hpp"
+#include "CAD_0/geometry/shape_bodies.hpp"
 #include "CAD_0/math/vec.hpp"
 #include "CAD_0/math/mat.hpp"
 #include "CAD_0/geometry/transform.hpp"
@@ -143,6 +145,35 @@ inline sdf::SDFBody materialize_operation(const OperationRecipe& r,
         std::move(chains), r.distance, r.direction));
 }
 
+// materialize_extrude_hybrid — THE EXACT SIDE (G1 unit 3, ADR-0031
+// D6 / ADR-0032 D6): the extrude's second materialization. The node
+// becomes ADR-0002's HybridBody — the type finally doing its job —
+// owning BOTH representations with bridge tolerance 0: the SAME
+// solid, dual NATIVE materializations, NOT a conversion. The SDF
+// member is the same recipe's ExtrudeSDF (the twin the display body
+// materializes); the B-Rep member is the exact prism
+// (brep::make_prism — the profile→face mapping, the seam reuse, the
+// caps from the sketch chains). Throws the SAME
+// std::invalid_argument family: the profile certificate (shared
+// with the SDF side) and the exact class boundary (the
+// hole-side-arc refusal — the typed vocabulary's own limit,
+// documented in extrude.hpp).
+inline std::unique_ptr<geometry::HybridBody>
+materialize_extrude_hybrid(const OperationRecipe& r,
+                           const std::vector<sdf::SketchChain>& chains) {
+    auto brep_body = brep::make_prism(chains, r.distance, r.direction);
+    auto sdf_body = std::make_unique<sdf::SDFBody>(
+        std::make_unique<sdf::ExtrudeSDF>(chains, r.distance,
+                                          r.direction));
+    // BRepWithSDFShell: the exact B-Rep is the properties/export
+    // truth, the SDF the display envelope (ADR-0031 D6's division).
+    // The accumulator stays ZERO: nothing was converted.
+    return std::make_unique<geometry::HybridBody>(
+        std::move(sdf_body), std::move(brep_body),
+        geometry::HybridRole::BRepWithSDFShell,
+        math::ToleranceAccumulator{});
+}
+
 // A shape factory: given the current parameters, rebuild the SDFBody.
 // This allows interactive editing — change a radius, the body is rebuilt.
 using ShapeFactory = std::function<sdf::SDFBody(const std::map<std::string, ParamValue>&)>;
@@ -242,6 +273,22 @@ struct SceneNode {
     std::optional<OperationRecipe> operation;
     bool operand_missing{false};
 
+    // ---- The exact side (G1 unit 3, ADR-0032 D6) --------------------
+    // The HybridBody landing: for an EXTRUDE operation this owns BOTH
+    // materializations — the SDF twin and the exact B-Rep prism —
+    // with bridge tolerance 0 (the same solid, dual NATIVE
+    // materializations, NOT a conversion; ADR-0002's type finally at
+    // work). DERIVED state, like the body: rebuilt by the same pass
+    // from the recipe, never serialized (the format does not move,
+    // D11 — a v0.4 project re-materializes it deterministically on
+    // load). Null when the exact class refuses (a hole-side arc: the
+    // typed 2D vocabulary stores CCW sweeps only) — the SDF display
+    // path stands, and `hybrid_refusal` carries the actionable reason
+    // for the query surfaces. Null for every non-extrude node (the
+    // subtract's exact side is unit 4's).
+    std::unique_ptr<geometry::HybridBody> hybrid;
+    std::string hybrid_refusal;
+
     // ---- The visible PENDING state (ADR-0030 D2 revision 1) ----
     // The sketch operand EXISTS but its profile does not certify (an
     // edit opened the chain, or crossed entities): the same
@@ -274,6 +321,78 @@ struct SceneNode {
         params[key] = std::move(value);
         rebuild_body();
     }
+
+    // ---- Copy semantics (G1 unit 3) --------------------------------
+    // The node was copyable before the HybridBody landed (SDFBody's
+    // deep-cloning copy ctor; the ParsedDocument and command-stack
+    // paths rely on the deep clone) and stays copyable: the hybrid
+    // member is DEEP-CLONED — the SDF twin through its own copy
+    // ctor, the exact B-Rep copied and its radial edges RELINKED
+    // (the copied Edge::coedges_ pointers point into the SOURCE's
+    // loops — the one shallow hazard of copying a BRepBody;
+    // link_radial_edges rebuilds them into the copy, closing it).
+    // The move operations stay the implicit ones (ownership
+    // transfers whole), and the default construction stays default.
+    SceneNode() = default;
+    SceneNode(const SceneNode& other)
+        : id(other.id), name(other.name), kind(other.kind),
+          body(other.body), transform(other.transform),
+          visible(other.visible), cached_mesh(other.cached_mesh),
+          mesh_dirty(other.mesh_dirty), mesh(other.mesh),
+          sketch(other.sketch), factory(other.factory),
+          params(other.params), builder(other.builder),
+          operation(other.operation),
+          operand_missing(other.operand_missing),
+          hybrid_refusal(other.hybrid_refusal),
+          operation_pending(other.operation_pending),
+          operation_pending_error(other.operation_pending_error) {
+        if (other.hybrid) {
+            auto sdf_clone =
+                std::make_unique<sdf::SDFBody>(*other.hybrid->sdf);
+            auto brep_clone =
+                std::make_unique<brep::BRepBody>(*other.hybrid->brep);
+            brep::link_radial_edges(*brep_clone);
+            hybrid = std::make_unique<geometry::HybridBody>(
+                std::move(sdf_clone), std::move(brep_clone),
+                other.hybrid->role, other.hybrid->bridge_tolerance);
+        }
+    }
+    SceneNode& operator=(const SceneNode& other) {
+        if (this == &other) return *this;
+        id = other.id;
+        name = other.name;
+        kind = other.kind;
+        body = other.body;
+        transform = other.transform;
+        visible = other.visible;
+        cached_mesh = other.cached_mesh;
+        mesh_dirty = other.mesh_dirty;
+        mesh = other.mesh;
+        sketch = other.sketch;
+        factory = other.factory;
+        params = other.params;
+        builder = other.builder;
+        operation = other.operation;
+        operand_missing = other.operand_missing;
+        hybrid_refusal = other.hybrid_refusal;
+        operation_pending = other.operation_pending;
+        operation_pending_error = other.operation_pending_error;
+        if (other.hybrid) {
+            auto sdf_clone =
+                std::make_unique<sdf::SDFBody>(*other.hybrid->sdf);
+            auto brep_clone =
+                std::make_unique<brep::BRepBody>(*other.hybrid->brep);
+            brep::link_radial_edges(*brep_clone);
+            hybrid = std::make_unique<geometry::HybridBody>(
+                std::move(sdf_clone), std::move(brep_clone),
+                other.hybrid->role, other.hybrid->bridge_tolerance);
+        } else {
+            hybrid.reset();
+        }
+        return *this;
+    }
+    SceneNode(SceneNode&&) = default;
+    SceneNode& operator=(SceneNode&&) = default;
 };
 
 enum class SceneChange {
@@ -309,6 +428,37 @@ inline sdf::SDFBody materialize_operation(
 }
 
 using SceneChangeCallback = std::function<void(SceneChange, std::uint32_t)>;
+
+// attach_operation_hybrid — the no-drift hook shared by creation,
+// the DAG rebuild pass and the loader's pass 2 (the Phase F rule:
+// one definition, every caller). For an Extrude recipe the exact
+// side is attempted AFTER the SDF materialized: a refusal (the
+// exact class boundary) is RECORDED — the SDF display path stands,
+// the absence is queryable, never a guess and never a lie. For any
+// other recipe the exact side is cleared: the subtract's exact
+// chain ends at its operands today (unit 4's subtract is not built;
+// its bridge extract stays faceted/approximated — the honesty chain
+// of ADR-0032 D8).
+inline void attach_operation_hybrid(
+    SceneNode& n, const OperationRecipe& r,
+    const std::vector<const SceneNode*>& operands) {
+    if (r.type != OperationType::Extrude) {
+        n.hybrid.reset();
+        n.hybrid_refusal.clear();
+        return;
+    }
+    try {
+        n.hybrid = materialize_extrude_hybrid(r, operands.at(0)->sketch);
+        n.hybrid_refusal.clear();
+    } catch (const std::invalid_argument& e) {
+        // The exact-B-Rep class boundary: the SDF materialization
+        // stands (display continues, unchanged); the refusal is
+        // recorded for the query surfaces — loud on demand, never
+        // silent, never thrown at the document level.
+        n.hybrid.reset();
+        n.hybrid_refusal = e.what();
+    }
+}
 
 class Scene {
 public:
@@ -603,7 +753,10 @@ public:
         // Materialize FIRST, install after: a refused creation (an open
         // sketch, an uncertifiable profile) leaves the scene untouched
         // — no node, no body, no id consumed (the refusal is a normal
-        // user-facing path for the extrude, not a freak event).
+        // user-facing path for the extrude, not a freak event). The
+        // exact side attaches after the SDF materialized: its own
+        // class refusal is RECORDED, never thrown at creation (the
+        // display path is the SDF's — no visible change).
         sdf::SDFBody body = materialize_operation(recipe, operands);
         SceneNode node;
         node.id = next_id_++;
@@ -612,6 +765,7 @@ public:
         node.kind = NodeKind::Sdf;
         node.operation = recipe;
         node.body = std::move(body);
+        attach_operation_hybrid(node, recipe, operands);
         node.mesh_dirty = true;
         nodes_.push_back(std::move(node));
         notify(SceneChange::NodeAdded, nodes_.back().id);
@@ -662,6 +816,7 @@ public:
         node.kind = NodeKind::Sdf;
         node.operation = recipe;
         node.body = std::move(body);
+        attach_operation_hybrid(node, recipe, operands);
         node.mesh_dirty = true;
         nodes_.push_back(std::move(node));
         if (next_id_ <= id) next_id_ = id + 1;

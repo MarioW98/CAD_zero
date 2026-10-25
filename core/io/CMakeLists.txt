@@ -26,6 +26,12 @@ target_include_directories(CAD_0_io
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/core/scene/include
+        # G1 unit 3: scene.hpp's public surface now includes the
+        # HybridBody landing (geometry/shape_bodies.hpp +
+        # brep/extrude.hpp), so the scene layer's public headers
+        # require the brep include path too (the same direct-list
+        # pattern this target already uses for scene/).
+        ${CMAKE_SOURCE_DIR}/core/brep/include
     PRIVATE
         ${CMAKE_BINARY_DIR}/include
         ${CMAKE_SOURCE_DIR}/core/math/include

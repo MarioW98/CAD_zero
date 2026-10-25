@@ -15,6 +15,10 @@ target_link_libraries(CAD_0_scene INTERFACE
     CAD_0_math
     CAD_0_geometry
     CAD_0_sdf
+    # G1 unit 3 (ADR-0032 D6): the extrude node's HybridBody landing —
+    # the node owns the exact B-Rep materialization beside its SDF, so
+    # the scene layer includes brep/extrude.hpp + shape_bodies.hpp.
+    CAD_0_brep
     # NOTE: scene is header-only and does NOT include io headers. The old
     # CAD_0_io link here was vestigial and created a dependency cycle with
     # io/native.cpp (which serializes scenes) — removed.

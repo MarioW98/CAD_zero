@@ -9,7 +9,7 @@ forever — the G2 gate an internal checkpoint, not a fork). This ADR
 pins G1's scope, data-model deltas, the Layer-1 invariant, the hard
 derivations (mass properties, plane∩cylinder), the discriminating
 test class, and the delivery units. Delivery follows the six units of
-D10, each landed standalone with the full suite green; **units 1–2
+D10, each landed standalone with the full suite green; **units 1–3
 have landed**:
 
 * **Unit 1 (the data model, D2 + D3)** — the p-curve vocabulary and
@@ -42,6 +42,45 @@ have landed**:
   (`CAD_0.brep.face_query`): family, loop counts, per-co-edge
   p-curve type and parameters, provenance — plain values, honest on
   both the exact and the faceted world.
+
+* **Unit 3 (the exact extrude, D6)** — the geometry born from the
+  sketch becomes exact: `brep::make_prism` maps the typed profile
+  chain to the prism B-Rep per D6's table (segments → planar
+  rectangles, arcs → cylindrical patches Δθ×h on the new
+  `CylinderZSurface`, the solid circle → the ADR-0023 seam-wired
+  pattern verbatim on the Z axis, 4V/5E/3F), and the caps' outer
+  trimming loop IS the validated chain itself, entity for entity
+  (segment→Line2, arc→Arc2, and — on the hole rims — circle→
+  Circle2, the vocabulary's first Circle2 writer: a closed trim
+  curve, honestly direction-free). The pinned formulas hold for
+  every n (V=2n, E=3n, F=n+2, χ=2; the lens at n=2, the box
+  case n=4) and the multi-chain extension is pinned with them
+  (each hole adds its wall and one inner cap loop: χ = 2−2·holes,
+  the ring reads χ=0 genus 1). **The HybridBody landed (ADR-0031
+  D6 honored): the extrude node owns BOTH materializations — the
+  SDF twin and the exact B-Rep — with bridge tolerance 0 (the same
+  solid, dual native materializations, not a conversion); the SDF
+  keeps feeding display unchanged, the subtract's bridge extract
+  stays faceted/approximated (the honesty chain of D8), and the
+  .CAD_0 format does not move (D11 — the hybrid is derived state,
+  re-materialized deterministically on load).** Two class
+  boundaries, derived and documented rather than worked around:
+  (1) a hole-side ARC (hole=true — a notch or a bite) refuses the
+  exact B-Rep loudly, because the typed 2D vocabulary stores CCW
+  sweeps only and a notch arc's cap trimming runs CW in BOTH cap
+  domains — the same honest exclusion shape as D5.3's oblique SSI;
+  the SDF materialization stands, the refusal recorded on the node;
+  (2) multi-entity HOLE chains are inexpressible in the 2D kernel
+  itself (the max-composition intersects regions; an intersection
+  of half-planes is convex and cannot be a hole's complement) —
+  holes are circles, one disc-complement entity each, exactly the
+  canvas's authoring class. The convention checker's region-side
+  model extended to the AUTHORED bits (interior_left / !hole) —
+  the sketch kernel's own region semantics, "the same mathematics"
+  of D2.1 read verbatim. The frame rule forced CylinderZSurface's
+  u-sign (the hole side's outward normal is −radial: u runs the
+  reversed azimuth there) — the second real use of the pinned
+  conventions, landed as the first one was: fixed and documented.
 
 **No promise on G2 appears anywhere in this document.** G2 has
 no schedule, no scope here, and no implied commitment: its entry
