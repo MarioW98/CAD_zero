@@ -34,7 +34,6 @@
 
 #include "CAD_0/bridge/sdf_to_brep.hpp"
 #include "CAD_0/brep/topology.hpp"
-
 namespace nb = nanobind;
 using CAD_0::bridge::SdfToBrepOptions;
 using CAD_0::bridge::SdfToBrepReport;
@@ -81,6 +80,26 @@ void bind_bridge(nb::module_& m) {
         nb::arg("body"), nb::arg("opts") = SdfToBrepOptions(),
         "Extract a faceted B-Rep body from an SDF body (MC33 + welding,\n"
         "ADR-0026). Returns an opaque BRepBody handle owned by Python.");
+
+    // The DISPATCHING conversion (G1 unit 2): exact analytic primitive
+    // fit first (sphere/box/cylinder), MC33 faceted fallback — the
+    // same entry the C++ sdf_to_brep() provides and the report runs.
+    // The primitive path returns FACTORY bodies: since unit 2 those
+    // carry typed p-curves on every co-edge and read exact/0 through
+    // CAD_0.brep.face_query; the faceted fallback carries no p-curves
+    // and declares its grid tolerance (the per-world invariant, never
+    // fudged). The bridge itself never writes a p-curve — the
+    // primitive bodies are the factories' products, a delegation.
+    bridge_mod.def("sdf_to_brep",
+        [](const SDFBody& body, const SdfToBrepOptions& opts) {
+            return CAD_0::bridge::sdf_to_brep(body, opts);
+        },
+        nb::arg("body"), nb::arg("opts") = SdfToBrepOptions(),
+        "Convert an SDF body to B-Rep, exact-primitive fit first\n"
+        "(sphere/box/cylinder — factory bodies with typed p-curves on\n"
+        "every co-edge since G1 unit 2), MC33 faceted fallback. Returns\n"
+        "the opaque BRepBody handle owned by Python; inspect it with\n"
+        "CAD_0.brep.face_count / CAD_0.brep.face_query.");
 
     // Topology report — the consumer-friendly entry point: runs the
     // same dispatch as the C++ sdf_to_brep() and returns plain values,

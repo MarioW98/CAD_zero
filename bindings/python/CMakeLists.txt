@@ -8,6 +8,7 @@ set(CAD_0_PY_SOURCES
     src/mesh_bindings.cpp
     src/scene_bindings.cpp
     src/bridge_bindings.cpp
+    src/brep_bindings.cpp
 )
 
 # Find Python3 with Development.Module component (provides Python.h + libpython).

@@ -14,6 +14,36 @@
 // path must declare its bound — the bridge does, and per-path tests
 // pin both sides of that asymmetry).
 //
+// THE TRIMMING CONTRACT (ADR-0032 D1.1/D2, G1 unit 2): every
+// co-edge of every factory body carries its typed p-curve in the
+// OWNING face's surface domain — the face is (surface, region of
+// the domain), and the loop of p-curves IS the region's boundary
+// (D2.3). Authoring discipline, per the conventions pinned in
+// pcurve.hpp:
+//
+//   * DIRECTION — the p-curve runs in the co-edge's traversal
+//     direction (its start/end are the projected start/end
+//     vertices, or the seam structure where the surface is
+//     periodic);
+//   * REGION SIDE — outer loops are authored CCW in the domain,
+//     material on the LEFT (interior_left = true / hole = false on
+//     every factory p-curve); inner loops — none in the G1
+//     primitive class — would be authored CW, material still on
+//     the left;
+//   * the seam-wired periodic faces (sphere, cylinder wall) slit
+//     their window open: the seam's forward copy walks the window's
+//     RIGHT edge (u = 2π), the reversed copy the LEFT edge (u = 0),
+//     and the loop's p-curves chain endpoint-to-endpoint in the
+//     domain (across the poles' degenerate edges, modulo the
+//     period — the sphere; contiguously — the cylinder wall).
+//
+// The plane-face p-curves are authored by PROJECTION (the co-edge's
+// 3D endpoints through PlaneSurface's (u,v) frame — one inverse, no
+// hand-copied corners); the sphere's and cylinder's seam/rim
+// p-curves are authored as the domain constants they are (the slit
+// window's edges), pinned bit-for-bit by the unit-2 goldens and
+// cross-checked against the surfaces' evaluate() by the unit-2
+// conventions tests.
 #pragma once
 
 #include "CAD_0/brep/topology.hpp"
@@ -22,6 +52,44 @@
 #include <memory>
 
 namespace CAD_0::brep {
+
+namespace detail {
+
+// The periodic domain's constants, shared by the seam authoring
+// here and pinned bit-for-bit by the unit-2 goldens (the sketch
+// kernel's own kTwoPi carries the same value — mathematical
+// constants, not mirrored layouts).
+inline constexpr float kPi = 3.14159265358979f;
+inline constexpr float kTwoPi = 6.28318530717958647692f;
+
+// The domain coordinates of a 3D point in a plane's (u,v) frame —
+// the inverse of PlaneSurface::evaluate (a frame the surface now
+// exposes for exactly this: one projection, no second frame copy).
+inline math::Vec2f plane_domain(const PlaneSurface& s, math::Vec3f p) {
+    const math::Vec3f d = p - s.origin();
+    return {d.dot(s.u_axis()), d.dot(s.v_axis())};
+}
+
+// A co-edge with its Line2 p-curve authored by projection through
+// the owning face's plane frame: the p-curve's start/end ARE the
+// co-edge's start/end vertices' domain images (the DIRECTION
+// convention, by construction). interior_left = true is the
+// factories' authoring discipline (outer loops CCW, material on
+// the left) — a discipline the unit-2 conventions tests verify
+// against the regions, so a reordered loop fails loudly there,
+// never silently here.
+inline CoEdge line_coedge(EdgeId e, bool reversed, const PlaneSurface& s,
+                          const std::vector<Vertex>& vertices,
+                          const std::vector<Edge>& edges) {
+    CoEdge ce{e, reversed};
+    ce.set_p_curve(sdf::sketch_segment(
+        plane_domain(s, vertices[ce.start_vertex(edges)].position()),
+        plane_domain(s, vertices[ce.end_vertex(edges)].position()),
+        /*interior_left=*/true));
+    return ce;
+}
+
+} // namespace detail
 
 // Create a box B-Rep body centered at origin with given half-extents.
 // 6 faces (planes), 12 edges, 8 vertices. Euler characteristic χ = 2.
@@ -77,20 +145,29 @@ inline std::unique_ptr<BRepBody> make_box(math::Vec3f half_extents) {
     for (std::size_t i = 0; i < body->edges.size(); ++i)
         body->edges[i].set_id(static_cast<EdgeId>(i));
 
-    // Helper: append a planar face with a single 4-coedge outer loop.
-    auto add_plane_face = [&shell](
+    // Helper: append a planar face with a single 4-coedge outer loop,
+    // every co-edge carrying its Line2 p-curve — the projected
+    // rectangle of the face's region in the plane's (u,v) domain
+    // (unit 2's trimming contract; the pins live in
+    // test_g1_unit2_pcurves.cpp).
+    auto add_plane_face = [&shell, &body](
         math::Vec3f origin, math::Vec3f normal, FaceId id,
         EdgeId e0, bool r0,
         EdgeId e1, bool r1,
         EdgeId e2, bool r2,
         EdgeId e3, bool r3
     ) {
-        Face face(std::make_shared<PlaneSurface>(origin, normal));
+        auto surf = std::make_shared<PlaneSurface>(origin, normal);
+        Face face(surf);
         Loop loop;
-        loop.add_coedge(CoEdge{e0, r0});
-        loop.add_coedge(CoEdge{e1, r1});
-        loop.add_coedge(CoEdge{e2, r2});
-        loop.add_coedge(CoEdge{e3, r3});
+        loop.add_coedge(detail::line_coedge(e0, r0, *surf,
+                                            body->vertices, body->edges));
+        loop.add_coedge(detail::line_coedge(e1, r1, *surf,
+                                            body->vertices, body->edges));
+        loop.add_coedge(detail::line_coedge(e2, r2, *surf,
+                                            body->vertices, body->edges));
+        loop.add_coedge(detail::line_coedge(e3, r3, *surf,
+                                            body->vertices, body->edges));
         face.add_loop(std::move(loop));
         face.set_id(id);
         shell.add_face(std::move(face));
@@ -165,6 +242,16 @@ inline std::unique_ptr<BRepBody> make_box(math::Vec3f half_extents) {
 //
 // Face loop: [e_seam forward, e_seam reversed]
 //
+// The trimming (G1 unit 2): the face's region is the slit rectangle
+// [0,2π]×[0,π] of the (u,v) domain (u = azimuth, v = polar from the
+// north pole). The CCW boundary walk is bottom-east (the degenerate
+// north-pole edge), right seam UP, top-west (the degenerate
+// south-pole edge), left seam DOWN — the degenerate pole edges carry
+// no co-edges, so the 3D loop is the seam pair, and the p-curves
+// chain across the poles modulo the 2π period:
+//   seam fwd (north→south): the RIGHT edge, Line2 (2π,0) → (2π,π);
+//   seam rev (south→north): the LEFT edge, Line2 (0,π) → (0,0).
+// Both carry material on the left (the rectangle's interior).
 inline std::unique_ptr<BRepBody> make_sphere(float radius, math::Vec3f center = {}) {
     auto body = std::make_unique<BRepBody>();
     auto& shell = body->solid.shell_mut();
@@ -187,8 +274,20 @@ inline std::unique_ptr<BRepBody> make_sphere(float radius, math::Vec3f center = 
     // forming a closed loop that bounds the entire spherical surface.
     Face face(std::make_shared<SphereSurface>(radius, center));
     Loop loop;
-    loop.add_coedge(CoEdge{0, false});  // north → south
-    loop.add_coedge(CoEdge{0, true});   // south → north
+    {
+        CoEdge seam_fwd{0, false};  // north → south, the RIGHT edge
+        seam_fwd.set_p_curve(sdf::sketch_segment(
+            math::Vec2f{detail::kTwoPi, 0.0f},
+            math::Vec2f{detail::kTwoPi, detail::kPi},
+            /*interior_left=*/true));
+        CoEdge seam_rev{0, true};   // south → north, the LEFT edge
+        seam_rev.set_p_curve(sdf::sketch_segment(
+            math::Vec2f{0.0f, detail::kPi},
+            math::Vec2f{0.0f, 0.0f},
+            /*interior_left=*/true));
+        loop.add_coedge(seam_fwd);
+        loop.add_coedge(seam_rev);
+    }
     face.add_loop(std::move(loop));
     face.set_id(0);
     shell.add_face(std::move(face));
@@ -206,18 +305,36 @@ inline std::unique_ptr<BRepBody> make_sphere(float radius, math::Vec3f center = 
 //   v_top1 = (+R, +H/2, 0)   v_top2 = (-R, +H/2, 0)
 //   v_bot1 = (+R, -H/2, 0)   v_bot2 = (-R, -H/2, 0)
 //
-// Edges:
-//   0: e_top1  v_top1 → v_top2   (top rim arc, +Z side)
-//   1: e_top2  v_top2 → v_top1   (top rim arc, -Z side)
+// Edges (the "sides" name which 3D half-arc each rim edge is — data
+// the P-CURVES pin since unit 2, not stored on the Edge itself; the
+// two top edges SWAPPED sides at unit 2's frame correction, the
+// analytic.hpp handedness fix — u now runs the opposite azimuth):
+//   0: e_top1  v_top1 → v_top2   (top rim arc, −Z side)
+//   1: e_top2  v_top2 → v_top1   (top rim arc, +Z side)
 //   2: e_bot1  v_bot1 → v_bot2   (bottom rim arc, +Z side)
-//   3: e_bot2  v_bot2 → v_bot1   (bottom rim arc, -Z side)
-//   4: e_seam  v_bot1 → v_top1   (vertical seam at angle 0)
+//   3: e_bot2  v_bot2 → v_bot1   (bottom rim arc, −Z side)
+//   4: e_seam  v_bot1 → v_top1   (vertical seam at u=0)
 //
 // Faces:
 //   0: lateral (CylinderSurface)  loop: [e_bot1 rev, e_bot2 rev, e_seam fwd, e_top2 rev, e_top1 rev, e_seam rev]
 //   1: top cap (PlaneSurface, +Y)  loop: [e_top1 fwd, e_top2 fwd]
 //   2: bot cap (PlaneSurface, -Y)  loop: [e_bot1 fwd, e_bot2 fwd]
 //
+// The trimming (G1 unit 2), in the corrected (u,v) domain — u the
+// azimuth of evaluate(u,v) = (R cos u, v, −R sin u), so u=0 is the
+// seam meridian through v_top1/v_bot1 and u=π the antipode:
+//
+//   * the WALL's region is the window [0,2π]×[−H/2,+H/2]; its CCW
+//     boundary walk is bottom-EAST, right-seam-UP, top-WEST,
+//     left-seam-DOWN — exactly the loop below, in walk order from
+//     the seam: right seam up (u=2π), top west (2π→π→0), left seam
+//     down (u=0), bottom east (0→π→2π). The six Line2 p-curves
+//     chain contiguously, no periodic jump (the rim arcs span the
+//     full window); each carries material on the left (the strip).
+//   * the CAPS' regions are discs in their own plane domains — the
+//     rim's full circle walked CCW as two π-sweep Arc2 (the caps'
+//     frames put v_top1/v_bot1 at domain angle −π/2 and the antipode
+//     at +π/2; both caps read the same angles, see the golden pins).
 inline std::unique_ptr<BRepBody> make_cylinder(float radius, float height) {
     auto body = std::make_unique<BRepBody>();
     auto& shell = body->solid.shell_mut();
@@ -236,81 +353,85 @@ inline std::unique_ptr<BRepBody> make_cylinder(float radius, float height) {
 
     // 5 edges (see numbering in the header comment).
     body->edges = {
-        Edge{0, 1},  // e_top1: v_top1 → v_top2
-        Edge{1, 0},  // e_top2: v_top2 → v_top1
-        Edge{2, 3},  // e_bot1: v_bot1 → v_bot2
-        Edge{3, 2},  // e_bot2: v_bot2 → v_bot1
-        Edge{2, 0},  // e_seam: v_bot1 → v_top1
+        Edge{0, 1},  // e_top1: v_top1 → v_top2   (−Z side)
+        Edge{1, 0},  // e_top2: v_top2 → v_top1   (+Z side)
+        Edge{2, 3},  // e_bot1: v_bot1 → v_bot2   (+Z side)
+        Edge{3, 2},  // e_bot2: v_bot2 → v_bot1   (−Z side)
+        Edge{2, 0},  // e_seam: v_bot1 → v_top1   (at u=0)
     };
     for (std::size_t i = 0; i < body->edges.size(); ++i)
         body->edges[i].set_id(static_cast<EdgeId>(i));
 
-    // Helper: append a planar face with a single outer loop.
-    auto add_plane_face = [&shell](
-        math::Vec3f origin, math::Vec3f normal, FaceId id,
-        std::initializer_list<std::pair<EdgeId, bool>> coedges
-    ) {
-        Face face(std::make_shared<PlaneSurface>(origin, normal));
-        Loop loop;
-        for (const auto& [eid, rev] : coedges) {
-            loop.add_coedge(CoEdge{eid, rev});
-        }
-        face.add_loop(std::move(loop));
-        face.set_id(id);
-        shell.add_face(std::move(face));
-    };
-
-    // Face 0: lateral (CylinderSurface).
-    // Loop walks: v_bot1 →(bot1 rev: bot2→bot1? no — bot1 is v_bot1→v_bot2,
-    //   reversed is v_bot2→v_bot1. But we start at v_bot1. So we need
-    //   bot2 rev first? Let me re-derive carefully.
-    //
-    //   Start at v_bot1 (id 2). Walk the lateral boundary:
-    //   - Bottom rim reversed (because the lateral face's bottom edge
-    //     goes opposite to the bottom cap's loop):
-    //       e_bot1 reversed: v_bot2 → v_bot1  (no, that arrives at v_bot1)
-    //       e_bot2 reversed: v_bot1 → v_bot2  (departs v_bot1)
-    //   Hmm, let me just walk and verify closure at the end.
-    //
-    //   Lateral loop (6 co-edges):
-    //     1. e_bot1 reversed:  v_bot2 → v_bot1  (arrive v_bot1)
-    //     2. e_bot2 reversed:  v_bot1 → v_bot2  (depart v_bot1, arrive v_bot2)
-    //   Wait — that's not right. Let me re-derive from scratch.
-    //
-    //   The lateral face boundary, walking CCW from outside (radially
-    //   outward), starting at v_bot1:
-    //     - Go UP along the seam: v_bot1 → v_top1   (e_seam forward)
-    //     - Go along the top rim (reversed relative to top cap):
-    //       v_top1 → v_top2  (e_top2 reversed, because e_top2 is v_top2→v_top1)
-    //       v_top2 → v_top1  (e_top1 reversed, because e_top1 is v_top1→v_top2)
-    //     - Go DOWN along the seam: v_top1 → v_bot1  (e_seam reversed)
-    //     - Go along the bottom rim (reversed relative to bottom cap):
-    //       v_bot1 → v_bot2  (e_bot2 reversed, because e_bot2 is v_bot2→v_bot1)
-    //       v_bot2 → v_bot1  (e_bot1 reversed, because e_bot1 is v_bot1→v_bot2)
-    //   Back at v_bot1. ✓ 6 co-edges.
+    // Face 0: the wall — the slit rectangle's CCW walk in the (u,v)
+    // window [0,2π]×[−h,h], starting up the RIGHT seam copy:
+    //   (2π,−h) → (2π,h) → (π,h) → (0,h) → (0,−h) → (π,−h) → (2π,−h)
+    // — six Line2, chained with no jump, material on the left.
     {
         Face face(std::make_shared<CylinderSurface>(radius, height));
         Loop loop;
-        loop.add_coedge(CoEdge{4, false});  // e_seam fwd: v_bot1 → v_top1
-        loop.add_coedge(CoEdge{1, true});  // e_top2 rev: v_top1 → v_top2
-        loop.add_coedge(CoEdge{0, true});  // e_top1 rev: v_top2 → v_top1
-        loop.add_coedge(CoEdge{4, true});  // e_seam rev: v_top1 → v_bot1
-        loop.add_coedge(CoEdge{3, true});  // e_bot2 rev: v_bot1 → v_bot2
-        loop.add_coedge(CoEdge{2, true});  // e_bot1 rev: v_bot2 → v_bot1
+        const auto wall_line = [](math::Vec2f a, math::Vec2f b) {
+            return sdf::sketch_segment(a, b, /*interior_left=*/true);
+        };
+        CoEdge seam_fwd{4, false};  // v_bot1 → v_top1: the RIGHT edge
+        seam_fwd.set_p_curve(wall_line({detail::kTwoPi, -h},
+                                       {detail::kTwoPi, h}));
+        CoEdge top2_rev{1, true};   // v_top1 → v_top2: +Z half, west
+        top2_rev.set_p_curve(wall_line({detail::kTwoPi, h},
+                                       {detail::kPi, h}));
+        CoEdge top1_rev{0, true};   // v_top2 → v_top1: −Z half, west
+        top1_rev.set_p_curve(wall_line({detail::kPi, h}, {0.0f, h}));
+        CoEdge seam_rev{4, true};   // v_top1 → v_bot1: the LEFT edge
+        seam_rev.set_p_curve(wall_line({0.0f, h}, {0.0f, -h}));
+        CoEdge bot2_rev{3, true};   // v_bot1 → v_bot2: −Z half, east
+        bot2_rev.set_p_curve(wall_line({0.0f, -h},
+                                       {detail::kPi, -h}));
+        CoEdge bot1_rev{2, true};   // v_bot2 → v_bot1: +Z half, east
+        bot1_rev.set_p_curve(wall_line({detail::kPi, -h},
+                                       {detail::kTwoPi, -h}));
+        loop.add_coedge(seam_fwd);
+        loop.add_coedge(top2_rev);
+        loop.add_coedge(top1_rev);
+        loop.add_coedge(seam_rev);
+        loop.add_coedge(bot2_rev);
+        loop.add_coedge(bot1_rev);
         face.add_loop(std::move(loop));
         face.set_id(0);
         shell.add_face(std::move(face));
     }
 
-    // Face 1: top cap (PlaneSurface, +Y normal).
-    // Loop: [e_top1 forward (v_top1→v_top2), e_top2 forward (v_top2→v_top1)]
-    add_plane_face({0, h, 0}, {0, 1, 0}, 1,
-        {{0, false}, {1, false}});
+    // The caps: planar disc regions, the rim circle walked CCW as two
+    // π-sweep arcs in each cap's own (u,v) frame. The frames
+    // ((−Z,−X) top, (Z,−X) bottom) put v_top1/v_bot1 (the seam-side
+    // rim vertex, +X in 3D) at domain angle −π/2 and the antipode at
+    // +π/2 — the same table for both caps, pinned by the goldens.
+    const auto add_cap_face = [&shell, radius](math::Vec3f origin,
+                                               math::Vec3f normal,
+                                               FaceId id, EdgeId e_first,
+                                               EdgeId e_second) {
+        Face face(std::make_shared<PlaneSurface>(origin, normal));
+        Loop loop;
+        CoEdge first{e_first, false};
+        first.set_p_curve(sdf::sketch_arc(math::Vec2f{0, 0}, radius,
+                                          /*hole=*/false,
+                                          -0.5f * detail::kPi,
+                                          detail::kPi));
+        CoEdge second{e_second, false};
+        second.set_p_curve(sdf::sketch_arc(math::Vec2f{0, 0}, radius,
+                                           /*hole=*/false,
+                                           0.5f * detail::kPi,
+                                           detail::kPi));
+        loop.add_coedge(first);
+        loop.add_coedge(second);
+        face.add_loop(std::move(loop));
+        face.set_id(id);
+        shell.add_face(std::move(face));
+    };
 
-    // Face 2: bottom cap (PlaneSurface, -Y normal).
-    // Loop: [e_bot1 forward (v_bot1→v_bot2), e_bot2 forward (v_bot2→v_bot1)]
-    add_plane_face({0, -h, 0}, {0, -1, 0}, 2,
-        {{2, false}, {3, false}});
+    // Face 1: top cap (PlaneSurface, +Y normal): [e_top1, e_top2].
+    add_cap_face({0, h, 0}, {0, 1, 0}, 1, 0, 1);
+
+    // Face 2: bottom cap (PlaneSurface, -Y normal): [e_bot1, e_bot2].
+    add_cap_face({0, -h, 0}, {0, -1, 0}, 2, 2, 3);
 
     link_radial_edges(*body);
     return body;
@@ -368,19 +489,25 @@ inline std::unique_ptr<BRepBody> make_tetrahedron() {
     // Helper: append a triangular planar face with a single 3-coedge
     // outer loop. The plane is built from the face centroid (used as
     // the plane origin) and the outward normal (face_centroid - body_centroid,
-    // with body_centroid = origin for this tetrahedron).
-    auto add_tri_face = [&shell](
+    // with body_centroid = origin for this tetrahedron). Every co-edge
+    // carries its Line2 p-curve by projection (unit 2's trimming
+    // contract — the fourth factory joins the three primitives).
+    auto add_tri_face = [&shell, &body](
         FaceId id,
         EdgeId e0, bool r0,
         EdgeId e1, bool r1,
         EdgeId e2, bool r2,
         math::Vec3f origin, math::Vec3f normal
     ) {
-        Face face(std::make_shared<PlaneSurface>(origin, normal));
+        auto surf = std::make_shared<PlaneSurface>(origin, normal);
+        Face face(surf);
         Loop loop;
-        loop.add_coedge(CoEdge{e0, r0});
-        loop.add_coedge(CoEdge{e1, r1});
-        loop.add_coedge(CoEdge{e2, r2});
+        loop.add_coedge(detail::line_coedge(e0, r0, *surf,
+                                            body->vertices, body->edges));
+        loop.add_coedge(detail::line_coedge(e1, r1, *surf,
+                                            body->vertices, body->edges));
+        loop.add_coedge(detail::line_coedge(e2, r2, *surf,
+                                            body->vertices, body->edges));
         face.add_loop(std::move(loop));
         face.set_id(id);
         shell.add_face(std::move(face));

@@ -9,13 +9,39 @@ forever — the G2 gate an internal checkpoint, not a fork). This ADR
 pins G1's scope, data-model deltas, the Layer-1 invariant, the hard
 derivations (mass properties, plane∩cylinder), the discriminating
 test class, and the delivery units. Delivery follows the six units of
-D10, each landed standalone with the full suite green; **unit 1 (the
-data model, D2 + D3) has landed** — the p-curve vocabulary and field,
-the Layer-2 tolerance/provenance fields with the writers' honesty
-(bridge → approximated(grid tol), factories → exact/0, booleans →
-worst-of-operands propagation), and the extended
-`euler_characteristic` χ = V−E+F−H with its backward-compatibility
-proof on every body path and every golden.
+D10, each landed standalone with the full suite green; **units 1–2
+have landed**:
+
+* **Unit 1 (the data model, D2 + D3)** — the p-curve vocabulary and
+  field, the Layer-2 tolerance/provenance fields with the writers'
+  honesty (bridge → approximated(grid tol), factories → exact/0,
+  booleans → worst-of-operands propagation), and the extended
+  `euler_characteristic` χ = V−E+F−H with its backward-compatibility
+  proof on every body path and every golden.
+
+* **Unit 2 (the primitives with true trimming, D1.1)** — the
+  factories write their p-curves: every co-edge of every factory
+  body (box, sphere, cylinder, tetrahedron) carries its typed 2D
+  curve in the owning face's domain, the faces now regions of their
+  domains (D2.3) — the box's six projected rectangles, the sphere's
+  slit rectangle with the periodic seam pair, the cylinder wall's
+  rectangle walk in (θ, axis) and the caps' π-sweep arc pairs.
+  Counts did not move (box 8/12/6, sphere 2/1/1, cylinder 4/5/3,
+  tetra 4/6/4; all H = 0, χ = 2) and every historical golden stays
+  bit-identical. **One convention correction, landed as the order
+  demanded (fix and document, not work around): the analytic
+  surfaces' (u,v) frames are now ALL right-handed around the outward
+  normal — the cylinder was the lone left-handed exception, and the
+  first real use of the pinned conventions exposed it (the caps and
+  the wall, both authored material-on-left, walked the shared rim
+  edges in the same direction, breaking the orientation-XOR);
+  ConeSurface and TorusSurface remain left-handed, registered for
+  the units that will first trim them.** The face query of D8's
+  "a query, not an investigation" is exposed in C++
+  (`brep/query.hpp`) and through the bindings
+  (`CAD_0.brep.face_query`): family, loop counts, per-co-edge
+  p-curve type and parameters, provenance — plain values, honest on
+  both the exact and the faceted world.
 
 **No promise on G2 appears anywhere in this document.** G2 has
 no schedule, no scope here, and no implied commitment: its entry

@@ -127,6 +127,17 @@ bool body_has_no_p_curves(const b::BRepBody& body) {
     return true;
 }
 
+// The unit-2 boundary, as a query: EVERY co-edge carries a p-curve
+// (the factories' writing — the field is never optional in the exact
+// world's factory output).
+bool body_has_p_curves(const b::BRepBody& body) {
+    for (const auto& face : body.solid.shell().faces())
+        for (const auto& loop : face.loops())
+            for (const auto& ce : loop.coedges())
+                if (ce.p_curve() == nullptr) return false;
+    return true;
+}
+
 // The declared grid tolerance of the faceted path, mirrored from the
 // bridge — the T12 discipline (two independent copies of the grid
 // layout cross-check each other; a layout change breaks this mirror
@@ -845,30 +856,44 @@ TEST_CASE("G1-U1 D8: booleans propagate the worst of their operands — approxim
 }
 
 // ---------------------------------------------------------------------------
-// The unit's own boundary, pinned: unit 1 writes NO p-curves — no
-// factory, no bridge path, no boolean emits one (the writers arrive
-// with units 3–4). The day a path starts writing p-curves, it amends
-// THIS test consciously.
+// The unit boundary, AMENDED AT UNIT 2 (the order's new fence): the
+// three primitives + the tetrahedron now WRITE their p-curves — every
+// co-edge of every factory body carries one (the golden tables and
+// the conventions checks live in test_g1_unit2_pcurves.cpp). The
+// bridge's own extraction (faceted, plane-per-triangle) and the
+// booleans' fragments still write NONE — their p-curves arrive with
+// units 3–4. The bridge's primitive-fit path returns FACTORY bodies,
+// which carry the factory's writing (a delegation, not a second
+// writer): pinned below as the delegation it is.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("G1-U1: unit 1 writes no p-curves — every existing path leaves the field empty") {
+TEST_CASE("G1-U1 (amended at U2): the factories write p-curves; the bridge and the booleans still do not") {
+    // The writers (unit 2): every co-edge of every factory body.
     const std::pair<const char*, std::unique_ptr<b::BRepBody>> factories[] = {
         {"make_box", b::make_box(Vec3f{1, 1, 1})},
         {"make_sphere", b::make_sphere(1.0f)},
         {"make_cylinder", b::make_cylinder(0.5f, 2.0f)},
+        {"make_tetrahedron", b::make_tetrahedron()},
     };
     for (auto& entry : factories) {
         // Binding member — the clang-14 CAPTURE note above applies.
         CAPTURE(entry.first);
-        CHECK(body_has_no_p_curves(*entry.second));
+        CHECK(body_has_p_curves(*entry.second));
     }
 
-    // The bridge, both paths:
+    // The bridge's primitive-fit path DELEGATES to the factories: the
+    // returned body is a factory product and carries the factory's
+    // p-curves. The bridge's own code writes none — the faceted path
+    // below is the bridge's writing, and it stays empty.
     {
         auto exact_fit = br::sdf_to_brep(s::make_sphere(1.0f), {});
         REQUIRE(exact_fit != nullptr);
-        CHECK(body_has_no_p_curves(*exact_fit));
+        CHECK(body_has_p_curves(*exact_fit));
+    }
 
+    // The bridge's faceted path: still no p-curves (the per-world
+    // invariant — the field stays empty, the provenance says so).
+    {
         s::SDFBody blend = s::sdf_smooth_union(s::make_sphere(0.8f),
                                                s::make_sphere(0.6f), 0.2f);
         br::SdfToBrepOptions opts;
@@ -879,11 +904,10 @@ TEST_CASE("G1-U1: unit 1 writes no p-curves — every existing path leaves the f
         CHECK(body_has_no_p_curves(*faceted));
     }
 
-    // A boolean over approximated operands (the heaviest existing
-    // path — marked factory boxes, per the discovered boundary noted
-    // in the propagation test above: the boolean's geometric class is
-    // exactly-convex, so the record is what varies here, not the
-    // geometry):
+    // The booleans build their fragments as fresh topology — no
+    // operand co-edge is copied, so no p-curve crosses the operation
+    // (the heaviest existing path, marked factory boxes as in the
+    // propagation test above):
     {
         auto A = b::make_box(Vec3f{1, 1, 1});
         auto B = b::make_box(Vec3f{1, 1, 1});

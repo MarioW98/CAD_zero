@@ -56,7 +56,7 @@ _promote_libstdcpp_global()
 try:
     from . import _CAD_0  # noqa: F401
     from ._CAD_0 import (  # noqa: F401
-        math, geometry, sdf, scene, camera, commands, bridge,
+        math, geometry, sdf, scene, camera, commands, bridge, brep,
     )
     from ._CAD_0.geometry import (  # noqa: F401
         Shape, ShapeId, FeatureId, DatumCS, Transform,

@@ -13,6 +13,7 @@ void bind_mesh(nb::module_&);
 void bind_io(nb::module_&);
 void bind_scene(nb::module_&);
 void bind_bridge(nb::module_&);
+void bind_brep(nb::module_&);
 
 NB_MODULE(_CAD_0, m) {
     m.doc() = "CAD_0 - dual-representation CAD kernel (native SDF + B-Rep)";
@@ -27,5 +28,9 @@ NB_MODULE(_CAD_0, m) {
     bind_mesh(sdf_mod);
     bind_io(m);
     bind_scene(m);
+    // bridge first (it registers the opaque BRepBody handle), then
+    // brep (its query functions consume that same handle — one
+    // Python type for every body, whatever path produced it).
     bind_bridge(m);
+    bind_brep(m);
 }

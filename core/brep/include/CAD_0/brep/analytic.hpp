@@ -7,6 +7,42 @@
 //   * normal(u, v) → unit normal at that point
 //   * bounds() → bounding box
 //
+// THE FRAME RULE (G1 unit 2's convention correction, landed with
+// the p-curve writers): every analytic surface's (u, v) frame is
+// RIGHT-HANDED around the OUTWARD normal — numerically,
+// (∂u × ∂v) · n_outward > 0 — so "CCW in the domain" and "CCW
+// around the outward normal in 3D" are the same statement for every
+// surface, and a face's material-on-left loop (the pcurve.hpp
+// convention the factories author) reads consistently everywhere.
+//
+// WHY THE CORRECTION WAS FORCED (the first real use of the pinned
+// conventions — the code said so): CylinderSurface was born
+// LEFT-handed (∂u×∂v pointed INWARD: evaluate(u,v) = (R cos u, v,
+// R sin u) has ∂u×∂v = −(radial)), while PlaneSurface (u_axis×v_axis
+// = normal, by the constructor's cross products) and SphereSurface
+// (∂u×∂v = +R sin v · radial) were right-handed. Writing the
+// cylinder's caps and wall all material-on-left then walked the
+// shared rim edges in the SAME direction on both sides — breaking
+// the radial-edge orientation-XOR (ADR-0022 §7 invariant 2) — and no
+// loop rearrangement fixes that with both faces reading their
+// regions honestly: the two domains disagree about handedness. The
+// correction flips the cylinder's u direction (u = −azimuth: u=0
+// stays the seam meridian +X); the existing loop structure of all
+// three factories then IS the material-on-left walk, and the top
+// cap's loop — which under the old frame was CW around its outward
+// normal — becomes CCW like every other factory face. The two
+// evaluate() pins that encoded the old handedness are amended in
+// test_analytic_surfaces.cpp, which also pins the rule itself as a
+// regression guard.
+//
+// KNOWN LEFTOVERS, registered for the units that will write their
+// p-curves (pre-existing, out of G1 unit 2's class — no factory
+// produces them today, so no p-curve writer exercises them):
+// ConeSurface and TorusSurface are still left-handed. Their frames
+// flip the same one-line way the day their first trimming loop is
+// authored, with their own discriminating pins — not before (an
+// untested flip of surfaces nobody trims would be exactly the
+// silent drift the house forbids).
 #pragma once
 
 #include "CAD_0/brep/topology.hpp"
@@ -42,6 +78,12 @@ public:
 
     math::Vec3f origin() const noexcept { return origin_; }
     math::Vec3f normal_vec() const noexcept { return normal_; }
+    // The domain frame, for the p-curve writers and the readers: a
+    // point's domain coordinates are ((P−origin)·u_axis,
+    // (P−origin)·v_axis) — the inverse of evaluate(). Right-handed
+    // around the normal by construction (u_axis × v_axis = normal).
+    const math::Vec3f& u_axis() const noexcept { return u_axis_; }
+    const math::Vec3f& v_axis() const noexcept { return v_axis_; }
 
 private:
     math::Vec3f origin_;
@@ -51,7 +93,11 @@ private:
 };
 
 // Cylinder: radius R, axis along Y, centered at origin.
-// u = angle [0, 2π), v = height along axis.
+// u = angle [0, 2π), v = height along axis. RIGHT-HANDED around the
+// outward normal since G1 unit 2 (see the frame rule in the file
+// header): evaluate(u, v) = (R cos u, v, −R sin u) — u runs the
+// opposite azimuth from the historical frame, u = 0 is the seam
+// meridian (+X side), and ∂u×∂v = +radial.
 class CylinderSurface : public SurfaceGeometry {
 public:
     CylinderSurface(float radius, float height, math::Vec3f origin = {})
@@ -61,11 +107,11 @@ public:
         const float c = std::cos(u), s = std::sin(u);
         return {origin_.x + radius_ * c,
                 origin_.y + v,
-                origin_.z + radius_ * s};
+                origin_.z - radius_ * s};
     }
 
     math::Vec3f normal(float u, float) const override {
-        return {std::cos(u), 0.0f, std::sin(u)};
+        return {std::cos(u), 0.0f, -std::sin(u)};
     }
 
     const char* type_name() const override { return "cylinder"; }

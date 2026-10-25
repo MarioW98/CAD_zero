@@ -65,27 +65,73 @@ TEST_CASE("PlaneSurface: bounds is universe") {
 // ---------------------------------------------------------------------------
 TEST_CASE("CylinderSurface: evaluate at multiple angles") {
     CylinderSurface cyl(1.0f, 2.0f);
-    
 
+    // G1 unit 2 corrected the frame's HANDEDNESS (see the next test):
+    // evaluate(u,v) = (R cos u, v, −R sin u) — right-handed around the
+    // OUTWARD normal, like every analytic surface. u=0 stays the seam
+    // meridian (+X); u=π/2 now reads −Z where it read +Z before.
     // u=0 → punto su +X
     auto p0 = cyl.evaluate(0.0f, 0.0f);
     CHECK(p0.x == doctest::Approx(1.0f));
     CHECK(p0.z == doctest::Approx(0.0f));
 
-    // u=π/2 → punto su +Z
+    // u=π/2 → punto su -Z (corrected handedness)
     auto p1 = cyl.evaluate(3.14159f * 0.5f, 0.0f);
     CHECK(p1.x == doctest::Approx(0.0f).epsilon(0.001f));
-    CHECK(p1.z == doctest::Approx(1.0f));
+    CHECK(p1.z == doctest::Approx(-1.0f).epsilon(0.001f));
 
     // u=π → punto su -X
     auto p2 = cyl.evaluate(3.14159f, 0.0f);
     CHECK(p2.x == doctest::Approx(-1.0f).epsilon(0.001f));
     CHECK(p2.z == doctest::Approx(0.0f).epsilon(0.001f));
 
-    // u=3π/2 → punto su -Z
+    // u=3π/2 → punto su +Z (corrected handedness)
     auto p3 = cyl.evaluate(3.14159f * 1.5f, 0.0f);
     CHECK(p3.x == doctest::Approx(0.0f).epsilon(0.001f));
-    CHECK(p3.z == doctest::Approx(-1.0f).epsilon(0.001f));
+    CHECK(p3.z == doctest::Approx(1.0f).epsilon(0.001f));
+}
+
+TEST_CASE("CylinderSurface: the (u,v) frame is right-handed around the outward normal (G1 unit 2's convention correction, pinned)") {
+    // WHY THIS PIN EXISTS: unit 1 planted the p-curve conventions
+    // (material on the left of traversal, in the face's domain);
+    // unit 2's first real use discovered the cylinder was the
+    // analytic set's LEFT-handed parametrization — its natural frame
+    // (∂u×∂v) pointed INWARD, while PlaneSurface and SphereSurface
+    // are right-handed around the outward normal. With the caps'
+    // and the wall's loops all authored material-on-left, the shared
+    // rim edges were walked in the SAME direction by both faces —
+    // breaking the radial-edge orientation-XOR. The correction (one
+    // rule for every analytic surface) flipped the cylinder's frame;
+    // this test is the regression guard: numerically,
+    // (∂u × ∂v) · normal > 0, everywhere sampled.
+    const auto frame_right_handed = [](const SurfaceGeometry& surf,
+                                       float umin, float umax, float vmin,
+                                       float vmax) {
+        const float eps = 1e-3f;
+        for (int i = 0; i <= 8; ++i) {
+            for (int j = 0; j <= 4; ++j) {
+                const float u = umin + (umax - umin) * float(i) / 8.0f;
+                const float v = vmin + (vmax - vmin) * float(j) / 4.0f;
+                const auto du = surf.evaluate(u + eps, v) - surf.evaluate(u - eps, v);
+                const auto dv = surf.evaluate(u, v + eps) - surf.evaluate(u, v - eps);
+                const auto n = du.cross(dv);
+                const auto want = surf.normal(u, v);
+                // > 0: the frame is right-handed around the outward
+                // normal (the corrected convention). Normalized so the
+                // check is scale-free.
+                CHECK(n.dot(want) > 0.0f);
+            }
+        }
+    };
+
+    CylinderSurface cyl(1.0f, 2.0f);
+    frame_right_handed(cyl, 0.0f, 6.2831853f, -0.9f, 0.9f);
+
+    // The already-correct reference: the sphere's frame was
+    // right-handed from the start (and the plane's is by
+    // construction: u_axis × v_axis = normal).
+    SphereSurface sph(2.0f);
+    frame_right_handed(sph, 0.0f, 6.2831853f, 0.1f, 3.0415927f);
 }
 
 TEST_CASE("CylinderSurface: all surface points at distance R from axis") {
