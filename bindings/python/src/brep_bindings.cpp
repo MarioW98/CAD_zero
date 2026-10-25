@@ -9,6 +9,11 @@
 //     (plane/cylinder/sphere/...), loop counts (outer + inner),
 //     per-co-edge p-curve type + readable parameters, and the
 //     Layer-2 provenance record (exact/0 vs approximated(tol)).
+//   * CAD_0.brep.mass_properties(body, tol=1e-6) — the divergence
+//     theorem over the exact faces (G1 unit 5, ADR-0032 D4): volume,
+//     centroid, inertia_about_centroid (density 1) and the all_exact
+//     honesty flag; a faceted body answers the polyhedral value with
+//     the flag False — never silently mixed.
 //
 // BRepBody arrives as the OPAQUE handle the bridge submodule already
 // registers (one registration per module — the factories' bodies and
@@ -41,6 +46,7 @@
 
 #include "CAD_0/brep/topology.hpp"
 #include "CAD_0/brep/query.hpp"
+#include "CAD_0/brep/mass_properties.hpp"
 
 namespace nb = nanobind;
 using CAD_0::brep::BRepBody;
@@ -144,4 +150,43 @@ void bind_brep(nb::module_& m) {
         "world, where the provenance says approximated and the\n"
         "distinction is never a guess. Raises ValueError for a face id\n"
         "the body does not carry (diagnosis + remedy verbatim).");
+
+    // The mass properties (G1 unit 5, ADR-0032 D4): the divergence
+    // theorem over the exact faces — the numbers as plain values, the
+    // final consumer being the unit-6 report (the contract is usable
+    // from the tests from day one). The tolerance argument is the
+    // operation's declared Layer-3 decision tolerance (mm, linear);
+    // the Python-side default mirrors the C++ suites' constant.
+    brep_mod.def(
+        "mass_properties",
+        [](const BRepBody& body, double tol) {
+            const auto mp = CAD_0::brep::mass_properties(
+                body, CAD_0::math::Tolerance::linear(tol));
+            nb::dict out;
+            out["volume"] = mp.volume;
+            out["centroid"] = nb::make_tuple(
+                double(mp.centroid.x), double(mp.centroid.y),
+                double(mp.centroid.z));
+            nb::list rows;
+            for (int r = 0; r < 3; ++r) {
+                nb::list row;
+                for (int c = 0; c < 3; ++c)
+                    row.append(double(mp.inertia_about_centroid(r, c)));
+                rows.append(row);
+            }
+            out["inertia_about_centroid"] = rows;
+            out["all_exact"] = mp.all_exact;
+            return out;
+        },
+        nb::arg("body"), nb::arg("tol") = 1e-6,
+        "The body's mass properties by the divergence theorem over\n"
+        "its faces (density 1): {volume: float, centroid: (x, y, z),\n"
+        "inertia_about_centroid: 3x3 nested lists, all_exact: bool}.\n"
+        "Exact faces contribute their closed forms (plane regions by\n"
+        "Green's theorem, cylindrical patches by the (theta, z)\n"
+        "rectangle integrals, the full sphere by its closed form); a\n"
+        "body with ANY approximated face answers the POLYHEDRAL value\n"
+        "with all_exact=False (never silently mixed). Raises ValueError\n"
+        "for out-of-class faces, the empty body, a non-closed shell or\n"
+        "a degenerate volume (diagnosis + remedy verbatim).");
 }

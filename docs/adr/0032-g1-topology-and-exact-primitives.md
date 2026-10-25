@@ -9,7 +9,7 @@ forever — the G2 gate an internal checkpoint, not a fork). This ADR
 pins G1's scope, data-model deltas, the Layer-1 invariant, the hard
 derivations (mass properties, plane∩cylinder), the discriminating
 test class, and the delivery units. Delivery follows the six units of
-D10, each landed standalone with the full suite green; **units 1–4
+D10, each landed standalone with the full suite green; **units 1–5
 have landed**:
 
 * **Unit 1 (the data model, D2 + D3)** — the p-curve vocabulary and
@@ -138,6 +138,65 @@ have landed**:
   goldens are bit-identical (verified, git-clean); the radius and
   offset edit cycles regenerate BOTH materializations
   bit-identically (ADR-0014).
+
+* **Unit 5 (the exact mass properties, D4)** — the B-Rep's first
+  quantitative interrogation: volume, centroid and the inertia
+  tensor by the DIVERGENCE THEOREM over the exact faces
+  (`brep::mass_properties`, core/brep/mass_properties.{hpp,cpp}),
+  never estimated from a mesh. The method lands as derived: V =
+  (1/3)∮x·n, M_i = (1/2)∮x_i²n_i, S_ij = (1/5)∮x_i x_j (x·n) —
+  the 1/5 from the primitive-function ansatz's five contraction
+  terms — the centroid M/V, the tensor δ·tr(S) − S and the
+  classical parallel axis. The per-family closed forms: the
+  PLANAR faces by GREEN'S THEOREM in the face's own (u,v) domain
+  (the six kernels A/Mu/Mv/Quu/Quv/Qvv from the loops — the
+  polygon part by the shoelace pattern, each arc by its
+  trigonometric line integrals through DERIVED reduction
+  recurrences for ∫cos^i sin^j, a lone Circle2 hole rim by the
+  disc's constants), the region semantics read GEOMETRICALLY: the
+  first loop is the outer boundary, subsequent loops are holes
+  (ADR-0021), each loop's winding sign σ = sign(∮u dv as
+  traversed) — outer-minus-inner is positional arithmetic,
+  whatever direction each walk runs (the caps' mirror/rotation
+  frames, the pierced faces' flipped walks: one rule, the
+  region-side bits never consulted). The CYLINDRICAL patches by
+  the (θ,z) rectangle integrals on a UNIFIED cylinder frame (the
+  extrude's Z-axis and the factory's Y-axis placements, the
+  normal sign s and the one substitution factor folded in); the
+  window read from the wall's Line2 loops (the bounding box —
+  the seam-wired walks split edges, never move the window),
+  verified on the boundary. The FULL SPHERE by its closed form
+  (the only sphere the exact world produces; trimmed spheres are
+  G2's, honestly declared). **The honesty contract: `all_exact`
+  is the flag — a body with ANY approximated face answers the
+  POLYHEDRAL value (every face reduced to its vertex polygon in
+  its own plane, Mirtich 1996's reduction subsumed by the same
+  Green machinery), never a silent mix; an exact face without
+  p-curves refuses loudly (the machinery honours the record and
+  does not launder it). The error contract: out-of-class families
+  (cone, torus), the empty body, the non-closed shell and the
+  degenerate volume each refuse actionably (the family and the
+  remedy named).** The precision doctrine, discovered and pinned:
+  the arithmetic is closed-form and double, the INPUTS are the
+  stored trimming parameters — the p-curves' floats (the float-π
+  sweeps of the seam-wired walks, the projected frames) — so the
+  honest bound is a few float ulps (~1e-6 relative), still five
+  orders tighter than any faceted extract; the suite pins that
+  bound (the exactly-representable bodies pass tighter). The
+  classical formulas ARE the tests (D9.3): box abc and
+  abc(b²+c²)/12, sphere (4/3)πR³ and (2/5)VR², cylinder πr²h,
+  πr⁴h/2 and V(3r²+h²)/12, the circle prism's per-face
+  decomposition (0 + (1/3)hπr² + (2/3)πr²h), the sector's pie
+  formulas, the ring's Circle2 subtraction, the tetrahedron's
+  vertex determinant, the TRANSLATED sphere (the parallel-axis
+  check), and THE GUIDE CASE's full table (abc − πr²h, the
+  centroid on the axis, I_zz = abc(a²+b²)/12 − πr⁴h/2 — the
+  off-centre hole deriving the composite parallel axis by hand).
+  The v0.4 golden answers the guide numbers on load,
+  bit-identically through a save/reload cycle. Exposed in the
+  bindings (`CAD_0.brep.mass_properties`) — the numbers readable
+  from Python end-to-end through the scene, the unit-6 report's
+  contract usable from day one.
 
 **No promise on G2 appears anywhere in this document.** G2 has
 no schedule, no scope here, and no implied commitment: its entry

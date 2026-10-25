@@ -70,6 +70,40 @@ struct Mat<4, 4, T> {
 using Mat4f = Mat<4, 4, float>;
 using Mat4d = Mat<4, 4, double>;
 
+// Mat3 — column-major 3x3 (G1 unit 5, ADR-0032 D4: the inertia
+// tensor's type). The layout mirrors Mat4's (cols[c] is the c-th
+// basis column); operator()(row, col) is the mathematical accessor.
+// Deliberately minimal: identity, element access, equality — the
+// mass-properties API stores the tensor, the consumers read it.
+template<typename T>
+struct Mat<3, 3, T> {
+    using value_type = T;
+    static constexpr std::size_t kRows = 3;
+    static constexpr std::size_t kCols = 3;
+
+    std::array<Vec<3, T>, 3> cols{};
+
+    static constexpr Mat identity() noexcept {
+        Mat m{};
+        m.cols[0] = {T{1}, T{0}, T{0}};
+        m.cols[1] = {T{0}, T{1}, T{0}};
+        m.cols[2] = {T{0}, T{0}, T{1}};
+        return m;
+    }
+
+    T& operator()(std::size_t row, std::size_t col) noexcept {
+        return cols[col][row];
+    }
+    constexpr T operator()(std::size_t row, std::size_t col) const noexcept {
+        return cols[col][row];
+    }
+
+    bool operator==(const Mat& o) const noexcept { return cols == o.cols; }
+};
+
+using Mat3 = Mat<3, 3, float>;   // the ADR-0032 D4 API name
+using Mat3d = Mat<3, 3, double>;
+
 // --- Implementation --------------------------------------------------------
 
 template<typename T>

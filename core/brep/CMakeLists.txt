@@ -9,6 +9,7 @@ set(CAD_0_BREP_HEADERS
     include/CAD_0/brep/factory.hpp
     include/CAD_0/brep/extrude.hpp
     include/CAD_0/brep/subtract.hpp
+    include/CAD_0/brep/mass_properties.hpp
     include/CAD_0/brep/query.hpp
     include/CAD_0/brep/boolean.hpp
     include/CAD_0/brep/detail/boolean_test_hooks.hpp
@@ -17,6 +18,7 @@ set(CAD_0_BREP_HEADERS
 set(CAD_0_BREP_SOURCES
     src/topology.cpp
     src/tessellate.cpp
+    src/mass_properties.cpp
     src/query.cpp
     src/boolean.cpp
 )
