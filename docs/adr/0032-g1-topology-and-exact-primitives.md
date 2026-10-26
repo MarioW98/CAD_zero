@@ -2,15 +2,28 @@
 
 ## Status
 
-**Accepted (2026-10-25, closed in review) — D9's entry criterion
-met: invariants and discriminating tests agreed before implementation
-began.** Daughter of ADR-0031 (accepted: road (a), all in house,
-forever — the G2 gate an internal checkpoint, not a fork). This ADR
-pins G1's scope, data-model deltas, the Layer-1 invariant, the hard
-derivations (mass properties, plane∩cylinder), the discriminating
-test class, and the delivery units. Delivery follows the six units of
-D10, each landed standalone with the full suite green; **units 1–5
-have landed**:
+**Implemented (G1 complete, 2026-10-26).** Accepted 2026-10-25,
+closed in review — D9's entry criterion met: invariants and
+discriminating tests agreed before implementation began. Daughter of
+ADR-0031 (accepted: road (a), all in house, forever — the G2 gate an
+internal checkpoint, not a fork). This ADR pinned G1's scope,
+data-model deltas, the Layer-1 invariant, the hard derivations (mass
+properties, plane∩cylinder), the discriminating test class, and the
+delivery units. The six units of D10 landed standalone, each with the
+full suite green, across three working sessions (2026-10-24 → 10-26)
+— six units in three sessions, from the data model to the printed
+table. The phase's exit, cited as it happened: the D9 suite carried
+the contracts (the API-surface and geometry discriminators, the
+closed-form goldens with the guide case's own table, the determinism
+family, every historical golden untouched); the user's manual
+click-test carried the end-to-end experience — the D7.5 table read
+in the Debug report, the volume verified by hand against
+abc − πr²h, the circle's radius edited live with the chain
+regenerating — the ADR-0030 lesson honored (the suite covers the
+contracts; the hands cover the experience). **The click-test found
+no defect; the defects the in-run verification found along the way
+are accounted below, by name — the register, not the
+embellishment.** The units:
 
 * **Unit 1 (the data model, D2 + D3)** — the p-curve vocabulary and
   field, the Layer-2 tolerance/provenance fields with the writers'
@@ -198,10 +211,87 @@ have landed**:
   from Python end-to-end through the scene, the unit-6 report's
   contract usable from day one.
 
-**No promise on G2 appears anywhere in this document.** G2 has
-no schedule, no scope here, and no implied commitment: its entry
-is ADR-0031's internal checkpoint (estimate vs. progress), and
-its ADR will be written when G1's data is on the table.
+* **Unit 6 (the report and the guide case end-to-end, D8 + D10.6)**
+  — the phase's visible face, no new geometry: the Debug report
+  grows **mass + provenance beside χ** (the label honest: V−E+F−H
+  with the arithmetic beside it for the hand-check) and genus,
+  through `CAD_0.report` (`bindings/python/CAD_0/report.py`) — **THE
+  consumer of the mass API (unit 5) and of the new body query
+  (`brep::body_query`, the unit-2 fields aggregated: counts, χ,
+  genus, the per-kind provenance tallies as plain values)**: there
+  is no second opinion and never a number recalculated elsewhere;
+  a mass refusal is a visible `mass_error` line carrying the
+  kernel's own diagnosis and remedy (the P2 culture — a refusal is
+  an answer, not a gap). The property panel shows the numbers
+  **READ-ONLY** (Volume, Centroid, the inertia diagonal and
+  products, the exact/approximated flag) — QLabel rows
+  structurally incapable of emitting `parameter_changed`: the
+  UI-bug lesson made structural; a faceted body says approximated
+  with its honest polyhedral numbers, never an exact in disguise.
+  The guide-case example (`examples/sketch_hole.py`) prints the
+  **D7.5 table** side by side — analytic expected vs reported
+  (12/17/7/2, χ = 0, genus 1, the volume abc − πr²h, the axial
+  I_zz = abc(a²+b²)/12 − πr⁴h/2, the provenance all exact) —
+  every row PASS or the difference named; the radius edit updates
+  the numbers bit-identically to a fresh recomputation through
+  ONE undo entry, and the undo returns the first table's own
+  numbers; a v0.4 save/reload round-trip answers the same report.
+  The example runs in the CI as a suite member (a test, not
+  documentation — `test_g1_unit6_report.py`); the v0.4 golden is
+  pinned with the table's numbers, the v0.3 golden stays honestly
+  faceted. Supporting moves: `body_query` in the bindings
+  (`CAD_0.brep.body_query`), the report module re-exported through
+  the app package, the UI smoke asserting the read-only semantics
+  (no parameter_changed from the mass rows — the honest-mode
+  test).
+
+**Delivery chronicle — the register's own words, kept honest:**
+
+* **One post-landing fix:** the push of unit 1 went red on exactly
+  one CI job — linux-clang, build step: doctest's `CAPTURE` context
+  lambda cannot capture structured bindings on clang ≤ 15 (P1091
+  landed in clang 16; gcc 11 accepts it, which is why every gcc
+  column was green). The fix (2e4d4db) root-caused it, changed the
+  iteration to by-member access with the why pinned as a comment,
+  and — the process consequence — made the clang-14 CI column
+  reproducible locally (user-land clang-14 + gcc-11 headers, the
+  exact pairing) so the column is never dark again. On the way it
+  registered one pre-existing inert leftover, still open: the
+  `rejections` counter in `test_bridge.cpp` (incremented, never
+  read — inert on the current matrix, fires under -Werror on
+  clang ≥ 17; a one-word cleanup or a missing CHECK, whichever
+  was intended — a maintainer's decision, carried into the
+  ADR-0031 checkpoint's open items).
+* **Two convention corrections, found by the units' own first-run
+  tests and fixed in-unit** — the order's "if a convention is
+  ambiguous, the code says so — fix it and DOCUMENT the correction,
+  not the detour around it", honored twice: the analytic frames'
+  one right-handed rule (unit 2: the cylinder was the lone
+  left-handed parametrization; Cone and Torus stay registered for
+  the units that first trim them) and the surviving wall's
+  region-on-right walk (unit 4: one requirement seen from both
+  sides of the radial XOR). Both are recorded in their units'
+  landing entries above.
+* **The register's own blemish, kept visible:** unit 6's commit
+  (7349ce4) carries its subject only — not the descriptive body
+  this house demands of every unit commit; the unit's record lives
+  here, in the README, and in the delivery report instead. The
+  record is the thing; the slip is registered, not repaired by
+  history rewrite.
+* **Environmental notes, not product:** the local GL-context smoke
+  could not run in the later sessions' sandboxes (the environment
+  resets lost the hand-built EGL stack; trixie's Mesa gives Qt's
+  offscreen platform no context without root) — the CI's own Xvfb
+  step covers it, as ever, declared in each unit's record.
+
+**No promise on G2 appears anywhere in this document.** G2 was
+never scheduled, scoped or implied here: its entry was ADR-0031's
+internal checkpoint — now recorded (2026-10-26, § "The G1 internal
+checkpoint" in the mother ADR: the measured effort and robustness
+data against D1's estimates; the estimates stand) — and its ADR,
+a **draft in the user's review** with the table-boundary decision
+explicitly reserved to the user, is ADR-0033. Nothing in it is
+scheduled by G1's completion.
 
 ## Context
 

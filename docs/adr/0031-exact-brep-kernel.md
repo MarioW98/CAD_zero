@@ -5,12 +5,14 @@
 **Accepted (2026-10-25) — road (a): all in house, forever.** The
 fork this document presented is closed at acceptance: no OCCT,
 no third-party CAD kernel, ever. The G2 gate survives as an
-internal checkpoint only (estimate vs. progress), not as a fork.
-The decision, the license constraint pinned into ADR-0003 in the
-same act, and the user's motivation verbatim are recorded in
-§ "Decision on acceptance" below. D1 stands as the honest price
-list that was weighed; D2's proposal was (c1) with the gate
-armed — the user chose (a), which D2 explicitly named as
+internal checkpoint only (estimate vs. progress), not as a fork —
+**and that checkpoint is now recorded: § "The G1 internal
+checkpoint (2026-10-26)" below (G1 measured against D1; the
+estimates stand).** The decision, the license constraint pinned
+into ADR-0003 in the same act, and the user's motivation verbatim
+are recorded in § "Decision on acceptance" below. D1 stands as the
+honest price list that was weighed; D2's proposal was (c1) with the
+gate armed — the user chose (a), which D2 explicitly named as
 consistent with this document.
 
 Drafted 2026-10-24, reviewed and decided by the user 2026-10-25.
@@ -64,6 +66,113 @@ countermeasure the motivation itself cites), D3/D4
 (the migration and the SDF boundary hold unchanged). A companion
 orientation document — the platform vision the decision serves —
 is recorded in `docs/architecture/platform-vision.md`.
+
+## The G1 internal checkpoint (2026-10-26) — measured against D1
+
+The gate this ADR kept after the fork closed — "G1's measured
+effort and robustness data against this ADR's estimates,
+re-baselining the G2 plan — never re-opening the build-vs-adopt
+question" — is discharged here, the day after G1's click-test
+closed the phase. The checkpoint is the comparison, not a
+celebration: every number below is the register's own (the commit
+history and ADR-0032's landing record), nothing embellished, and
+the open items are named, not footnoted away.
+
+**What D1 estimated, at the granularity D1 spoke.** G1: "house-scale
+(several delivery units)" — the class of work Phase D+E+F
+exemplified (roughly fourteen ADR units across 2026-10-13 →
+10-24). G2: "years, not months — order 1–3+ years of sustained
+effort for an honest narrow version (exact where the pair table
+reaches, declared-tolerance subdivision elsewhere, degeneracies
+rejected with actionable errors rather than handled)", unbounded
+for NX-class robustness. D1 did not price the individual delivery
+units — no per-unit estimate exists to divide by, and inventing
+per-unit ratios now would be exactly the infioritura this section
+forbids. The measurable granularities are the phase, the session,
+and the unit count.
+
+**What G1 measured (the register, ADR-0032):**
+
+- **Units: six of six**, as the daughter's D10 pinned them — one
+  per rung of the order's arrow (data model → primitives →
+  extrude → subtract → mass → report), each landed standalone with
+  the full local suite green and visible value on delivery. Plus
+  one post-landing fix commit and the closure docs (the ADR-0032
+  status flip, this checkpoint, and the G2 draft).
+- **Sessions: three**, 2026-10-24 → 10-26 (the register's dates:
+  the acceptance evening carrying the review, unit 1 and the CI
+  fix; the 10-25 session carrying units 2–5; the 10-26 session
+  carrying unit 6). Six units in three sessions, from the data
+  model to the printed table.
+- **Revisions needed after landing: one.** The push of unit 1 went
+  red on exactly one CI job (linux-clang, build step: doctest's
+  CAPTURE lambda vs structured bindings — a clang ≤ 15 limitation
+  gcc 11 accepts); the fix (2e4d4db) root-caused it, reproduced
+  the CI pairing locally so that column is never dark again, and
+  registered the one inert leftover it met on the way (still open:
+  the unread `rejections` counter in test_bridge.cpp — a
+  maintainer's one-word decision: delete it or CHECK it). No other
+  unit needed a second landing; no unit was re-delivered.
+- **Defects found by the in-run verification, by class:** two
+  convention defects caught by the units' own first-run tests and
+  fixed in-unit (the cylinder's left-handed parametrization, unit
+  2; the surviving wall's region-side walk, unit 4 — the
+  tests-first discipline absorbing them BEFORE landing: the
+  countermeasure working, not the process failing); one
+  portability defect caught by CI after landing (the clang-14
+  case above, closed same-day). **Defects found by the user's
+  click-test: none** — the exit validation (the D7.5 table in the
+  report, the volume verified by hand, the live radius edit)
+  passed clean. **The disappointed-vs-promises class is empty:**
+  every promise of ADR-0032's D1 landed; every declared exclusion
+  stayed excluded and refused actionably (the oblique SSI, the
+  v0.3 golden's faceted honesty, trimmed spheres deferred); the
+  boundaries G1 discovered on the way (the booleans-consume-
+  exactness gate; the exactly-convex class of the faceted
+  assembly; the few-ulp precision doctrine of the stored trimming
+  floats) were derived, pinned and declared in the units' records
+  — none reached the user as a surprise, and none was softened
+  after the fact.
+- **Robustness data:** the degenerate dispositions of the daughter
+  D7 are golden-pinned or refusal-pinned (coplanar absorbed,
+  tangential tie-broken by canonical key, crossing/blind/swallow
+  refused with remedies, the miss the exact copy); determinism is
+  proven per ADR-0014 (bit-identical edit cycles on BOTH
+  materializations of the hybrid, hex-digest pinned; the v0.4
+  golden re-loads and re-materializes identically); the mass
+  precision bound is pinned (~1e-6 relative — the stored-float
+  inputs doctrine, five orders tighter than any faceted extract).
+
+**The comparison, and the honest consequence for G2's pricing.**
+G1's measured shape — six units in three sessions, one escaped
+defect (CI-caught, closed same day), zero user-visible defects,
+the disappointed class empty — **confirms D1's G1 estimate at its
+own granularity** ("house-scale, several delivery units") and
+nothing more. It does not touch the G2 estimate, and the
+checkpoint says so plainly: **G1 never met the cliff.** One SSI
+pair was intersected (plane∩cylinder, the two typed orientations);
+no tangential contact beyond a pinned disposition, no vertex
+blends, no non-parallel cylinder pair, no quartic of any kind, no
+trimmed sphere. The tail that makes G2 "years, not months" is
+exactly the part G1 did not exercise — so the estimate stands,
+un-rebaselined: **"order 1–3+ years of sustained effort for an
+honest narrow version" remains the working number**, now with one
+measured anchor under it: the bounded class runs at the house
+cadence (two units per session at G1's size) with the discipline
+absorbing the discovery rate (three product-relevant findings in
+six units, none escaping to the user). What the experience DOES
+update is not the price but the shape of the first bites: the G2
+draft (ADR-0033, shipped with this checkpoint, in the user's
+review) derives the analytic table's honest boundary — the pairs
+of degree > 2 are not typable in the pinned vocabulary; the
+Viviani-class quartics and the spiric sections stay out — and puts
+to the user, as an explicit reserved decision, the very fork D1's
+own wording embedded in "honest narrow version": exact-where-the-
+table-reaches with refusal elsewhere (option i), or plus
+declared-tolerance subdivision (option ii). The elephant's next
+bite is on the table; its total weight is not re-estimated here,
+and no promise on the tail is made — by D6's rule and by this
+checkpoint's own.
 
 ## Context — position, stated honestly
 
