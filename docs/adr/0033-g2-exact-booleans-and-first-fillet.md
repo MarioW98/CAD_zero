@@ -2,23 +2,26 @@
 
 ## Status
 
-**Draft (2026-10-26) — in the user's review before the phase starts;
-nothing in G2 is scheduled until this review closes.** Daughter of
-ADR-0031 (accepted: road (a), all in house, forever — its G1 internal
-checkpoint recorded the same day this draft ships: the estimates
-stand) and of ADR-0032 (implemented: the exact spine G2 builds on —
-p-curves, Layer-2 provenance, χ = V−E+F−H, the HybridBody, the report
-as the single consumer). This draft pins the scope with **one
-derivation per table entry**, the fillet's derived class with its
-counts and volume, the degenerate dispositions, the unit ladder and
-the no-promises list — and it carries **ONE DECISION RESERVED TO THE
-USER** (D2: the table boundary — exact-only refusals, or
-declared-tolerance subdivision beside the table), the decision that
-determines whether G2's core is *months of table* or *months of table
-plus a subdivision engine*. The house method applies as ever:
-invariants and discriminating tests are pinned in this document,
-agreed in review, BEFORE the phase begins; the review moves
-D-sections, the ADR does not defend them.
+**Accepted (2026-10-26) — the review closed the same day the draft
+shipped, with the reserved decision TAKEN: D2 = option (i), the table
+is the wall.** Daughter of ADR-0031 (accepted: road (a), all in
+house, forever — its G1 internal checkpoint recorded the same day
+this draft shipped: the estimates stand) and of ADR-0032 (implemented:
+the exact spine G2 builds on — p-curves, Layer-2 provenance, χ =
+V−E+F−H, the HybridBody, the report as the single consumer). The
+draft pinned the scope with **one derivation per table entry**, the
+fillet's derived class with its counts and volume, the degenerate
+dispositions, the unit ladder and the no-promises list — and it
+carried **ONE DECISION RESERVED TO THE USER** (D2: the table
+boundary), which the acceptance records below: **option (i)**, with
+option (ii) REGISTERED as a priced candidate carrying its entry
+criterion (not dead — awaiting a real case, decided at the next
+internal checkpoint). The ladder runs as written: **six units**.
+The house method held as ever: invariants and discriminating tests
+were pinned in this document, agreed in review, BEFORE the phase
+began; the review moved nothing but D2's lever, and carried one
+correction to the record (row 7's unequal-radii note, corrected
+below where it stood).
 
 ## Context
 
@@ -179,7 +182,7 @@ authored class can actually produce):**
 | 4 | plane×sphere (d<R) | circle √(R²−d²) at the foot | `Circle2` + latitude `Line2` (re-frame to the plane normal) | d=R: tangent point; d>R: empty |
 | 5 | sphere×sphere (non-nested, d<R₁+R₂) | circle in the **radical plane** (subtract the equations: 2(c₂−c₁)·x = ‖c₂‖²−‖c₁‖²+R₁²−R₂² — a plane ⊥ to the center line, then entry 4) | latitude `Line2` on each sphere (re-frame each to the center line) | nested: empty; internal/external tangency: a point; equal spheres: the coincident-face degenerate (the co-radial dedup rule, the coplanar rule's analog) |
 | 6 | cylinder×sphere coaxial (r<R) | two circles at z=±√(R²−r²) | `Line2` z=const (cyl) + latitude `Line2` (sphere, re-frame to the axis) | r=R: one tangent circle; r>R: empty |
-| 7 | cylinder×cylinder parallel, equal r, offset d<2r | **two lines** in the mid-plane, y=±√(r²−d²/4) (subtract: x=d/2) | `Line2` θ=θ₀,θ₁ on each | d=2r: the tangent double line; d>2r: empty; unequal radii: empty, or the external/internal tangency line (d=r₁+r₂, \|r₁−r₂\|); coaxial equal: coincident faces (the degenerate) |
+| 7 | cylinder×cylinder parallel, equal r, offset d<2r | **two lines** in the mid-plane, y=±√(r²−d²/4) (subtract: x=d/2) | `Line2` θ=θ₀,θ₁ on each | d=2r: the tangent double line; d>2r: empty; coaxial equal: coincident faces (the degenerate); unequal radii — **corrected at acceptance** (D2's correction block): the transverse case \|r₁−r₂\|<d<r₁+r₂ is two TYPED lines in the offset plane x=(d²+r₁²−r₂²)/(2d), admitted by the criterion; out of the registered entry (equal r) until the unit that consumes it |
 | 8 | plane×cone ⊥ axis | circle at constant slant t | `Circle2` + `Line2` t=const | through-apex: the ruling line pair (`Line2`+`Line2`); tangent: the double ruling; **oblique: the conics — refused** (the cone-domain p-curve is t(θ)=d/(n·û(θ)), the secant family — the sinusoid's sibling); **unreachable today: no cone writer** |
 | 9 | plane×torus ⊥ axis, \|z\|<ρ | two concentric circles a±√(ρ²−z²) | `Circle2` + `Line2` φ=const-pair (torus) | \|z\|=ρ: one tangent circle; reachable only via the fillet (D3) |
 | 10 | cylinder×torus coaxial (\|R−a\|<ρ) | circles at φ=const: a+ρcosφ=R | `Line2` z=const + `Line2` φ=const | the fillet's own adjacencies (the tangency circles of D3 — built by construction, consumed by the table); reachable only via the fillet |
@@ -261,6 +264,56 @@ user does, in review, because the choice sizes the phase:
 silent mix is what the provenance contract exists to prevent; an
 "exact-ish" quartic is a lie with a tolerance costume on. The
 boundary is a wall or a fence — never a curtain.
+
+**Decision on acceptance (2026-10-26) — D2 = option (i): the table
+is the wall.** The user's decision, taken in review the same day the
+draft shipped:
+
+- **Option (i) stands.** The exact booleans run only where every
+  curved pair of the operands is in D1.1's typed table; anything
+  else is **refused with an actionable error** naming the pair, the
+  disposition class, and the remedies (reorient the operands, accept
+  the faceted path, or await G3). The capability ceiling is explicit
+  and queryable — the refusal is a recorded answer, not a missing
+  one. The ladder runs as written: six units, no unit 2.5.
+- **Option (ii) does not die — it is REGISTERED as a priced
+  candidate with its entry criterion.** The criterion: a real case
+  demanded by an author body (for instance: two non-parallel
+  cylindrical walls met in a sketch chain — the Steinmetz
+  disposition, typed in neither domain). The decision is taken at
+  the **next internal checkpoint**, with the table and the fillet
+  measured on the table — empirical, never philosophical. The price
+  stands as derived above: the subdivision engine on the existing
+  `Interval` type plus the one honestly-approximated p-curve citizen
+  behind the same fence the bridge already keeps, landing as **unit
+  2.5** between the table and the booleans, priced as its own
+  delivery. Until the criterion fires, the register says no to
+  subdivision — and says it in the refusal, by name.
+- **The user's motivation, recorded verbatim:** «il muro è sempre
+  onesto; la siepe, una volta piantata, va sorvegliata per sempre;
+  prima il muro, la siepe quando un caso vero la domanda.» ("the
+  wall is always honest; the hedge, once planted, must be watched
+  forever; first the wall — the hedge when a real case asks for
+  it.")
+
+**One correction carried by the acceptance, owed to the record
+(row 7's unequal-radii note).** The drafted limit cell read
+"unequal radii: empty, or the external/internal tangency line" —
+and that disposition is wrong in the transverse interior: two
+parallel cylinders of UNEQUAL radii with |r₁−r₂| < d < r₁+r₂
+intersect in **two lines** lying in the offset plane x =
+(d²+r₁²−r₂²)/(2d) (subtract the equations: a plane ⊥ to the
+offset direction; the lines at y = ±√(r₁²−x²)), and the p-curves
+are u = const on **both** domains — the admission criterion
+ADMITS the pair. The drafted note covered only the empty exterior
+and the tangency boundary, and missed the interior; the derivation,
+not the draft, is the authority the house recognizes. The
+correction's consequence for the unit that lands the table: the
+entry implements the **equal-radii class as scoped** (the order's
+own boundary), and the unequal pair is refused **at the entry's
+gate** — with the refusal's disposition class named honestly (out
+of the registered entry, the transverse case typable and awaiting
+the unit that consumes it), never as "untypable", which it is not.
 
 The consequence for the ladder: under (i), D5 runs as written, six
 units; under (ii), the subdivision engine is **unit 2.5** (between

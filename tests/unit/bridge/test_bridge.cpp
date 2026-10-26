@@ -1579,4 +1579,15 @@ TEST_CASE("property: bridge twisted columns (seeded family) - genus-0 invariants
     CHECK(pure_columns >= 5);
     INFO("check: Theta range reached (max seen ", theta_max_seen, " >= 0.12)");
     CHECK(theta_max_seen >= 0.12f);
+    // The guard's own recorded claim, now enforced (the ADR-0031
+    // checkpoint's open item, closed by the maintainer's word): the
+    // header above pins "0 rejections needed — the guard is a guard,
+    // not a filter", and an unread counter is an unpinned recorded
+    // sentence. This check makes it a contract: a failure here means
+    // the declared regime drifted into the guard's band (Theta or the
+    // sections widened, or the tilt bound moved) and the header's
+    // regime comment — not the kernel — is what needs re-deriving.
+    INFO("check: rejections == 0 (the guard never fired — observed ",
+         rejections, ")");
+    CHECK(rejections == 0);
 }

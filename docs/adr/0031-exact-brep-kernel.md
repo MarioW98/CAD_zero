@@ -109,9 +109,12 @@ and the unit count.
   CAPTURE lambda vs structured bindings — a clang ≤ 15 limitation
   gcc 11 accepts); the fix (2e4d4db) root-caused it, reproduced
   the CI pairing locally so that column is never dark again, and
-  registered the one inert leftover it met on the way (still open:
-  the unread `rejections` counter in test_bridge.cpp — a
-  maintainer's one-word decision: delete it or CHECK it). No other
+  registered the one inert leftover it met on the way (CLOSED
+  2026-10-26, the maintainer's one-word decision taken in the
+  ADR-0033 acceptance: CHECK — the unread `rejections` counter in
+  test_bridge.cpp now enforces the header's own recorded sentence,
+  "0 rejections needed — the guard is a guard, not a filter", as a
+  contract; the reasoning is in that commit's body). No other
   unit needed a second landing; no unit was re-delivered.
 - **Defects found by the in-run verification, by class:** two
   convention defects caught by the units' own first-run tests and
