@@ -56,6 +56,8 @@
 #include "CAD_0/math/mat.hpp"
 
 #include <cmath>
+#include <stdexcept>
+#include <string>
 
 namespace CAD_0::brep {
 
@@ -213,23 +215,71 @@ private:
     float u_sign_;
 };
 
-// Sphere: radius R centered at origin.
-// u = azimuth [0, 2π), v = polar angle [0, π].
+// Sphere: radius R centered at origin, in a (pole, azimuth) frame.
+//
+// THE FRAME (G2 unit 1's re-frame rule, ADR-0033 D1.1): the
+// parametrization is
+//
+//   evaluate(u, v) = C + R·[ sin v·(cos u·e₀ + sin u·e₁) + cos v·n̂ ],
+//   e₁ = e₀ × n̂,
+//
+// with n̂ the POLE (v = 0) and e₀ the AZIMUTH reference (u = 0 is the
+// meridian through +e₀). The HISTORICAL frame is the default and is
+// untouched: n̂ = +Y, e₀ = +X — the (u, v) every factory authoring and
+// every pre-G2 golden reads (the constructor without a frame keeps
+// it, so nothing moves). The re-frame derives a new (n̂, e₀) from the
+// OPERATION's canonical axis (the cut plane's normal, the center
+// line, the cylinder's axis) — the frame serves the geometry, never
+// the reverse, and the re-framed surface is the SAME mathematical
+// sphere (C, R unchanged). Right-handedness HOLDS BY CONSTRUCTION in
+// every frame: ∂u×∂v = +R·sin v·radial for any (e₀, n̂) with
+// e₁ = e₀×n̂ (the derivation in ADR-0033 D1.1; the frame rule's
+// (∂u×∂v)·n_outward > 0 read on the OUTER normal — the radial).
 class SphereSurface : public SurfaceGeometry {
 public:
+    // The historical frame: pole +Y, azimuth +X.
     SphereSurface(float radius, math::Vec3f origin = {})
-        : radius_(radius), origin_(origin) {}
+        : radius_(radius), origin_(origin),
+          pole_{0, 1, 0}, azimuth_{1, 0, 0} {
+        precompute();
+    }
+
+    // The derived frame (the re-frame rule): `pole` is the new v = 0
+    // axis, `azimuth` the new u = 0 meridian direction. Perpendicular
+    // unit-ish inputs (each normalized; cross-product-derived pairs
+    // are unit up to fp); the PERPENDICULARITY is validated loudly —
+    // a skewed frame has no sphere parametrization in its span.
+    SphereSurface(float radius, math::Vec3f origin,
+                  math::Vec3f pole, math::Vec3f azimuth)
+        : radius_(radius), origin_(origin),
+          pole_(pole.normalized()), azimuth_(azimuth.normalized()) {
+        const float dot = pole_.dot(azimuth_);
+        if (!std::isfinite(dot) || std::abs(dot) > 1e-6f ||
+            !(pole_.length() > 0.0f) || !(azimuth_.length() > 0.0f)) {
+            throw std::invalid_argument(
+                "SphereSurface: (pole, azimuth) must be non-zero and "
+                "perpendicular (the re-frame's derived frame), got "
+                "pole·azimuth=" + std::to_string(dot) +
+                " — a skewed frame bends the parametrization off the "
+                "sphere's meridians and every authored p-curve with it. "
+                "Remedy: pass the operation's derived axis and a "
+                "perpendicular azimuth reference (the entries' own "
+                "derivations).");
+        }
+        precompute();
+    }
 
     math::Vec3f evaluate(float u, float v) const override {
         const float sv = std::sin(v);
-        return {origin_.x + radius_ * sv * std::cos(u),
-                origin_.y + radius_ * std::cos(v),
-                origin_.z + radius_ * sv * std::sin(u)};
+        return origin_ + e0_ * (radius_ * sv * std::cos(u)) +
+               e1_ * (radius_ * sv * std::sin(u)) +
+               pole_ * (radius_ * std::cos(v));
     }
 
     math::Vec3f normal(float u, float v) const override {
         const float sv = std::sin(v);
-        return {sv * std::cos(u), std::cos(v), sv * std::sin(u)};
+        return e0_ * (sv * std::cos(u)) + e1_ * (sv * std::sin(u)) +
+               pole_ * std::cos(v);
     }
 
     const char* type_name() const override { return "sphere"; }
@@ -241,10 +291,24 @@ public:
     float radius() const noexcept { return radius_; }
     // The placement origin (G1 unit 4: translate_body's table).
     const math::Vec3f& origin() const noexcept { return origin_; }
+    // The frame (G2 unit 1): the pole n̂ (v = 0) and the azimuth
+    // reference e₀ (u = 0) — readable so translate_body and the table
+    // can carry the DERIVED frame through without a second copy.
+    const math::Vec3f& pole() const noexcept { return pole_; }
+    const math::Vec3f& azimuth() const noexcept { return azimuth_; }
 
 private:
+    void precompute() {
+        e0_ = azimuth_;
+        e1_ = e0_.cross(pole_);  // e₁ = e₀ × n̂ (the historical X×Y = Z)
+    }
+
     float radius_;
     math::Vec3f origin_;
+    math::Vec3f pole_;
+    math::Vec3f azimuth_;
+    math::Vec3f e0_;
+    math::Vec3f e1_;
 };
 
 // Cone: base radius r at y=0, apex at y=h, centered at origin.

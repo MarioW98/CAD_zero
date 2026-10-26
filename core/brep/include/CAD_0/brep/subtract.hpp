@@ -405,9 +405,16 @@ inline void translate_body(BRepBody& body, math::Vec3f delta) {
             }
         } else if (family == "sphere") {
             const auto* sp = dynamic_cast<const SphereSurface*>(surf);
+            // G2 unit 1: the sphere's frame is DERIVED state carried by
+            // the surface (the re-frame rule) — the translation moves
+            // the mathematical object (C, R) and keeps the frame, so a
+            // re-framed face's p-curves stay valid verbatim (the same
+            // mathematics, one code path — the header's own doctrine).
             f.set_surface(std::make_shared<SphereSurface>(sp->radius(),
                                                           sp->origin() +
-                                                              delta));
+                                                              delta,
+                                                          sp->pole(),
+                                                          sp->azimuth()));
         } else if (family == "cone") {
             const auto* co = dynamic_cast<const ConeSurface*>(surf);
             f.set_surface(std::make_shared<ConeSurface>(co->base_radius(),

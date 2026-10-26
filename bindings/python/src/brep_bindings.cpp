@@ -19,6 +19,26 @@
 //     the genus under the ADR-0027 D6 rule, the structural flags,
 //     and the per-kind provenance tallies — the report's single
 //     source beside mass_properties.
+//   * CAD_0.brep.ssi_query(body_a, face_a, body_b, face_b, tol) —
+//     THE TABLE (G2 unit 1, ADR-0033 D5.1): the analytic SSI entries
+//     queryable BEFORE any boolean consumes them (the face-query
+//     precedent). The intersections answer as plain values: the
+//     kind, the 3D curves (circles with their derived in-plane
+//     frames, lines with point + direction), the typed p-curves in
+//     BOTH domains (the same payload dicts face_query serves), the
+//     re-frame declaration when an entry derived one, and the
+//     Layer-2 provenance (exact/0 — closed forms on exact faces).
+//     The out-of-table pairs are RETURNED records (kind
+//     "out_of_table", the message naming the pair, the disposition
+//     class and the remedies) — the capability ceiling is explicit
+//     and queryable, a recorded answer, never a missing one.
+//   * CAD_0.brep.translate_body(body, delta) — the exact side's own
+//     placement operation (the subtract's tool-offset path, G1 unit
+//     4), exposed so author bodies can be POSITIONED for the query:
+//     the bridge's primitive fit serves origin-centered bodies only,
+//     and the sphere pairs / the offset cylinder pairs need distance.
+//     In place, like the C++ act; the loops, co-edges and p-curves
+//     are untouched (the frames move with their surfaces).
 //
 // BRepBody arrives as the OPAQUE handle the bridge submodule already
 // registers (one registration per module — the factories' bodies and
@@ -52,6 +72,8 @@
 #include "CAD_0/brep/topology.hpp"
 #include "CAD_0/brep/query.hpp"
 #include "CAD_0/brep/mass_properties.hpp"
+#include "CAD_0/brep/ssi.hpp"
+#include "CAD_0/brep/subtract.hpp"
 
 namespace nb = nanobind;
 using CAD_0::brep::BRepBody;
@@ -59,8 +81,12 @@ using CAD_0::brep::BodySummary;
 using CAD_0::brep::FaceId;
 using CAD_0::brep::FaceInfo;
 using CAD_0::brep::LoopInfo;
+using CAD_0::brep::PCurve;
 using CAD_0::brep::PCurveInfo;
 using CAD_0::brep::ProvenanceTally;
+using CAD_0::brep::SsiCurve;
+using CAD_0::brep::SsiDomainAnswer;
+using CAD_0::brep::SsiResult;
 
 namespace {
 
@@ -159,6 +185,134 @@ nb::dict body_summary_dict(const BodySummary& s) {
     return out;
 }
 
+// One typed p-curve as plain values — None in the faceted world, else
+// the typed payload verbatim (the sketch kernel's own parameters).
+// This raw-PCurve flavor serves the SSI answer (the domain answers
+// carry SketchEntity values, not co-edges) — the SAME payload mapping
+// pcurve_obj() serves for the face query, one opinion, no drift.
+nb::object pcurve_obj_raw(const PCurve& p) {
+    switch (p.kind) {
+    case PCurve::Kind::Segment: {
+        nb::dict d;
+        d["type"] = "line";
+        d["a"] = nb::make_tuple(p.segment.a.x, p.segment.a.y);
+        d["b"] = nb::make_tuple(p.segment.b.x, p.segment.b.y);
+        d["interior_left"] = p.segment.interior_left;
+        return d;
+    }
+    case PCurve::Kind::Circle: {
+        nb::dict d;
+        d["type"] = "circle";
+        d["center"] = nb::make_tuple(p.circle.center.x, p.circle.center.y);
+        d["radius"] = p.circle.radius;
+        d["hole"] = p.circle.hole;
+        return d;
+    }
+    case PCurve::Kind::Arc: {
+        nb::dict d;
+        d["type"] = "arc";
+        d["center"] = nb::make_tuple(p.arc.center.x, p.arc.center.y);
+        d["radius"] = p.arc.radius;
+        d["hole"] = p.arc.hole;
+        d["start_angle"] = p.arc.start_angle;
+        d["sweep"] = p.arc.sweep;
+        return d;
+    }
+    }
+    return nb::none();  // unreachable — all enum cases handled above
+}
+
+// One operand's domain answer: the family, the re-frame declaration,
+// and the typed p-curves in curve order.
+nb::dict ssi_domain_dict(const SsiDomainAnswer& d) {
+    nb::dict out;
+    out["reframed"] = d.reframe_needed;
+    out["frame_pole"] = d.reframe_needed
+                             ? nb::make_tuple(double(d.frame_pole.x),
+                                              double(d.frame_pole.y),
+                                              double(d.frame_pole.z))
+                             : nb::none();
+    out["frame_azimuth"] = d.reframe_needed
+                               ? nb::make_tuple(double(d.frame_azimuth.x),
+                                                double(d.frame_azimuth.y),
+                                                double(d.frame_azimuth.z))
+                               : nb::none();
+    nb::list pcs;
+    for (const PCurve& p : d.pcurves) pcs.append(pcurve_obj_raw(p));
+    out["pcurves"] = pcs;
+    return out;
+}
+
+// The SSI answer as plain values — the dict layout:
+//
+//   {"kind": "empty" | "point" | "circle" | "circle_pair" |
+//            "line_pair" | "tangent_line" | "coincident" |
+//            "out_of_table",
+//    "exact": bool, "linear_tolerance": float,
+//    "families": (str, str),
+//    "point": (x, y, z) | None,
+//    "curves": [ {"type": "circle", "center": (x,y,z), "radius": r,
+//                 "u_ref": (x,y,z), "v_ref": (x,y,z)}
+//               | {"type": "line", "point": (x,y,z), "dir": (x,y,z)} ],
+//    "operands": [ {"reframed": bool, "frame_pole": ... | None,
+//                   "frame_azimuth": ... | None, "pcurves": [...]}, ... ],
+//    "message": str}
+//
+nb::dict ssi_dict(const SsiResult& r) {
+    nb::dict out;
+    const char* kind = "out_of_table";
+    switch (r.kind) {
+    case SsiResult::Kind::Empty: kind = "empty"; break;
+    case SsiResult::Kind::Point: kind = "point"; break;
+    case SsiResult::Kind::Circle: kind = "circle"; break;
+    case SsiResult::Kind::CirclePair: kind = "circle_pair"; break;
+    case SsiResult::Kind::LinePair: kind = "line_pair"; break;
+    case SsiResult::Kind::TangentLine: kind = "tangent_line"; break;
+    case SsiResult::Kind::Coincident: kind = "coincident"; break;
+    case SsiResult::Kind::OutOfTable: kind = "out_of_table"; break;
+    }
+    out["kind"] = kind;
+    out["exact"] = r.provenance.is_exact();
+    out["linear_tolerance"] = r.provenance.linear_tolerance;
+    out["families"] = nb::make_tuple(r.family_a, r.family_b);
+    out["point"] = r.kind == SsiResult::Kind::Point
+                       ? nb::make_tuple(double(r.point.x), double(r.point.y),
+                                        double(r.point.z))
+                       : nb::none();
+    nb::list curves;
+    for (const SsiCurve& c : r.curves) {
+        nb::dict d;
+        if (c.kind == SsiCurve::Kind::Circle) {
+            d["type"] = "circle";
+            d["center"] = nb::make_tuple(double(c.center.x),
+                                          double(c.center.y),
+                                          double(c.center.z));
+            d["radius"] = c.radius;
+            d["u_ref"] = nb::make_tuple(double(c.u_ref.x),
+                                         double(c.u_ref.y),
+                                         double(c.u_ref.z));
+            d["v_ref"] = nb::make_tuple(double(c.v_ref.x),
+                                         double(c.v_ref.y),
+                                         double(c.v_ref.z));
+        } else {
+            d["type"] = "line";
+            d["point"] = nb::make_tuple(double(c.point.x),
+                                         double(c.point.y),
+                                         double(c.point.z));
+            d["dir"] = nb::make_tuple(double(c.dir.x), double(c.dir.y),
+                                       double(c.dir.z));
+        }
+        curves.append(d);
+    }
+    out["curves"] = curves;
+    nb::list operands;
+    operands.append(ssi_domain_dict(r.a));
+    operands.append(ssi_domain_dict(r.b));
+    out["operands"] = operands;
+    out["message"] = r.message;
+    return out;
+}
+
 } // namespace
 
 void bind_brep(nb::module_& m) {
@@ -247,4 +401,58 @@ void bind_brep(nb::module_& m) {
         "max_linear_tolerance} — the Layer-2 provenance tallies.\n"
         "Raises ValueError for the empty body (diagnosis + remedy\n"
         "verbatim — no shell to summarize).");
+
+    // THE TABLE (G2 unit 1, ADR-0033 D5.1): the intersections
+    // answer as plain values, queryable before any boolean consumes
+    // them — the face-query precedent, one rung sideways. The
+    // tolerance argument is the operation's declared Layer-3
+    // decision tolerance (the exact_subtract discipline: the linear
+    // bands and the cosine band read the same value).
+    brep_mod.def(
+        "ssi_query",
+        [](const BRepBody& body_a, FaceId face_a, const BRepBody& body_b,
+           FaceId face_b, double tol) {
+            return ssi_dict(CAD_0::brep::ssi_query(
+                body_a, face_a, body_b, face_b, float(tol)));
+        },
+        nb::arg("body_a"), nb::arg("face_a"), nb::arg("body_b"),
+        nb::arg("face_b"), nb::arg("tol") = 1e-6,
+        "Consult the analytic SSI table with two faces of two bodies:\n"
+        "the typed intersection as plain values — {kind, exact,\n"
+        "linear_tolerance, families, point (tangency), curves (the 3D\n"
+        "circles with their derived frames / the lines with point +\n"
+        "direction), operands (each: reframed + the declared frame +\n"
+        "the typed p-curves in that domain, one per curve in order),\n"
+        "message (the disposition class; for out_of_table, the FULL\n"
+        "actionable refusal: the pair, the class, the remedies)}. The\n"
+        "entries: plane×sphere (the circle sqrt(R^2-d^2) at the foot),\n"
+        "sphere×sphere (the radical plane), cylinder×sphere coaxial\n"
+        "(the two circles at ±sqrt(R^2-r^2)), cylinder×cylinder\n"
+        "parallel equal-radii (the mid-plane line pair) — with their\n"
+        "degenerates (tangencies, the empty classes, the co-radial\n"
+        "coincident). Everything else is the WALL: a returned record,\n"
+        "never an exception — the capability ceiling is queryable.\n"
+        "Raises ValueError only for a face id a body does not carry\n"
+        "(diagnosis + remedy verbatim).");
+
+    // The exact side's own placement (the subtract's tool-offset path,
+    // G1 unit 4) — exposed so the author bodies can be POSITIONED for
+    // the table's queries (the bridge's primitive fit serves
+    // origin-centered bodies only). In place: the surfaces re-anchor
+    // through their own accessors, the p-curves stay valid verbatim.
+    brep_mod.def(
+        "translate_body",
+        [](BRepBody& body, CAD_0::math::Vec3f delta) {
+            CAD_0::brep::translate_body(body, delta);
+        },
+        nb::arg("body"), nb::arg("delta"),
+        "Translate a B-Rep body by a world delta, in place: every\n"
+        "vertex moves, every face's surface re-anchors (the plane's\n"
+        "origin, the cylinders' placements, the sphere's center — the\n"
+        "sphere keeping its DERIVED frame, the re-frame rule's own).\n"
+        "The loops, the co-edges, the p-curves and the provenance are\n"
+        "untouched: the p-curve coordinates are frame-relative and the\n"
+        "frame moves with its surface. Raises ValueError for a surface\n"
+        "family outside the analytic translation table (loud, never a\n"
+        "silent skip).");
 }

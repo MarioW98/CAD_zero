@@ -41,6 +41,7 @@ set(CAD_0_TEST_SOURCES
     unit/brep/test_g1_unit4_subtract.cpp
     unit/brep/test_g1_unit5_mass.cpp
     unit/brep/test_g1_unit6_report.cpp
+    unit/brep/test_g2_unit1_ssi_table.cpp
     unit/bridge/test_bridge.cpp
     main.cpp
 )

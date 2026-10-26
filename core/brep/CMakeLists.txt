@@ -9,6 +9,7 @@ set(CAD_0_BREP_HEADERS
     include/CAD_0/brep/factory.hpp
     include/CAD_0/brep/extrude.hpp
     include/CAD_0/brep/subtract.hpp
+    include/CAD_0/brep/ssi.hpp
     include/CAD_0/brep/mass_properties.hpp
     include/CAD_0/brep/query.hpp
     include/CAD_0/brep/boolean.hpp
@@ -21,6 +22,7 @@ set(CAD_0_BREP_SOURCES
     src/mass_properties.cpp
     src/query.cpp
     src/boolean.cpp
+    src/ssi.cpp
 )
 
 add_library(CAD_0_brep STATIC ${CAD_0_BREP_SOURCES} ${CAD_0_BREP_HEADERS})
