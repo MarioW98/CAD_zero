@@ -176,14 +176,23 @@ def test_subtract_flow_end_to_end(main_window):
 
     # ---- The Debug report on the operation node: χ = 0, genus 1,
     # closed-orientable yes (ADR-0027 D6 — the report content, built
-    # by the pure text helper so it is assertable offscreen).
+    # by the pure text helper so it is assertable offscreen). G1
+    # unit 6: the report GREW — mass + provenance beside the
+    # structural block, and the χ label carries the H term.
     win._selected_node_id = op_id
-    text = win._sdf_to_brep_report_text(win._scene.get_node(op_id))
+    text = win._body_report_text(win._scene.get_node(op_id))
     assert text is not None
     assert "faceted extraction (MC33)" in text
-    assert "V - E + F = 0" in text
+    chi_line = [ln for ln in text.splitlines()
+                if "V - E + F - H =" in ln][0]
+    assert chi_line.endswith("= 0")
     assert "Genus = 1" in text
     assert "Closed orientable (is_closed_orientable): yes" in text
+    # The grown blocks: the mass (approximated — the faceted body's
+    # own polyhedral numbers) and the provenance tallies.
+    assert "APPROXIMATED (all_exact = False" in text
+    assert "subshapes exact / " in text
+    assert "min |f| on grid (P2 margin):" in text
 
     # ---- Operand param edit propagates through the DAG (the radius
     # feeds the operation's field: f(0,0,0) tracks the tool radius).
@@ -234,9 +243,11 @@ def test_subtract_flow_end_to_end(main_window):
     # The Debug report still works on the dangling node (its body is
     # the kept last-good geometry).
     win._selected_node_id = op_id
-    text = win._sdf_to_brep_report_text(op_node)
+    text = win._body_report_text(op_node)
     assert text is not None
-    assert "V - E + F = 0" in text
+    chi_line = [ln for ln in text.splitlines()
+                if "V - E + F - H =" in ln][0]
+    assert chi_line.endswith("= 0")
 
     # ---- Undo the delete: the operand returns with the SAME id and
     # the operation recovers.
@@ -310,11 +321,13 @@ def test_debug_report_multi_shell_genus_n_d(main_window):
         sdf_mod.translate(sdf_mod.sphere(1.0), vec(5.0, 0.0, 0.0)))
     nid = main_window._scene.add_node("TwoSpheres", two)
 
-    text = main_window._sdf_to_brep_report_text(
+    text = main_window._body_report_text(
         main_window._scene.get_node(nid))
     assert text is not None
     assert "faceted extraction (MC33)" in text
-    assert "V - E + F = 4" in text      # chi = 4: two closed shells
-    assert "Genus = n/d" in text        # NOT derived (chi > 2)
+    chi_line = [ln for ln in text.splitlines()
+                if "V - E + F - H =" in ln][0]
+    assert chi_line.endswith("= 4")   # chi = 4: two closed shells
+    assert "Genus = n/d" in text       # NOT derived (chi > 2)
     assert "multi-shell" in text
     assert "Closed orientable (is_closed_orientable): yes" in text

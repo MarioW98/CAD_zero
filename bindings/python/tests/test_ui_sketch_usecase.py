@@ -141,11 +141,15 @@ def test_the_parametric_hole_end_to_end(app_window, tmp_path):
     assert body.value(_math.Vec3f(0.3, 0.0, 0.0)) == pytest.approx(
         0.35, abs=1e-6)
 
-    # The Debug report: chi = 0, genus 1 (the same pure string builder
-    # the Debug menu shows).
-    text = win._sdf_to_brep_report_text(win._scene.get_node(hole_id))
-    assert "\u03c7 = V - E + F = 0" in text
+    # The Debug report: chi = 0, genus 1 (the same pure string
+    # builder the Debug menu shows). G1 unit 6: the node's exact
+    # materialization is the report's body — the pinned table's
+    # counts, the exact flag, the mass beside them.
+    text = win._body_report_text(win._scene.get_node(hole_id))
+    assert "V = 12, E = 17, F = 7, H (inner loops) = 2" in text
+    assert "V - E + F - H = 12 - 17 + 7 - 2 = 0" in text
     assert "Genus = 1" in text
+    assert "all_exact = True" in text
 
     # THE EDIT: the circle's radius (the panel's text route). The
     # report follows: the hole deepens to 0.5, still genus 1.
@@ -157,8 +161,9 @@ def test_the_parametric_hole_end_to_end(app_window, tmp_path):
     body = win._scene.get_node(hole_id).body
     assert body.value(_math.Vec3f(0.3, 0.0, 0.0)) == pytest.approx(
         0.5, abs=1e-6)
-    text = win._sdf_to_brep_report_text(win._scene.get_node(hole_id))
+    text = win._body_report_text(win._scene.get_node(hole_id))
     assert "Genus = 1" in text
+    assert "all_exact = True" in text
 
     # Delete the sketch: the extrude goes dangling (visible rows,
     # last body kept); undo recovers it with the SAME id.
@@ -173,7 +178,7 @@ def test_the_parametric_hole_end_to_end(app_window, tmp_path):
     # problem is flagged where it lives (the extrude's row).
     assert _tree_row(win, hole_id).text(1) == "CSG"
     # The last good body is kept — display (and the report) continue.
-    assert win._sdf_to_brep_report_text(
+    assert win._body_report_text(
         win._scene.get_node(hole_id)) is not None
 
     win.on_undo()   # the sketch delete
@@ -193,8 +198,9 @@ def test_the_parametric_hole_end_to_end(app_window, tmp_path):
     CAD_0.io.load(path, fresh)
     loaded_hole = fresh.get_node(hole_id)
     assert loaded_hole is not None
-    loaded_text = win._sdf_to_brep_report_text(loaded_hole)
+    loaded_text = win._body_report_text(loaded_hole)
     assert "Genus = 1" in loaded_text
+    assert "all_exact = True" in loaded_text
     assert loaded_hole.body.value(_math.Vec3f(0.3, 0.0, 0.0)) == \
         pytest.approx(0.5, abs=1e-6)
 
@@ -225,10 +231,11 @@ def test_the_parametric_hole_end_to_end(app_window, tmp_path):
 
 @pytest.mark.skipif(not _pyside6_available(), reason="PySide6 not installed")
 def test_sketch_hole_example_is_the_same_recipe():
-    """D5.8: examples/sketch_hole.py runs clean — the CLI face of the
-    same recipe (entity creation, extrude, subtract by FeatureId, the
-    bit-identical radius propagation, the v0.4 round-trip, the
-    genus-1 report)."""
+    """D5.8 -> G1 unit 6 (D10.6): examples/sketch_hole.py runs clean
+    — the CLI face of the same recipe (entity creation, extrude,
+    subtract by FeatureId, the D7.5 table with every row PASS, the
+    bit-identical radius propagation through ONE undo entry, the
+    v0.4 round-trip, the grown report)."""
     import subprocess
     import sys
     from pathlib import Path
@@ -242,6 +249,12 @@ def test_sketch_hole_example_is_the_same_recipe():
         cwd=str(root))
     out = result.stdout
     assert result.returncode == 0, result.stderr[-2000:]
-    assert "Genus = 1" in out
-    assert "chi = V - E + F = 0" in out
-    assert "0.35" in out and "0.5" in out
+    # The two D7.5 tables (before and after the radius edit), every
+    # row PASS (a DIFF row is a bug — the example asserts it too).
+    assert out.count("LA TAVOLA DI D7.5") == 2
+    assert "DIFF:" not in out
+    assert "V - E + F - H = 12 - 17 + 7 - 2 = 0" in out
+    assert "Genus" in out and "PASS" in out
+    # The edit's discipline: bit-identical, ONE undo entry.
+    assert "bit-identical" in out
+    assert "ONE undo entry" in out

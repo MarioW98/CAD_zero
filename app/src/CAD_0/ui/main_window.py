@@ -356,10 +356,15 @@ class MainWindow(QMainWindow):
         # Read-only inspection tools (ADR-0026 consumer step): they
         # report on the current scene without touching it — no authoring,
         # no scene/document mutation, nothing on the undo stack.
+        # G1 unit 6: the report GREW — topology (χ with the H term,
+        # genus) beside the mass properties and the Layer-2
+        # provenance, on the exact materialization when the node owns
+        # one, on the dispatching extraction otherwise.
         debug_menu = self.menuBar().addMenu("&Debug")
-        sdf_to_brep_action = QAction("Extract SDF → B-Rep (topology report)", self)
-        sdf_to_brep_action.triggered.connect(self.on_debug_sdf_to_brep_report)
-        debug_menu.addAction(sdf_to_brep_action)
+        body_report_action = QAction(
+            "Body report — topology, mass, provenance", self)
+        body_report_action.triggered.connect(self.on_debug_body_report)
+        debug_menu.addAction(body_report_action)
 
         # ----- Help menu -----
         help_menu = self.menuBar().addMenu("&Help")
@@ -1738,103 +1743,132 @@ class MainWindow(QMainWindow):
 
     # ----- Debug menu (read-only inspection) -----
 
-    def _sdf_to_brep_report_text(self, node) -> Optional[str]:
-        """The Debug → Extract SDF → B-Rep report TEXT for a node (or
-        None, with the warning already shown, when the node is not
-        extractable). Pure string building — no dialogs — so the UI
-        smoke tests can assert the report content offscreen without
-        touching QMessageBox.
+    def _report_brep_for_node(self, node, quiet: bool = False):
+        """The B-Rep the report speaks about, for a node: the node's
+        OWN exact materialization when it has one (the HybridBody —
+        the chain's exact B-Rep, read directly, never re-extracted:
+        re-extracting the SDF would be the second opinion), else the
+        dispatching bridge conversion of the node's SDF body (exact
+        primitive fit first, MC33 faceted fallback — the honest path
+        for everything outside the exact class).
 
-        Amended content (ADR-0027 D6): χ, genus and the STRUCTURAL
-        contract (is_closed_orientable) — not just closed yes/no. The
-        genus follows the acceptance-correction-1 rule: derived only
-        when χ ≤ 2 and even; a multi-shell body (χ > 2) reports
-        "n/d" (the components counter is deferred).
+        Returns (body, path_label, extras) with extras the
+        extraction-only lines (min |f| margin, elapsed ms), or
+        (None, None, None). Failures are SHOWN (QMessageBox.critical,
+        the Debug report's culture) unless `quiet` — the property
+        panel's selection path passes quiet=True: a selection change
+        must never pop a modal dialog; its honest remainder is simply
+        no mass rows (the Debug report, on demand, tells why).
         """
-        if node is None or node.kind != "sdf":
-            return None
-
-        # The bridge submodule: re-exported by the package __init__; the
-        # direct fallback covers a bare _CAD_0 found on sys.path. Any
-        # failure here (e.g. a stale mixed old-package/new-extension
-        # install) is reported, never a crash.
+        import time
         import CAD_0
         try:
             bridge_mod = getattr(CAD_0, "bridge", None) or CAD_0._CAD_0.bridge
         except Exception as exc:
-            QMessageBox.critical(self, "SDF → B-Rep", str(exc))
-            return None
+            if not quiet:
+                QMessageBox.critical(self, "Body report", str(exc))
+            return None, None, None
 
-        # Timed extraction (default options: resolution 48, primitive
-        # fit first). Bridge errors (ValueError / RuntimeError) cross
-        # the binding with the FULL message — diagnosis and remedy are
-        # already inside (ADR-0026 D2): shown verbatim, never
-        # translated, never reduced to a log line.
-        import time
+        # The exact materialization first (G1 units 3–4): instant,
+        # exact, already built — the SDF twin is the display's own.
+        exact = getattr(node, "exact_brep", None)
+        if exact is not None:
+            return exact, "exact materialization (HybridBody, bridge tolerance 0)", None
+
+        # The dispatching conversion, timed (the ADR-0026 consumer
+        # step, unchanged): fit first, faceted fallback. Bridge errors
+        # (ValueError / RuntimeError) cross the binding with the FULL
+        # message — diagnosis and remedy already inside (ADR-0026 D2):
+        # shown verbatim, never translated, never reduced to a log
+        # line.
+        #
+        # Two dispatches on this path, on purpose: sdf_to_brep for the
+        # BODY handle (the queries' input) and sdf_to_brep_report for
+        # the fit NAME + the min |f| margin (the plain-values twin —
+        # re-deriving the fit from the body's faces would be a second
+        # opinion, and the report dict is the one authority that
+        # carries it). The fit path costs ~1 ms twice; the faceted
+        # path ~50 ms twice — a Debug menu action, on demand, with the
+        # exact materialization (the G1 chain's own case) instant.
         opts = bridge_mod.SdfToBrepOptions()
         t0 = time.perf_counter()
         try:
+            body = bridge_mod.sdf_to_brep(node.body, opts)
             rep = bridge_mod.sdf_to_brep_report(node.body, opts)
         except Exception as exc:
-            QMessageBox.critical(self, "SDF → B-Rep", str(exc))
-            return None
+            if not quiet:
+                QMessageBox.critical(self, "Body report", str(exc))
+            return None, None, None
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
 
-        fit_label = {
-            "sphere": "exact primitive (sphere)",
-            "box": "exact primitive (box)",
-            "cylinder": "exact primitive (cylinder)",
+        label = {
+            "sphere": "exact primitive fit (sphere)",
+            "box": "exact primitive fit (box)",
+            "cylinder": "exact primitive fit (cylinder)",
             "faceted": "faceted extraction (MC33)",
         }.get(rep["fit"], rep["fit"])
-
-        # Labels are precomputed OUTSIDE the f-string: a backslash
-        # inside an f-string expression (e.g. the '\u00ec' escape of
-        # the old inline conditional) is a syntax error on Python
-        # 3.10, the supported floor (CI). The file is UTF-8, so the
-        # plain literal is fine.
-        orientable_label = "yes" if rep["orientable"] else "NO"
-        loops_label = "yes" if rep["loops"] else "NO"
-
-        # Genus under the correction-1 rule (ADR-0027 D6): an int when
-        # derived (χ ≤ 2 and even, structurally sound); "n/d" for a
-        # multi-shell body (χ > 2 — the components counter is
-        # deferred), never a fabricated half-integer.
-        if rep["genus"] is None:
-            genus_label = ("n/d (multi-shell? chi > 2 — components "
-                           "counter deferred)")
-        else:
-            genus_label = str(rep["genus"])
-
-        # min |f| over the sampled grid (ADR-0026 Consequences
-        # left-over, resolved as a report field): the P2 margin — how
-        # far the closest grid sample sits from the surface. 0 would
-        # mean an on-grid zero (the faceted path rejects it). A
-        # diagnostic, not a contract: shown for both paths.
-        min_abs_f = rep["min_abs_field"]
-
-        return (
-            f"Body: \"{node.name}\" (id {node.id}, {node.kind})\n"
-            f"Path: {fit_label}\n"
-            f"V = {rep['V']}, E = {rep['E']}, F = {rep['F']}\n"
-            f"\u03c7 = V - E + F = {rep['chi']}\n"
-            f"Genus = {genus_label}\n"
-            f"Closed orientable (is_closed_orientable): {orientable_label}\n"
-            f"Loops (loops_are_closed): {loops_label}\n"
-            f"min |f| on grid (P2 margin): {min_abs_f:.6g}\n"
+        extras = (
+            f"min |f| on grid (P2 margin): {rep['min_abs_field']:.6g}\n"
             f"Extraction time: {elapsed_ms:.1f} ms"
         )
+        return body, label, extras
 
-    def on_debug_sdf_to_brep_report(self) -> None:
-        """Debug → Extract SDF → B-Rep: topology report (ADR-0026
-        consumer, amended by ADR-0027 D6).
+    def _body_report_text(self, node) -> Optional[str]:
+        """The Debug → Body report TEXT for a node (or None, with the
+        failure already shown, when the node has nothing to report).
+        Pure string building over CAD_0.report — the single consumer
+        of the mass API and the body query — so the UI, the example
+        and the tests can never disagree on a number.
 
-        Runs the SDF → B-Rep bridge on the selected SDF body (or the
-        scene's only body when nothing is selected) and reports V/E/F,
-        the Euler characteristic, the genus (correction-1 rule), the
-        structural manifold/loop invariants, the path the bridge took
-        (exact primitive vs faceted extraction) and the extraction
-        time. Strictly read-only: the scene, the document and the
-        undo stack are untouched — an inspection tool, not an
+        G1 unit 6 (ADR-0032 D8 + D10.6): the report that showed the
+        structural invariants grew — mass properties (volume,
+        centroid, inertia in the readable diagonal + products form,
+        the all_exact flag) and the Layer-2 provenance (n exact /
+        m approximated per kind, the max declared tolerance) beside
+        χ = V − E + F − H (the label now carries the H term the
+        formula has had since unit 1) and genus, as always. A faceted
+        body reports its polyhedral numbers under the approximated
+        flag — never an exact in disguise.
+        """
+        if node is None or node.kind != "sdf":
+            return None
+
+        body, label, extras = self._report_brep_for_node(node)
+        if body is None:
+            return None
+
+        # The report module (the single consumer of the mass API and
+        # the body query — the UI never recomputes a number): the app
+        # package imports it beside io; the importlib fallback covers
+        # a stale mixed install, reported never crashed (the bridge
+        # submodule's own pattern above).
+        import CAD_0
+        report_mod = getattr(CAD_0, "report", None)
+        if report_mod is None:
+            import importlib
+            try:
+                report_mod = importlib.import_module("CAD_0.report")
+            except ImportError as exc:
+                QMessageBox.critical(self, "Body report", str(exc))
+                return None
+        text = report_mod.body_report_text(body, label)
+        if extras is not None:
+            text += "\n" + extras
+        return text
+
+    def on_debug_body_report(self) -> None:
+        """Debug → Body report: topology + mass + provenance (ADR-0026
+        consumer, amended by ADR-0027 D6, grown by ADR-0032 D8).
+
+        Reports on the selected body (or the scene's only body when
+        nothing is selected): V/E/F/H, the Euler characteristic χ with
+        its inner-loop term, the genus (correction-1 rule), the
+        structural manifold/loop invariants, the mass properties with
+        the exact/approximated honesty flag, the per-kind provenance
+        tallies — on the node's exact materialization when it owns
+        one, on the bridge extraction otherwise (with the path and the
+        extraction time). Strictly read-only: the scene, the document
+        and the undo stack are untouched — an inspection tool, not an
         authoring action.
         """
         if not self._has_kernel:
@@ -1851,25 +1885,25 @@ class MainWindow(QMainWindow):
             node = self._scene.node_at(0)
         if node is None:
             QMessageBox.warning(
-                self, "SDF → B-Rep",
-                "No SDF body selected.\n"
+                self, "Body report",
+                "No body selected.\n"
                 "Select a body in the feature tree (or in the viewport); "
                 "if the scene contains exactly one body, it is used "
                 "automatically.")
             return
         if node.kind != "sdf":
             QMessageBox.warning(
-                self, "SDF → B-Rep",
+                self, "Body report",
                 f"The node \"{node.name}\" is a mesh node, not an SDF node: "
                 "there is no field to convert (ADR-0002).")
             return
 
-        text = self._sdf_to_brep_report_text(node)
+        text = self._body_report_text(node)
         if text is None:
             return
         box = QMessageBox(
             QMessageBox.Icon.Information,
-            "SDF → B-Rep — topology report",
+            "Body report — topology, mass, provenance",
             text,
             QMessageBox.StandardButton.Ok,
             self,
@@ -1977,16 +2011,73 @@ class MainWindow(QMainWindow):
             display_params = {k: float(v) for k, v in params.items()
                               if isinstance(v, (int, float))}
             readonly = self._operation_info_fields(node_id, op)
+            # The mass rows (G1 unit 6): read-only, below the operand
+            # summary — the panel's numbers come from the same report
+            # module the Debug menu reads, never recomputed here.
+            readonly.update(self._mass_readonly_fields(node))
             self._property_panel.set_parameters_and_readonly(
                 node.name, display_params, readonly)
             return
-        # Show the node's parameters in the property panel.
+        # Show the node's parameters in the property panel — with the
+        # read-only mass rows below them (G1 unit 6).
         params = self._node_params.get(node_id, {})
         # Convert to dict[str, float|str|bool] for PropertyPanel
         display_params = {}
         for k, v in params.items():
             display_params[k] = float(v) if isinstance(v, (int, float)) else str(v)
-        self._property_panel.set_parameters(node.name, display_params)
+        self._property_panel.set_parameters_and_readonly(
+            node.name, display_params, self._mass_readonly_fields(node))
+
+    def _mass_readonly_fields(self, node) -> dict:
+        """The read-only mass rows for the property panel (G1 unit 6,
+        ADR-0032 D8's visible face — the honesty the order asks for).
+
+        These rows LOOK, they do not touch: they are rendered by
+        set_parameters_and_readonly as QLabels — no editor, no entry
+        in the panel's _editors, structurally incapable of emitting
+        parameter_changed, never a write, never a regeneration. The
+        UI-bug lesson (the radius field's silent death) is answered
+        structurally, not by discipline: a field that cannot edit
+        cannot crash the edit path.
+
+        The numbers come from the report module — the single consumer
+        of the unit-5 mass API — on the node's exact materialization
+        when it owns one, else on the dispatching bridge conversion
+        (primitive fit first, faceted fallback): a faceted body says
+        approximated with its own honest polyhedral numbers, never an
+        exact in disguise. A refusal (the P2 culture) is a visible
+        n/d row with the diagnosis, never a wrong number.
+        """
+        if node is None or getattr(node, "kind", None) != "sdf":
+            return {}
+
+        body, _label, _extras = self._report_brep_for_node(node, quiet=True)
+        if body is None:
+            # The quiet selection path: no dialog, no rows — the
+            # honest remainder. The Debug report (on demand, loud)
+            # tells why.
+            return {}
+
+        import CAD_0
+        report_mod = getattr(CAD_0, "report", None)
+        if report_mod is None:
+            return {}  # a stale install: the Debug report shows why
+        data = report_mod.body_report_data(body)
+
+        if data["mass_error"] is not None:
+            return {"Mass properties": f"n/d \u2014 {data['mass_error']}"}
+
+        flag = "exact" if data["all_exact"] else "approximated"
+        inertia = data["inertia"]
+        cx, cy, cz = data["centroid"]
+        return {
+            "Volume": format(data["volume"], ".6g"),
+            "Centroid": f"({cx:.4g}, {cy:.4g}, {cz:.4g})",
+            "Inertia (Ixx, Iyy, Izz)": (
+                f"{inertia[0][0]:.6g}, {inertia[1][1]:.6g}, "
+                f"{inertia[2][2]:.6g}"),
+            "Mass provenance": flag,
+        }
 
     def _operation_info_fields(self, node_id: int, op: dict) -> dict:
         """Read-only property-panel fields for an operation node: the

@@ -14,6 +14,11 @@
 //     centroid, inertia_about_centroid (density 1) and the all_exact
 //     honesty flag; a faceted body answers the polyhedral value with
 //     the flag False — never silently mixed.
+//   * CAD_0.brep.body_query(body) — the whole body as plain values
+//     (G1 unit 6, D8 one rung up): the counts V/E/F/H, χ = V−E+F−H,
+//     the genus under the ADR-0027 D6 rule, the structural flags,
+//     and the per-kind provenance tallies — the report's single
+//     source beside mass_properties.
 //
 // BRepBody arrives as the OPAQUE handle the bridge submodule already
 // registers (one registration per module — the factories' bodies and
@@ -50,10 +55,12 @@
 
 namespace nb = nanobind;
 using CAD_0::brep::BRepBody;
+using CAD_0::brep::BodySummary;
 using CAD_0::brep::FaceId;
 using CAD_0::brep::FaceInfo;
 using CAD_0::brep::LoopInfo;
 using CAD_0::brep::PCurveInfo;
+using CAD_0::brep::ProvenanceTally;
 
 namespace {
 
@@ -118,6 +125,37 @@ nb::dict face_info_dict(const FaceInfo& info) {
         loops.append(ld);
     }
     out["loops"] = loops;
+    return out;
+}
+
+// One kind's provenance tally as plain values (D8): {"exact": int,
+// "approximated": int, "max_linear_tolerance": float} — the pairing
+// exact|0 vs approximated|tol is the contract, never laundered.
+nb::dict tally_dict(const ProvenanceTally& t) {
+    nb::dict d;
+    d["exact"] = t.exact;
+    d["approximated"] = t.approximated;
+    d["max_linear_tolerance"] = t.max_linear_tolerance;
+    return d;
+}
+
+// The whole body as plain values (G1 unit 6): the counts, χ with
+// its H term, the genus under the D6 rule (None when not derived —
+// a multi-shell body reports n/d, never a fabricated half-integer),
+// the structural flags, and the per-kind provenance tallies.
+nb::dict body_summary_dict(const BodySummary& s) {
+    nb::dict out;
+    out["V"] = s.vertex_count;
+    out["E"] = s.edge_count;
+    out["F"] = s.face_count;
+    out["H"] = s.inner_loops;
+    out["chi"] = s.chi;
+    out["orientable"] = s.orientable;
+    out["loops_closed"] = s.loops_closed;
+    out["genus"] = s.genus_derived ? nb::int_(s.genus) : nb::none();
+    out["vertices"] = tally_dict(s.vertices);
+    out["edges"] = tally_dict(s.edges);
+    out["faces"] = tally_dict(s.faces);
     return out;
 }
 
@@ -189,4 +227,24 @@ void bind_brep(nb::module_& m) {
         "with all_exact=False (never silently mixed). Raises ValueError\n"
         "for out-of-class faces, the empty body, a non-closed shell or\n"
         "a degenerate volume (diagnosis + remedy verbatim).");
+
+    // The body query (G1 unit 6, ADR-0032 D8 at the body level): the
+    // whole body as plain values — the report's single source beside
+    // mass_properties. Every number is a pinned authority's own answer
+    // (euler_characteristic, inner_loop_count, genus_from_chi, the
+    // provenance fields) — no second opinion exists to drift from.
+    brep_mod.def(
+        "body_query",
+        [](const BRepBody& body) {
+            return body_summary_dict(CAD_0::brep::query_body(body));
+        },
+        nb::arg("body"),
+        "The whole body as plain values: {V, E, F, H (inner loops),\n"
+        "chi = V - E + F - H, orientable, loops_closed, genus (int or\n"
+        "None — derived only under the ADR-0027 D6 rule: orientable\n"
+        "body, chi <= 2 and even; a multi-shell body reports None,\n"
+        "\"n/d\"), vertices/edges/faces: {exact, approximated,\n"
+        "max_linear_tolerance} — the Layer-2 provenance tallies.\n"
+        "Raises ValueError for the empty body (diagnosis + remedy\n"
+        "verbatim — no shell to summarize).");
 }

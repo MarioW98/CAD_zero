@@ -481,10 +481,14 @@ def test_the_hole_sequence_from_menus_and_canvas(sketch_app, monkeypatch):
     assert _select_tree_row(win, hole_id).text(1) == "CSG"
 
     # The hole is real, and Debug reports genus 1 (the same pure
-    # string builder the Debug menu shows).
+    # string builder the Debug menu shows). G1 unit 6: the hole node
+    # owns its exact materialization — the report reads THAT (the
+    # counts are the pinned table's, the flag says exact).
     body = win._scene.get_node(hole_id).body
     assert body.value(_math.Vec3f(0.3, 0.0, 0.0)) == pytest.approx(
         0.35, abs=1e-6)
-    text = win._sdf_to_brep_report_text(win._scene.get_node(hole_id))
-    assert "\u03c7 = V - E + F = 0" in text
+    text = win._body_report_text(win._scene.get_node(hole_id))
+    assert "V = 12, E = 17, F = 7, H (inner loops) = 2" in text
+    assert "V - E + F - H = 12 - 17 + 7 - 2 = 0" in text
     assert "Genus = 1" in text
+    assert "all_exact = True" in text

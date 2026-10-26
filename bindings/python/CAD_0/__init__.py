@@ -18,7 +18,7 @@ from . import _CAD_0  # noqa: F401
 
 # Re-export kernel submodules
 from ._CAD_0 import (  # noqa: F401
-    math, geometry, sdf, scene, camera, commands, bridge,
+    math, geometry, sdf, scene, camera, commands, bridge, brep,
 )
 from ._CAD_0.geometry import (  # noqa: F401
     Shape,
@@ -33,6 +33,10 @@ from ._CAD_0.geometry import (  # noqa: F401
 
 # Python-side io module (wraps C++ io with auto-detect export)
 from . import io  # noqa: F401
+
+# Python-side report builder (G1 unit 6): the single consumer of the
+# mass API and the body query.
+from . import report  # noqa: F401
 
 # Python-side viewer (matplotlib 3D + 2D slices)
 try:
@@ -52,11 +56,13 @@ __all__ = [
     "geometry",
     "sdf",
     "io",
+    "report",
     "viewer",
     "scene",
     "camera",
     "commands",
     "bridge",
+    "brep",
     "ui",
     "Shape",
     "ShapeId",

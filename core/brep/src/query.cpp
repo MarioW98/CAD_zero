@@ -95,4 +95,91 @@ std::vector<FaceInfo> query_all_faces(const BRepBody& body) {
     return out;
 }
 
+// ---------------------------------------------------------------------------
+// The body query (G1 unit 6): a thin aggregation of the authorities —
+// every number below is another pinned function's own answer.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// One kind's tally: exact, approximated, and the max declared bound.
+// The max is over ALL subshapes of the kind (an exact subshape
+// contributes 0 — the pairing IS the contract), so the report's
+// "max tolerance" is the honest worst case, never diluted.
+ProvenanceTally tally(const std::vector<ProvenanceInfo>& records) {
+    ProvenanceTally t;
+    for (const ProvenanceInfo& p : records) {
+        if (p.is_exact()) {
+            ++t.exact;
+        } else {
+            ++t.approximated;
+            if (p.linear_tolerance > t.max_linear_tolerance)
+                t.max_linear_tolerance = p.linear_tolerance;
+        }
+    }
+    return t;
+}
+
+} // namespace
+
+BodySummary query_body(const BRepBody& body) {
+    // The empty body refuses, loudly (the P2 pattern): there is no
+    // shell to summarize, and χ = 0 / genus 1 painted on nothing
+    // would be a lie with a straight face. The remedy names the
+    // consumers that already refuse it — mass_properties for the same
+    // reason, the bridge report on entry.
+    if (body.vertices.empty() && body.edges.empty() &&
+        body.face_count() == 0) {
+        std::ostringstream os;
+        os << "query_body: the empty body has no topology to report "
+              "(no vertices, no edges, no faces) — remedy: pass a body "
+              "with a shell (a factory product, an exact "
+              "materialization, or a bridge extraction; "
+              "mass_properties refuses the empty body for the same "
+              "reason, and the bridge report refuses it on entry).";
+        throw std::invalid_argument(os.str());
+    }
+
+    BodySummary s;
+    s.vertex_count = body.vertex_count();
+    s.edge_count = body.edge_count();
+    s.face_count = body.face_count();
+    s.inner_loops = inner_loop_count(body);
+    s.chi = euler_characteristic(body);
+    s.orientable = is_closed_orientable(body);
+    s.loops_closed = loops_are_closed(body);
+
+    // The genus, under the bridge report's own rule (one authority:
+    // the same gate, the same function): derived only for a body the
+    // structural contract already vouches for, with genus_from_chi
+    // encoding the χ ≤ 2 / even gates itself.
+    if (s.orientable) {
+        if (const std::optional<std::int64_t> g = genus_from_chi(s.chi)) {
+            s.genus_derived = true;
+            s.genus = *g;
+        }
+    }
+
+    // The provenance tallies, per kind (D8: "n exact / m
+    // approximated, with the max tolerance" — never a guess, never
+    // laundered).
+    std::vector<ProvenanceInfo> records;
+    records.reserve(body.vertices.size());
+    for (const auto& v : body.vertices) records.push_back(v.provenance());
+    s.vertices = tally(records);
+
+    records.clear();
+    records.reserve(body.edges.size());
+    for (const auto& e : body.edges) records.push_back(e.provenance());
+    s.edges = tally(records);
+
+    records.clear();
+    records.reserve(body.face_count());
+    for (const auto& f : body.solid.shell().faces())
+        records.push_back(f.provenance());
+    s.faces = tally(records);
+
+    return s;
+}
+
 } // namespace CAD_0::brep

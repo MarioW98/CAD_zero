@@ -8,6 +8,17 @@
 // type and readable parameters, alongside the Layer-2 provenance
 // record.
 //
+// The BODY query (G1 unit 6, the same D8 contract one rung up): the
+// Debug report asked for the whole body as plain values — the counts,
+// χ with its inner-loop term, the genus, and the provenance tallies
+// per subshape kind — so "questo bordo è esatto?" answers at the
+// body level too, without walking faces. `query_body` is a THIN
+// aggregator of the existing authorities (euler_characteristic,
+// inner_loop_count, is_closed_orientable, loops_are_closed,
+// genus_from_chi, the per-subshape provenance fields): no number is
+// computed here that is not already a pinned function's own — the
+// report that consumes it stays the single opinion.
+//
 // Design notes, per the house rules:
 //
 //   * FREE FUNCTIONS, read-only — the ADR-0022 §2 query-operator
@@ -39,6 +50,7 @@
 #include "CAD_0/brep/topology.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -109,5 +121,61 @@ FaceInfo query_face(const BRepBody& body, FaceId face_id);
 // An empty body returns an empty vector (a legitimate answer, not an
 // error: an empty shell has no faces to describe).
 std::vector<FaceInfo> query_all_faces(const BRepBody& body);
+
+// ---------------------------------------------------------------------------
+// The body query (G1 unit 6, ADR-0032 D8 at the body level)
+// ---------------------------------------------------------------------------
+
+// One subshape kind's provenance tally (D2.4 + D8): how many exact,
+// how many approximated, and the maximum declared linear tolerance
+// over the kind's subshapes. max_linear_tolerance is 0 for an
+// all-exact kind — the pairing IS the contract (exact | 0).
+struct ProvenanceTally {
+    std::size_t exact{0};
+    std::size_t approximated{0};
+    double max_linear_tolerance{0.0};
+};
+
+// The whole body as plain values — what the Debug report renders and
+// the guide case's table reads as its "reported" column. Every field
+// is an existing authority's own answer, verbatim:
+//
+//   * vertex_count / edge_count / face_count — the body's own counts;
+//   * inner_loops — inner_loop_count (H, the χ term's own query);
+//   * chi — euler_characteristic, χ = V − E + F − H;
+//   * orientable / loops_closed — is_closed_orientable /
+//     loops_are_closed, the structural contract as reported;
+//   * genus — genus_from_chi under the ADR-0027 D6 rule the bridge
+//     report already applies: derived only when the body is
+//     orientable AND the χ gates hold (χ ≤ 2 and even — the rule
+//     genus_from_chi itself encodes). When genus_derived is false the
+//     genus must not be read: a multi-shell body (χ > 2) is "n/d",
+//     and an odd χ is an assembly defect reported, never smoothed
+//     into a half-integer;
+//   * vertices / edges / faces — the per-kind provenance tallies
+//     (D8's "n exact / m approximated, with the max tolerance").
+struct BodySummary {
+    std::size_t vertex_count{0};
+    std::size_t edge_count{0};
+    std::size_t face_count{0};
+    std::int64_t inner_loops{0};  // H = Σ_f max(0, loops(f) − 1)
+    std::int64_t chi{0};          // V − E + F − H
+    bool orientable{false};       // is_closed_orientable
+    bool loops_closed{false};     // loops_are_closed
+    bool genus_derived{false};    // valid iff true (the D6 rule)
+    std::int64_t genus{0};
+    ProvenanceTally vertices{};
+    ProvenanceTally edges{};
+    ProvenanceTally faces{};
+};
+
+// query_body — the body's whole answer, as plain values. Throws
+// std::invalid_argument (diagnosis + remedy, the P2 pattern) for the
+// EMPTY body: with no vertices and no faces there is no shell to
+// summarize, and the counts would silently paint χ = 0 / genus 1 on
+// nothing — mass_properties refuses the same body for the same
+// reason. A non-empty body never throws (every field is a noexcept
+// authority's answer).
+BodySummary query_body(const BRepBody& body);
 
 } // namespace CAD_0::brep

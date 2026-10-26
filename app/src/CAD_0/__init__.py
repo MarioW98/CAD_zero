@@ -66,6 +66,10 @@ try:
     # Bug fix: this import was missing, so `CAD_0.io` (documented in the
     # README) raised AttributeError after a plain `import CAD_0`.
     from . import io  # noqa: F401
+    # Python-side report builder (G1 unit 6): the single consumer of
+    # the mass API and the body query — the UI, the example and the
+    # tests render through it, no second opinion.
+    from . import report  # noqa: F401
     _HAS_KERNEL = True
 except ImportError:
     _HAS_KERNEL = False
