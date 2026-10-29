@@ -285,10 +285,23 @@ V=17, E=27, F=12, closed manifold.
   (V=17/E=27/F=12), overlapping-slab, grid-straddle and slab tests,
   plus a minimal `polygon_subtract_fragments_for_tests` regression:
   exactly ONE outside fragment `[-1,-0.7]×[-1,1]`.
-- **v5 known limitation**: `bool_union` with PARTIALLY overlapping
-  coplanar faces still subtracts the overlap from both sides (the
-  overlap region belongs in the union boundary once). Same
-  classification, different action — deferred.
+- **v5 limitation → H2-u2 refusal (amended in place, H2)**: the
+  partial coplanar overlap defect is no longer returned. While the
+  limitation stood, `bool_union` subtracted the overlap from both
+  sides and the OPEN SHELL — 8 rim edges carrying a single co-edge —
+  was returned as a `BRepBody`, pinned by two tests asserting the
+  non-manifold result. H2 unit 2 flipped the contract: the polygon
+  booleans' Layer-1 assembly postconditions are HARD, and the open
+  shell is REFUSED with its name (`result_edge_not_manifold`, the
+  message naming the partial coplanar class, the rim census "8 of 24"
+  and the remedy; `std::runtime_error`) — the body does not exist for
+  the caller and cannot enter the feature tree. The full handling of
+  the class (the sewn shared-face union boundary) is H2 unit 5 of the
+  contract-honesty phase; the refusal is the declared interim answer,
+  not a fix. The zero-volume contact class is UNCHANGED: the
+  face-touching intersect still answers the shared disk (one face,
+  every edge one co-edge, χ = 1) — an honest lower-dimensional answer,
+  not an assembly defect.
 
 ## References
 - ADR-0024 — boolean union/subtract (parent).

@@ -47,6 +47,16 @@ using Polygon = std::vector<math::Vec3d>;
 constexpr double kWeldGrid = 1e-6;
 constexpr double kPlaneTol = 1e-6;  // Plane classification tolerance (ADR-0025 FASE 3)
 constexpr double kEps       = 1e-9;
+// H2 unit 1 (the input gate): the class gates that are RELATIVE to the
+// body's own scale. A solid of volume under kVolumeRelTol * scale^3 or a
+// face of area under kAreaRelTol * scale^2 (scale = the largest vertex
+// coordinate magnitude) is outside the declared boolean class — the
+// operations are defined on full-dimensional solids, and a near-flat
+// body would classify every point "on boundary" without answering a
+// geometric question. Relative, so the gate means the same thing at
+// every model scale.
+constexpr double kVolumeRelTol = 1e-9;
+constexpr double kAreaRelTol   = 1e-9;
 // Degenerate-denominator guard for the edge/plane crossing
 // interpolation in IntersectionTable: below this |d0 − d1| the crossing
 // point is not computed and the edge start vertex is reused. Purely a
@@ -92,6 +102,36 @@ SnappedKeySet snap_polygon(const Polygon& poly) {
 // Plane helpers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The typed plane reader (H1, ADR-0034 D3 — the residue cleaned by H2
+// unit 1): the plane payload is extracted through the surface VISITOR,
+// the same way the SSI table reads its operands. The string-compare +
+// dynamic_cast chain this file carried since Phase D ("is the type
+// name 'plane'? then cast") is the exact defect class ADR-0034 D3
+// banned in ssi.cpp — a typo'd tag compiled and failed at runtime.
+// Here the family is the typed enum and the payload arrives through
+// the visit overload; there is no string in the dispatch.
+// ---------------------------------------------------------------------------
+struct PlanePayloadReader : SurfaceVisitor {
+    const PlaneSurface* plane{nullptr};
+    void visit(const PlaneSurface& s) override { plane = &s; }
+};
+
+// The face's plane payload, or nullptr when the face carries no
+// surface or a non-plane family. The ONLY sanctioned plane extraction
+// in this file — every consumer (the gate, the clippers) reads through
+// it, so the class decision and the payload can never diverge.
+const PlaneSurface* plane_of(const Face& face) {
+    const auto* surf = face.surface();
+    if (!surf) return nullptr;
+    // The typed gate first (the enum — one naming authority): the
+    // visitor below is the payload extraction for the admitted family.
+    if (surf->family() != SurfaceFamily::Plane) return nullptr;
+    PlanePayloadReader reader;
+    surf->accept(reader);
+    return reader.plane;
+}
+
 bool get_face_plane(
     const Face& face,
     const std::vector<Edge>& edges,
@@ -99,10 +139,7 @@ bool get_face_plane(
     math::Vec3d& origin,
     math::Vec3d& normal
 ) {
-    const auto* surf = face.surface();
-    if (!surf) return false;
-    if (std::string(surf->type_name()) != "plane") return false;
-    const auto* plane = dynamic_cast<const PlaneSurface*>(surf);
+    const auto* plane = plane_of(face);
     if (!plane) return false;
     normal = plane->normal_vec();
     if (face.loops().empty() || face.loops()[0].coedges().empty()) {
@@ -118,6 +155,15 @@ bool get_face_plane(
     return true;
 }
 
+// The face's outer-loop polygon, in loop order.
+//
+// H2 unit 1 (the input gate): this reader walks the face's FIRST loop
+// — the class the boolean header declares is "exactly one outer loop
+// per face", and the gate (validate_boolean_input below) refuses every
+// multi-loop face BEFORE any reader runs. Within the enforced class
+// the single-loop walk is exact: there are no inner loops to ignore,
+// and a body that gains one is rejected with its name
+// (input_face_inner_loops) instead of silently mis-read.
 Polygon extract_face_polygon(
     const Face& face,
     const std::vector<Edge>& edges,
@@ -125,8 +171,7 @@ Polygon extract_face_polygon(
 ) {
     Polygon poly;
     if (face.loops().empty()) return poly;
-    const auto* surf = face.surface();
-    if (!surf || std::string(surf->type_name()) != "plane") return poly;
+    if (!plane_of(face)) return poly;
     const auto& loop = face.loops()[0];
     poly.reserve(loop.coedges().size());
     for (const auto& ce : loop.coedges()) {
@@ -1242,6 +1287,151 @@ void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces,
     link_radial_edges(result);
 }
 
+// ---------------------------------------------------------------------------
+// H2 unit 2 — THE OUTPUT GATE (the honest refusal of results).
+// ---------------------------------------------------------------------------
+//
+// The Layer-1 assembly postconditions become HARD for the three
+// polygon booleans, mirroring exact_subtract's culture (the bridge's
+// rule: an assembly defect is thrown, never returned): after
+// assemble_body links the radial edges, the result must be ONE of the
+// honest outcome classes — anything else is refused with its name,
+// the measured evidence and the remedy, and the body NEVER reaches
+// the caller (it cannot enter the feature tree, the report, or an
+// export).
+//
+// The honest outcome classes (derived, not assumed):
+//
+//   1. THE EMPTY ANSWER — zero faces. The operation truthfully
+//      produced nothing (disjoint intersect, A \ A). Accepted.
+//   2. THE ZERO-VOLUME CONTACT ANSWER (the pinned ADR-0025 class) —
+//      exactly one face, every edge carrying exactly one co-edge,
+//      loops closed, chi = 1: a disk. The true intersection of two
+//      solids touching face-to-face IS that lower-dimensional answer,
+//      and the pinned tests assert it as documented behavior — the
+//      body does not claim to bound a volume (the shell's closed flag
+//      is set false here: a disk has a boundary; the flag stops
+//      lying). Accepted.
+//   3. THE SOLID ANSWER — a closed orientable manifold (every edge
+//      exactly two co-edges in opposite orientations, every loop
+//      chained) with an EVEN chi (with the H term): every closed
+//      orientable component contributes an even chi, so an even chi
+//      is the whole coherence the assembly can be held to — chi > 2
+//      (multi-shell, e.g. the union of disjoint bodies) is a
+//      CLASSIFICATION per ADR-0022's amendment, never an assembly
+//      defect, and is accepted as such.
+//
+// Everything else is refused:
+//
+//   result_loop_open          a loop does not chain.
+//   result_edge_not_manifold  an edge carries != 2 co-edges — the
+//                             open-shell signature (the boundary rim).
+//   result_edge_not_orientable two co-edges traverse an edge the same
+//                             way (the duplicated interface ring).
+//   result_odd_chi            chi odd under passing structure — the
+//                             assembly defect the structure alone
+//                             cannot see (ADR-0022 §7's own analysis).
+//
+// The open-shell refusal names the KNOWN input class behind it — the
+// partial coplanar overlap of ADR-0025 v5's limitation — and declares
+// the refusal the interim answer: the class's full handling is H2
+// unit 5. A refused result throws std::runtime_error (the operation
+// ran; the RESULT failed its postcondition — an input defect would
+// have been caught by the input gate first).
+void assert_boolean_result_honest(BRepBody& result, const char* op) {
+    auto refuse = [op](const std::string& cls, const std::string& diagnosis,
+                       const std::string& remedy) {
+        throw std::runtime_error(
+            std::string(op) + ": the result was refused — " + cls + ": " +
+            diagnosis + " Remedy: " + remedy + ".");
+    };
+
+    auto& shell = result.solid.shell_mut();
+    const auto& faces = shell.faces();
+    if (faces.empty()) {
+        return;  // class 1: the honest empty answer
+    }
+
+    const bool loops_closed = loops_are_closed(result);
+    std::size_t single = 0, paired = 0, bad_orientation = 0;
+    for (const auto& e : result.edges) {
+        const auto n = e.coedges().size();
+        if (n == 1) {
+            ++single;
+        } else if (n == 2) {
+            if (e.coedges()[0]->reversed() == e.coedges()[1]->reversed()) {
+                ++bad_orientation;
+            } else {
+                ++paired;
+            }
+        }
+    }
+
+    // Class 2: the zero-volume contact answer (a disk).
+    if (faces.size() == 1 && single == result.edges.size() &&
+        paired == 0 && bad_orientation == 0 && loops_closed) {
+        const std::int64_t chi = euler_characteristic(result);
+        if (chi == 1) {
+            shell.set_closed(false);  // a disk has a boundary: the flag
+                                      // stops claiming closure
+            return;
+        }
+    }
+
+    // Class 3 gate: the structural invariants, each with its name.
+    if (!loops_closed) {
+        refuse("result_loop_open",
+               "a loop of the assembled result does not chain (the "
+               "radial-edge structure was built, so this is an "
+               "assembly defect, not a caller error).",
+               "report this as a kernel bug with the two inputs; the "
+               "operation must never return a body whose loops do "
+               "not close");
+    }
+    if (single != 0 || (paired + bad_orientation + single) !=
+                           result.edges.size()) {
+        refuse("result_edge_not_manifold",
+               std::to_string(single) + " of " +
+                   std::to_string(result.edges.size()) +
+                   " edges carry a single co-edge (a boundary rim) — "
+                   "the assembled shell bounds no solid. This is the "
+                   "known PARTIAL COPLANAR OVERLAP class (ADR-0025 v5's "
+                   "limitation): the union of the faces' outside parts "
+                   "leaves the overlap's rim open, and until H2 unit 5 "
+                   "sews the shared-face class the refusal IS the "
+                   "answer. The body is NOT returned and must not "
+                   "enter the feature tree.",
+               "treat the refusal as the operation's honest result; "
+               "the class's full handling (the sewn union boundary) "
+               "is H2 unit 5 of the contract-honesty phase — a "
+               "non-coplanar pair, or the exact subtract, are the "
+               "in-class alternatives today");
+    }
+    if (bad_orientation != 0) {
+        refuse("result_edge_not_orientable",
+               std::to_string(bad_orientation) + " edge(s) carry two "
+               "co-edges traversing them in the SAME direction (the "
+               "duplicated interface ring ADR-0022 §7 warns about — "
+               "chi cannot see it, the XOR does).",
+               "report this as a kernel bug with the two inputs; the "
+               "operation must never return a non-orientable "
+               "assembly");
+    }
+    const std::int64_t chi = euler_characteristic(result);
+    if ((chi & 1) != 0) {
+        refuse("result_odd_chi",
+               "chi = " + std::to_string(chi) +
+                   " (odd, with the H term) while the structural "
+                   "invariants pass — every closed orientable "
+                   "component has even chi, so an odd chi is an "
+                   "assembly defect the structure alone cannot see "
+                   "(ADR-0022's own analysis).",
+               "report this as a kernel bug with the two inputs");
+    }
+    // Class 3 accepted: the flag may stay true — the shell IS closed.
+    shell.set_closed(true);
+}
+
 // Check if two bodies have identical vertex sets (within kWeldGrid).
 // Used for the A == B shortcut in bool_union.
 bool bodies_identical(const BRepBody& A, const BRepBody& B) {
@@ -1252,25 +1442,453 @@ bool bodies_identical(const BRepBody& A, const BRepBody& B) {
     return a_keys == b_keys;
 }
 
+// ---------------------------------------------------------------------------
+// H2 unit 1 — THE INPUT GATE (the single boolean validator).
+// ---------------------------------------------------------------------------
+//
+// ONE function, called as the FIRST thing by all three operations
+// (union, intersect, subtract) on BOTH operands, before any shortcut,
+// clipping or mutation. The contract it enforces is the one the header
+// declares (boolean.hpp): planar-faced convex polyhedra, closed
+// orientable manifolds, exactly one outer loop per face. Until this
+// gate existed the only enforced clause was "the surfaces are planes"
+// (the old validate_planar lambda, duplicated three times) — an input
+// outside the declared class could be accepted and mis-clipped without
+// a sound, because extract_face_polygon reads the first loop only and
+// the half-space machinery assumes a closed convex solid.
+//
+// THE TAXONOMY — every violated prerequisite carries ITS OWN error
+// (the house's actionable-error pattern: the message names the
+// prerequisite, the responsible entity with its measured evidence, and
+// the remedy; never a generic "invalid input"). The classes, in the
+// deterministic order the gate checks them:
+//
+//   input_empty_body         the operand has no vertices/edges/faces —
+//                            there is no solid to operate on.
+//   input_topology_reference a co-edge names an edge that does not
+//                            exist, or an edge names a vertex that does
+//                            not exist — the topology graph is torn.
+//   input_surface_not_plane  a face carries no surface or a non-plane
+//                            family (the curved-surface class is G2's
+//                            extended table, not this one).
+//   input_face_inner_loops   a face carries more than one loop — the
+//                            holed-face class (e.g. an exact subtract's
+//                            pierced output re-entered as an input).
+//                            The declared class is one outer loop per
+//                            face; the old code silently read
+//                            loops()[0] and ignored the hole.
+//   input_loop_open          a loop does not chain (end of co-edge i !=
+//                            start of co-edge i+1) or is too short to
+//                            bound a region.
+//   input_edge_not_manifold  an edge carries != 2 co-edges (a boundary
+//                            rim or a non-manifold fan) — the half-space
+//                            classification assumes a closed solid.
+//   input_coedge_orientation an edge's two co-edges traverse it in the
+//                            SAME direction (the orientability XOR,
+//                            ADR-0022 §5 invariant 2).
+//   input_loop_off_plane     a loop vertex lies off its own face's
+//                            plane — the surface/border coherence the
+//                            polygon reader depends on.
+//   input_face_orientation   the face normals point INTO the solid
+//                            (globally, measured by the divergence
+//                            volume) — every inside/outside test would
+//                            invert.
+//   input_zero_volume        the operand is not full-dimensional (flat
+//                            or measure-zero) — not a solid.
+//   input_loop_winding       a loop winds CW around its own face
+//                            normal — the slab decomposition
+//                            (polygon_subtract_3d) takes the interior
+//                            to the LEFT of each edge, which assumes
+//                            CCW w.r.t. the normal.
+//   input_face_not_convex    a face's polygon has a reflex vertex —
+//                            the declared class is convex polygons.
+//   input_not_convex         the polyhedron is not the intersection of
+//                            its faces' half-spaces (a vertex lies
+//                            beyond a face's supporting plane) — the
+//                            Sutherland-Hodgman/inside tests are
+//                            correct only for convex operands.
+//
+// The checks are ordered so the SAME input always yields the SAME
+// first violation (deterministic refusals, ADR-0014 in spirit): data
+// integrity before geometry, geometry before class shape.
+//
+// Throws std::invalid_argument (an INPUT defect — the operation was
+// never obliged to run; the RESULT-side refusals of H2 unit 2 throw
+// std::runtime_error, the exact_subtract precedent).
+void validate_boolean_input(const BRepBody& body, const char* op,
+                            const char* input_name) {
+    const std::string where = std::string(op) + ": input " + input_name +
+                              " rejected — ";
+    const std::string note =
+        " (the declared class: planar-faced convex polyhedra, closed "
+        "orientable manifold, one outer loop per face — boolean.hpp)";
+    auto fail = [&where, &note](const std::string& cls,
+                                const std::string& diagnosis,
+                                const std::string& remedy) {
+        throw std::invalid_argument(
+            where + cls + ": " + diagnosis + " Remedy: " + remedy + "." +
+            note);
+    };
+
+    const auto& shell = body.solid.shell();
+    const auto& faces = shell.faces();
+
+    // -- 1. the empty body ------------------------------------------------
+    if (body.vertices.empty() || body.edges.empty() || faces.empty()) {
+        fail("input_empty_body",
+             "the body carries " +
+                 std::to_string(body.vertices.size()) + " vertex(es), " +
+                 std::to_string(body.edges.size()) + " edge(s), " +
+                 std::to_string(faces.size()) + " face(s) — there is no "
+                 "solid to operate on.",
+             "pass a real solid; if this came from an operation that "
+             "may legitimately produce nothing, check for emptiness "
+             "before calling");
+    }
+
+    // -- 2. topological reference coherence --------------------------------
+    for (const auto& e : body.edges) {
+        if (e.vertex(0) >= body.vertices.size() ||
+            e.vertex(1) >= body.vertices.size()) {
+            fail("input_topology_reference",
+                 "edge " + std::to_string(e.id()) + " names vertex " +
+                     std::to_string(std::max(e.vertex(0), e.vertex(1))) +
+                     " but the body has " +
+                     std::to_string(body.vertices.size()) +
+                     " vertices — the topology graph is torn.",
+                 "rebuild the body; edge endpoints must index the body's "
+                 "own vertex table");
+        }
+    }
+    for (const auto& f : faces) {
+        for (const auto& loop : f.loops()) {
+            for (const auto& ce : loop.coedges()) {
+                if (ce.edge() >= body.edges.size()) {
+                    fail("input_topology_reference",
+                         "a co-edge of face " + std::to_string(f.id()) +
+                             " names edge " + std::to_string(ce.edge()) +
+                             " but the body has " +
+                             std::to_string(body.edges.size()) +
+                             " edges — the topology graph is torn.",
+                         "rebuild the body; co-edges must reference "
+                         "existing edges");
+                }
+            }
+        }
+    }
+
+    // -- 3. the plane family (typed — the enum, never a string) ------------
+    for (const auto& f : faces) {
+        const auto* surf = f.surface();
+        const auto* plane = plane_of(f);
+        if (!plane) {
+            const char* fam = surf ? family_name(surf->family())
+                                   : family_name(SurfaceFamily::None);
+            fail("input_surface_not_plane",
+                 std::string("face ") + std::to_string(f.id()) +
+                     " carries the '" + fam +
+                     "' family — this boolean class clips planes only.",
+                 "the curved-surface booleans belong to the extended G2 "
+                 "table (ADR-0033); pass a planar-faced body");
+        }
+    }
+
+    // -- 4. one outer loop per face (no inner loops in the class) ----------
+    for (const auto& f : faces) {
+        if (f.loops().size() != 1) {
+            fail("input_face_inner_loops",
+                 "face " + std::to_string(f.id()) + " carries " +
+                     std::to_string(f.loops().size()) +
+                     " loop(s); the declared class is exactly one outer "
+                     "loop per face — a holed face would be silently "
+                     "mis-read (only its first loop is on the class's "
+                     "boundary).",
+                 "the holed-face class is out of this boolean's scope "
+                 "(the polygon reader walks the outer loop only); "
+                     "operate on the disk-faced class or extend the "
+                     "kernel with the holed-class booleans (H2 ledger)");
+        }
+    }
+
+    // -- 5. loop closure ---------------------------------------------------
+    for (const auto& f : faces) {
+        for (const auto& loop : f.loops()) {
+            const auto& ces = loop.coedges();
+            if (ces.size() < 3) {
+                fail("input_loop_open",
+                     "face " + std::to_string(f.id()) +
+                         " has a loop of " + std::to_string(ces.size()) +
+                         " co-edge(s) — too short to bound a region.",
+                     "rebuild the body; a face boundary needs at least "
+                     "three chained co-edges");
+            }
+            for (std::size_t i = 0; i < ces.size(); ++i) {
+                const VertexId end_i =
+                    ces[i].end_vertex(body.edges);
+                const VertexId start_next =
+                    ces[(i + 1) % ces.size()].start_vertex(body.edges);
+                if (end_i != start_next) {
+                    fail("input_loop_open",
+                         "face " + std::to_string(f.id()) +
+                             ": co-edge " + std::to_string(i) +
+                             " ends at vertex " + std::to_string(end_i) +
+                             " but co-edge " +
+                             std::to_string((i + 1) % ces.size()) +
+                             " starts at vertex " +
+                             std::to_string(start_next) +
+                             " — the loop does not chain.",
+                         "rebuild the body; each loop must be a closed "
+                         "cycle of co-edges");
+                }
+            }
+        }
+    }
+
+    // -- 6. edge manifoldness (the census) ---------------------------------
+    for (const auto& e : body.edges) {
+        const auto n = e.coedges().size();
+        if (n != 2) {
+            fail("input_edge_not_manifold",
+                 "edge " + std::to_string(e.id()) + " carries " +
+                     std::to_string(n) +
+                     " co-edge(s) (a closed solid's edge carries "
+                     "exactly 2) — the operand is open or non-manifold.",
+                 "pass closed manifold solids; an open-shell operand "
+                 "has no inside to classify");
+        }
+    }
+
+    // -- 7. the orientability XOR (ADR-0022 §5 invariant 2) ----------------
+    for (const auto& e : body.edges) {
+        if (e.coedges().size() == 2 &&
+            e.coedges()[0]->reversed() == e.coedges()[1]->reversed()) {
+            fail("input_coedge_orientation",
+                 "edge " + std::to_string(e.id()) +
+                     "'s two co-edges traverse it in the SAME direction "
+                     "(the orientability XOR fails) — the faces around "
+                     "this edge do not bound an orientable solid.",
+                 "rebuild the body with consistent face orientations "
+                 "(every shared edge traversed once per direction)");
+        }
+    }
+
+    // -- 8. surface/border coherence: loop vertices coplanar ---------------
+    // The plane measured here is the one the algorithm itself uses:
+    // get_face_plane anchors the clipping plane at the loop's FIRST
+    // vertex (the PlaneSurface's origin field is a parameterization
+    // anchor anywhere along the plane, not a point on the face). The
+    // coherence the polygon machinery needs is exactly this: every
+    // loop vertex on the plane through the first vertex with the
+    // face's normal.
+    for (const auto& f : faces) {
+        const auto* plane = plane_of(f);
+        const auto& loop = f.loops()[0];
+        const math::Vec3d anchor =
+            body.vertices[loop.coedges()[0].start_vertex(body.edges)]
+                .position();
+        for (const auto& ce : loop.coedges()) {
+            const VertexId vid = ce.start_vertex(body.edges);
+            const math::Vec3d p = body.vertices[vid].position();
+            const double d =
+                (p - anchor).dot(plane->normal_vec());
+            if (std::abs(d) > kPlaneTol) {
+                fail("input_loop_off_plane",
+                     "face " + std::to_string(f.id()) + ": vertex " +
+                         std::to_string(vid) +
+                         " lies " + std::to_string(d) +
+                         " mm off the face's own plane — the surface "
+                         "and its border disagree.",
+                     "rebuild the body; every loop vertex must lie on "
+                     "its face's surface within the plane tolerance");
+            }
+        }
+    }
+
+    // The polygons, once, for the metric gates below.
+    std::vector<Polygon> polys;
+    polys.reserve(faces.size());
+    std::vector<math::Vec3d> normals;
+    normals.reserve(faces.size());
+    double scale = 0.0;
+    for (const auto& v : body.vertices) {
+        scale = std::max(scale, std::abs(v.position().x));
+        scale = std::max(scale, std::abs(v.position().y));
+        scale = std::max(scale, std::abs(v.position().z));
+    }
+    for (const auto& f : faces) {
+        polys.push_back(extract_face_polygon(f, body.edges, body.vertices));
+        normals.push_back(plane_of(f)->normal_vec());
+    }
+
+    // -- 9. the divergence volume with the STORED normals ------------------
+    // V = (1/3)∮x·n dA over the faces' triangle fans, the TRUE area per
+    // fan triangle (independent of loop winding): for an outward-normal
+    // convex solid every fan triangle's centroid lies inside and every
+    // contribution is positive. Globally negative → the normals point
+    // into the solid; ~zero → the operand is not full-dimensional.
+    {
+        double vol = 0.0;
+        for (std::size_t fi = 0; fi < faces.size(); ++fi) {
+            const auto& poly = polys[fi];
+            const auto& n = normals[fi];
+            if (poly.size() < 3) continue;
+            for (std::size_t i = 1; i + 1 < poly.size(); ++i) {
+                const math::Vec3d cr =
+                    (poly[i] - poly[0]).cross(poly[i + 1] - poly[0]);
+                const math::Vec3d centroid =
+                    (poly[0] + poly[i] + poly[i + 1]) * (1.0 / 3.0);
+                vol += centroid.dot(n) * cr.length() / 3.0;
+            }
+        }
+        const double vol_tol =
+            kVolumeRelTol * scale * scale * scale;
+        if (vol < -vol_tol) {
+            fail("input_face_orientation",
+                 "the face normals point INTO the solid (the divergence "
+                 "volume with the stored normals reads " +
+                     std::to_string(vol) + " mm^3) — every "
+                     "inside/outside test would invert.",
+                 "author the faces with outward normals (the loop "
+                 "winding CCW around the outward normal); if the body "
+                 "came from a kernel path, report it — outward "
+                 "orientation is that path's contract");
+        }
+        if (vol <= vol_tol) {
+            fail("input_zero_volume",
+                 "the operand is not full-dimensional (the divergence "
+                 "volume reads " + std::to_string(vol) +
+                     " mm^3, the class gate is " + std::to_string(vol_tol) +
+                     " mm^3 at this scale) — there is no inside to "
+                     "classify.",
+                 "pass a solid with positive volume; flat or degenerate "
+                 "bodies are outside the boolean class");
+        }
+    }
+
+    // -- 10. loop winding w.r.t. the face's own normal ---------------------
+    // The slab decomposition (polygon_subtract_3d) takes the interior to
+    // the LEFT of each clip edge — that rule assumes the polygon winds
+    // CCW in the right-handed frame (u, v, n). A 3D-CCW-around-n loop
+    // projects CCW in that frame by construction; a negative projected
+    // area is the CW signature.
+    for (std::size_t fi = 0; fi < faces.size(); ++fi) {
+        const auto& poly = polys[fi];
+        const auto& n = normals[fi];
+        math::Vec3d u_axis;
+        if (std::abs(n.y) > 0.9) {
+            u_axis = n.cross(math::Vec3d{1, 0, 0}).normalized();
+        } else {
+            u_axis = n.cross(math::Vec3d{0, 1, 0}).normalized();
+        }
+        const math::Vec3d v_axis = n.cross(u_axis).normalized();
+        double area2 = 0.0;
+        for (std::size_t i = 0; i < poly.size(); ++i) {
+            const auto& a = poly[i];
+            const auto& b = poly[(i + 1) % poly.size()];
+            const double au = (a - poly[0]).dot(u_axis);
+            const double av = (a - poly[0]).dot(v_axis);
+            const double bu = (b - poly[0]).dot(u_axis);
+            const double bv = (b - poly[0]).dot(v_axis);
+            area2 += au * bv - bu * av;
+        }
+        const double area = 0.5 * area2;
+        const double area_tol = kAreaRelTol * scale * scale;
+        if (area < -area_tol) {
+            fail("input_loop_winding",
+                 "face " + std::to_string(faces[fi].id()) +
+                     "'s loop winds CW around its own normal (the "
+                     "projected signed area reads " +
+                     std::to_string(area) +
+                     ") — the slab decomposition would take the wrong "
+                     "side of every clip edge.",
+                 "author loops CCW around the face's outward normal "
+                 "(the right-hand rule); check the surface normal's "
+                 "direction first — a flipped normal reads exactly "
+                 "like this");
+        }
+    }
+
+    // -- 11. face convexity -------------------------------------------------
+    for (std::size_t fi = 0; fi < faces.size(); ++fi) {
+        const auto& poly = polys[fi];
+        const auto& n = normals[fi];
+        const std::size_t m = poly.size();
+        for (std::size_t i = 0; i < m; ++i) {
+            const math::Vec3d cr =
+                (poly[(i + 1) % m] - poly[i])
+                    .cross(poly[(i + 2) % m] - poly[(i + 1) % m]);
+            // Collinear runs (cross ≈ 0) are allowed; a negative cross
+            // is a reflex vertex.
+            if (cr.dot(n) < -kPlaneTol) {
+                fail("input_face_not_convex",
+                     "face " + std::to_string(faces[fi].id()) +
+                         " has a reflex vertex at its loop position " +
+                         std::to_string((i + 1) % m) +
+                         " — the declared class is convex polygons.",
+                     "split the non-convex face, or operate on the "
+                     "convex class only (the boolean's polygon "
+                     "machinery — Sutherland-Hodgman, the slab "
+                     "decomposition — is convex-class)");
+            }
+        }
+    }
+
+    // -- 12. polyhedron convexity (the supporting-plane test) ---------------
+    for (std::size_t fi = 0; fi < faces.size(); ++fi) {
+        const auto& poly = polys[fi];
+        const auto& n = normals[fi];
+        bool violated = false, saw_inside = false;
+        VertexId offender = 0;
+        double worst = 0.0;
+        for (VertexId vid = 0; vid < body.vertices.size(); ++vid) {
+            const double d =
+                (body.vertices[vid].position() - poly[0]).dot(n);
+            if (d > kPlaneTol && (!violated || d > worst)) {
+                violated = true;
+                worst = d;
+                offender = vid;
+            }
+            if (d < -kPlaneTol) saw_inside = true;
+        }
+        if (!violated) continue;
+        if (!saw_inside) {
+            // Every other vertex lies BEYOND this face's plane: the
+            // face's normal points into the solid (a local orientation
+            // defect the divergence volume could not see — the
+            // contribution of one small flipped face cancels under the
+            // global sum).
+            fail("input_face_orientation",
+                 "face " + std::to_string(faces[fi].id()) +
+                     "'s normal points into the solid (every other "
+                     "vertex lies beyond its plane, e.g. vertex " +
+                     std::to_string(offender) + " at " +
+                     std::to_string(worst) + " mm) — this face's "
+                     "half-space would classify the solid as outside.",
+                 "flip the face's normal to the outward direction; "
+                 "loops stay CCW around the OUTWARD normal");
+        }
+        fail("input_not_convex",
+             "vertex " + std::to_string(offender) + " lies " +
+                 std::to_string(worst) +
+                 " mm beyond face " + std::to_string(faces[fi].id()) +
+                 "'s supporting plane — the polyhedron is not the "
+                 "intersection of its faces' half-spaces.",
+             "the boolean class is convex polyhedra (boolean.hpp); "
+             "split the body into convex pieces or extend the kernel "
+             "to the non-convex class");
+    }
+}
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
 // bool_intersect — A ∩ B via Greiner-Hormann
 // ---------------------------------------------------------------------------
 std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
-    auto validate_planar = [](const BRepBody& body) -> bool {
-        for (const auto& face : body.solid.shell().faces()) {
-            const auto* surf = face.surface();
-            if (!surf) return false;
-            if (std::string(surf->type_name()) != "plane") return false;
-        }
-        return true;
-    };
-    if (!validate_planar(A) || !validate_planar(B)) {
-        throw std::invalid_argument(
-            "bool_intersect: only planar-faced polyhedra are supported "
-            "(curved-surface boolean is deferred — ADR-0023 §2 / ADR-0025)");
-    }
+    // H2 unit 1: THE INPUT GATE — the one validator, both operands,
+    // as the FIRST thing (nothing clips before the contract holds).
+    validate_boolean_input(A, "bool_intersect", "A");
+    validate_boolean_input(B, "bool_intersect", "B");
 
     auto result = std::make_unique<BRepBody>();
     auto& shell = result->solid.shell_mut();
@@ -1338,6 +1956,7 @@ std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
 
     assemble_body(*result, clipped_faces, /*canonicalize=*/false,
                   combined_provenance(A, B));
+    assert_boolean_result_honest(*result, "bool_intersect");
     return result;
 }
 
@@ -1362,19 +1981,10 @@ std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
 // with the same vertex set, and deduplication keeps only one.
 //
 std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
-    auto validate_planar = [](const BRepBody& body) -> bool {
-        for (const auto& face : body.solid.shell().faces()) {
-            const auto* surf = face.surface();
-            if (!surf) return false;
-            if (std::string(surf->type_name()) != "plane") return false;
-        }
-        return true;
-    };
-    if (!validate_planar(A) || !validate_planar(B)) {
-        throw std::invalid_argument(
-            "bool_union: only planar-faced polyhedra are supported "
-            "(curved-surface boolean is deferred — ADR-0024 / ADR-0025)");
-    }
+    // H2 unit 1: THE INPUT GATE — the one validator, both operands,
+    // as the FIRST thing (nothing clips before the contract holds).
+    validate_boolean_input(A, "bool_union", "A");
+    validate_boolean_input(B, "bool_union", "B");
 
     auto result = std::make_unique<BRepBody>();
     auto& shell = result->solid.shell_mut();
@@ -1394,6 +2004,7 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
         }
         assemble_body(*result, clipped_faces, /*canonicalize=*/true,
                       combined_provenance(A, B));
+        assert_boolean_result_honest(*result, "bool_union");
         return result;
     }
 
@@ -1442,6 +2053,7 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
 
     assemble_body(*result, clipped_faces, /*canonicalize=*/true,
                   combined_provenance(A, B));
+    assert_boolean_result_honest(*result, "bool_union");
     return result;
 }
 
@@ -1475,19 +2087,10 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
 //        so inside is convex and single-piece.)
 //
 std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
-    auto validate_planar = [](const BRepBody& body) -> bool {
-        for (const auto& face : body.solid.shell().faces()) {
-            const auto* surf = face.surface();
-            if (!surf) return false;
-            if (std::string(surf->type_name()) != "plane") return false;
-        }
-        return true;
-    };
-    if (!validate_planar(A) || !validate_planar(B)) {
-        throw std::invalid_argument(
-            "bool_subtract: only planar-faced polyhedra are supported "
-            "(curved-surface boolean is deferred — ADR-0024 / ADR-0025)");
-    }
+    // H2 unit 1: THE INPUT GATE — the one validator, both operands,
+    // as the FIRST thing (nothing clips before the contract holds).
+    validate_boolean_input(A, "bool_subtract", "A");
+    validate_boolean_input(B, "bool_subtract", "B");
 
     auto result = std::make_unique<BRepBody>();
     auto& shell = result->solid.shell_mut();
@@ -1604,6 +2207,7 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
 
     assemble_body(*result, clipped_faces, /*canonicalize=*/true,
                   combined_provenance(A, B));
+    assert_boolean_result_honest(*result, "bool_subtract");
     return result;
 }
 

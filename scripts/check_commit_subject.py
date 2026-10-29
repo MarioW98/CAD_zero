@@ -17,7 +17,36 @@ v. report nella commit che introduce questo script):
        stringa: dice la FASE, non il contenuto — "intro kernel 2d" era
        15 caratteri esatti e passava col solo controllo lunghezza
        (run #90): il gap che questa regola chiude;
-    4. è lungo almeno MIN_LENGTH caratteri (dopo lo strip).
+    4. NON contiene una numerazione di consegna ("Commit 1/4",
+       "commit 3"): la posizione nella consegna non e' un contenuto
+       (H2, Parte C — la disciplina-per-attenzione e' scivolata DUE
+       volte: "Commit 1/4 — c851bdc · docs (PARTE A) ..." e
+       "g2 - dimenticanza file"); da qui la fa rispettare la macchina;
+    5. NON contiene un hash git (7-40 cifre esadecimali, 0x escluso):
+       git identifica, il soggetto DESCRIVE — l'hash nel subject e'
+       il secondo difetto dello stesso soggetto storico;
+    6. NON contiene un banner di titolo di prompt (code di '=' o '═'):
+       il soggetto e' una riga, non un manifesto incollato;
+    7. NON urla (maiuscole-urlò): oltre meta' delle lettere
+       maiuscole e' un titolo gridato, non un soggetto — la misura e'
+       sul soggetto ORIGINALE (il case e' il segnale), con soglia
+       6+ lettere per non bocciare i soggetti corti o pieni di
+       acronimi (ADR, SSI, G1, H2...);
+    8. PORTA il prefisso tipo conventional (feat/fix/docs/chore/test/
+       refactor/perf/ci/build/style/revert, case-insensibile — la
+       filosofia della regola 2-3: il case non cambia la forma), con
+       lo scope fra parentesi per i tipi che toccano codice
+       (feat/fix/test/refactor/perf: feat(brep): ..., fix(tests): ...)
+       e opzionale per i tipi di registro (docs/chore/ci/build/style/
+       revert: docs: ... e' la forma storica dei documenti);
+    9. è lungo almeno MIN_LENGTH caratteri (dopo lo strip).
+
+  L'ORDINE dei giudizi e' la diagnosi: prima la NATURA del soggetto
+  (regole 1-3), poi i divieti di CONTENUTO (4-7 — difetti che
+  boccierebbero il soggetto in qualsiasi involucro), poi la FORMA
+  (8: il prefisso), poi la misura (9). "Commit 1/4 — c851bdc · docs
+  (PARTE A) ..." arriva alla regola 4 con la diagnosi giusta
+  (numerazione), non al generico "prefisso mancante".
 
   Il case e la forma Unicode non cambiano il difetto di un soggetto:
   "FIX della build" difetta esattamente come "fix della build", e la
@@ -120,6 +149,58 @@ BANNED_STARTERS = (
 # etichetta di "unità 4".
 PROGRESS_LABELS = r"^(intro|bozza|riepilogo|unit[àa])(\s|/|$)"
 
+# H2 Parte C — i divieti di contenuto e la forma tipizzata.
+#
+# Regola 4: la numerazione di consegna. "Commit 1/4" e' il soggetto
+# reale dell'ultima consegna H1: dice la posizione nella consegna, non
+# il contenuto — e la posizione muore al secondo commit successivo,
+# restando come rumore permanente nella storia. Il match e' sulla
+# forma normalizzata: "commit 1/4", "Commit 12/16", "commit 3" cadono
+# uguali.
+DELIVERY_COUNTER = r"\bcommit\s+\d+(\s*/\s*\d+)?\b"
+
+# Regola 5: l'hash git nel soggetto. 7-40 cifre esadecimali (la forma
+# abbreviata standard e' 7+); il prefisso 0x e' escluso (un numero
+# esadecimale dichiarato come tale e' un dato, non un rimando git —
+# "seed 0xa11ced01" dei test proprieta' resta lecito). Falsi positivi
+# teorici: parole inglesi di 7+ lettere solo con a-f ("defaced") —
+# nessuna nella storia dei soggetti; il rischio e' dichiarato e
+# accettato (il difetto reale e' molto piu' frequente).
+GIT_SHA = r"\b[0-9a-f]{7,40}\b"
+
+# Regola 6: il banner di titolo di prompt. I due soggetti storici
+# incollati da prompt finivano con code di '='; una riga di soggetto
+# non contiene mai tre '=' di seguito (nemmeno "a==b" ha tre).
+PROMPT_BANNER = r"[=═]{3,}"
+
+# Regola 7: le soglie del maiuscole-urlò (misura sul soggetto
+# ORIGINALE — il case e' il segnale; la forma normalizzata lo
+# cancellerebbe). Almeno 6 lettere per attivare la misura, oltre metà
+# maiuscole per bocciare: gli acronimi (ADR, SSI, G2, H2, χ a parte)
+# non avvicinano mai un soggetto vero alla soglia.
+SHOUT_MIN_ALPHA = 6
+SHOUT_RATIO = 0.5
+
+# Regola 8: il prefisso tipo conventional. Il vocabolario e' quello
+# standard della forma che la storia adotta gia' ("La forma buona
+# esiste ed e' quella conventional: fix(parser): ..., docs: ...");
+# lo scope e' OBBLIGATORIO per i tipi che toccano codice (feat, fix,
+# test, refactor, perf — il dominio e' parte della descrizione:
+# feat(brep), fix(tests)) e opzionale per i tipi di registro (docs,
+# chore, ci, build, style, revert — docs: e' la forma storica dei
+# documenti, senza dominio da dichiarare). Il match e' sulla forma
+# normalizzata: il case non cambia ne' la forma buona ne' la cattiva.
+CONVENTIONAL_TYPES = ("feat", "fix", "docs", "chore", "test",
+                      "refactor", "perf", "ci", "build", "style",
+                      "revert")
+SCOPED_REQUIRED_TYPES = ("feat", "fix", "test", "refactor", "perf")
+# La regex si COSTRUISCE dal vocabolario (una sola fonte: il giorno in
+# cui il vocabolario si estende, la regex non puo' restare indietro).
+TYPE_PREFIX = re.compile(
+    r"^(" + "|".join(CONVENTIONAL_TYPES) + r")"
+    r"(\(([a-z0-9][a-z0-9._/-]*)\))?: (\S.*)$"
+)
+
 
 def normalize_subject(subject: str) -> str:
     """La forma su cui le regole di TESTO giudicano: NFC, poi casefold.
@@ -160,6 +241,38 @@ def check_subject(subject: str) -> str | None:
 
     if re.match(PROGRESS_LABELS, n):
         return "etichetta di progresso (intro/bozza/riepilogo/unità N): la fase non è il contenuto"
+
+    # -- i divieti di contenuto (H2 Parte C): difetti che boccierebbero
+    # il soggetto in qualsiasi involucro, prima della questione di forma.
+    if re.search(DELIVERY_COUNTER, n):
+        return ("numerazione di consegna ('Commit 1/4'): la posizione "
+                "nella consegna non è un contenuto")
+
+    if re.search(GIT_SHA, n):
+        return ("un hash git dentro il soggetto: git identifica, il "
+                "soggetto deve descrivere")
+
+    if re.search(PROMPT_BANNER, n):
+        return ("titolo di prompt (banner di '='): il soggetto è una "
+                "riga, non un manifesto")
+
+    alpha = [c for c in s if c.isalpha()]
+    if len(alpha) >= SHOUT_MIN_ALPHA:
+        upper = sum(1 for c in alpha if c.isupper())
+        if upper / len(alpha) > SHOUT_RATIO:
+            return ("maiuscole-urlò: oltre metà delle lettere è "
+                    "maiuscolo — il soggetto urla invece di descrivere")
+
+    # -- la forma tipizzata (H2 Parte C): il prefisso conventional.
+    m = TYPE_PREFIX.match(n)
+    if not m:
+        return ("prefisso tipo mancante o malformato (la forma buona: "
+                "feat(brep): ... , docs: ... — tipo, scope opzionale "
+                "fra parentesi, ': ', descrizione)")
+    if m.group(1) in SCOPED_REQUIRED_TYPES and not m.group(2):
+        return (f"scope mancante per il tipo '{m.group(1)}' (la forma "
+                f"buona: {m.group(1)}(dominio): ... — i tipi che "
+                "toccano codice portano il dominio)")
 
     if len(s) < MIN_LENGTH:
         return f"troppo corto ({len(s)} < {MIN_LENGTH} caratteri)"

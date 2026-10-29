@@ -11,9 +11,13 @@
 //     containment cases, corner-notch and slab exact-count regressions.
 //   * Every non-empty closed result: exact V/E/F counts, χ = 2,
 //     loops_are_closed, is_closed_manifold.
-//   * Degenerate zero-volume results and the bool_union partial
-//     coplanar-overlap limitation are asserted exactly as documented
-//     (ADR-0025 v5 Consequences — known limitation).
+//   * Degenerate zero-volume results are asserted exactly as
+//     documented (ADR-0025: the face-touching intersect answers the
+//     shared disk).
+//   * H2 unit 2: the Layer-1 postconditions are HARD — the partial
+//     coplanar-overlap open shell is REFUSED with its name (the
+//     golden refusal messages), never returned; the multi-shell
+//     union (χ = 4) is accepted as a classification.
 //
 #include <doctest/doctest.h>
 
@@ -24,7 +28,11 @@
 #include "CAD_0/brep/detail/boolean_test_hooks.hpp"
 
 #include <cmath>
+#include <map>
+#include <memory>
 #include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
 using namespace CAD_0::brep;
@@ -535,42 +543,97 @@ TEST_CASE("ADR-0025: bool_intersect of identical boxes returns one box (regressi
 }
 
 // ---------------------------------------------------------------------------
-// ADR-0024 — bool_union
+// H2 unit 2 — THE OUTPUT GATE: the open-shell refusal.
 // ---------------------------------------------------------------------------
 //
 // bool_union(A, B) = (A's faces outside B) ∪ (B's faces outside A).
 // When the two boxes share full lateral faces (partial coplanar
 // overlap), each side's lateral faces are clipped against the other
-// solid, leaving a gap over the overlap region: the result is an open
-// shell — the documented ADR-0025 v5 known limitation.
-//
+// solid, leaving a gap over the overlap region: the assembly is an
+// open shell — 8 rim edges with a single co-edge. While the ADR-0025
+// v5 limitation stood, that non-manifold body was RETURNED as a
+// BRepBody (two tests asserted it) and could enter the feature tree
+// spacciato per valido. H2 unit 2 flipped the contract: the Layer-1
+// postconditions are hard, the result is REFUSED with its name, and
+// the refusal message IS the golden. The class's full handling is
+// H2 unit 5 — the refusal is the declared interim answer.
 
-TEST_CASE("ADR-0024: bool_union of overlapping boxes — open shell, partial coplanar overlap (ADR-0025 v5 known limitation)") {
+TEST_CASE("H2-u2: bool_union with partial coplanar overlap — the open shell is refused, not returned") {
     // Box A: [-1,1]³
     // Box B: [-0.5, 1.5] × [-1, 1] × [-1, 1] (overlaps +X half of A;
     //        the ±Y and ±Z faces are coplanar with A's)
     // A ∪ B = [-1,1.5] × [-1,1] × [-1,1], but with partial coplanar
-    // overlap the union keeps only A's faces left of x=-0.5 and B's
-    // faces right of x=1 (ADR-0025 v5 Consequences — known limitation).
-    // The result is two open half-shells:
-    //   A-part: box [-1,-0.5]×[-1,1]² without the x=-0.5 face → 8V/12E/5F
-    //   B-part: box [1,1.5]×[-1,1]²   without the x=1     face → 8V/12E/5F
-    //   V = 8+8 = 16, E = 12+12 = 24, F = 5+5 = 10, χ = 16−24+10 = 2,
-    //   loops closed; NOT a closed manifold: the 8 rim edges (4 at
-    //   x=-0.5, 4 at x=1) carry a single coedge each.
+    // overlap the union's assembly keeps only A's faces left of x=-0.5
+    // and B's faces right of x=1: two open half-shells whose 8 rim
+    // edges (4 at x=-0.5, 4 at x=1) carry a single co-edge. The old
+    // contract returned that body (16V/24E/10F, chi=2, NOT a closed
+    // manifold); the H2 contract refuses it.
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_box(Vec3d{1, 1, 1});
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0, 0});
     }
+    bool threw = false;
+    try {
+        auto result = bool_union(*A, *B);
+        (void)result;
+    } catch (const std::runtime_error& e) {
+        threw = true;
+        const std::string msg = e.what();
+        INFO("refusal message: ", msg);
+        CHECK(msg.find("bool_union") != std::string::npos);
+        CHECK(msg.find("result_edge_not_manifold") != std::string::npos);
+        CHECK(msg.find("8 of 24") != std::string::npos);
+        CHECK(msg.find("PARTIAL COPLANAR OVERLAP") != std::string::npos);
+        CHECK(msg.find("H2 unit 5") != std::string::npos);
+        CHECK(msg.find("Remedy:") != std::string::npos);
+    }
+    CHECK_MESSAGE(threw, "the open shell must be refused, not returned");
+}
+
+TEST_CASE("H2-u2: the open-shell refusal names the rim census (the golden message)") {
+    // The census that used to be asserted on the RETURNED body (8 rim
+    // edges / 16 interior edges) now lives in the refusal text: the
+    // message IS the record of what the assembly produced.
+    auto A = make_box(Vec3d{1, 1, 1});
+    auto B = make_box(Vec3d{1, 1, 1});
+    for (auto& v : B->vertices) {
+        v.set_position(v.position() + Vec3d{0.5f, 0, 0});
+    }
+    try {
+        auto result = bool_union(*A, *B);
+        (void)result;
+        FAIL("the open shell must be refused, not returned");
+    } catch (const std::runtime_error& e) {
+        const std::string msg = e.what();
+        CHECK(msg.find("8 of 24 edges carry a single co-edge") !=
+              std::string::npos);
+        CHECK(msg.find("must not enter the feature tree") !=
+              std::string::npos);
+    }
+}
+
+TEST_CASE("H2-u2: the union of disjoint bodies is a valid multi-shell answer (chi = 4, accepted)") {
+    // Two disjoint boxes: every face survives, the assembly carries
+    // TWO closed shells in one body — chi = 16-24+12 = 4. Per the
+    // ADR-0022 amendment, multi-shell is a CLASSIFICATION, not an
+    // assembly defect: the output gate accepts it (even chi, structure
+    // passing) and genus_from_chi declines to derive one — the
+    // reported genus reads n/d, never a negative.
+    auto A = make_box(Vec3d{1, 1, 1});
+    auto B = make_box(Vec3d{1, 1, 1});
+    for (auto& v : B->vertices) {
+        v.set_position(v.position() + Vec3d{10, 0, 0});
+    }
     auto result = bool_union(*A, *B);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 16);
     CHECK(result->edge_count()   == 24);
-    CHECK(result->face_count()   == 10);
-    CHECK(euler_characteristic(*result) == 2);
+    CHECK(result->face_count()   == 12);
+    CHECK(euler_characteristic(*result) == 4);
+    CHECK(is_closed_orientable(*result));
+    CHECK_FALSE(genus_from_chi(4).has_value());
     CHECK(loops_are_closed(*result));
-    CHECK_FALSE(is_closed_manifold(*result));
 }
 
 TEST_CASE("ADR-0024: bool_union of identical boxes returns A (identical-body shortcut)") {
@@ -588,27 +651,18 @@ TEST_CASE("ADR-0024: bool_union of identical boxes returns A (identical-body sho
     CHECK(loops_are_closed(*result));
 }
 
-TEST_CASE("ADR-0024: bool_union of overlapping boxes — exact coedge census (open shell)") {
-    // Same input as the open-shell union test above: 24 edges — the 16
-    // edges of the two closed half-shell "rings" carry exactly 2
-    // coedges, the 8 open-rim edges (4 at x=-0.5, 4 at x=1) carry
-    // exactly 1. No edge is an orphan and none exceeds 2 coedges.
+TEST_CASE("H2-u2: the refusal replaces the old open-shell coedge census") {
+    // HISTORICAL: this test asserted the returned open shell's coedge
+    // census (24 edges: 16 with 2 co-edges, 8 rim edges with 1). H2
+    // unit 2 refuses that body — the census survives in the refusal
+    // message (the golden above); nothing with a boundary rim reaches
+    // a caller anymore.
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_box(Vec3d{1, 1, 1});
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0, 0});
     }
-    auto result = bool_union(*A, *B);
-    REQUIRE(result != nullptr);
-    REQUIRE(result->edge_count() == 24);
-    std::size_t boundary = 0, interior = 0;
-    for (const auto& edge : result->edges) {
-        REQUIRE(edge.coedges().size() <= 2);
-        if (edge.coedges().size() == 1) ++boundary;
-        else ++interior;
-    }
-    CHECK(boundary == 8);
-    CHECK(interior == 16);
+    CHECK_THROWS_AS(bool_union(*A, *B), std::runtime_error);
 }
 
 // ---------------------------------------------------------------------------
@@ -717,17 +771,16 @@ TEST_CASE("ADR-0024: bool_subtract of overlapping boxes — χ = 2 on the corner
 TEST_CASE("ADR-0024: bool_union and bool_intersect of overlapping boxes — exact counts on both sides") {
     // A=[-1,1]³, B shift (0.5,0,0) → overlap [-0.5,1]×[-1,1]×[-1,1].
     //   intersect = the overlap box: 8V/12E/6F, χ=2, closed manifold.
-    //   union = the open shell of the partial coplanar overlap
-    //           (ADR-0025 v5 known limitation): 16V/24E/10F, χ=2,
-    //           loops closed, not a closed manifold.
+    //   union = the partial coplanar overlap class — REFUSED since H2
+    //           unit 2 (the open shell, 8 rim edges of 24, is never
+    //           returned); the intersect side keeps its exact counts.
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_box(Vec3d{1, 1, 1});
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0, 0});
     }
-    auto u = bool_union(*A, *B);
+    CHECK_THROWS_AS(bool_union(*A, *B), std::runtime_error);
     auto i = bool_intersect(*A, *B);
-    REQUIRE(u != nullptr);
     REQUIRE(i != nullptr);
     CHECK(i->vertex_count() == 8);
     CHECK(i->edge_count()   == 12);
@@ -735,12 +788,6 @@ TEST_CASE("ADR-0024: bool_union and bool_intersect of overlapping boxes — exac
     CHECK(euler_characteristic(*i) == 2);
     CHECK(loops_are_closed(*i));
     CHECK(is_closed_manifold(*i));
-    CHECK(u->vertex_count() == 16);
-    CHECK(u->edge_count()   == 24);
-    CHECK(u->face_count()   == 10);
-    CHECK(euler_characteristic(*u) == 2);
-    CHECK(loops_are_closed(*u));
-    CHECK_FALSE(is_closed_manifold(*u));
 }
 
 TEST_CASE("ADR-0027: wrapper equivalence on the genus-0 boolean fixtures") {
@@ -748,10 +795,14 @@ TEST_CASE("ADR-0027: wrapper equivalence on the genus-0 boolean fixtures") {
     // fixtures: is_closed_manifold == (is_closed_orientable && χ == 2)
     // on the box booleans and the corner notch — the exact bodies that
     // made ADR-0025 v5. The identity must hold on the healthy results
-    // (closed, χ = 2) AND on the documented failure (the partial
-    // coplanar union: χ = 2 but structurally open — the wrapper stays
-    // false through its structural half, not through χ). If the wrapper
-    // is ever edited, this is the fixture class that must notice.
+    // (closed, χ = 2), on the zero-volume contact disk (false through
+    // BOTH halves: χ = 1 and structurally open), and on the multi-shell
+    // disjoint union (false through the χ half ONLY: the structure is
+    // sound, χ = 4 is a classification). The partial coplanar open
+    // shell — the historical χ=2-but-open fixture — is refused since
+    // H2 unit 2 and cannot be a fixture anymore: that refusal is the
+    // very point of the unit. If the wrapper is ever edited, these are
+    // the fixture classes that must notice.
     auto check = [](const BRepBody& b) {
         CHECK(is_closed_manifold(b) ==
               (is_closed_orientable(b) && euler_characteristic(b) == 2));
@@ -800,16 +851,34 @@ TEST_CASE("ADR-0027: wrapper equivalence on the genus-0 boolean fixtures") {
         CHECK(euler_characteristic(*d) == 2);
         check(*d);
     }
-    // The partial coplanar-overlap union (ADR-0025 v5 known
-    // limitation): χ = 2 but an open shell — both sides of the
-    // equivalence false through the STRUCTURAL half, never through χ.
+    // The zero-volume contact disk (the face-touching intersect, the
+    // pinned ADR-0025 class): χ = 1, structurally open — the wrapper
+    // is false through BOTH halves, and the equivalence holds.
     {
-        auto u = bool_union(*make_box(Vec3d{1, 1, 1}), *box_at({0.5f, 0, 0}));
+        auto d = bool_intersect(*make_box(Vec3d{1, 1, 1}), *box_at({2.0f, 0, 0}));
+        REQUIRE(d != nullptr);
+        CHECK(euler_characteristic(*d) == 1);
+        CHECK_FALSE(is_closed_orientable(*d));
+        CHECK_FALSE(is_closed_manifold(*d));
+        check(*d);
+    }
+    // The multi-shell disjoint union (H2 unit 2's accepted
+    // classification): χ = 4, structure sound — the wrapper is false
+    // through the χ half ONLY, and the equivalence still holds.
+    {
+        auto u = bool_union(*make_box(Vec3d{1, 1, 1}), *box_at({10, 0, 0}));
         REQUIRE(u != nullptr);
-        CHECK(euler_characteristic(*u) == 2);
+        CHECK(euler_characteristic(*u) == 4);
+        CHECK(is_closed_orientable(*u));
         CHECK_FALSE(is_closed_manifold(*u));
-        CHECK_FALSE(is_closed_orientable(*u));
         check(*u);
+    }
+    // The partial coplanar-overlap union: REFUSED since H2 unit 2 —
+    // the open shell is not a fixture anymore, it is an error.
+    {
+        CHECK_THROWS_AS(bool_union(*make_box(Vec3d{1, 1, 1}),
+                                   *box_at({0.5f, 0, 0})),
+                        std::runtime_error);
     }
 }
 
@@ -1115,4 +1184,393 @@ TEST_CASE("pinned regression: weld grid-boundary straddle on a box-pair intersec
         INFO("vertex ", i, " dist to nearest oracle corner = ", best);
         CHECK(best <= kTol);
     }
+}
+
+// ===========================================================================
+// H2 unit 1 — THE INPUT GATE: the adversarial corpus (error goldens)
+// ===========================================================================
+//
+// For EVERY violated prerequisite of the declared class (boolean.hpp)
+// one crafted body, one refusal, and the message IS the golden: it
+// names the operation, the operand, the error class, the responsible
+// entity with its measured evidence, and the remedy. The reverse
+// proof is the whole suite above: every valid body in the historical
+// corpus passes the gate unchanged (rifiutare troppo è difetto quanto
+// accettare troppo).
+//
+// The craft helpers build bodies through the public topology API
+// (vertices, edges, co-edges, radial linking) exactly like
+// assemble_body does — keyed edges, canonical direction, the
+// reversed flag derived from the traversal — so a crafted body is
+// indistinguishable from a factory body except for the defect it
+// carries.
+
+namespace {
+
+struct H2FaceSpec {
+    // loop 0 is the face's outer loop (the class allows exactly one);
+    // vertex indices, CCW around `normal`.
+    std::vector<std::vector<std::size_t>> loops;
+    Vec3d normal;
+};
+
+// Build a body from explicit vertices and face loop tables. Edges are
+// keyed (min,max) like assemble_body's; the co-edge's reversed flag is
+// derived from the traversal direction (a > b), so two faces listing a
+// shared edge in opposite directions produce the orientable pairing
+// automatically — and in the SAME direction produce the XOR defect on
+// demand.
+std::unique_ptr<BRepBody> build_h2_body(
+    const std::vector<Vec3d>& pts,
+    const std::vector<H2FaceSpec>& face_specs
+) {
+    auto body = std::make_unique<BRepBody>();
+    body->vertices.reserve(pts.size());
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+        body->vertices.push_back(Vertex{pts[i]});
+        body->vertices.back().set_id(i);
+    }
+    std::map<std::pair<VertexId, VertexId>, EdgeId> edge_map;
+    auto edge_for = [&](VertexId a, VertexId b) -> EdgeId {
+        const auto key = std::minmax(a, b);
+        auto it = edge_map.find({key.first, key.second});
+        if (it != edge_map.end()) return it->second;
+        const EdgeId eid = body->edges.size();
+        body->edges.push_back(Edge{key.first, key.second});
+        body->edges.back().set_id(eid);
+        edge_map.emplace(std::make_pair(key.first, key.second), eid);
+        return eid;
+    };
+    FaceId fid = 0;
+    for (const auto& spec : face_specs) {
+        auto surface = std::make_shared<PlaneSurface>(
+            pts[spec.loops[0][0]], spec.normal);
+        Face face(surface);
+        for (const auto& loop : spec.loops) {
+            Loop l;
+            for (std::size_t i = 0; i < loop.size(); ++i) {
+                const VertexId a = loop[i];
+                const VertexId b = loop[(i + 1) % loop.size()];
+                const EdgeId eid = edge_for(a, b);
+                l.add_coedge(CoEdge{eid, a > b});
+            }
+            face.add_loop(std::move(l));
+        }
+        face.set_id(fid++);
+        body->solid.shell_mut().add_face(std::move(face));
+    }
+    link_radial_edges(*body);
+    return body;
+}
+
+// A prism over the CCW (viewed from +z) xy polygon, from z0 to z1.
+// Bottom cap normal -z (loop CW in xy), top cap +z (CCW in xy), the
+// sides' outward normal (dy, -dx, 0) per CCW edge, each side quad
+// wound (a_bot, b_bot, b_top, a_top) — CCW around its normal.
+std::unique_ptr<BRepBody> build_h2_prism(
+    const std::vector<Vec3d>& poly_ccw, double z0, double z1
+) {
+    const std::size_t n = poly_ccw.size();
+    std::vector<Vec3d> pts;
+    pts.reserve(2 * n);
+    for (const auto& p : poly_ccw) pts.push_back(Vec3d{p.x, p.y, z0});
+    for (const auto& p : poly_ccw) pts.push_back(Vec3d{p.x, p.y, z1});
+    std::vector<H2FaceSpec> specs;
+    std::vector<std::size_t> top(n), bot(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        top[i] = n + i;
+        bot[i] = i;
+    }
+    std::vector<std::size_t> bot_rev(bot.rbegin(), bot.rend());
+    specs.push_back({{bot_rev}, Vec3d{0, 0, -1}});
+    specs.push_back({{top}, Vec3d{0, 0, 1}});
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t a = i, b = (i + 1) % n;
+        const double dx = poly_ccw[b].x - poly_ccw[a].x;
+        const double dy = poly_ccw[b].y - poly_ccw[a].y;
+        const double len = std::sqrt(dx * dx + dy * dy);
+        specs.push_back({{{a, b, n + b, n + a}},
+                         Vec3d{dy / len, -dx / len, 0}});
+    }
+    return build_h2_body(pts, specs);
+}
+
+// Assert the operation refuses with the named class (and the house's
+// actionable shape: the remedy is in the message).
+template <typename Fn>
+void expect_input_rejected(Fn&& op, const char* cls) {
+    bool threw = false;
+    try {
+        op();
+    } catch (const std::invalid_argument& e) {
+        threw = true;
+        const std::string msg = e.what();
+        INFO("refusal message: ", msg);
+        CHECK(msg.find(cls) != std::string::npos);
+        CHECK(msg.find("Remedy:") != std::string::npos);
+        CHECK(msg.find("boolean.hpp") != std::string::npos);
+    }
+    CHECK_MESSAGE(threw, "expected the operation to refuse with ", cls);
+}
+
+} // namespace
+
+TEST_CASE("H2-u1: the gate refuses the empty body by name") {
+    auto A = make_box(Vec3d{1, 1, 1});
+    BRepBody empty;
+    expect_input_rejected([&] { bool_union(empty, *A); },
+                          "input_empty_body");
+    expect_input_rejected([&] { bool_subtract(*A, empty); },
+                          "input_empty_body");
+    expect_input_rejected([&] { bool_intersect(empty, empty); },
+                          "input_empty_body");
+}
+
+TEST_CASE("H2-u1: the gate refuses torn topology references by name") {
+    auto A = make_box(Vec3d{1, 1, 1});
+    auto B = make_box(Vec3d{1, 1, 1});
+    // An edge endpoint pointing past the vertex table.
+    B->edges[0].set_vertex(0, 999);
+    expect_input_rejected([&] { bool_intersect(*A, *B); },
+                          "input_topology_reference");
+}
+
+TEST_CASE("H2-u1: the gate refuses non-plane surfaces by name") {
+    auto A = make_box(Vec3d{1, 1, 1});
+    auto S = make_sphere(1.0);
+    expect_input_rejected([&] { bool_intersect(*A, *S); },
+                          "input_surface_not_plane");
+    // A face with NO surface is the same class (the family is 'none').
+    auto B = make_box(Vec3d{1, 1, 1});
+    B->solid.shell_mut().faces_mut()[0].set_surface(nullptr);
+    expect_input_rejected([&] { bool_union(*A, *B); },
+                          "input_surface_not_plane");
+}
+
+TEST_CASE("H2-u1: the gate refuses holed faces (inner loops) by name") {
+    // A box whose top face carries an extra inner square loop — the
+    // holed-face class the old code silently mis-read (loops()[0] only).
+    std::vector<Vec3d> pts{
+        {-1, -1, 1}, {1, -1, 1}, {1, 1, 1}, {-1, 1, 1},          // top rim
+        {-0.5, -0.5, 1}, {0.5, -0.5, 1}, {0.5, 0.5, 1}, {-0.5, 0.5, 1},
+        {-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},      // bottom
+    };
+    std::vector<H2FaceSpec> specs{
+        {{{8, 11, 10, 9}}, Vec3d{0, 0, -1}},                     // bottom
+        {{{0, 1, 2, 3}, {4, 5, 6, 7}}, Vec3d{0, 0, 1}},          // holed top
+        {{{8, 9, 1, 0}}, Vec3d{0, -1, 0}},                       // sides
+        {{{9, 10, 2, 1}}, Vec3d{1, 0, 0}},
+        {{{10, 11, 3, 2}}, Vec3d{0, 1, 0}},
+        {{{11, 8, 0, 3}}, Vec3d{-1, 0, 0}},
+    };
+    auto holed = build_h2_body(pts, specs);
+    auto A = make_box(Vec3d{1, 1, 1});
+    expect_input_rejected([&] { bool_subtract(*A, *holed); },
+                          "input_face_inner_loops");
+}
+
+TEST_CASE("H2-u1: the gate refuses open loops by name") {
+    // A proper box whose bottom loop's LAST co-edge has its orientation
+    // flag flipped: the walk breaks between co-edge 2 (ends at vertex
+    // 4) and co-edge 3 (starts at vertex 7) — the loop does not chain,
+    // and no geometry check can save it. Built through the public API:
+    // the co-edges are owned by the face's loop, so the corrupted face
+    // replaces the original one wholesale.
+    std::vector<Vec3d> pts{
+        {0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0},
+        {0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1},
+    };
+    std::vector<H2FaceSpec> specs{
+        {{{3, 2, 1, 0}}, Vec3d{0, 0, -1}},
+        {{{4, 5, 6, 7}}, Vec3d{0, 0, 1}},
+        {{{0, 4, 5, 1}}, Vec3d{0, -1, 0}},
+        {{{1, 5, 6, 2}}, Vec3d{1, 0, 0}},
+        {{{2, 6, 7, 3}}, Vec3d{0, 1, 0}},
+        {{{3, 7, 4, 0}}, Vec3d{-1, 0, 0}},
+    };
+    auto broken = build_h2_body(pts, specs);
+    // The bottom face is spec 0; its loop walks edges 0..3 with flags
+    // (t, t, t, f). Flip the last flag: the chain 0-1-2 breaks at 3.
+    Loop corrupted;
+    corrupted.add_coedge(CoEdge{0, true});
+    corrupted.add_coedge(CoEdge{1, true});
+    corrupted.add_coedge(CoEdge{2, true});
+    corrupted.add_coedge(CoEdge{3, true});  // flipped: should be false
+    Face face(std::make_shared<PlaneSurface>(pts[3], Vec3d{0, 0, -1}));
+    face.add_loop(std::move(corrupted));
+    face.set_id(0);
+    broken->solid.shell_mut().faces_mut()[0] = std::move(face);
+    link_radial_edges(*broken);
+    auto A = make_box(Vec3d{1, 1, 1});
+    expect_input_rejected([&] { bool_union(*A, *broken); },
+                          "input_loop_open");
+}
+
+TEST_CASE("H2-u1: the gate refuses open shells (1-coedge edges) by name") {
+    // A box without its top face: the rim edges carry one co-edge.
+    std::vector<Vec3d> pts{
+        {-1, -1, 1}, {1, -1, 1}, {1, 1, 1}, {-1, 1, 1},
+        {-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
+    };
+    std::vector<H2FaceSpec> specs{
+        {{{7, 6, 5, 4}}, Vec3d{0, 0, -1}},                       // bottom
+        {{{0, 4, 5, 1}}, Vec3d{0, -1, 0}},                       // sides
+        {{{1, 5, 6, 2}}, Vec3d{1, 0, 0}},
+        {{{2, 6, 7, 3}}, Vec3d{0, 1, 0}},
+        {{{3, 7, 4, 0}}, Vec3d{-1, 0, 0}},
+    };
+    auto open = build_h2_body(pts, specs);
+    auto A = make_box(Vec3d{1, 1, 1});
+    expect_input_rejected([&] { bool_intersect(*A, *open); },
+                          "input_edge_not_manifold");
+}
+
+TEST_CASE("H2-u1: the gate refuses the orientability XOR violation by name") {
+    // Two triangles glued back-to-back, both wound the same way: every
+    // edge has 2 co-edges with the SAME orientation (ADR-0022 §5
+    // invariant 2's classic defect).
+    std::vector<Vec3d> pts{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+    std::vector<H2FaceSpec> specs{
+        {{{0, 1, 2}}, Vec3d{0, 0, 1}},
+        {{{0, 1, 2}}, Vec3d{0, 0, -1}},
+    };
+    auto folded = build_h2_body(pts, specs);
+    auto A = make_box(Vec3d{1, 1, 1});
+    expect_input_rejected([&] { bool_subtract(*A, *folded); },
+                          "input_coedge_orientation");
+}
+
+TEST_CASE("H2-u1: the gate refuses off-plane loop vertices by name") {
+    auto A = make_box(Vec3d{1, 1, 1});
+    auto B = make_box(Vec3d{1, 1, 1});
+    // Drag one vertex out of three of its faces' planes.
+    B->vertices[0].set_position(B->vertices[0].position()
+                                + Vec3d{0.1, 0.1, 0.1});
+    expect_input_rejected([&] { bool_intersect(*A, *B); },
+                          "input_loop_off_plane");
+}
+
+TEST_CASE("H2-u1: the gate refuses inward face normals by name") {
+    // A full box authored with every normal pointing INTO the solid:
+    // the divergence volume with the stored normals is negative.
+    std::vector<Vec3d> pts{
+        {-1, -1, 1}, {1, -1, 1}, {1, 1, 1}, {-1, 1, 1},
+        {-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
+    };
+    std::vector<H2FaceSpec> specs{
+        {{{7, 6, 5, 4}}, Vec3d{0, 0, 1}},    // bottom, normal up: inward
+        {{{0, 1, 2, 3}}, Vec3d{0, 0, -1}},   // top, normal down: inward
+        {{{0, 4, 5, 1}}, Vec3d{0, 1, 0}},
+        {{{1, 5, 6, 2}}, Vec3d{-1, 0, 0}},
+        {{{2, 6, 7, 3}}, Vec3d{0, -1, 0}},
+        {{{3, 7, 4, 0}}, Vec3d{1, 0, 0}},
+    };
+    auto inside_out = build_h2_body(pts, specs);
+    auto A = make_box(Vec3d{1, 1, 1});
+    expect_input_rejected([&] { bool_union(*A, *inside_out); },
+                          "input_face_orientation");
+}
+
+TEST_CASE("H2-u1: the gate refuses zero-volume (flat) operands by name") {
+    // Two coplanar squares glued along all three edges — a closed
+    // orientable "body" with zero volume.
+    std::vector<Vec3d> pts{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}};
+    std::vector<H2FaceSpec> specs{
+        {{{0, 1, 2}}, Vec3d{0, 0, 1}},
+        {{{0, 2, 1}}, Vec3d{0, 0, -1}},
+    };
+    auto flat = build_h2_body(pts, specs);
+    auto A = make_box(Vec3d{1, 1, 1});
+    expect_input_rejected([&] { bool_subtract(*A, *flat); },
+                          "input_zero_volume");
+}
+
+TEST_CASE("H2-u1: the gate refuses CW loop winding by name") {
+    // A box whose top face's normal is flipped while its loop stays
+    // CCW-around-+z: the divergence volume stays positive (one face's
+    // contribution is small against the whole), the loop reads CW
+    // around its own normal.
+    std::vector<Vec3d> pts{
+        {-1, -1, 1}, {1, -1, 1}, {1, 1, 1}, {-1, 1, 1},
+        {-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
+    };
+    std::vector<H2FaceSpec> specs{
+        {{{7, 6, 5, 4}}, Vec3d{0, 0, -1}},
+        {{{0, 1, 2, 3}}, Vec3d{0, 0, -1}},   // top with a flipped normal
+        {{{0, 4, 5, 1}}, Vec3d{0, -1, 0}},
+        {{{1, 5, 6, 2}}, Vec3d{1, 0, 0}},
+        {{{2, 6, 7, 3}}, Vec3d{0, 1, 0}},
+        {{{3, 7, 4, 0}}, Vec3d{-1, 0, 0}},
+    };
+    auto flipped = build_h2_body(pts, specs);
+    auto A = make_box(Vec3d{1, 1, 1});
+    expect_input_rejected([&] { bool_intersect(*A, *flipped); },
+                          "input_loop_winding");
+}
+
+TEST_CASE("H2-u1: the gate refuses non-convex FACES by name") {
+    // The L-prism: closed, manifold, planar, outward — and the L caps
+    // carry a reflex vertex.
+    const std::vector<Vec3d> L{
+        {0, 0, 0}, {2, 0, 0}, {2, 1, 0}, {1, 1, 0}, {1, 2, 0}, {0, 2, 0},
+    };
+    auto lprism = build_h2_prism(L, 0.0, 1.0);
+    auto A = make_box(Vec3d{1, 1, 1});
+    expect_input_rejected([&] { bool_union(*A, *lprism); },
+                          "input_face_not_convex");
+}
+
+TEST_CASE("H2-u1: the gate refuses the non-convex POLYHEDRON by name") {
+    // Every face a convex polygon (the L split into a convex pentagon
+    // and a convex quad on each cap) — but the SOLID is not the
+    // intersection of its half-spaces: the arm's back wall has the
+    // bar's far corners beyond it.
+    std::vector<Vec3d> pts{
+        {0, 0, 0}, {1, 0, 0}, {2, 0, 0}, {2, 1, 0},
+        {1, 1, 0}, {1, 2, 0}, {0, 2, 0},              // bottom (z=0)
+        {0, 0, 1}, {1, 0, 1}, {2, 0, 1}, {2, 1, 1},
+        {1, 1, 1}, {1, 2, 1}, {0, 2, 1},              // top (z=1)
+    };
+    std::vector<H2FaceSpec> specs{
+        // bottom caps (normal -z, loops CW in xy)
+        {{{6, 5, 4, 1, 0}}, Vec3d{0, 0, -1}},   // bar pentagon
+        {{{4, 3, 2, 1}}, Vec3d{0, 0, -1}},      // arm quad
+        // top caps (+z, CCW in xy)
+        {{{7, 8, 11, 12, 13}}, Vec3d{0, 0, 1}},
+        {{{8, 9, 10, 11}}, Vec3d{0, 0, 1}},
+        // sides, CCW boundary walk
+        {{{0, 1, 8, 7}}, Vec3d{0, -1, 0}},      // y=0 (bar)
+        {{{1, 2, 9, 8}}, Vec3d{0, -1, 0}},      // y=0 (arm)
+        {{{2, 3, 10, 9}}, Vec3d{1, 0, 0}},      // x=2
+        {{{3, 4, 11, 10}}, Vec3d{0, 1, 0}},     // y=1 (arm back)
+        {{{4, 5, 12, 11}}, Vec3d{1, 0, 0}},     // x=1 (notch wall)
+        {{{5, 6, 13, 12}}, Vec3d{0, 1, 0}},     // y=2
+        {{{6, 0, 7, 13}}, Vec3d{-1, 0, 0}},     // x=0
+    };
+    auto notchy = build_h2_body(pts, specs);
+    auto A = make_box(Vec3d{1, 1, 1});
+    expect_input_rejected([&] { bool_subtract(*A, *notchy); },
+                          "input_not_convex");
+}
+
+TEST_CASE("H2-u1: the reverse proof — the gate accepts exactly the declared class") {
+    // The factory corpus (the same bodies every golden above and below
+    // is built from) passes the gate: the operations run and answer.
+    auto A = make_box(Vec3d{1, 1, 1});
+    auto B = make_box(Vec3d{1, 1, 1});
+    for (auto& v : B->vertices) {
+        v.set_position(v.position() + Vec3d{0.5f, 0, 0});
+    }
+    CHECK(bool_subtract(*A, *B) != nullptr);       // closed solid answer
+    auto C = make_box(Vec3d{1, 1, 1});
+    for (auto& v : C->vertices) {
+        v.set_position(v.position() + Vec3d{1.0f, 1.0f, 1.0f});
+    }
+    auto cut = bool_subtract(*A, *C);
+    REQUIRE(cut != nullptr);
+    CHECK(cut->vertex_count() == 17);
+    // The tetrahedron (triangles, not quads) is in the class too.
+    auto T = make_tetrahedron();
+    auto cube = make_box(Vec3d{1, 1, 1});
+    CHECK(bool_intersect(*T, *cube) != nullptr);
 }

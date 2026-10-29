@@ -69,7 +69,10 @@ CASES = [
     ("intro kernel 2d", False, "etichetta di progresso"),        # run #90, 15 char
     ("Unità 2 sketch", False, "etichetta di progresso"),         # run #91
     ("unità 2 fix e unità 3", False, "etichetta di progresso"),  # run #92
-    ("Riepilogo:", False, "troppo corto"),                       # run #85, 10 char
+    ("Riepilogo:", False, "prefisso tipo mancante o malformato"),   # run #85, 10 char
+    # la regola lunghezza si giudica da sola su un soggetto con la
+    # forma giusta (il prefisso): 13 caratteri < 15:
+    ("feat(brep): x", False, "troppo corto"),
     ("U2", False, "tag di unita'"),                              # run #89
     ("2.3", False, "versione numerica nuda"),
     ("docs/adr", False, "percorso di file"),
@@ -77,7 +80,6 @@ CASES = [
     # --- 3. la forma buona passa ---------------------------------------
     ("fix(lint): ban empty-marker subjects in Italian too", True, None),
     ("docs: revisione ADR-0030 D5 dopo review", True, None),
-    ("scripts: hook commit-msg tracciato eseguibile", True, None),
     # la parola italiana dentro il soggetto non c'entra: la regola e'
     # sullo START, non sulla presenza:
     ("docs: aggiornamento del contratto ADR-0029", True, None),
@@ -113,6 +115,60 @@ CASES = [
     # come il suo gemello minuscolo — la lista storica si aggiorna:
     ("Fix f-string Python 3.10", False, "starter vuoto"),
     ("Correzione del calcolo AABB del cilindro", False, "starter vuoto"),
+    # --- 5. H2 Parte C: il prefisso tipo conventional ------------------
+    # "scripts:" non e' nel vocabolario dei tipi: la forma buona ha
+    # il tipo conventional (feat/fix/docs/chore/test/...) — il vecchio
+    # esempio PASS della lista 3 si aggiorna, e' il comportamento
+    # giusto (la lista storica pass/fail si aggiorna anche qui):
+    ("scripts: hook commit-msg tracciato eseguibile",
+     False, "prefisso tipo mancante o malformato"),
+    # i due soggetti reali della scivolata H1, bocciati dalla macchina:
+    ("g2 - dimenticanza file", False, "prefisso tipo mancante o malformato"),
+    ("Commit 1/4 — c851bdc · docs (PARTE A) docs: ADR-0034 accepted",
+     False, "numerazione di consegna"),
+    # il prefisso esiste ma il tipo che tocca codice senza scope:
+    ("feat: the boolean input gate lands with named errors",
+     False, "scope mancante per il tipo 'feat'"),
+    ("fix: the weld straddle regression",
+     False, "scope mancante per il tipo 'fix'"),
+    # i tipi di registro restano leciti senza scope (la forma storica):
+    ("chore: restore the commit-msg hook executable bit", True, None),
+    ("test(lint): pin the subject checker judgments via --explain", True, None),
+    # il case non cambia la forma buona ne' la cattiva:
+    ("FEAT(brep): the boolean input gate lands",
+     True, None),
+    ("Feat(BREP): the boolean input gate lands",
+     True, None),
+    # --- 6. H2 Parte C: i divieti di contenuto --------------------------
+    # la numerazione di consegna, anche dentro un involucro conforme:
+    ("feat(brep): Commit 1/4 — the input gate",
+     False, "numerazione di consegna"),
+    ("docs: commit 3 of the ADR sweep",
+     False, "numerazione di consegna"),
+    # l'hash git nel soggetto (0x escluso — il dato esadecimale
+    # dichiarato resta lecito):
+    ("feat(brep): re-pin the goldens after c851bdc",
+     False, "un hash git dentro il soggetto"),
+    ("feat(brep): the seed 0xa11ced01 oracle pins the weld",
+     True, None),
+    # il banner di titolo di prompt:
+    ("feat(brep): the input gate lands =====================",
+     False, "titolo di prompt"),
+    ("docs: ADR-0034 accepted ══════════════════",
+     False, "titolo di prompt"),
+    # il maiuscole-urlò (misura sul soggetto originale):
+    ("feat(brep): THE BOOLEAN INPUT GATE LANDS WITH THE NAMED ERRORS",
+     False, "maiuscole-urlò"),
+    ("feat(brep): the input gate — ADR-0034 D3 and the SSI table pinned",
+     True, None),
+    # i due soggetti conformi di QUESTA consegna, giudicati dalla
+    # macchina che li fermerebbe prima del commit:
+    ("feat(brep): the boolean input gate — one validator enforces the declared class with named errors",
+     True, None),
+    ("feat(brep): the boolean output gate — Layer-1 postconditions hard, the open-shell union refused",
+     True, None),
+    ("feat(ci): the subject lint extended — typed prefixes, delivery counters, SHAs and prompt banners refused",
+     True, None),
 ]
 
 

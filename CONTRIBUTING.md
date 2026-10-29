@@ -78,7 +78,30 @@ start with an empty marker (`fix`, `various`, `check`, ... — Italian
 equivalents included: `correzione`, `sistemazione`, `modifica`,
 `aggiornamento`) or a progress label (`intro`, `bozza`, `riepilogo`,
 `Unità N` — the phase is not the content), and is at least 15
-characters. The derivation of every rule lives in the checker's
+characters.
+
+Since H2 (Parte C), the subject also must NOT contain a delivery
+counter (`Commit 1/4` — the position in a delivery is not a content),
+a git SHA (git identifies; the subject describes — `0x`-prefixed hex
+literals excluded, they are data, not references), a prompt-title
+banner (runs of `=`/`═` — the subject is one line, not a pasted
+manifest), or SHOUTING (more than half the letters uppercase). And it
+must carry the conventional type prefix — `feat(brep): ...`,
+`fix(tests): ...`, `docs: ...` — with the scope REQUIRED for the
+code-touching types (`feat`, `fix`, `test`, `refactor`, `perf`) and
+optional for the registry types (`docs`, `chore`, `ci`, `build`,
+`style`, `revert`). The machine refuses a non-conforming subject
+BEFORE the commit exists (the hook) and judges the pushed range in CI.
+
+**History note (annotated, not rewritten).** The deliveries that
+landed with non-conforming subjects — `Commit 1/4 — c851bdc · docs
+(PARTE A) ...`, `g2 - dimenticanza file`, and the pre-lint era's
+markers — stay in history exactly as they happened: the house does
+not rewrite pushed history. The extended lint applies to NEW commits
+from this one forward; `check_commit_subject.py --all` remains a
+report (not a gate) for exactly this reason.
+
+The derivation of every rule lives in the checker's
 docstring; preview a subject without touching history with
 `python3 scripts/check_commit_subject.py --explain "..."`.
 Merge commits are skipped both here and in CI (their subject is
