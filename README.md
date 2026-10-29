@@ -194,7 +194,7 @@ CAD_0/
 ├── docs/                # architecture, ADRs, warning audits
 ├── examples/            # Python usage examples
 ├── tests/               # doctest unit + regression suites
-└── third_party/         # Vendored Shewchuk predicates (public domain)
+└── third_party/         # Vendored third-party code: the AUTHENTIC Shewchuk robust.c (public domain, adaptive — vendored by H1, ADR-0034)
 ```
 
 See [docs/architecture/overview.md](docs/architecture/overview.md) for the full layout and design rationale.
@@ -268,4 +268,11 @@ The project follows an **ADR-first culture**: architectural decisions are writte
 
 Apache-2.0. See [LICENSE](LICENSE).
 
-The vendored Shewchuk robust predicates under `third_party/robust_predicates/` are public domain; all other dependencies keep their original licenses (MIT, BSD-3, Apache-2.0). The `[ui]` extra pulls in PySide6, the only copyleft (LGPL-3.0) in the tree — dynamic import, replaceable, notices required for closed-source derivatives. The [NOTICE](NOTICE) file lists every third-party component and its license (the ADR-0013 release notice, due since the `v0.1.0-alpha` tag). Full inventory and per-dependency flags: [docs/audits/2026-10-16-third-party-license-audit.md](docs/audits/2026-10-16-third-party-license-audit.md).
+**Correction on the record (H1, ADR-0034).** The file under
+`third_party/robust_predicates/` was **not** Shewchuk's — it was a
+hand-written non-adaptive stub imitating his structure (the license
+audit had said so; the README had not). H1 vendored the authentic
+`robust.c` (public domain, rev. May 18, 1996): the adaptive
+implementation is in the tree, with its provenance header and the
+discriminating adaptivity tests as the proof. All other dependencies keep their original licenses (MIT,
+BSD-3, Apache-2.0). The `[ui]` extra pulls in PySide6, the only copyleft (LGPL-3.0) in the tree — dynamic import, replaceable, notices required for closed-source derivatives. The [NOTICE](NOTICE) file lists every third-party component and its license (the ADR-0013 release notice, due since the `v0.1.0-alpha` tag). Full inventory and per-dependency flags: [docs/audits/2026-10-16-third-party-license-audit.md](docs/audits/2026-10-16-third-party-license-audit.md).

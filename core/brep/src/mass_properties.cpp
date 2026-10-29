@@ -451,13 +451,13 @@ Contrib polyhedron_contrib(const PlaneSurface& pl, const Face& f,
                            const std::vector<Edge>& edges,
                            const std::vector<Vertex>& vertices, double tol,
                            std::size_t face_index) {
-    const auto project = [&pl](const math::Vec3f& P) {
-        const math::Vec3f d = P - pl.origin();
+    const auto project = [&pl](const math::Vec3d& P) {
+        const math::Vec3d d = P - pl.origin();
         return std::pair<double, double>(
-            double(d.x) * pl.u_axis().x + double(d.y) * pl.u_axis().y +
-                double(d.z) * pl.u_axis().z,
-            double(d.x) * pl.v_axis().x + double(d.y) * pl.v_axis().y +
-                double(d.z) * pl.v_axis().z);
+            d.x * pl.u_axis().x + d.y * pl.u_axis().y +
+                d.z * pl.u_axis().z,
+            d.x * pl.v_axis().x + d.y * pl.v_axis().y +
+                d.z * pl.v_axis().z);
     };
 
     Moments2 reg;
@@ -503,6 +503,48 @@ Contrib polyhedron_contrib(const PlaneSurface& pl, const Face& f,
 } // namespace
 
 // ---------------------------------------------------------------------------
+// The surface payload reader - the typed dispatch (H1, ADR-0034 D3):
+// the visitor extracts the concrete surface's parameters; the family
+// switch decides the closed form. No string compare, no dynamic_cast
+// chain.
+// ---------------------------------------------------------------------------
+namespace {
+
+struct MassSurfaceReader : SurfaceVisitor {
+    const PlaneSurface* plane{nullptr};
+    const SphereSurface* sphere{nullptr};
+    bool cyl_found{false};
+    CylFrame cyl{};
+
+    void visit(const PlaneSurface& p) override { plane = &p; }
+    void visit(const SphereSurface& s) override { sphere = &s; }
+    void visit(const CylinderZSurface& z) override {
+        cyl_found = true;
+        cyl.P0[0] = z.axis_center().x;
+        cyl.P0[1] = z.axis_center().y;
+        cyl.P0[2] = z.z_base();
+        cyl.a[0] = 0.0; cyl.a[1] = 0.0; cyl.a[2] = 1.0;
+        cyl.e1[0] = 1.0; cyl.e1[1] = 0.0; cyl.e1[2] = 0.0;
+        cyl.e2[0] = 0.0; cyl.e2[1] = 1.0; cyl.e2[2] = 0.0;
+        cyl.r = z.radius();
+        cyl.s = z.u_sign();
+    }
+    void visit(const CylinderSurface& y) override {
+        cyl_found = true;
+        cyl.P0[0] = y.origin().x;
+        cyl.P0[1] = y.origin().y;
+        cyl.P0[2] = y.origin().z;
+        cyl.a[0] = 0.0; cyl.a[1] = 1.0; cyl.a[2] = 0.0;
+        cyl.e1[0] = 1.0; cyl.e1[1] = 0.0; cyl.e1[2] = 0.0;
+        cyl.e2[0] = 0.0; cyl.e2[1] = 0.0; cyl.e2[2] = -1.0;
+        cyl.r = y.radius();
+        cyl.s = 1.0;
+    }
+};
+
+} // namespace
+
+// ---------------------------------------------------------------------------
 // mass_properties — the divergence theorem over the body's faces
 // ---------------------------------------------------------------------------
 MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
@@ -537,64 +579,49 @@ MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
     for (std::size_t fi = 0; fi < faces.size(); ++fi) {
         const auto& f = faces[fi];
         const auto* surf = f.surface();
-        const std::string family =
-            surf ? std::string(surf->type_name()) : std::string("none");
+        // H1 (ADR-0034 D3): the typed dispatch - the family ENUM (a
+        // typo cannot compile) and the payload VISITOR below; the
+        // string survives only in the MESSAGES, derived from the enum.
+        const SurfaceFamily family =
+            surf ? surf->family() : SurfaceFamily::None;
 
         if (any_approximated) {
             // The polyhedral path: every face reduces to its vertex
             // polygon in its own plane.
-            if (family != "plane")
+            if (family != SurfaceFamily::Plane)
                 throw std::invalid_argument(
                     "mass_properties: face " + std::to_string(fi) +
-                    " is approximated and curved (family '" + family +
+                    " is approximated and curved (family '" +
+                    std::string(family_name(family)) +
                     "') - the polyhedral path reduces PLANAR faces (the "
                     "bridge's faceted output); a curved approximated face "
                     "has no producer. Remedy: report the body's "
                     "construction.");
-            const auto* pl = dynamic_cast<const PlaneSurface*>(surf);
-            total.accumulate(polyhedron_contrib(*pl, f, body.edges,
+            MassSurfaceReader reader;
+            surf->accept(reader);
+            total.accumulate(polyhedron_contrib(*reader.plane, f, body.edges,
                                                 body.vertices, tol.value, fi));
             continue;
         }
 
-        // The exact path, per family.
-        if (family == "plane") {
-            const auto* pl = dynamic_cast<const PlaneSurface*>(surf);
-            total.accumulate(planar_contrib(*pl, f, tol.value, fi));
-        } else if (family == "cylinder") {
+        // The exact path, per family (the typed dispatch).
+        MassSurfaceReader reader;
+        if (surf != nullptr) surf->accept(reader);
+        if (family == SurfaceFamily::Plane) {
+            total.accumulate(planar_contrib(*reader.plane, f, tol.value, fi));
+        } else if (family == SurfaceFamily::Cylinder) {
             // The unified frame for both placements (the extrude's
             // Z-axis CylinderZSurface and the factory's Y-axis
             // CylinderSurface — G1 does not unify the surfaces, the
             // MASS machinery unifies the mathematics).
-            CylFrame fr;
-            if (const auto* cz =
-                    dynamic_cast<const CylinderZSurface*>(surf)) {
-                fr.P0[0] = cz->axis_center().x;
-                fr.P0[1] = cz->axis_center().y;
-                fr.P0[2] = cz->z_base();
-                fr.a[0] = 0.0; fr.a[1] = 0.0; fr.a[2] = 1.0;
-                fr.e1[0] = 1.0; fr.e1[1] = 0.0; fr.e1[2] = 0.0;
-                fr.e2[0] = 0.0; fr.e2[1] = 1.0; fr.e2[2] = 0.0;
-                fr.r = cz->radius();
-                fr.s = cz->u_sign();
-            } else if (const auto* cy =
-                           dynamic_cast<const CylinderSurface*>(surf)) {
-                fr.P0[0] = cy->origin().x;
-                fr.P0[1] = cy->origin().y;
-                fr.P0[2] = cy->origin().z;
-                fr.a[0] = 0.0; fr.a[1] = 1.0; fr.a[2] = 0.0;
-                fr.e1[0] = 1.0; fr.e1[1] = 0.0; fr.e1[2] = 0.0;
-                fr.e2[0] = 0.0; fr.e2[1] = 0.0; fr.e2[2] = -1.0;
-                fr.r = cy->radius();
-                fr.s = 1.0;
-            } else {
+            if (!reader.cyl_found)
                 throw std::invalid_argument(
                     "mass_properties: face " + std::to_string(fi) +
                     " carries an unknown 'cylinder' subtype - the mass "
                     "machinery covers CylinderZSurface and "
                     "CylinderSurface. Remedy: report the body's "
                     "construction.");
-            }
+            const CylFrame fr = reader.cyl;
 
             // The window: the bounding box of the wall's Line2
             // endpoints (the authored rectangle — the seam-wired walks
@@ -664,7 +691,7 @@ MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
                         "body's construction.");
             }
             total.accumulate(cylinder_contrib(fr, u0, u1, v0, v1));
-        } else if (family == "sphere") {
+        } else if (family == SurfaceFamily::Sphere) {
             // The FULL sphere's closed form — the only sphere the
             // exact world produces (trimmed spheres are G2's, D1).
             if (faces.size() != 1)
@@ -676,13 +703,15 @@ MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
                     "trimmed spherical region arises from sphere "
                     "booleans (G2's table). Remedy: check the body's "
                     "construction.");
-            const auto* sp = dynamic_cast<const SphereSurface*>(surf);
-            total.accumulate(sphere_contrib(sp->origin().x, sp->origin().y,
-                                            sp->origin().z, sp->radius()));
+            total.accumulate(sphere_contrib(reader.sphere->origin().x,
+                                            reader.sphere->origin().y,
+                                            reader.sphere->origin().z,
+                                            reader.sphere->radius()));
         } else {
             throw std::invalid_argument(
                 "mass_properties: face " + std::to_string(fi) + " carries a "
-                "'" + family + "' surface - outside the supported G1 "
+                "'" + std::string(family_name(family)) +
+                "' surface - outside the supported G1 "
                 "families (plane with line/arc loops, cylindrical patch, "
                 "full sphere; the cone and torus closed forms arrive with "
                 "the G2 table). Remedy: check the body's faces, or accept "
@@ -717,9 +746,7 @@ MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
         for (int j = 0; j < 3; ++j) S[i][j] = total.Fij[i][j] / 5.0;
 
     const double c[3] = {M[0] / V, M[1] / V, M[2] / V};
-    mp.centroid = math::Vec3f{static_cast<float>(c[0]),
-                              static_cast<float>(c[1]),
-                              static_cast<float>(c[2])};
+    mp.centroid = math::Vec3d{c[0], c[1], c[2]};
 
     // I(origin) = δ·tr(S) − S; then the parallel axis to the centroid.
     const double tr = S[0][0] + S[1][1] + S[2][2];
@@ -728,8 +755,7 @@ MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
         for (int j = 0; j < 3; ++j) {
             const double I0 = (i == j ? tr : 0.0) - S[i][j];
             const double shift = V * ((i == j ? c2 : 0.0) - c[i] * c[j]);
-            mp.inertia_about_centroid(
-                i, j) = static_cast<float>(I0 - shift);
+            mp.inertia_about_centroid(i, j) = I0 - shift;
         }
     return mp;
 }

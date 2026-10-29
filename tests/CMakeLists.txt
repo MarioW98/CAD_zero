@@ -8,6 +8,7 @@ set(CAD_0_TEST_SOURCES
     unit/math/test_mat.cpp
     unit/math/test_bbox.cpp
     unit/math/test_predicate.cpp
+    unit/math/test_predicate_adaptive.cpp
     unit/math/test_tolerance.cpp
     unit/geometry/test_shape.cpp
     unit/geometry/test_shape_id.cpp

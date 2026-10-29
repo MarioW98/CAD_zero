@@ -105,7 +105,7 @@ namespace b = CAD_0::brep;
 namespace s = CAD_0::sdf;
 namespace br = CAD_0::bridge;
 using CAD_0::math::Vec2f;
-using CAD_0::math::Vec3f;
+using CAD_0::math::Vec3d;
 
 namespace {
 
@@ -119,7 +119,7 @@ constexpr float kCoincidenceTol = 1e-5f;
 // a wrong endpoint is off by O(1), noise is off by ~1e-6.
 constexpr float kEvalTol = 1e-4f;
 
-bool close(float a, float b, float tol = kCoincidenceTol) {
+bool close(double a, double b, double tol = kCoincidenceTol) {
     return std::abs(a - b) <= tol;
 }
 
@@ -127,7 +127,7 @@ bool close2(const Vec2f& a, const Vec2f& b, float tol = kCoincidenceTol) {
     return close(a.x, b.x, tol) && close(a.y, b.y, tol);
 }
 
-bool close3(const Vec3f& a, const Vec3f& b, float tol = kEvalTol) {
+bool close3(const Vec3d& a, const Vec3d& b, double tol = kEvalTol) {
     return close(a.x, b.x, tol) && close(a.y, b.y, tol) &&
            close(a.z, b.z, tol);
 }
@@ -380,9 +380,9 @@ void check_conventions(const b::BRepBody& body, const b::Face& face,
         const Vec2f pe = pcurve_end(*ce.p_curve());
 
         // DIRECTION (start vertex): try u as stored, then ± period.
-        const Vec3f want_start =
+        const Vec3d want_start =
             body.vertices[ce.start_vertex(body.edges)].position();
-        const Vec3f want_end =
+        const Vec3d want_end =
             body.vertices[ce.end_vertex(body.edges)].position();
         bool start_ok = close3(surface->evaluate(ps.x, ps.y), want_start);
         bool end_ok = close3(surface->evaluate(pe.x, pe.y), want_end);
@@ -458,7 +458,7 @@ std::filesystem::path golden_file(const char* name) {
 // ---------------------------------------------------------------------------
 
 TEST_CASE("G1-U2 golden: make_box(1,2,3) — 6 planar faces, 4 Line2 each, pinned domains") {
-    auto body = b::make_box(Vec3f{1, 2, 3});
+    auto body = b::make_box(Vec3d{1, 2, 3});
     REQUIRE(body != nullptr);
 
     struct FaceTable {
@@ -607,7 +607,7 @@ TEST_CASE("G1-U2 compat: the counts do not move — χ confirmed WITH the H term
         std::size_t v, e, f;
     };
     const std::pair<Pin, std::unique_ptr<b::BRepBody>> bodies[] = {
-        {Pin{"box", 8, 12, 6}, b::make_box(Vec3f{1, 2, 3})},
+        {Pin{"box", 8, 12, 6}, b::make_box(Vec3d{1, 2, 3})},
         {Pin{"sphere", 2, 1, 1}, b::make_sphere(2.0f)},
         {Pin{"cylinder", 4, 5, 3}, b::make_cylinder(1.0f, 2.0f)},
         {Pin{"tetrahedron", 4, 6, 4}, b::make_tetrahedron()},
@@ -695,7 +695,7 @@ TEST_CASE("G1-U2 compat: the faceted world still writes no p-curves — bridge e
 
 TEST_CASE("G1-U2 provenance: every face of every factory reads exact/0 through the query") {
     const std::pair<const char*, std::unique_ptr<b::BRepBody>> bodies[] = {
-        {"make_box", b::make_box(Vec3f{1, 2, 3})},
+        {"make_box", b::make_box(Vec3d{1, 2, 3})},
         {"make_sphere", b::make_sphere(2.0f)},
         {"make_cylinder", b::make_cylinder(1.0f, 2.0f)},
         {"make_tetrahedron", b::make_tetrahedron()},
@@ -716,7 +716,7 @@ TEST_CASE("G1-U2 provenance: every face of every factory reads exact/0 through t
 // ---------------------------------------------------------------------------
 
 TEST_CASE("G1-U2 conventions: the box — direction, chaining, region side on all 6 faces") {
-    auto body = b::make_box(Vec3f{1, 2, 3});
+    auto body = b::make_box(Vec3d{1, 2, 3});
     REQUIRE(body != nullptr);
     for (const auto& face : body->solid.shell().faces()) {
         CAPTURE(face.id());
@@ -788,7 +788,7 @@ TEST_CASE("G1-U2 conventions: the tetrahedron — the same discipline on the fou
 // ---------------------------------------------------------------------------
 
 TEST_CASE("G1-U2 query: the box through query_face — family, loops, per-co-edge p-curves") {
-    auto body = b::make_box(Vec3f{1, 2, 3});
+    auto body = b::make_box(Vec3d{1, 2, 3});
     REQUIRE(body != nullptr);
 
     const auto q0 = b::query_face(*body, 0);
@@ -876,7 +876,7 @@ TEST_CASE("G1-U2 query: the cylinder and sphere — families and kinds per face"
 }
 
 TEST_CASE("G1-U2 query: bad face id is loud — invalid_argument naming the remedy") {
-    auto body = b::make_box(Vec3f{1, 1, 1});
+    auto body = b::make_box(Vec3d{1, 1, 1});
     REQUIRE(body != nullptr);
     CHECK_THROWS_AS(b::query_face(*body, 99), std::invalid_argument);
     CHECK_THROWS_AS(b::query_face(*body, 6), std::invalid_argument);

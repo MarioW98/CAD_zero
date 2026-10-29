@@ -261,11 +261,11 @@ TEST_CASE("Extraction: extruded disc = cylinder topology at the same grid "
     // some vertex of the other.
     const float step = 2.0f * 0.7f * 1.02f / 15.0f; // padded extent / (res-1), x axis
     for (std::size_t i = 0; i < a->vertex_count(); ++i) {
-        const Vec3f& va = a->vertices[i].position();
-        float best = std::numeric_limits<float>::infinity();
+        const Vec3d& va = a->vertices[i].position();
+        double best = std::numeric_limits<double>::infinity();
         for (std::size_t j = 0; j < c->vertex_count(); ++j)
             best = std::min(best, (va - c->vertices[j].position()).length());
-        CHECK(best <= 1.01f * step);
+        CHECK(best <= 1.01 * step);
     }
 
     // P2: the pinned grid has no on-surface grid point.

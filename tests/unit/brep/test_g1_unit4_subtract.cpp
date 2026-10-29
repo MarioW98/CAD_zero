@@ -78,18 +78,18 @@ using CAD_0::brep::EdgeId;
 using CAD_0::brep::FaceId;
 using CAD_0::brep::VertexId;
 using CAD_0::math::Vec2f;
-using CAD_0::math::Vec3f;
+using CAD_0::math::Vec3d;
 namespace b = CAD_0::brep;
 namespace s = CAD_0::sdf;
 
 constexpr float kPi = 3.14159265358979f;
 constexpr float kTwoPi = 6.28318530717958647692f;
 
-bool close(float a, float b, float tol = 1e-5f) { return std::abs(a - b) <= tol; }
+bool close(double a, double b, double tol = 1e-5) { return std::abs(a - b) <= tol; }
 bool close2(Vec2f a, Vec2f b, float tol = 1e-5f) {
     return close(a.x, b.x, tol) && close(a.y, b.y, tol);
 }
-bool close3(Vec3f a, Vec3f b, float tol = 1e-5f) {
+bool close3(Vec3d a, Vec3d b, double tol = 1e-5) {
     return close(a.x, b.x, tol) && close(a.y, b.y, tol) &&
            close(a.z, b.z, tol);
 }
@@ -144,16 +144,16 @@ std::vector<s::SketchChain> sector_chains() {
 std::unique_ptr<BRepBody> ell_prism_body() {
     const Vec2f J[6] = {{-0.6f, -0.6f}, {0.6f, -0.6f}, {0.6f, 0.1f},
                         {0.1f, 0.1f},  {0.1f, 0.6f}, {-0.6f, 0.6f}};
-    const Vec3f lat_n[6] = {{0, -1, 0}, {1, 0, 0}, {0, 1, 0},
+    const Vec3d lat_n[6] = {{0, -1, 0}, {1, 0, 0}, {0, 1, 0},
                             {1, 0, 0},  {0, 1, 0}, {-1, 0, 0}};
     auto body = std::make_unique<BRepBody>();
     auto& shell = body->solid.shell_mut();
     shell.set_closed(true);
     for (std::size_t i = 0; i < 6; ++i) {
-        b::Vertex vb{Vec3f{J[i].x, J[i].y, -1.5f}};
+        b::Vertex vb{Vec3d{J[i].x, J[i].y, -1.5f}};
         vb.set_id(static_cast<b::VertexId>(2 * i));
         body->vertices.push_back(vb);
-        b::Vertex vt{Vec3f{J[i].x, J[i].y, 1.5f}};
+        b::Vertex vt{Vec3d{J[i].x, J[i].y, 1.5f}};
         vt.set_id(static_cast<b::VertexId>(2 * i + 1));
         body->vertices.push_back(vt);
     }
@@ -172,8 +172,8 @@ std::unique_ptr<BRepBody> ell_prism_body() {
         body->edges.push_back(ev);
     }
     {
-        b::Face f(std::make_shared<b::PlaneSurface>(Vec3f{0, 0, -1.5f},
-                                                 Vec3f{0, 0, -1}));
+        b::Face f(std::make_shared<b::PlaneSurface>(Vec3d{0, 0, -1.5f},
+                                                 Vec3d{0, 0, -1}));
         b::Loop l;
         for (std::size_t i = 0; i < 6; ++i)
             l.add_coedge(b::CoEdge{static_cast<b::EdgeId>(i), false});
@@ -182,8 +182,8 @@ std::unique_ptr<BRepBody> ell_prism_body() {
         shell.add_face(std::move(f));
     }
     {
-        b::Face f(std::make_shared<b::PlaneSurface>(Vec3f{0, 0, 1.5f},
-                                                 Vec3f{0, 0, 1}));
+        b::Face f(std::make_shared<b::PlaneSurface>(Vec3d{0, 0, 1.5f},
+                                                 Vec3d{0, 0, 1}));
         b::Loop l;
         for (std::size_t i = 0; i < 6; ++i)
             l.add_coedge(b::CoEdge{static_cast<b::EdgeId>(6 + i), false});
@@ -193,7 +193,7 @@ std::unique_ptr<BRepBody> ell_prism_body() {
     }
     for (std::size_t i = 0; i < 6; ++i) {
         b::Face f(std::make_shared<b::PlaneSurface>(
-            Vec3f{J[i].x, J[i].y, -1.5f}, lat_n[i]));
+            Vec3d{J[i].x, J[i].y, -1.5f}, lat_n[i]));
         b::Loop l;
         f.add_loop(std::move(l));
         f.set_id(static_cast<b::FaceId>(2 + i));
@@ -260,7 +260,7 @@ void check_body_invariants(const BRepBody& body, std::size_t V, std::size_t E,
 struct GuideCase {
     std::unique_ptr<BRepBody> a;   // make_box({1,1,1})
     std::unique_ptr<BRepBody> b;   // make_prism(circle r=0.25, 3.0, +1)
-    Vec3f offset{0.0f, 0.0f, -1.5f};
+    Vec3d offset{0.0f, 0.0f, -1.5f};
 };
 
 GuideCase guide_case() {
@@ -354,7 +354,7 @@ std::string sdf_digest(const CAD_0::sdf::SDFBody& body) {
     for (int i = 0; i <= 6; ++i)
         for (int j = 0; j <= 6; ++j)
             for (int k = 0; k <= 6; ++k) {
-                const Vec3f p{-1.3f + 0.4f * static_cast<float>(i),
+                const CAD_0::math::Vec3f p{-1.3f + 0.4f * static_cast<float>(i),
                               -1.3f + 0.4f * static_cast<float>(j),
                               -1.3f + 0.4f * static_cast<float>(k)};
                 out += std::to_string(body.sample(p).value) + ",";
@@ -375,22 +375,26 @@ std::uint32_t add_extrude(CAD_0::scene::Scene& sc, const std::string& name,
 
 std::uint32_t add_subtract(CAD_0::scene::Scene& sc, const std::string& name,
                            std::uint32_t target, std::uint32_t tool,
-                           Vec3f offset = {0.0f, 0.0f, 0.0f}) {
+                           Vec3d offset = {0.0f, 0.0f, 0.0f}) {
     CAD_0::scene::OperationRecipe r;
     r.type = CAD_0::scene::OperationType::Subtract;
     r.target = target;
     r.tool = tool;
-    r.offset_x = offset.x;
-    r.offset_y = offset.y;
-    r.offset_z = offset.z;
+    r.offset_x = static_cast<float>(offset.x);
+    r.offset_y = static_cast<float>(offset.y);
+    r.offset_z = static_cast<float>(offset.z);
     return sc.add_operation_node(name, r);
 }
 
 // A factory box node (the bridge's primitive path serves its exact
 // B-Rep — the class check's other operand source).
 std::uint32_t add_box_node(CAD_0::scene::Scene& sc, const std::string& name,
-                           Vec3f half) {
-    return sc.add_node(name, s::make_box(half));
+                           CAD_0::math::Vec3d half) {
+    // il confine display (ADR-0034): la fabbrica SDF e' float
+    return sc.add_node(
+        name, s::make_box(CAD_0::math::Vec3f{
+                   static_cast<float>(half.x), static_cast<float>(half.y),
+                   static_cast<float>(half.z)}));
 }
 
 } // namespace
@@ -436,7 +440,7 @@ TEST_CASE("G1-U4 SSI: plane parallel to the axis - the LINE PAIR, tangent, empty
         CHECK(close(std::abs(std::cos(ssi.phi_b)), 0.0f, 1e-4f));
         CHECK(close3(ssi.line_dir, {0.0f, 0.0f, 1.0f}));
         // Each line's point lies on the cylinder and on the plane.
-        const Vec3f pa = ssi.line_point;
+        const Vec3d pa = ssi.line_point;
         CHECK(close(std::hypot(pa.x - 0.5f, pa.y - 0.25f), 1.25f));
         CHECK(close(pa.x, 0.5f));
     }
@@ -492,7 +496,7 @@ TEST_CASE("G1-U4 guide: box minus the circle prism - THE pinned table 12/17/7/2"
     // the tool's canonical walk (the +Z cap's, CCW in the world):
     // J_0 = the seam S (+X), J_1 = the antipode A (-X). 2i = J_i at
     // z_bot, 2i+1 = J_i at z_top.
-    const Vec3f pv[12] = {
+    const Vec3d pv[12] = {
         {-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},   // box bottom
         {-1, -1, 1},  {1, -1, 1},  {1, 1, 1},  {-1, 1, 1},    // box top
         {0.25f, 0, -1}, {0.25f, 0, 1},                        // S_b, S_t
@@ -577,7 +581,10 @@ TEST_CASE("G1-U4 guide: the wall - ONE CylinderSurface-family face, the sketch r
     const auto* cyl = dynamic_cast<const b::CylinderZSurface*>(wall.surface());
     REQUIRE(cyl != nullptr);
     CHECK(close(cyl->radius(), 0.25f, 0.0f));
-    CHECK(close2(cyl->axis_center(), {0.0f, 0.0f}, 0.0f));
+    CHECK(close2(CAD_0::math::Vec2f{
+                     static_cast<float>(cyl->axis_center().x),
+                     static_cast<float>(cyl->axis_center().y)},
+                 {0.0f, 0.0f}, 0.0f));
     CHECK(close(cyl->z_base(), -1.0f, 0.0f));
     // The hole side: the frame rule forces u_sign = -1 (the outward
     // normal points INTO the hole, -radial).
@@ -756,7 +763,7 @@ TEST_CASE("G1-U4 formulas: the square prism tool (n=4) - V=16 E=24 F=10 H=2") {
     // The new vertices: the square's joints J_0..J_3 at z_bot/top.
     // (The canonical walk = the +Z cap's = the authored CCW cycle:
     // J_0=(0.3,-0.3), J_1=(0.3,0.3), J_2=(-0.3,0.3), J_3=(-0.3,-0.3).)
-    const Vec3f pv8[8] = {
+    const Vec3d pv8[8] = {
         {0.3f, -0.3f, -1.0f}, {0.3f, -0.3f, 1.0f},   // J_0 bot, top
         {0.3f, 0.3f, -1.0f}, {0.3f, 0.3f, 1.0f},     // J_1
         {-0.3f, 0.3f, -1.0f}, {-0.3f, 0.3f, 1.0f},   // J_2
@@ -1171,8 +1178,15 @@ TEST_CASE("G1-U4 landing: the subtract node owns BOTH materializations, bridge t
     s::SDFBody fresh = s::sdf_subtract(
         sc.get_node(bid)->body,
         s::sdf_translate(sc.get_node(eid)->body, {0.0f, 0.0f, -1.5f}));
-    for (const Vec3f p : {Vec3f{0.0f, 0.0f, 0.0f}, Vec3f{0.9f, 0.0f, 0.0f},
-                          Vec3f{0.0f, 0.0f, 0.9f}, Vec3f{0.3f, 0.3f, 0.3f}}) {
+    for (const CAD_0::math::Vec3d pd : {
+             CAD_0::math::Vec3d{0.0f, 0.0f, 0.0f},
+             CAD_0::math::Vec3d{0.9f, 0.0f, 0.0f},
+             CAD_0::math::Vec3d{0.0f, 0.0f, 0.9f},
+             CAD_0::math::Vec3d{0.3f, 0.3f, 0.3f}}) {
+        // il confine display (ADR-0034): il campionamento SDF e' float
+        const CAD_0::math::Vec3f p{static_cast<float>(pd.x),
+                                   static_cast<float>(pd.y),
+                                   static_cast<float>(pd.z)};
         CHECK(n->hybrid->sdf->sample(p).value == fresh.sample(p).value);
         CHECK(n->body.sample(p).value == fresh.sample(p).value);
     }

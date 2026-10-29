@@ -413,7 +413,7 @@ void bind_brep(nb::module_& m) {
         [](const BRepBody& body_a, FaceId face_a, const BRepBody& body_b,
            FaceId face_b, double tol) {
             return ssi_dict(CAD_0::brep::ssi_query(
-                body_a, face_a, body_b, face_b, float(tol)));
+                body_a, face_a, body_b, face_b, tol));
         },
         nb::arg("body_a"), nb::arg("face_a"), nb::arg("body_b"),
         nb::arg("face_b"), nb::arg("tol") = 1e-6,
@@ -442,8 +442,13 @@ void bind_brep(nb::module_& m) {
     // through their own accessors, the p-curves stay valid verbatim.
     brep_mod.def(
         "translate_body",
-        [](BRepBody& body, CAD_0::math::Vec3f delta) {
-            CAD_0::brep::translate_body(body, delta);
+        [](BRepBody& body, const CAD_0::math::Vec3f& delta) {
+            // THE BINDING BOUNDARY (H1, ADR-0034): the Python surface
+            // keeps its Vec3f vocabulary; the promotion to the exact
+            // world's double is lossless and happens here, one
+            // direction, declared.
+            CAD_0::brep::translate_body(
+                body, CAD_0::math::Vec3d{delta.x, delta.y, delta.z});
         },
         nb::arg("body"), nb::arg("delta"),
         "Translate a B-Rep body by a world delta, in place: every\n"

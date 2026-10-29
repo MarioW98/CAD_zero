@@ -3,10 +3,13 @@
 // Analytic curves: Line, Circle, Ellipse.
 //
 // Each curve is parametrized by t and provides:
-//   * evaluate(t) → 3D point
+//   * evaluate(t) → 3D point on the curve
 //   * tangent(t) → unit tangent vector
 //   * length() → arc length (or infinity for lines)
 //
+// H1 (ADR-0034): the 3D curve vocabulary is the EXACT world's — every
+// parameter, evaluation and answer is DOUBLE. (The p-curve vocabulary
+// stays the sketch kernel's float domain — pcurve.hpp, one opinion.)
 #pragma once
 
 #include "CAD_0/math/vec.hpp"
@@ -21,23 +24,23 @@ namespace CAD_0::brep {
 // Line: from point `p0` in direction `dir` (normalized).
 class LineCurve {
 public:
-    LineCurve(math::Vec3f p0, math::Vec3f dir)
+    LineCurve(math::Vec3d p0, math::Vec3d dir)
         : p0_(p0), dir_(dir.normalized()) {}
 
-    math::Vec3f evaluate(float t) const noexcept {
+    math::Vec3d evaluate(double t) const noexcept {
         return p0_ + dir_ * t;
     }
 
-    math::Vec3f tangent(float) const noexcept { return dir_; }
+    math::Vec3d tangent(double) const noexcept { return dir_; }
 
-    float length() const noexcept { return std::numeric_limits<float>::infinity(); }
+    double length() const noexcept { return std::numeric_limits<double>::infinity(); }
 
-    math::Vec3f origin() const noexcept { return p0_; }
-    math::Vec3f direction() const noexcept { return dir_; }
+    math::Vec3d origin() const noexcept { return p0_; }
+    math::Vec3d direction() const noexcept { return dir_; }
 
 private:
-    math::Vec3f p0_;
-    math::Vec3f dir_;
+    math::Vec3d p0_;
+    math::Vec3d dir_;
 };
 
 // Circle: radius R in a plane, centered at `center`.
@@ -58,7 +61,7 @@ private:
 // premise).
 class CircleCurve {
 public:
-    CircleCurve(float radius, math::Vec3f center = {})
+    CircleCurve(double radius, math::Vec3d center = {})
         : radius_(radius), center_(center),
           u_ref_{1, 0, 0}, v_ref_{0, 0, 1} {}
 
@@ -68,15 +71,15 @@ public:
     // PERPENDICULARITY is validated loudly: a skewed pair has no
     // circle in its span, and accepting it would bend every
     // evaluated point out of the intended plane.
-    CircleCurve(float radius, math::Vec3f center,
-                math::Vec3f u_ref, math::Vec3f v_ref)
+    CircleCurve(double radius, math::Vec3d center,
+                math::Vec3d u_ref, math::Vec3d v_ref)
         : radius_(radius), center_(center),
           u_ref_(u_ref.normalized()), v_ref_(v_ref.normalized()) {
-        const float du = u_ref_.length();
-        const float dv = v_ref_.length();
-        const float dot = u_ref_.dot(v_ref_);
-        if (!(du > 0.0f) || !(dv > 0.0f) || !std::isfinite(du) ||
-            !std::isfinite(dv) || std::abs(dot) > 1e-6f) {
+        const double du = u_ref_.length();
+        const double dv = v_ref_.length();
+        const double dot = u_ref_.dot(v_ref_);
+        if (!(du > 0.0) || !(dv > 0.0) || !std::isfinite(du) ||
+            !std::isfinite(dv) || std::abs(dot) > 1e-6) {
             throw std::invalid_argument(
                 "CircleCurve: (u_ref, v_ref) must be non-zero and "
                 "perpendicular (an orthonormal in-plane frame), got "
@@ -89,58 +92,59 @@ public:
         }
     }
 
-    math::Vec3f evaluate(float t) const noexcept {
+    math::Vec3d evaluate(double t) const noexcept {
         return center_ + u_ref_ * (radius_ * std::cos(t)) +
                v_ref_ * (radius_ * std::sin(t));
     }
 
-    math::Vec3f tangent(float t) const noexcept {
+    math::Vec3d tangent(double t) const noexcept {
         return u_ref_ * (-std::sin(t)) + v_ref_ * std::cos(t);
     }
 
-    float length() const noexcept { return 2.0f * 3.14159265358979f * radius_; }
+    double length() const noexcept { return 2.0 * 3.14159265358979 * radius_; }
 
-    float radius() const noexcept { return radius_; }
-    math::Vec3f center() const noexcept { return center_; }
-    const math::Vec3f& u_ref() const noexcept { return u_ref_; }
-    const math::Vec3f& v_ref() const noexcept { return v_ref_; }
+    double radius() const noexcept { return radius_; }
+    math::Vec3d center() const noexcept { return center_; }
+    const math::Vec3d& u_ref() const noexcept { return u_ref_; }
+    const math::Vec3d& v_ref() const noexcept { return v_ref_; }
 
 private:
-    float radius_;
-    math::Vec3f center_;
-    math::Vec3f u_ref_;
-    math::Vec3f v_ref_;
+    double radius_;
+    math::Vec3d center_;
+    math::Vec3d u_ref_;
+    math::Vec3d v_ref_;
 };
 
 // Ellipse: semi-axes a (X) and b (Z), in the XZ plane, centered at origin.
 class EllipseCurve {
 public:
-    EllipseCurve(float a, float b, math::Vec3f center = {})
+    EllipseCurve(double a, double b, math::Vec3d center = {})
         : a_(a), b_(b), center_(center) {}
 
-    math::Vec3f evaluate(float t) const noexcept {
+    math::Vec3d evaluate(double t) const noexcept {
         return {center_.x + a_ * std::cos(t),
                 center_.y,
                 center_.z + b_ * std::sin(t)};
     }
 
-    math::Vec3f tangent(float t) const noexcept {
-        const float tx = -a_ * std::sin(t);
-        const float tz = b_ * std::cos(t);
-        const float len = std::sqrt(tx * tx + tz * tz);
-        if (len < 1e-9f) return {0, 0, 1};
-        return {tx / len, 0.0f, tz / len};
+    math::Vec3d tangent(double t) const noexcept {
+        const double tx = -a_ * std::sin(t);
+        const double tz = b_ * std::cos(t);
+        const double len = std::sqrt(tx * tx + tz * tz);
+        if (len < 1e-9) return {0, 0, 1};
+        return {tx / len, 0.0, tz / len};
     }
 
     // Approximate arc length (Ramanujan's formula)
-    float length() const noexcept {
-        const float h = static_cast<float>(std::pow((a_ - b_) / (a_ + b_), 2));
-        return 3.14159265358979f * (a_ + b_) * (1.0f + 3.0f * h / (10.0f + std::sqrt(4.0f - 3.0f * h)));
+    double length() const noexcept {
+        const double h = std::pow((a_ - b_) / (a_ + b_), 2);
+        return 3.14159265358979 * (a_ + b_) *
+               (1.0 + 3.0 * h / (10.0 + std::sqrt(4.0 - 3.0 * h)));
     }
 
 private:
-    float a_, b_;
-    math::Vec3f center_;
+    double a_, b_;
+    math::Vec3d center_;
 };
 
 } // namespace CAD_0::brep
