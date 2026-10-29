@@ -444,6 +444,128 @@ Contrib sphere_contrib(double cx, double cy, double cz, double R) {
     return c;
 }
 
+// ---------------------------------------------------------------------------
+// The trimmed sphere patch (G2 unit 2, ADR-0033 D1.4) — the latitude-
+// bounded windows the booleans author
+// ---------------------------------------------------------------------------
+//
+// The parametrization (the re-framed SphereSurface's own):
+//   x = C + R·[ sin v·(cos u·e0 + sin u·e1) + cos v·n ],
+//   n̂ = the radial, dA = R² sin v du dv,
+// over the seam-wired rectangle [u0, u1] x [v0, v1] (u1 − u0 = 2π:
+// the slit-rectangle windows — a cap [0, v0], a zone [v1, v2]). The
+// kernels: F0 = ∫∫ (C·n̂ + R) dA, Fi = ∫∫ x_i² n̂_i dA, Fij =
+// ∫∫ x_i x_j (C·n̂ + R) dA — every factor a bivariate trig polynomial
+// (cos^iu u·sin^ju u)·(cos^iv v·sin^jv v), the two angles SEPARATING
+// under the integral: each term integrates as
+// trig_T(iu,ju)·trig_T(iv,jv) — the same recurrence machinery the
+// cylinder kernels run, one dimension more. Determinism (ADR-0014):
+// +, −, ×, ÷ and the recurrences only, the terms accumulated in the
+// authored order.
+struct Term2 {
+    double coef;
+    int iu, ju, iv, jv;
+};
+
+struct Form2 {
+    std::vector<Term2> terms;
+
+    void add(double coef, int iu, int ju, int iv, int jv) {
+        if (coef == 0.0) return;
+        for (auto& t : terms)
+            if (t.iu == iu && t.ju == ju && t.iv == iv && t.jv == jv) {
+                t.coef += coef;
+                return;
+            }
+        terms.push_back({coef, iu, ju, iv, jv});
+    }
+
+    void scale(double k) {
+        for (auto& t : terms) t.coef *= k;
+    }
+
+    // Multiply by the measure R² sin v (the extra sin v power).
+    void times_measure(double R2) {
+        for (auto& t : terms) ++t.jv;
+        scale(R2);
+    }
+
+    double integrate(double u0, double u1, double v0, double v1) const {
+        double sum = 0.0;
+        for (const Term2& t : terms)
+            sum += t.coef * trig_T(t.iu, t.ju, u0, u1) *
+                   trig_T(t.iv, t.jv, v0, v1);
+        return sum;
+    }
+};
+
+Form2 operator*(const Form2& a, const Form2& b) {
+    Form2 r;
+    r.terms.reserve(a.terms.size() * b.terms.size());
+    for (const Term2& x : a.terms)
+        for (const Term2& y : b.terms)
+            r.add(x.coef * y.coef, x.iu + y.iu, x.ju + y.ju,
+                  x.iv + y.iv, x.jv + y.jv);
+    return r;
+}
+
+Contrib sphere_patch_contrib(const SphereSurface& sp, double u0, double u1,
+                             double v0, double v1) {
+    const double R = sp.radius();
+    const math::Vec3f C = sp.origin();
+    const math::Vec3f e0 = sp.azimuth().normalized();
+    const math::Vec3f n = sp.pole().normalized();
+    const math::Vec3f e1 = e0.cross(n);
+    const double Rc[3] = {double(C.x), double(C.y), double(C.z)};
+    const double E0[3] = {double(e0.x), double(e0.y), double(e0.z)};
+    const double E1[3] = {double(e1.x), double(e1.y), double(e1.z)};
+    const double N[3] = {double(n.x), double(n.y), double(n.z)};
+
+    // x_i and n̂_i as bivariate forms.
+    Form2 xi[3], ni[3];
+    for (int i = 0; i < 3; ++i) {
+        xi[i].add(Rc[i], 0, 0, 0, 0);
+        xi[i].add(R * E0[i], 1, 0, 0, 1);  // R e0_i · cos u sin v
+        xi[i].add(R * E1[i], 0, 1, 0, 1);  // R e1_i · sin u sin v
+        xi[i].add(R * N[i], 0, 0, 1, 0);   // R n_i · cos v
+        ni[i].add(E0[i], 1, 0, 0, 1);
+        ni[i].add(E1[i], 0, 1, 0, 1);
+        ni[i].add(N[i], 0, 0, 1, 0);
+    }
+    // x·n̂ = C·n̂ + R.
+    Form2 xn;
+    {
+        const double ce0 = Rc[0] * E0[0] + Rc[1] * E0[1] + Rc[2] * E0[2];
+        const double ce1 = Rc[0] * E1[0] + Rc[1] * E1[1] + Rc[2] * E1[2];
+        const double cn = Rc[0] * N[0] + Rc[1] * N[1] + Rc[2] * N[2];
+        xn.add(ce0, 1, 0, 0, 1);
+        xn.add(ce1, 0, 1, 0, 1);
+        xn.add(cn, 0, 0, 1, 0);
+        xn.add(R, 0, 0, 0, 0);
+    }
+
+    const double R2 = R * R;
+    Contrib c;
+    {
+        Form2 f = xn;
+        f.times_measure(R2);
+        c.F0 = f.integrate(u0, u1, v0, v1);
+    }
+    for (int i = 0; i < 3; ++i) {
+        Form2 f = (xi[i] * xi[i]) * ni[i];
+        f.times_measure(R2);
+        c.Fi[i] = f.integrate(u0, u1, v0, v1);
+    }
+    for (int i = 0; i < 3; ++i)
+        for (int j = i; j < 3; ++j) {
+            Form2 f = (xi[i] * xi[j]) * xn;
+            f.times_measure(R2);
+            c.Fij[i][j] = c.Fij[j][i] =
+                f.integrate(u0, u1, v0, v1);
+        }
+    return c;
+}
+
 // The polyhedral face (the Mirtich reduction): the vertex polygon
 // projected into the face's own plane, the same Green machinery with
 // synthesized segments — the honest value of the faceted body.
@@ -451,13 +573,13 @@ Contrib polyhedron_contrib(const PlaneSurface& pl, const Face& f,
                            const std::vector<Edge>& edges,
                            const std::vector<Vertex>& vertices, double tol,
                            std::size_t face_index) {
-    const auto project = [&pl](const math::Vec3d& P) {
-        const math::Vec3d d = P - pl.origin();
+    const auto project = [&pl](const math::Vec3f& P) {
+        const math::Vec3f d = P - pl.origin();
         return std::pair<double, double>(
-            d.x * pl.u_axis().x + d.y * pl.u_axis().y +
-                d.z * pl.u_axis().z,
-            d.x * pl.v_axis().x + d.y * pl.v_axis().y +
-                d.z * pl.v_axis().z);
+            double(d.x) * pl.u_axis().x + double(d.y) * pl.u_axis().y +
+                double(d.z) * pl.u_axis().z,
+            double(d.x) * pl.v_axis().x + double(d.y) * pl.v_axis().y +
+                double(d.z) * pl.v_axis().z);
     };
 
     Moments2 reg;
@@ -503,48 +625,6 @@ Contrib polyhedron_contrib(const PlaneSurface& pl, const Face& f,
 } // namespace
 
 // ---------------------------------------------------------------------------
-// The surface payload reader - the typed dispatch (H1, ADR-0034 D3):
-// the visitor extracts the concrete surface's parameters; the family
-// switch decides the closed form. No string compare, no dynamic_cast
-// chain.
-// ---------------------------------------------------------------------------
-namespace {
-
-struct MassSurfaceReader : SurfaceVisitor {
-    const PlaneSurface* plane{nullptr};
-    const SphereSurface* sphere{nullptr};
-    bool cyl_found{false};
-    CylFrame cyl{};
-
-    void visit(const PlaneSurface& p) override { plane = &p; }
-    void visit(const SphereSurface& s) override { sphere = &s; }
-    void visit(const CylinderZSurface& z) override {
-        cyl_found = true;
-        cyl.P0[0] = z.axis_center().x;
-        cyl.P0[1] = z.axis_center().y;
-        cyl.P0[2] = z.z_base();
-        cyl.a[0] = 0.0; cyl.a[1] = 0.0; cyl.a[2] = 1.0;
-        cyl.e1[0] = 1.0; cyl.e1[1] = 0.0; cyl.e1[2] = 0.0;
-        cyl.e2[0] = 0.0; cyl.e2[1] = 1.0; cyl.e2[2] = 0.0;
-        cyl.r = z.radius();
-        cyl.s = z.u_sign();
-    }
-    void visit(const CylinderSurface& y) override {
-        cyl_found = true;
-        cyl.P0[0] = y.origin().x;
-        cyl.P0[1] = y.origin().y;
-        cyl.P0[2] = y.origin().z;
-        cyl.a[0] = 0.0; cyl.a[1] = 1.0; cyl.a[2] = 0.0;
-        cyl.e1[0] = 1.0; cyl.e1[1] = 0.0; cyl.e1[2] = 0.0;
-        cyl.e2[0] = 0.0; cyl.e2[1] = 0.0; cyl.e2[2] = -1.0;
-        cyl.r = y.radius();
-        cyl.s = 1.0;
-    }
-};
-
-} // namespace
-
-// ---------------------------------------------------------------------------
 // mass_properties — the divergence theorem over the body's faces
 // ---------------------------------------------------------------------------
 MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
@@ -579,49 +659,64 @@ MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
     for (std::size_t fi = 0; fi < faces.size(); ++fi) {
         const auto& f = faces[fi];
         const auto* surf = f.surface();
-        // H1 (ADR-0034 D3): the typed dispatch - the family ENUM (a
-        // typo cannot compile) and the payload VISITOR below; the
-        // string survives only in the MESSAGES, derived from the enum.
-        const SurfaceFamily family =
-            surf ? surf->family() : SurfaceFamily::None;
+        const std::string family =
+            surf ? std::string(surf->type_name()) : std::string("none");
 
         if (any_approximated) {
             // The polyhedral path: every face reduces to its vertex
             // polygon in its own plane.
-            if (family != SurfaceFamily::Plane)
+            if (family != "plane")
                 throw std::invalid_argument(
                     "mass_properties: face " + std::to_string(fi) +
-                    " is approximated and curved (family '" +
-                    std::string(family_name(family)) +
+                    " is approximated and curved (family '" + family +
                     "') - the polyhedral path reduces PLANAR faces (the "
                     "bridge's faceted output); a curved approximated face "
                     "has no producer. Remedy: report the body's "
                     "construction.");
-            MassSurfaceReader reader;
-            surf->accept(reader);
-            total.accumulate(polyhedron_contrib(*reader.plane, f, body.edges,
+            const auto* pl = dynamic_cast<const PlaneSurface*>(surf);
+            total.accumulate(polyhedron_contrib(*pl, f, body.edges,
                                                 body.vertices, tol.value, fi));
             continue;
         }
 
-        // The exact path, per family (the typed dispatch).
-        MassSurfaceReader reader;
-        if (surf != nullptr) surf->accept(reader);
-        if (family == SurfaceFamily::Plane) {
-            total.accumulate(planar_contrib(*reader.plane, f, tol.value, fi));
-        } else if (family == SurfaceFamily::Cylinder) {
+        // The exact path, per family.
+        if (family == "plane") {
+            const auto* pl = dynamic_cast<const PlaneSurface*>(surf);
+            total.accumulate(planar_contrib(*pl, f, tol.value, fi));
+        } else if (family == "cylinder") {
             // The unified frame for both placements (the extrude's
             // Z-axis CylinderZSurface and the factory's Y-axis
             // CylinderSurface — G1 does not unify the surfaces, the
             // MASS machinery unifies the mathematics).
-            if (!reader.cyl_found)
+            CylFrame fr;
+            if (const auto* cz =
+                    dynamic_cast<const CylinderZSurface*>(surf)) {
+                fr.P0[0] = cz->axis_center().x;
+                fr.P0[1] = cz->axis_center().y;
+                fr.P0[2] = cz->z_base();
+                fr.a[0] = 0.0; fr.a[1] = 0.0; fr.a[2] = 1.0;
+                fr.e1[0] = 1.0; fr.e1[1] = 0.0; fr.e1[2] = 0.0;
+                fr.e2[0] = 0.0; fr.e2[1] = 1.0; fr.e2[2] = 0.0;
+                fr.r = cz->radius();
+                fr.s = cz->u_sign();
+            } else if (const auto* cy =
+                           dynamic_cast<const CylinderSurface*>(surf)) {
+                fr.P0[0] = cy->origin().x;
+                fr.P0[1] = cy->origin().y;
+                fr.P0[2] = cy->origin().z;
+                fr.a[0] = 0.0; fr.a[1] = 1.0; fr.a[2] = 0.0;
+                fr.e1[0] = 1.0; fr.e1[1] = 0.0; fr.e1[2] = 0.0;
+                fr.e2[0] = 0.0; fr.e2[1] = 0.0; fr.e2[2] = -1.0;
+                fr.r = cy->radius();
+                fr.s = 1.0;
+            } else {
                 throw std::invalid_argument(
                     "mass_properties: face " + std::to_string(fi) +
                     " carries an unknown 'cylinder' subtype - the mass "
                     "machinery covers CylinderZSurface and "
                     "CylinderSurface. Remedy: report the body's "
                     "construction.");
-            const CylFrame fr = reader.cyl;
+            }
 
             // The window: the bounding box of the wall's Line2
             // endpoints (the authored rectangle — the seam-wired walks
@@ -691,27 +786,95 @@ MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
                         "body's construction.");
             }
             total.accumulate(cylinder_contrib(fr, u0, u1, v0, v1));
-        } else if (family == SurfaceFamily::Sphere) {
-            // The FULL sphere's closed form — the only sphere the
-            // exact world produces (trimmed spheres are G2's, D1).
-            if (faces.size() != 1)
+        } else if (family == "sphere") {
+            const auto* sp = dynamic_cast<const SphereSurface*>(surf);
+            // The window from the loops' Line2 endpoints (the
+            // seam-wired slit rectangles the booleans author — a cap
+            // [0, v0], a zone [v1, v2]); the FULL window on a
+            // single-face body keeps the closed form (the factory
+            // sphere's own path, the goldens untouched).
+            double u0 = std::numeric_limits<double>::infinity();
+            double u1 = -std::numeric_limits<double>::infinity();
+            double v0 = std::numeric_limits<double>::infinity();
+            double v1 = -std::numeric_limits<double>::infinity();
+            std::vector<std::pair<double, double>> endpoints;
+            for (const auto& loop : f.loops())
+                for (const auto& ce : loop.coedges()) {
+                    const auto* pc = ce.p_curve();
+                    if (pc == nullptr)
+                        throw std::invalid_argument(
+                            "mass_properties: face " +
+                            std::to_string(fi) +
+                            " is exact but a co-edge carries no p-curve - "
+                            "the exact world's invariant is violated. "
+                            "Remedy: report the body's construction.");
+                    if (pc->kind != sdf::SketchEntity::Kind::Segment)
+                        throw std::invalid_argument(
+                            "mass_properties: face " + std::to_string(fi) +
+                            "'s spherical loop carries a non-Line2 "
+                            "p-curve - outside the latitude-bounded "
+                            "window class (the trimmed sphere's patches "
+                            "are seam-wired rectangles in (u, v), the "
+                            "boolean unit's own authoring, ADR-0033 "
+                            "D1.4). Remedy: report the body's "
+                            "construction.");
+                    endpoints.push_back({pc->segment.a.x, pc->segment.a.y});
+                    endpoints.push_back({pc->segment.b.x, pc->segment.b.y});
+                }
+            for (const auto& e : endpoints) {
+                u0 = std::min(u0, e.first);
+                u1 = std::max(u1, e.first);
+                v0 = std::min(v0, e.second);
+                v1 = std::max(v1, e.second);
+            }
+            if (v1 - v0 <= tol.value)
                 throw std::invalid_argument(
                     "mass_properties: face " + std::to_string(fi) +
-                    " is a sphere among " + std::to_string(faces.size()) +
-                    " faces - only the FULL sphere (the factory's "
-                    "seam-wired single-face body) is in the G1 class; a "
-                    "trimmed spherical region arises from sphere "
-                    "booleans (G2's table). Remedy: check the body's "
+                    "'s spherical window is degenerate (v in [" +
+                    std::to_string(v0) + ", " + std::to_string(v1) +
+                    "]) - a zero-height patch. Remedy: report the body's "
                     "construction.");
-            total.accumulate(sphere_contrib(reader.sphere->origin().x,
-                                            reader.sphere->origin().y,
-                                            reader.sphere->origin().z,
-                                            reader.sphere->radius()));
+            if (u1 - u0 > 2.0 * M_PI + tol.value ||
+                u1 - u0 < 2.0 * M_PI - tol.value)
+                throw std::invalid_argument(
+                    "mass_properties: face " + std::to_string(fi) +
+                    "'s spherical window spans " +
+                    std::to_string(u1 - u0) +
+                    " in u (the seam-wired patch covers the full 2pi "
+                    "period - a partial-azimuth sphere patch is not in "
+                    "the authored class). Remedy: report the body's "
+                    "construction.");
+            for (const auto& e : endpoints) {
+                const bool on_u =
+                    std::abs(e.first - u0) <= tol.value ||
+                    std::abs(e.first - u1) <= tol.value;
+                const bool on_v =
+                    std::abs(e.second - v0) <= tol.value ||
+                    std::abs(e.second - v1) <= tol.value;
+                if (!(on_u || on_v))
+                    throw std::invalid_argument(
+                        "mass_properties: face " + std::to_string(fi) +
+                        "'s spherical loop leaves the window boundary "
+                        "(the point (" + std::to_string(e.first) + ", " +
+                        std::to_string(e.second) +
+                        ") is strictly inside) - a non-rectangular patch "
+                        "is outside the class. Remedy: report the body's "
+                        "construction.");
+            }
+            const bool full = std::abs(v0) <= tol.value &&
+                              std::abs(v1 - M_PI) <= tol.value;
+            if (full && faces.size() == 1)
+                total.accumulate(sphere_contrib(sp->origin().x,
+                                                sp->origin().y,
+                                                sp->origin().z,
+                                                sp->radius()));
+            else
+                total.accumulate(
+                    sphere_patch_contrib(*sp, u0, u1, v0, v1));
         } else {
             throw std::invalid_argument(
                 "mass_properties: face " + std::to_string(fi) + " carries a "
-                "'" + std::string(family_name(family)) +
-                "' surface - outside the supported G1 "
+                "'" + family + "' surface - outside the supported G1 "
                 "families (plane with line/arc loops, cylindrical patch, "
                 "full sphere; the cone and torus closed forms arrive with "
                 "the G2 table). Remedy: check the body's faces, or accept "
@@ -746,7 +909,9 @@ MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
         for (int j = 0; j < 3; ++j) S[i][j] = total.Fij[i][j] / 5.0;
 
     const double c[3] = {M[0] / V, M[1] / V, M[2] / V};
-    mp.centroid = math::Vec3d{c[0], c[1], c[2]};
+    mp.centroid = math::Vec3f{static_cast<float>(c[0]),
+                              static_cast<float>(c[1]),
+                              static_cast<float>(c[2])};
 
     // I(origin) = δ·tr(S) − S; then the parallel axis to the centroid.
     const double tr = S[0][0] + S[1][1] + S[2][2];
@@ -755,7 +920,8 @@ MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
         for (int j = 0; j < 3; ++j) {
             const double I0 = (i == j ? tr : 0.0) - S[i][j];
             const double shift = V * ((i == j ? c2 : 0.0) - c[i] * c[j]);
-            mp.inertia_about_centroid(i, j) = I0 - shift;
+            mp.inertia_about_centroid(
+                i, j) = static_cast<float>(I0 - shift);
         }
     return mp;
 }

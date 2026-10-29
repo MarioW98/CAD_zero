@@ -96,16 +96,12 @@ struct ProvenanceInfo {
 };
 
 // Vertex — a 3D point with an ID
-//
-// H1 (ADR-0034): the position is DOUBLE — the exact path's stored
-// geometry. The display/mesh boundary converts, one direction,
-// declared at its site; nothing converts back silently.
 class Vertex {
 public:
     Vertex() = default;
-    explicit Vertex(math::Vec3d pos) : position_(pos) {}
-    const math::Vec3d& position() const noexcept { return position_; }
-    void set_position(math::Vec3d p) noexcept { position_ = p; }
+    explicit Vertex(math::Vec3f pos) : position_(pos) {}
+    const math::Vec3f& position() const noexcept { return position_; }
+    void set_position(math::Vec3f p) noexcept { position_ = p; }
     VertexId id() const noexcept { return id_; }
     void set_id(VertexId id) noexcept { id_ = id; }
     // Layer-2 (ADR-0032 D2.4): exact/0 unless a sampling path
@@ -113,7 +109,7 @@ public:
     const ProvenanceInfo& provenance() const noexcept { return provenance_; }
     void set_provenance(ProvenanceInfo p) noexcept { provenance_ = p; }
 private:
-    math::Vec3d position_{};
+    math::Vec3f position_{};
     VertexId id_{0};
     ProvenanceInfo provenance_{};
 };
@@ -193,6 +189,10 @@ class Loop {
 public:
     Loop() = default;
     const std::vector<CoEdge>& coedges() const noexcept { return coedges_; }
+    // Mutable access (the boolean copy path, G2 unit 2: the tool's
+    // faces are copied wholesale and their co-edges' edge ids
+    // REMAPPED to the result's numbering — the faces_mut precedent).
+    std::vector<CoEdge>& coedges_mut() noexcept { return coedges_; }
     void add_coedge(CoEdge ce) { coedges_.push_back(std::move(ce)); }
     bool is_outer() const noexcept { return is_outer_; }
     void set_outer(bool outer) noexcept { is_outer_ = outer; }
@@ -202,66 +202,13 @@ private:
 };
 
 // SurfaceGeometry — abstract base for analytic surfaces
-//
-// H1 (ADR-0034) THE TYPED DISPATCH: the family is a TYPED ENUM (a
-// typo in a case label is a compile error), and the concrete-class
-// payload extraction is the classic VISITOR below — no string
-// comparison, no dynamic_cast chains anywhere in the exact path.
-// type_name() is DERIVED from family() through one switch
-// (family_name, topology.cpp): the string keeps serving the messages
-// and the reports, and can no longer drift from the truth.
-enum class SurfaceFamily : std::uint8_t {
-    None,     // no surface on the face
-    Plane,
-    Cylinder, // both placements (the class split carries the placement)
-    Sphere,
-    Cone,
-    Torus,
-    Unknown   // a subclass the vocabulary does not know (future/foreign)
-};
-
-// The single naming authority: family -> string, one switch, topology.cpp.
-const char* family_name(SurfaceFamily f) noexcept;
-
-class PlaneSurface;
-class CylinderSurface;
-class CylinderZSurface;
-class SphereSurface;
-class ConeSurface;
-class TorusSurface;
-
-// The surface visitor: typed overloads, one per concrete class. A
-// handler that implements the wrong class name does not compile;
-// families a handler does not care about fall through to unhandled()
-// (override for the loud default).
-class SurfaceVisitor {
-public:
-    virtual ~SurfaceVisitor() = default;
-    virtual void visit(const PlaneSurface&) { unhandled(); }
-    virtual void visit(const CylinderSurface&) { unhandled(); }
-    virtual void visit(const CylinderZSurface&) { unhandled(); }
-    virtual void visit(const SphereSurface&) { unhandled(); }
-    virtual void visit(const ConeSurface&) { unhandled(); }
-    virtual void visit(const TorusSurface&) { unhandled(); }
-protected:
-    virtual void unhandled() {}
-};
-
 class SurfaceGeometry {
 public:
     virtual ~SurfaceGeometry() = default;
-    // H1 (ADR-0034): the exact path's arithmetic is double — the
-    // parameters, the evaluated points, the normals, the bounds.
-    virtual math::Vec3d evaluate(double u, double v) const = 0;
-    virtual math::Vec3d normal(double u, double v) const = 0;
-    virtual SurfaceFamily family() const = 0;
-    virtual void accept(SurfaceVisitor& v) const = 0;
-    // Derived from family() through family_name(): one naming
-    // authority, typo-proof (ADR-0034 D3).
-    virtual const char* type_name() const {
-        return family_name(family());
-    }
-    virtual math::Bboxd bounds() const = 0;
+    virtual math::Vec3f evaluate(float u, float v) const = 0;
+    virtual math::Vec3f normal(float u, float v) const = 0;
+    virtual const char* type_name() const = 0;
+    virtual math::Bboxf bounds() const = 0;
 };
 
 // Face — bounded region of a surface
@@ -272,6 +219,9 @@ public:
     const SurfaceGeometry* surface() const noexcept { return surface_.get(); }
     void set_surface(std::shared_ptr<SurfaceGeometry> surf) { surface_ = std::move(surf); }
     const std::vector<Loop>& loops() const noexcept { return loops_; }
+    // Mutable access (the boolean copy path, G2 unit 2 — the
+    // coedges_mut note above).
+    std::vector<Loop>& loops_mut() noexcept { return loops_; }
     void add_loop(Loop loop) { loops_.push_back(std::move(loop)); }
     FaceId id() const noexcept { return id_; }
     void set_id(FaceId id) noexcept { id_ = id; }
@@ -331,8 +281,8 @@ public:
     std::size_t face_count() const noexcept {
         return solid.shell().faces().size();
     }
-    math::Bboxd bounds() const noexcept {
-        math::Bboxd b;
+    math::Bboxf bounds() const noexcept {
+        math::Bboxf b;
         for (const auto& v : vertices) b.expand(v.position());
         return b;
     }

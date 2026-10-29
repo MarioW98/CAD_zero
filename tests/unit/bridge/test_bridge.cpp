@@ -22,7 +22,7 @@
 #include "CAD_0/math/quat.hpp"
 
 using namespace CAD_0::bridge;
-using CAD_0::math::Vec3d;
+using CAD_0::math::Vec3f;
 
 // Use explicit namespace to disambiguate make_sphere/make_box/make_cylinder
 // (they exist in both CAD_0::sdf and CAD_0::brep)
@@ -46,7 +46,7 @@ TEST_CASE("Bridge: SDF sphere → B-Rep sphere (primitive fit)") {
 }
 
 TEST_CASE("Bridge: SDF box → B-Rep box (primitive fit)") {
-    auto box = s::make_box(CAD_0::math::Vec3f{1, 1, 1});
+    auto box = s::make_box(Vec3f{1, 1, 1});
     SdfToBrepOptions opts;
     opts.fit_primitives = true;
     auto body = sdf_to_brep(box, opts);
@@ -137,13 +137,13 @@ TEST_CASE("Bridge: B-Rep sphere → SDF sphere") {
     // are hand-derived and bit-exact: f(p) = |p| - 2. sqrt of exact
     // squares is exact here (0, 9, and the 1.9 roundtrip), so == is
     // sound, no epsilon.
-    CHECK(sdf_body->value(CAD_0::math::Vec3f{0, 0, 0}) == -2.0f);
-    CHECK(sdf_body->value(CAD_0::math::Vec3f{3, 0, 0}) == 1.0f);
-    CHECK(sdf_body->value(CAD_0::math::Vec3f{0, 1.9f, 0}) == -(2.0f - 1.9f));
+    CHECK(sdf_body->value(Vec3f{0, 0, 0}) == -2.0f);
+    CHECK(sdf_body->value(Vec3f{3, 0, 0}) == 1.0f);
+    CHECK(sdf_body->value(Vec3f{0, 1.9f, 0}) == -(2.0f - 1.9f));
 }
 
 TEST_CASE("Bridge: B-Rep box → SDF box") {
-    auto body = b::make_box(CAD_0::math::Vec3d{1, 1, 1});
+    auto body = b::make_box(Vec3f{1, 1, 1});
     auto sdf_body = brep_to_sdf(*body);
 
     REQUIRE(sdf_body != nullptr);
@@ -152,9 +152,9 @@ TEST_CASE("Bridge: B-Rep box → SDF box") {
     // values are hand-derived and bit-exact (no sqrt on these paths):
     // center → -1 (nearest wall), (5,0,0) → +4, the (0.5,0.5,0.5)
     // corner direction → -0.5 (nearest wall at distance 0.5).
-    CHECK(sdf_body->value(CAD_0::math::Vec3f{0, 0, 0}) == -1.0f);
-    CHECK(sdf_body->value(CAD_0::math::Vec3f{5, 0, 0}) == 4.0f);
-    CHECK(sdf_body->value(CAD_0::math::Vec3f{0.5f, 0.5f, 0.5f}) == -0.5f);
+    CHECK(sdf_body->value(Vec3f{0, 0, 0}) == -1.0f);
+    CHECK(sdf_body->value(Vec3f{5, 0, 0}) == 4.0f);
+    CHECK(sdf_body->value(Vec3f{0.5f, 0.5f, 0.5f}) == -0.5f);
 }
 
 TEST_CASE("Bridge: B-Rep cylinder → SDF cylinder") {
@@ -170,9 +170,9 @@ TEST_CASE("Bridge: B-Rep cylinder → SDF cylinder") {
     //   (5,0,0) → rho - r = 4 (outside, axial inside → no sqrt mixing)
     //   (0,0,1.9) → rho = sqrt(1.9^2) = 1.9 (roundtrip), radial
     //     outside distance 1.9 - 1
-    CHECK(sdf_body->value(CAD_0::math::Vec3f{0, 0, 0}) == -1.0f);
-    CHECK(sdf_body->value(CAD_0::math::Vec3f{5, 0, 0}) == 4.0f);
-    CHECK(sdf_body->value(CAD_0::math::Vec3f{0, 0, 1.9f}) == 1.9f - 1.0f);
+    CHECK(sdf_body->value(Vec3f{0, 0, 0}) == -1.0f);
+    CHECK(sdf_body->value(Vec3f{5, 0, 0}) == 4.0f);
+    CHECK(sdf_body->value(Vec3f{0, 0, 1.9f}) == 1.9f - 1.0f);
 }
 
 TEST_CASE("Bridge: round-trip sphere SDF → B-Rep → SDF") {
@@ -183,21 +183,21 @@ TEST_CASE("Bridge: round-trip sphere SDF → B-Rep → SDF") {
     REQUIRE(roundtrip != nullptr);
     // Default options fit the primitive first, so the round-trip is
     // analytic end-to-end: EXACT values, hand-derived (f = |p| - 2).
-    CHECK(roundtrip->value(CAD_0::math::Vec3f{0, 0, 0}) == -2.0f);
-    CHECK(roundtrip->value(CAD_0::math::Vec3f{3, 0, 0}) == 1.0f);
-    CHECK(roundtrip->value(CAD_0::math::Vec3f{0, 1.9f, 0}) == -(2.0f - 1.9f));
+    CHECK(roundtrip->value(Vec3f{0, 0, 0}) == -2.0f);
+    CHECK(roundtrip->value(Vec3f{3, 0, 0}) == 1.0f);
+    CHECK(roundtrip->value(Vec3f{0, 1.9f, 0}) == -(2.0f - 1.9f));
 }
 
 TEST_CASE("Bridge: round-trip box SDF → B-Rep → SDF") {
-    auto original = s::make_box(CAD_0::math::Vec3f{1, 1, 1});
+    auto original = s::make_box(Vec3f{1, 1, 1});
     auto body = sdf_to_brep(original);
     auto roundtrip = brep_to_sdf(*body);
 
     REQUIRE(roundtrip != nullptr);
     // Analytic round-trip through the box primitive fit: EXACT values,
     // hand-derived (center → -1, (5,0,0) → +4).
-    CHECK(roundtrip->value(CAD_0::math::Vec3f{0, 0, 0}) == -1.0f);
-    CHECK(roundtrip->value(CAD_0::math::Vec3f{5, 0, 0}) == 4.0f);
+    CHECK(roundtrip->value(Vec3f{0, 0, 0}) == -1.0f);
+    CHECK(roundtrip->value(Vec3f{5, 0, 0}) == 4.0f);
 }
 
 TEST_CASE("Bridge: faceted B-Rep → SDF mesh") {
@@ -237,11 +237,11 @@ TEST_CASE("Bridge: faceted B-Rep → SDF mesh") {
     // res-8 surface + tessellation perturb it, so a 50% band around
     // k/16 is the honest coherence check (measured: -0.0348413).
     const float k = 0.5f;
-    const float waist = sdf_body->value(CAD_0::math::Vec3f{1, 0, 0});
+    const float waist = sdf_body->value(Vec3f{1, 0, 0});
     CHECK(waist < 0.0f);
     CHECK(waist == doctest::Approx(-k / 16.0f).epsilon(0.5f));
     // Deep inside (center of sphere A): solidly negative.
-    CHECK(sdf_body->value(CAD_0::math::Vec3f{0, 0, 0}) < 0.0f);
+    CHECK(sdf_body->value(Vec3f{0, 0, 0}) < 0.0f);
     // The mesh must cover the source body ([-1, 3] x [-1, 1] x [-1, 1]
     // for the two unit spheres at distance 2).
     auto bnds = sdf_body->bounds();
@@ -271,10 +271,9 @@ TEST_CASE("Bridge: faceted B-Rep → SDF mesh") {
 // The smooth-union configuration pinned by T7–T10 (and whose grid T4
 // also checks): two unit spheres, centers 1.2 apart, polynomial smin
 // blend k = 0.4 — the ADR-0026 "first follow-up" body.
-static s::SDFBody smooth_union_two_unit_spheres(
-    CAD_0::math::Vec3f ca, CAD_0::math::Vec3f cb) {
+static s::SDFBody smooth_union_two_unit_spheres(Vec3f ca, Vec3f cb) {
     auto a = s::make_sphere(1.0f);
-    if (ca != CAD_0::math::Vec3f{0, 0, 0}) a = s::sdf_translate(std::move(a), ca);
+    if (ca != Vec3f{0, 0, 0}) a = s::sdf_translate(std::move(a), ca);
     auto b = s::sdf_translate(s::make_sphere(1.0f), cb);
     return s::sdf_smooth_union(std::move(a), std::move(b), 0.4f);
 }
@@ -529,8 +528,7 @@ TEST_CASE("Bridge T8: off-grid smooth-union - invariants survive generic placeme
 TEST_CASE("Bridge T8b: rotated smooth-union - invariants survive generic orientation") {
     auto u = smooth_union_two_unit_spheres({0, 0, 0}, {1.2f, 0, 0});
     const CAD_0::math::Quatf q =
-        CAD_0::math::Quatf::from_axis_angle(
-                CAD_0::math::Vec3f{1, 2, 3}.normalized(), 0.6f);
+        CAD_0::math::Quatf::from_axis_angle(Vec3f{1, 2, 3}.normalized(), 0.6f);
     auto r = s::sdf_rotate(std::move(u), q);
     SdfToBrepOptions opts;
     opts.fit_primitives = false;
@@ -705,7 +703,7 @@ TEST_CASE("Bridge T12: report min_abs_field matches the mesh_extract grid layout
 // ---------------------------------------------------------------------------
 
 static s::SDFBody pierced_box() {
-    auto box = s::make_box(CAD_0::math::Vec3f{1, 1, 1});
+    auto box = s::make_box(Vec3f{1, 1, 1});
     auto cyl = s::make_cylinder(0.25f, 3.0f);
     return s::sdf_subtract(std::move(box), std::move(cyl));
 }
@@ -872,8 +870,7 @@ TEST_CASE("Bridge T16: wrapper equivalence on the genus-0 fixtures") {
         // T8b (rotated): the same equivalence under a rotation.
         auto u = smooth_union_two_unit_spheres({0, 0, 0}, {1.2f, 0, 0});
         const CAD_0::math::Quatf q =
-            CAD_0::math::Quatf::from_axis_angle(
-                CAD_0::math::Vec3f{1, 2, 3}.normalized(), 0.6f);
+            CAD_0::math::Quatf::from_axis_angle(Vec3f{1, 2, 3}.normalized(), 0.6f);
         check(s::sdf_rotate(std::move(u), q), 16);
     }
 }
@@ -926,8 +923,8 @@ namespace prop = CAD_0::test::property;
 // accidental). Same constant for both families.
 constexpr float kOffGridOffset = 0.0137255020f;
 
-CAD_0::math::Vec3f off_grid_center(prop::Prng& prng, float lo, float hi) {
-    return CAD_0::math::Vec3f{prng.frange(lo, hi) + kOffGridOffset,
+Vec3f off_grid_center(prop::Prng& prng, float lo, float hi) {
+    return Vec3f{prng.frange(lo, hi) + kOffGridOffset,
                  prng.frange(lo, hi) - kOffGridOffset,
                  prng.frange(lo, hi) + kOffGridOffset};
 }
@@ -937,9 +934,9 @@ CAD_0::math::Vec3f off_grid_center(prop::Prng& prng, float lo, float hi) {
 // chains its spheres along a RANDOM direction, so the members hit the
 // grid in generic orientations — the rotation lesson of T8b, which
 // pure translations cannot teach.
-CAD_0::math::Vec3f random_unit_dir(prop::Prng& prng) {
+Vec3f random_unit_dir(prop::Prng& prng) {
     for (;;) {
-        const CAD_0::math::Vec3f d{prng.frange(-1.0f, 1.0f),
+        const Vec3f d{prng.frange(-1.0f, 1.0f),
                       prng.frange(-1.0f, 1.0f),
                       prng.frange(-1.0f, 1.0f)};
         const float l = d.length();
@@ -956,7 +953,7 @@ TEST_CASE("property: bridge spheres (seeded family) - genus-0 invariants at res 
     // 25 members at res 24 = ~0.14 s total (report call per member).
     for (int iter = 0; iter < 25; ++iter) {
         const float r = prng.frange(0.5f, 2.0f);
-        const CAD_0::math::Vec3f c = off_grid_center(prng, -0.4f, 0.4f);
+        const Vec3f c = off_grid_center(prng, -0.4f, 0.4f);
         auto body = s::sdf_translate(s::make_sphere(r), c);
 
         SdfToBrepOptions opts;
@@ -993,9 +990,9 @@ TEST_CASE("property: bridge pierced boxes (seeded family) - genus-1 invariants a
     // 25 members at res 24 = ~0.20 s total (report call per member).
     for (int iter = 0; iter < 25; ++iter) {
         const float rh = prng.frange(0.34f, 0.45f);  // P3 margin declared above
-        const CAD_0::math::Vec3f c = off_grid_center(prng, -0.25f, 0.25f);
+        const Vec3f c = off_grid_center(prng, -0.25f, 0.25f);
         auto body = s::sdf_subtract(
-            s::make_box(CAD_0::math::Vec3f{1, 1, 1}),
+            s::make_box(Vec3f{1, 1, 1}),
             s::sdf_translate(s::make_cylinder(rh, 3.0f), c));
 
         SdfToBrepOptions opts;
@@ -1162,10 +1159,10 @@ TEST_CASE("property: bridge smooth unions (seeded family) - genus-0 invariants a
         if (has_neck) ++neck_members; else ++overlap_members;
 
         // --- build the chain: nested smin along the generated direction ---
-        const CAD_0::math::Vec3f base = off_grid_center(prng, -0.3f, 0.3f);
-        const CAD_0::math::Vec3f dir = random_unit_dir(prng);
+        const Vec3f base = off_grid_center(prng, -0.3f, 0.3f);
+        const Vec3f dir = random_unit_dir(prng);
         s::SDFBody body = s::sdf_translate(s::make_sphere(radii[0]), base);
-        CAD_0::math::Vec3f c = base;
+        Vec3f c = base;
         for (std::size_t p = 0; p + 1 < radii.size(); ++p) {
             c = c + dir * dists[p];
             s::SDFBody next = s::sdf_translate(s::make_sphere(radii[p + 1]), c);
@@ -1373,7 +1370,7 @@ TEST_CASE("Bridge TW1: off-axis twisted sphere res=96 - the D3 guinea pig, full 
 // safe zone: 0/25 pinch across the full ty cell at res 48).
 TEST_CASE("Bridge TW2: on-axis twisted column res=48 - pinned counts + full contract") {
     auto col = s::sdf_twist(
-        s::sdf_translate(s::make_box(CAD_0::math::Vec3f{0.5f, 2.0f, 0.5f}),
+        s::sdf_translate(s::make_box(Vec3f{0.5f, 2.0f, 0.5f}),
                          {0.0137255020f, 0.0151f, 7.0f * 0.0137255020f}),
         0.10f);  // k = 0.10, H = 2 -> Theta = 0.20
 
@@ -1403,7 +1400,7 @@ TEST_CASE("Bridge TW2: on-axis twisted column res=48 - pinned counts + full cont
 // non-tangential intersection, so the union is a ball: genus 0.
 TEST_CASE("Bridge TW3: twisted column union sphere res=48 - pinned counts + full contract") {
     auto body = s::sdf_union(
-        s::sdf_twist(s::sdf_translate(s::make_box(CAD_0::math::Vec3f{0.5f, 2.0f, 0.5f}),
+        s::sdf_twist(s::sdf_translate(s::make_box(Vec3f{0.5f, 2.0f, 0.5f}),
                                       {0.0137255020f, 0.0151f, 7.0f * 0.0137255020f}),
                      0.10f),
         s::sdf_translate(s::make_sphere(0.55f),
@@ -1446,7 +1443,7 @@ TEST_CASE("property: bridge twisted columns (seeded family) - genus-0 invariants
     // The untwisted control (the classification anchor: an extraction
     // failure HERE would be a kernel bug, not a resolution limit).
     {
-        auto plain = s::sdf_translate(s::make_box(CAD_0::math::Vec3f{0.5f, 2.0f, 0.5f}),
+        auto plain = s::sdf_translate(s::make_box(Vec3f{0.5f, 2.0f, 0.5f}),
                                       {og, -3 * og, 7 * og});
         SdfToBrepOptions o;
         o.fit_primitives = false;
@@ -1483,8 +1480,8 @@ TEST_CASE("property: bridge twisted columns (seeded family) - genus-0 invariants
             // radius — so the guard is per-member, on actual geometry).
             const float R = std::sqrt(ex * ex + ez * ez);
             CAD_0::math::Bboxf bb;
-            bb.min = CAD_0::math::Vec3f{-R, -0.5f * H + ty, -R};
-            bb.max = CAD_0::math::Vec3f{R, 0.5f * H + ty, R};
+            bb.min = Vec3f{-R, -0.5f * H + ty, -R};
+            bb.max = Vec3f{R, 0.5f * H + ty, R};
             if (comp) {
                 bb.min.y = std::min(bb.min.y, ys - r_sph);
                 bb.max.y = std::max(bb.max.y, ys + r_sph);
@@ -1492,7 +1489,7 @@ TEST_CASE("property: bridge twisted columns (seeded family) - genus-0 invariants
                 bb.max.z = std::max(bb.max.z, r_sph + 0.1f);
                 bb.min.z = std::min(bb.min.z, -r_sph + 0.1f);
             }
-            const CAD_0::math::Vec3f ext = bb.extent();
+            const Vec3f ext = bb.extent();
             const float cell_x = ext.x * 1.02f / 48.0f;
             const float cell_y = ext.y * 1.02f / 48.0f;
             const float cell_z = ext.z * 1.02f / 48.0f;
@@ -1506,7 +1503,7 @@ TEST_CASE("property: bridge twisted columns (seeded family) - genus-0 invariants
         if (comp) ++composites; else ++pure_columns;
 
         auto col = s::sdf_twist(
-            s::sdf_translate(s::make_box(CAD_0::math::Vec3f{ex, H, ez}), {og, ty, 7 * og}), k);
+            s::sdf_translate(s::make_box(Vec3f{ex, H, ez}), {og, ty, 7 * og}), k);
         s::SDFBody body = std::move(col);
         if (comp) {
             body = s::sdf_union(

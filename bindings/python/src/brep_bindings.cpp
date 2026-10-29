@@ -74,6 +74,7 @@
 #include "CAD_0/brep/mass_properties.hpp"
 #include "CAD_0/brep/ssi.hpp"
 #include "CAD_0/brep/subtract.hpp"
+#include "CAD_0/brep/booleans_ext.hpp"
 
 namespace nb = nanobind;
 using CAD_0::brep::BRepBody;
@@ -413,7 +414,7 @@ void bind_brep(nb::module_& m) {
         [](const BRepBody& body_a, FaceId face_a, const BRepBody& body_b,
            FaceId face_b, double tol) {
             return ssi_dict(CAD_0::brep::ssi_query(
-                body_a, face_a, body_b, face_b, tol));
+                body_a, face_a, body_b, face_b, float(tol)));
         },
         nb::arg("body_a"), nb::arg("face_a"), nb::arg("body_b"),
         nb::arg("face_b"), nb::arg("tol") = 1e-6,
@@ -442,13 +443,8 @@ void bind_brep(nb::module_& m) {
     // through their own accessors, the p-curves stay valid verbatim.
     brep_mod.def(
         "translate_body",
-        [](BRepBody& body, const CAD_0::math::Vec3f& delta) {
-            // THE BINDING BOUNDARY (H1, ADR-0034): the Python surface
-            // keeps its Vec3f vocabulary; the promotion to the exact
-            // world's double is lossless and happens here, one
-            // direction, declared.
-            CAD_0::brep::translate_body(
-                body, CAD_0::math::Vec3d{delta.x, delta.y, delta.z});
+        [](BRepBody& body, CAD_0::math::Vec3f delta) {
+            CAD_0::brep::translate_body(body, delta);
         },
         nb::arg("body"), nb::arg("delta"),
         "Translate a B-Rep body by a world delta, in place: every\n"
@@ -460,4 +456,61 @@ void bind_brep(nb::module_& m) {
         "frame moves with its surface. Raises ValueError for a surface\n"
         "family outside the analytic translation table (loud, never a\n"
         "silent skip).");
+
+    // THE EXTENDED BOOLEANS (G2 unit 2, ADR-0033 D5.2): the operations
+    // CONSUME the unit-1 table — union/intersect/subtract run exact
+    // exactly where every curved pair of the operands sits in the
+    // typed table, the class check part of the ENTRY contract. The
+    // sphere pairs (the classical union, the lens, the bitten sphere),
+    // the sphere±prism family (the bead, the rivet, the core, the
+    // truncations), and the prism-pair subtract's pierced-target class
+    // (the two-holes body — the second cut). Every out-of-class input
+    // raises ValueError with the actionable refusal (the pair, the
+    // class, the remedies); the trimmed-sphere mass family lands with
+    // the bodies (mass_properties reads the latitude-bounded windows).
+    const auto bind_op = [&](const char* py_name,
+                             std::unique_ptr<CAD_0::brep::BRepBody> (
+                                 *fn)(const BRepBody&, const BRepBody&,
+                                      CAD_0::math::Vec3f, float),
+                             const char* doc) {
+        // The body handle is the bridge submodule's opaque
+        // registration (one type, two modules): the ownership crosses
+        // as a released pointer under take_ownership, which nanobind
+        // wraps in the registered holder's own deleter.
+        brep_mod.def(
+            py_name,
+            [fn](const BRepBody& a, const BRepBody& b,
+                 CAD_0::math::Vec3f offset,
+                 double tol) -> BRepBody* {
+                return fn(a, b, offset, float(tol)).release();
+            },
+            nb::arg("body_a"), nb::arg("body_b"),
+            nb::arg("offset") = CAD_0::math::Vec3f{0, 0, 0},
+            nb::arg("tol") = 1e-6, nb::rv_policy::take_ownership, doc);
+    };
+    bind_op("exact_union", CAD_0::brep::exact_union,
+            "A ∪ (B + offset) on the extended exact class: the\n"
+            "sphere×sphere classical union, the sphere∪prism rivet,\n"
+            "the dome (the box truncation). The operand order is\n"
+            "canonically normalized (center, then radius) — union(A,B)\n"
+            "and union(B,A) assemble ONE body, bit-identical. Prism\n"
+            "pairs are Phase D's landed opinion (bool_union) — pointed\n"
+            "at, never duplicated. Raises ValueError for every\n"
+            "out-of-class input (the actionable refusal: the pair, the\n"
+            "class, the remedies).");
+    bind_op("exact_intersect", CAD_0::brep::exact_intersect,
+            "A ∩ (B + offset) on the same class: the lens, the core\n"
+            "(the coaxial circle prism), the near cap (the box\n"
+            "truncation). The same entry contract and refusal culture\n"
+            "as exact_union.");
+    bind_op("exact_subtract", CAD_0::brep::exact_subtract,
+            "A − (B + offset): the G1 through-hole subtract EXTENDED —\n"
+            "the SECOND cut on a pierced target (the two-holes body:\n"
+            "each cut appends +4V/+5E/+1F/+2H, χ = χ(A)−2), and the\n"
+            "sphere-class targets (the bitten sphere, the bead, the\n"
+            "truncation family, the slab). Raises ValueError for the\n"
+            "out-of-class inputs (the non-annular refusals name the\n"
+            "dispositions — the unequal-radii crossing carries the\n"
+            "offset plane x = (d²+r₁²−r₂²)/(2d) and its two typed\n"
+            "lines, never 'untypable').");
 }

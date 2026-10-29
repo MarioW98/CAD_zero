@@ -126,11 +126,7 @@ std::unique_ptr<brep::BRepBody> sdf_to_brep_faceted(
     //    identity here: by construction, not by tolerance.
     body->vertices.reserve(mesh.positions.size());
     for (const auto& p : mesh.positions) {
-        // THE FACETED WORLD IN (ADR-0034): the float mesh promoted to
-        // the exact world's double storage — lossless (every float32
-        // is exactly a double); the provenance field carries the
-        // declared tolerance, the promotion adds none.
-        body->vertices.push_back(brep::Vertex{math::Vec3d{p.x, p.y, p.z}});
+        body->vertices.push_back(brep::Vertex{p});
     }
     for (std::size_t i = 0; i < body->vertices.size(); ++i) {
         body->vertices[i].set_id(static_cast<brep::VertexId>(i));
@@ -177,9 +173,7 @@ std::unique_ptr<brep::BRepBody> sdf_to_brep_faceted(
             throw_degenerate_triangle(t);
         }
 
-        auto surf = std::make_shared<brep::PlaneSurface>(
-            math::Vec3d{p0.x, p0.y, p0.z},
-            math::Vec3d{n.x, n.y, n.z});
+        auto surf = std::make_shared<brep::PlaneSurface>(p0, n.normalized());
         brep::Face face(surf);
         face.set_id(static_cast<brep::FaceId>(t));
 

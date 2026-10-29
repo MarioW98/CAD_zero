@@ -468,7 +468,7 @@ materialize_subtract_hybrid(const OperationRecipe& r,
     auto a = resolve(target, "target");
     auto b = resolve(tool, "tool");
     auto brep_body = brep::exact_subtract(
-        *a, *b, math::Vec3d{r.offset_x, r.offset_y, r.offset_z},
+        *a, *b, math::Vec3f{r.offset_x, r.offset_y, r.offset_z},
         brep::kSubtractTolerance);
     // BRepWithSDFShell: the exact B-Rep is the properties/export
     // truth, the SDF the display envelope (ADR-0031 D6's division).

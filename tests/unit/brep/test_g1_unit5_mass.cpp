@@ -63,7 +63,7 @@ namespace {
 using CAD_0::brep::BRepBody;
 using CAD_0::math::Tolerance;
 using CAD_0::math::Vec2f;
-using CAD_0::math::Vec3d;
+using CAD_0::math::Vec3f;
 namespace b = CAD_0::brep;
 namespace s = CAD_0::sdf;
 
@@ -93,7 +93,7 @@ bool close(double a, double b, double rel = 1e-6, double abs = 1e-12) {
 // inputs (the pi-sweeps, the projected frames) leave ~1e-6 residue on
 // values that cancel to zero — the absolute bound follows the storage
 // (the diagonal's relative bound stays 1e-5).
-bool close3x3(const CAD_0::math::Mat3d& m, double v00, double v01, double v02,
+bool close3x3(const CAD_0::math::Mat3& m, double v00, double v01, double v02,
               double v10, double v11, double v12, double v20, double v21,
               double v22, double rel = 1e-5) {
     const double want[3][3] = {{v00, v01, v02}, {v10, v11, v12}, {v20, v21, v22}};
@@ -597,9 +597,9 @@ namespace {
 std::unique_ptr<BRepBody> one_face_body(
     std::shared_ptr<CAD_0::brep::SurfaceGeometry> surf) {
     auto body = std::make_unique<BRepBody>();
-    b::Vertex v0{Vec3d{0.0f, 0.0f, 0.5f}};
+    b::Vertex v0{Vec3f{0.0f, 0.0f, 0.5f}};
     v0.set_id(0);
-    b::Vertex v1{Vec3d{0.0f, 0.0f, -0.5f}};
+    b::Vertex v1{Vec3f{0.0f, 0.0f, -0.5f}};
     v1.set_id(1);
     body->vertices.push_back(v0);
     body->vertices.push_back(v1);

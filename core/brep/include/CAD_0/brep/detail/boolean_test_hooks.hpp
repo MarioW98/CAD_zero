@@ -24,9 +24,9 @@ namespace CAD_0::brep {
 // Both polygons are coplanar with `plane_normal` as surface normal.
 // Returns the outside fragments of subject \ clip, one point loop per
 // fragment.
-std::vector<std::vector<math::Vec3d>> polygon_subtract_fragments_for_tests(
-    const std::vector<math::Vec3d>& subject,
-    const std::vector<math::Vec3d>& clip,
-    math::Vec3d plane_normal);
+std::vector<std::vector<math::Vec3f>> polygon_subtract_fragments_for_tests(
+    const std::vector<math::Vec3f>& subject,
+    const std::vector<math::Vec3f>& clip,
+    math::Vec3f plane_normal);
 
 } // namespace CAD_0::brep

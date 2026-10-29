@@ -58,7 +58,7 @@ namespace b = CAD_0::brep;
 namespace s = CAD_0::sdf;
 using CAD_0::brep::BRepBody;
 using CAD_0::math::Vec2f;
-using CAD_0::math::Vec3d;
+using CAD_0::math::Vec3f;
 
 constexpr double kPid = 3.141592653589793;
 
@@ -202,7 +202,7 @@ TEST_CASE("G1-U6 query_body: the FACETED world - approximated tallies, the decla
     // approximated, the max tolerance the grid's own declared bound.
     CAD_0::scene::Scene sc;
     const auto box_id = sc.add_node(
-        "Box", s::make_box(CAD_0::math::Vec3f{1.0f, 1.0f, 1.0f}));
+        "Box", s::make_box(Vec3f{1.0f, 1.0f, 1.0f}));
     const auto tool_id = sc.add_node(
         "Cyl", s::make_cylinder(0.25f, 2.0f));
     CAD_0::scene::OperationRecipe r;
@@ -284,7 +284,7 @@ TEST_CASE("G1-U6 query_body: the MULTI-SHELL body - genus n/d, the D6 rule") {
     auto a = b::make_box({0.5f, 0.5f, 0.5f});
     auto far = b::make_box({0.5f, 0.5f, 0.5f});
     for (auto& v : far->vertices)
-        v.set_position(v.position() + Vec3d{3.0f, 0, 0});
+        v.set_position(v.position() + Vec3f{3.0f, 0, 0});
     auto uni = b::bool_union(*a, *far);
     REQUIRE(uni != nullptr);
 

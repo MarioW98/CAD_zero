@@ -32,6 +32,8 @@ from CAD_0 import brep as brep_mod
 from CAD_0 import bridge as bridge_mod
 from CAD_0 import scene
 
+brep = brep_mod
+
 V3 = CAD_0.math.Vec3f
 
 PI = 3.14159265358979
@@ -170,8 +172,12 @@ def test_exact_wall_vs_faceted_today():
 
 
 def test_out_of_class_target_refusal_visible():
-    # A sphere target: convex but not planar-faced — the refusal is
-    # recorded, the SDF path stands, nothing regressed.
+    # AMENDED AT G2 UNIT 2 (ADR-0033 D5.2): this case pinned the G1
+    # era's boundary — the sphere target refused ("not planar-faced")
+    # and the node kept the faceted path only. The extended booleans
+    # consume the table: the SAME chain (the sphere minus the coaxial
+    # circle prism = the bead) now materializes the exact side BESIDE
+    # the SDF — no wiring touched, the bridge's own call now answers.
     s = scene.Scene()
     sph = s.add_node("Sphere", CAD_0.sdf.sphere(1.0))
     sid = s.add_sketch_node("S", _circle_sketch())
@@ -179,9 +185,12 @@ def test_out_of_class_target_refusal_visible():
     did = s.add_operation_node("Sub", sph, eid, 0.0, 0.0, -1.5)
     n = s.get_node(did)
 
-    assert n.exact_brep is None
-    assert n.hybrid_refusal != ""
-    assert "non-planar" in n.hybrid_refusal
+    # The bead landed: the exact side present, no refusal.
+    assert n.exact_brep is not None
+    assert n.hybrid_refusal == ""
+    assert brep.face_count(n.exact_brep) == 2          # the zone + the wall
+    q = brep.body_query(n.exact_brep)
+    assert (q["V"], q["E"], q["F"], q["H"], q["chi"]) == (4, 6, 2, 0, 0)
     # The SDF side materialized regardless.
     assert not n.operation_pending
     assert not n.operand_missing

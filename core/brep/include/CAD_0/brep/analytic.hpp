@@ -44,9 +44,11 @@
 // untested flip of surfaces nobody trims would be exactly the
 // silent drift the house forbids).
 //
-// H1 (ADR-0034): every surface's parameters, arithmetic and answers
-// are DOUBLE — the exact path's domain. FLOAT appears only at the
-// named one-direction boundaries (the p-curve vocabulary, the mesh).
+// G1 UNIT 3 ADDS the extrude's own cylinder (below): the sketch
+// plane is the world XY, the extrusion runs along ±Z, so the arc
+// lateral faces live on cylinders whose axis is Z — a different
+// placement from the primitive factory's axis-Y CylinderSurface
+// (whose goldens and pins stay untouched; G1 does not unify them).
 #pragma once
 
 #include "CAD_0/brep/topology.hpp"
@@ -63,40 +65,39 @@ namespace CAD_0::brep {
 // Parametrization: u along X-axis, v along Y-axis (in local frame).
 class PlaneSurface : public SurfaceGeometry {
 public:
-    PlaneSurface(math::Vec3d origin, math::Vec3d normal)
+    PlaneSurface(math::Vec3f origin, math::Vec3f normal)
         : origin_(origin), normal_(normal.normalized()) {
         // Build local frame: u-axis perpendicular to normal
-        if (std::abs(normal_.y) > 0.9) {
-            u_axis_ = normal_.cross(math::Vec3d{1, 0, 0}).normalized();
+        if (std::abs(normal_.y) > 0.9f) {
+            u_axis_ = normal_.cross(math::Vec3f{1, 0, 0}).normalized();
         } else {
-            u_axis_ = normal_.cross(math::Vec3d{0, 1, 0}).normalized();
+            u_axis_ = normal_.cross(math::Vec3f{0, 1, 0}).normalized();
         }
         v_axis_ = normal_.cross(u_axis_).normalized();
     }
 
-    math::Vec3d evaluate(double u, double v) const override {
+    math::Vec3f evaluate(float u, float v) const override {
         return origin_ + u_axis_ * u + v_axis_ * v;
     }
 
-    math::Vec3d normal(double, double) const override { return normal_; }
-    SurfaceFamily family() const override { return SurfaceFamily::Plane; }
-    void accept(SurfaceVisitor& v) const override { v.visit(*this); }
-    math::Bboxd bounds() const override { return math::Bboxd::universe(); }
+    math::Vec3f normal(float, float) const override { return normal_; }
+    const char* type_name() const override { return "plane"; }
+    math::Bboxf bounds() const override { return math::Bboxf::universe(); }
 
-    math::Vec3d origin() const noexcept { return origin_; }
-    math::Vec3d normal_vec() const noexcept { return normal_; }
+    math::Vec3f origin() const noexcept { return origin_; }
+    math::Vec3f normal_vec() const noexcept { return normal_; }
     // The domain frame, for the p-curve writers and the readers: a
     // point's domain coordinates are ((P−origin)·u_axis,
     // (P−origin)·v_axis) — the inverse of evaluate(). Right-handed
     // around the normal by construction (u_axis × v_axis = normal).
-    const math::Vec3d& u_axis() const noexcept { return u_axis_; }
-    const math::Vec3d& v_axis() const noexcept { return v_axis_; }
+    const math::Vec3f& u_axis() const noexcept { return u_axis_; }
+    const math::Vec3f& v_axis() const noexcept { return v_axis_; }
 
 private:
-    math::Vec3d origin_;
-    math::Vec3d normal_;
-    math::Vec3d u_axis_;
-    math::Vec3d v_axis_;
+    math::Vec3f origin_;
+    math::Vec3f normal_;
+    math::Vec3f u_axis_;
+    math::Vec3f v_axis_;
 };
 
 // Cylinder: radius R, axis along Y, centered at origin.
@@ -107,38 +108,37 @@ private:
 // meridian (+X side), and ∂u×∂v = +radial.
 class CylinderSurface : public SurfaceGeometry {
 public:
-    CylinderSurface(double radius, double height, math::Vec3d origin = {})
-        : radius_(radius), half_height_(height * 0.5), origin_(origin) {}
+    CylinderSurface(float radius, float height, math::Vec3f origin = {})
+        : radius_(radius), half_height_(height * 0.5f), origin_(origin) {}
 
-    math::Vec3d evaluate(double u, double v) const override {
-        const double c = std::cos(u), s = std::sin(u);
+    math::Vec3f evaluate(float u, float v) const override {
+        const float c = std::cos(u), s = std::sin(u);
         return {origin_.x + radius_ * c,
                 origin_.y + v,
                 origin_.z - radius_ * s};
     }
 
-    math::Vec3d normal(double u, double) const override {
-        return {std::cos(u), 0.0, -std::sin(u)};
+    math::Vec3f normal(float u, float) const override {
+        return {std::cos(u), 0.0f, -std::sin(u)};
     }
 
-    SurfaceFamily family() const override { return SurfaceFamily::Cylinder; }
-    void accept(SurfaceVisitor& v) const override { v.visit(*this); }
-    math::Bboxd bounds() const override {
+    const char* type_name() const override { return "cylinder"; }
+    math::Bboxf bounds() const override {
         return {{-radius_, -half_height_, -radius_},
                 { radius_,  half_height_,  radius_}};
     }
 
-    double radius() const noexcept { return radius_; }
-    double height() const noexcept { return half_height_ * 2.0; }
+    float radius() const noexcept { return radius_; }
+    float height() const noexcept { return half_height_ * 2.0f; }
     // The placement origin (G1 unit 4: translate_body re-anchors the
     // analytic surfaces through their own accessors — one table, no
     // second frame copy).
-    const math::Vec3d& origin() const noexcept { return origin_; }
+    const math::Vec3f& origin() const noexcept { return origin_; }
 
 private:
-    double radius_;
-    double half_height_;
-    math::Vec3d origin_;
+    float radius_;
+    float half_height_;
+    math::Vec3f origin_;
 };
 
 // CylinderZ — the EXTRUDE's cylinder (G1 unit 3): axis = world Z
@@ -165,35 +165,34 @@ private:
 // placement are pinned by tests/unit/brep/test_g1_unit3_extrude.cpp.
 class CylinderZSurface : public SurfaceGeometry {
 public:
-    CylinderZSurface(math::Vec2d axis_center, double radius, double z_base,
+    CylinderZSurface(math::Vec2f axis_center, float radius, float z_base,
                      int u_sign)
         : center_(axis_center), radius_(radius), z_base_(z_base),
-          u_sign_(u_sign == 1 ? 1.0 : -1.0) {}
+          u_sign_(u_sign == 1 ? 1.0f : -1.0f) {}
 
-    math::Vec3d evaluate(double u, double v) const override {
-        const double phi = u_sign_ * u;
-        const double c = std::cos(phi), s = std::sin(phi);
+    math::Vec3f evaluate(float u, float v) const override {
+        const float phi = u_sign_ * u;
+        const float c = std::cos(phi), s = std::sin(phi);
         return {center_.x + radius_ * c,
                 center_.y + radius_ * s,
                 z_base_ + v};
     }
 
-    math::Vec3d normal(double u, double) const override {
+    math::Vec3f normal(float u, float) const override {
         // s·radial(phi): the SAME sign as ∂u×∂v — the outward normal
         // the frame rule pins (+radial on the solid side, −radial on
         // the hole side, where "outward" points INTO the hole, away
         // from the material).
-        const double phi = u_sign_ * u;
-        return {u_sign_ * std::cos(phi), u_sign_ * std::sin(phi), 0.0};
+        const float phi = u_sign_ * u;
+        return {u_sign_ * std::cos(phi), u_sign_ * std::sin(phi), 0.0f};
     }
 
-    SurfaceFamily family() const override { return SurfaceFamily::Cylinder; }
-    void accept(SurfaceVisitor& v) const override { v.visit(*this); }
-    math::Bboxd bounds() const override {
+    const char* type_name() const override { return "cylinder"; }
+    math::Bboxf bounds() const override {
         // The full-cylinder box (the patch trim lives in the loops,
         // not the surface): z unbounded above z_base — the extrude's
         // span is carried by the trimming window [0, h].
-        math::Bboxd b = math::Bboxd::universe();
+        math::Bboxf b = math::Bboxf::universe();
         b.min.x = center_.x - radius_;
         b.max.x = center_.x + radius_;
         b.min.y = center_.y - radius_;
@@ -202,18 +201,18 @@ public:
         return b;
     }
 
-    math::Vec2d axis_center() const noexcept { return center_; }
-    double radius() const noexcept { return radius_; }
-    double z_base() const noexcept { return z_base_; }
+    math::Vec2f axis_center() const noexcept { return center_; }
+    float radius() const noexcept { return radius_; }
+    float z_base() const noexcept { return z_base_; }
     // The u direction's sign (+1 CCW azimuth, -1 reversed) — the
     // reader-facing declaration of the frame-rule flip above.
-    double u_sign() const noexcept { return u_sign_; }
+    float u_sign() const noexcept { return u_sign_; }
 
 private:
-    math::Vec2d center_;
-    double radius_;
-    double z_base_;
-    double u_sign_;
+    math::Vec2f center_;
+    float radius_;
+    float z_base_;
+    float u_sign_;
 };
 
 // Sphere: radius R centered at origin, in a (pole, azimuth) frame.
@@ -239,7 +238,7 @@ private:
 class SphereSurface : public SurfaceGeometry {
 public:
     // The historical frame: pole +Y, azimuth +X.
-    SphereSurface(double radius, math::Vec3d origin = {})
+    SphereSurface(float radius, math::Vec3f origin = {})
         : radius_(radius), origin_(origin),
           pole_{0, 1, 0}, azimuth_{1, 0, 0} {
         precompute();
@@ -250,13 +249,13 @@ public:
     // unit-ish inputs (each normalized; cross-product-derived pairs
     // are unit up to fp); the PERPENDICULARITY is validated loudly —
     // a skewed frame has no sphere parametrization in its span.
-    SphereSurface(double radius, math::Vec3d origin,
-                  math::Vec3d pole, math::Vec3d azimuth)
+    SphereSurface(float radius, math::Vec3f origin,
+                  math::Vec3f pole, math::Vec3f azimuth)
         : radius_(radius), origin_(origin),
           pole_(pole.normalized()), azimuth_(azimuth.normalized()) {
-        const double dot = pole_.dot(azimuth_);
-        if (!std::isfinite(dot) || std::abs(dot) > 1e-6 ||
-            !(pole_.length() > 0.0) || !(azimuth_.length() > 0.0)) {
+        const float dot = pole_.dot(azimuth_);
+        if (!std::isfinite(dot) || std::abs(dot) > 1e-6f ||
+            !(pole_.length() > 0.0f) || !(azimuth_.length() > 0.0f)) {
             throw std::invalid_argument(
                 "SphereSurface: (pole, azimuth) must be non-zero and "
                 "perpendicular (the re-frame's derived frame), got "
@@ -270,34 +269,33 @@ public:
         precompute();
     }
 
-    math::Vec3d evaluate(double u, double v) const override {
-        const double sv = std::sin(v);
+    math::Vec3f evaluate(float u, float v) const override {
+        const float sv = std::sin(v);
         return origin_ + e0_ * (radius_ * sv * std::cos(u)) +
                e1_ * (radius_ * sv * std::sin(u)) +
                pole_ * (radius_ * std::cos(v));
     }
 
-    math::Vec3d normal(double u, double v) const override {
-        const double sv = std::sin(v);
+    math::Vec3f normal(float u, float v) const override {
+        const float sv = std::sin(v);
         return e0_ * (sv * std::cos(u)) + e1_ * (sv * std::sin(u)) +
                pole_ * std::cos(v);
     }
 
-    SurfaceFamily family() const override { return SurfaceFamily::Sphere; }
-    void accept(SurfaceVisitor& v) const override { v.visit(*this); }
-    math::Bboxd bounds() const override {
+    const char* type_name() const override { return "sphere"; }
+    math::Bboxf bounds() const override {
         return {{-radius_ + origin_.x, -radius_ + origin_.y, -radius_ + origin_.z},
                 { radius_ + origin_.x,  radius_ + origin_.y,  radius_ + origin_.z}};
     }
 
-    double radius() const noexcept { return radius_; }
+    float radius() const noexcept { return radius_; }
     // The placement origin (G1 unit 4: translate_body's table).
-    const math::Vec3d& origin() const noexcept { return origin_; }
+    const math::Vec3f& origin() const noexcept { return origin_; }
     // The frame (G2 unit 1): the pole n̂ (v = 0) and the azimuth
     // reference e₀ (u = 0) — readable so translate_body and the table
     // can carry the DERIVED frame through without a second copy.
-    const math::Vec3d& pole() const noexcept { return pole_; }
-    const math::Vec3d& azimuth() const noexcept { return azimuth_; }
+    const math::Vec3f& pole() const noexcept { return pole_; }
+    const math::Vec3f& azimuth() const noexcept { return azimuth_; }
 
 private:
     void precompute() {
@@ -305,91 +303,89 @@ private:
         e1_ = e0_.cross(pole_);  // e₁ = e₀ × n̂ (the historical X×Y = Z)
     }
 
-    double radius_;
-    math::Vec3d origin_;
-    math::Vec3d pole_;
-    math::Vec3d azimuth_;
-    math::Vec3d e0_;
-    math::Vec3d e1_;
+    float radius_;
+    math::Vec3f origin_;
+    math::Vec3f pole_;
+    math::Vec3f azimuth_;
+    math::Vec3f e0_;
+    math::Vec3f e1_;
 };
 
 // Cone: base radius r at y=0, apex at y=h, centered at origin.
 // u = angle [0, 2π), v = height [0, h].
 class ConeSurface : public SurfaceGeometry {
 public:
-    ConeSurface(double base_radius, double height, math::Vec3d origin = {})
+    ConeSurface(float base_radius, float height, math::Vec3f origin = {})
         : base_radius_(base_radius), height_(height), origin_(origin) {}
 
-    math::Vec3d evaluate(double u, double v) const override {
-        const double r = base_radius_ * (1.0 - v / height_);
+    math::Vec3f evaluate(float u, float v) const override {
+        const float r = base_radius_ * (1.0f - v / height_);
         return {origin_.x + r * std::cos(u),
                 origin_.y + v,
                 origin_.z + r * std::sin(u)};
     }
 
-    math::Vec3d normal(double u, double v) const override {
+    math::Vec3f normal(float u, float v) const override {
         // Normal points outward; slope = base_radius / height
-        const double slope = base_radius_ / height_;
-        const double c = std::cos(u), s = std::sin(u);
-        const double n = 1.0 / std::sqrt(slope * slope + 1.0);
+        const float slope = base_radius_ / height_;
+        const float c = std::cos(u), s = std::sin(u);
+        const float n = 1.0f / std::sqrt(slope * slope + 1.0f);
         return {c * n, slope * n, s * n};
     }
 
-    SurfaceFamily family() const override { return SurfaceFamily::Cone; }
-    void accept(SurfaceVisitor& v) const override { v.visit(*this); }
-    math::Bboxd bounds() const override {
+    const char* type_name() const override { return "cone"; }
+    math::Bboxf bounds() const override {
         return {{-base_radius_, 0, -base_radius_},
                 { base_radius_, height_, base_radius_}};
     }
 
-    double base_radius() const noexcept { return base_radius_; }
-    double height() const noexcept { return height_; }
+    float base_radius() const noexcept { return base_radius_; }
+    float height() const noexcept { return height_; }
     // The placement origin (G1 unit 4: translate_body's table).
-    const math::Vec3d& origin() const noexcept { return origin_; }
+    const math::Vec3f& origin() const noexcept { return origin_; }
 
 private:
-    double base_radius_;
-    double height_;
-    math::Vec3d origin_;
+    float base_radius_;
+    float height_;
+    math::Vec3f origin_;
 };
 
 // Torus: major radius R (ring), minor radius r (tube), in XZ plane.
 // u = angle around ring [0, 2π), v = angle around tube [0, 2π).
 class TorusSurface : public SurfaceGeometry {
 public:
-    TorusSurface(double R, double r, math::Vec3d origin = {})
+    TorusSurface(float R, float r, math::Vec3f origin = {})
         : R_(R), r_(r), origin_(origin) {}
 
-    math::Vec3d evaluate(double u, double v) const override {
-        const double cu = std::cos(u), su = std::sin(u);
-        const double cv = std::cos(v), sv = std::sin(v);
+    math::Vec3f evaluate(float u, float v) const override {
+        const float cu = std::cos(u), su = std::sin(u);
+        const float cv = std::cos(v), sv = std::sin(v);
         return {origin_.x + (R_ + r_ * cv) * cu,
                 origin_.y + r_ * sv,
                 origin_.z + (R_ + r_ * cv) * su};
     }
 
-    math::Vec3d normal(double u, double v) const override {
-        const double cv = std::cos(v), sv = std::sin(v);
-        const double cu = std::cos(u), su = std::sin(u);
+    math::Vec3f normal(float u, float v) const override {
+        const float cv = std::cos(v), sv = std::sin(v);
+        const float cu = std::cos(u), su = std::sin(u);
         return {cv * cu, sv, cv * su};
     }
 
-    SurfaceFamily family() const override { return SurfaceFamily::Torus; }
-    void accept(SurfaceVisitor& v) const override { v.visit(*this); }
-    math::Bboxd bounds() const override {
-        const double e = R_ + r_;
+    const char* type_name() const override { return "torus"; }
+    math::Bboxf bounds() const override {
+        const float e = R_ + r_;
         return {{-e + origin_.x, -r_ + origin_.y, -e + origin_.z},
                 { e + origin_.x,  r_ + origin_.y,  e + origin_.z}};
     }
 
-    double major_radius() const noexcept { return R_; }
-    double minor_radius() const noexcept { return r_; }
+    float major_radius() const noexcept { return R_; }
+    float minor_radius() const noexcept { return r_; }
     // The placement origin (G1 unit 4: translate_body's table).
-    const math::Vec3d& origin() const noexcept { return origin_; }
+    const math::Vec3f& origin() const noexcept { return origin_; }
 
 private:
-    double R_, r_;
-    math::Vec3d origin_;
+    float R_, r_;
+    math::Vec3f origin_;
 };
 
 } // namespace CAD_0::brep

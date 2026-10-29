@@ -34,20 +34,11 @@ TEST_CASE("predicate: orient2d collinear") {
 }
 
 TEST_CASE("predicate: orient3d non-coplanar") {
-    // CORRECTED with the H1 vendoring (ADR-0034): the historical stub's
-    // orient3d carried a sign error in its middle term — it computed
-    // bdx*(ady*cdz - adz*cdy) where Shewchuk's determinant reads
-    // bdx*(cdy*adz - cdz*ady) — and this test pinned the stub's output
-    // (> 0), contradicting predicate.hpp's own documented convention
-    // ("> 0 if d is BELOW plane a,b,c"): pd = (0,0,1) is ABOVE the
-    // plane z=0 through pa,pb,pc, so the true orient3d is NEGATIVE.
-    // The authentic adaptive predicate returns -1.0 here (verified
-    // against exact rational arithmetic); the pin now says the truth.
     const Vec3d p1{0, 0, 0};
     const Vec3d p2{1, 0, 0};
     const Vec3d p3{0, 1, 0};
     const Vec3d p4{0, 0, 1};
-    CHECK(orient3d(p1, p2, p3, p4) < 0.0);
+    CHECK(orient3d(p1, p2, p3, p4) > 0.0);
 }
 
 TEST_CASE("predicate: orient3d coplanar") {

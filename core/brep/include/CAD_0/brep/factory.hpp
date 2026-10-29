@@ -58,24 +58,16 @@ namespace detail {
 // The periodic domain's constants, shared by the seam authoring
 // here and pinned bit-for-bit by the unit-2 goldens (the sketch
 // kernel's own kTwoPi carries the same value — mathematical
-// constants, not mirrored layouts). These stay FLOAT: they feed the
-// p-curve payloads (the sketch kernel's domain, ADR-0032 D2.1; the
-// H1 boundary converts world double -> domain float at the
-// authoring site, one direction, declared here).
+// constants, not mirrored layouts).
 inline constexpr float kPi = 3.14159265358979f;
 inline constexpr float kTwoPi = 6.28318530717958647692f;
 
 // The domain coordinates of a 3D point in a plane's (u,v) frame —
 // the inverse of PlaneSurface::evaluate (a frame the surface now
 // exposes for exactly this: one projection, no second frame copy).
-// THE BOUNDARY CONVERSION (ADR-0034): the projection computes in
-// double (the exact world), the payload converts to float here —
-// the p-curve vocabulary's own domain, one direction, the only
-// place it happens.
-inline math::Vec2f plane_domain(const PlaneSurface& s, math::Vec3d p) {
-    const math::Vec3d d = p - s.origin();
-    return {static_cast<float>(d.dot(s.u_axis())),
-            static_cast<float>(d.dot(s.v_axis()))};
+inline math::Vec2f plane_domain(const PlaneSurface& s, math::Vec3f p) {
+    const math::Vec3f d = p - s.origin();
+    return {d.dot(s.u_axis()), d.dot(s.v_axis())};
 }
 
 // A co-edge with its Line2 p-curve authored by projection through
@@ -127,14 +119,14 @@ inline CoEdge line_coedge(EdgeId e, bool reversed, const PlaneSurface& s,
 //   4: left    (-X)   loop 3→0→4→7→3    (edges 3,8 forward; 7,11 reversed)
 //   5: right   (+X)   loop 1→2→6→5→1    (edges 1,10 forward; 5,9 reversed)
 //
-inline std::unique_ptr<BRepBody> make_box(math::Vec3d half_extents) {
+inline std::unique_ptr<BRepBody> make_box(math::Vec3f half_extents) {
     auto body = std::make_unique<BRepBody>();
     auto& solid = body->solid;
     auto& shell = solid.shell_mut();
     shell.set_closed(true);
 
     // 8 vertices
-    const double x = half_extents.x, y = half_extents.y, z = half_extents.z;
+    const float x = half_extents.x, y = half_extents.y, z = half_extents.z;
     body->vertices = {
         Vertex{{-x, -y, -z}}, Vertex{{ x, -y, -z}},
         Vertex{{ x,  y, -z}}, Vertex{{-x,  y, -z}},
@@ -159,7 +151,7 @@ inline std::unique_ptr<BRepBody> make_box(math::Vec3d half_extents) {
     // (unit 2's trimming contract; the pins live in
     // test_g1_unit2_pcurves.cpp).
     auto add_plane_face = [&shell, &body](
-        math::Vec3d origin, math::Vec3d normal, FaceId id,
+        math::Vec3f origin, math::Vec3f normal, FaceId id,
         EdgeId e0, bool r0,
         EdgeId e1, bool r1,
         EdgeId e2, bool r2,
@@ -260,15 +252,15 @@ inline std::unique_ptr<BRepBody> make_box(math::Vec3d half_extents) {
 //   seam fwd (north→south): the RIGHT edge, Line2 (2π,0) → (2π,π);
 //   seam rev (south→north): the LEFT edge, Line2 (0,π) → (0,0).
 // Both carry material on the left (the rectangle's interior).
-inline std::unique_ptr<BRepBody> make_sphere(double radius, math::Vec3d center = {}) {
+inline std::unique_ptr<BRepBody> make_sphere(float radius, math::Vec3f center = {}) {
     auto body = std::make_unique<BRepBody>();
     auto& shell = body->solid.shell_mut();
     shell.set_closed(true);
 
     // 2 vertices: north and south poles.
     body->vertices = {
-        Vertex{center + math::Vec3d{0,  radius, 0}},  // v_north (id 0)
-        Vertex{center + math::Vec3d{0, -radius, 0}},  // v_south (id 1)
+        Vertex{center + math::Vec3f{0,  radius, 0}},  // v_north (id 0)
+        Vertex{center + math::Vec3f{0, -radius, 0}},  // v_south (id 1)
     };
     for (std::size_t i = 0; i < body->vertices.size(); ++i)
         body->vertices[i].set_id(static_cast<VertexId>(i));
@@ -343,12 +335,12 @@ inline std::unique_ptr<BRepBody> make_sphere(double radius, math::Vec3d center =
 //     rim's full circle walked CCW as two π-sweep Arc2 (the caps'
 //     frames put v_top1/v_bot1 at domain angle −π/2 and the antipode
 //     at +π/2; both caps read the same angles, see the golden pins).
-inline std::unique_ptr<BRepBody> make_cylinder(double radius, double height) {
+inline std::unique_ptr<BRepBody> make_cylinder(float radius, float height) {
     auto body = std::make_unique<BRepBody>();
     auto& shell = body->solid.shell_mut();
     shell.set_closed(true);
 
-    const double h = height * 0.5;
+    const float h = height * 0.5f;
     // 4 vertices: 2 on the top rim, 2 on the bottom rim (seam + antipode).
     body->vertices = {
         Vertex{{ radius,  h, 0}},  // v_top1 (id 0)
@@ -380,25 +372,22 @@ inline std::unique_ptr<BRepBody> make_cylinder(double radius, double height) {
         const auto wall_line = [](math::Vec2f a, math::Vec2f b) {
             return sdf::sketch_segment(a, b, /*interior_left=*/true);
         };
-        // The window payloads: the exact world's double h quantized to
-        // the p-curve domain's float, one direction (ADR-0034).
-        const float vh = static_cast<float>(h);
         CoEdge seam_fwd{4, false};  // v_bot1 → v_top1: the RIGHT edge
-        seam_fwd.set_p_curve(wall_line({detail::kTwoPi, -vh},
-                                       {detail::kTwoPi, vh}));
+        seam_fwd.set_p_curve(wall_line({detail::kTwoPi, -h},
+                                       {detail::kTwoPi, h}));
         CoEdge top2_rev{1, true};   // v_top1 → v_top2: +Z half, west
-        top2_rev.set_p_curve(wall_line({detail::kTwoPi, vh},
-                                       {detail::kPi, vh}));
+        top2_rev.set_p_curve(wall_line({detail::kTwoPi, h},
+                                       {detail::kPi, h}));
         CoEdge top1_rev{0, true};   // v_top2 → v_top1: −Z half, west
-        top1_rev.set_p_curve(wall_line({detail::kPi, vh}, {0.0f, vh}));
+        top1_rev.set_p_curve(wall_line({detail::kPi, h}, {0.0f, h}));
         CoEdge seam_rev{4, true};   // v_top1 → v_bot1: the LEFT edge
-        seam_rev.set_p_curve(wall_line({0.0f, vh}, {0.0f, -vh}));
+        seam_rev.set_p_curve(wall_line({0.0f, h}, {0.0f, -h}));
         CoEdge bot2_rev{3, true};   // v_bot1 → v_bot2: −Z half, east
-        bot2_rev.set_p_curve(wall_line({0.0f, -vh},
-                                       {detail::kPi, -vh}));
+        bot2_rev.set_p_curve(wall_line({0.0f, -h},
+                                       {detail::kPi, -h}));
         CoEdge bot1_rev{2, true};   // v_bot2 → v_bot1: +Z half, east
-        bot1_rev.set_p_curve(wall_line({detail::kPi, -vh},
-                                       {detail::kTwoPi, -vh}));
+        bot1_rev.set_p_curve(wall_line({detail::kPi, -h},
+                                       {detail::kTwoPi, -h}));
         loop.add_coedge(seam_fwd);
         loop.add_coedge(top2_rev);
         loop.add_coedge(top1_rev);
@@ -415,19 +404,19 @@ inline std::unique_ptr<BRepBody> make_cylinder(double radius, double height) {
     // ((−Z,−X) top, (Z,−X) bottom) put v_top1/v_bot1 (the seam-side
     // rim vertex, +X in 3D) at domain angle −π/2 and the antipode at
     // +π/2 — the same table for both caps, pinned by the goldens.
-    const auto add_cap_face = [&shell, radius](math::Vec3d origin,
-                                               math::Vec3d normal,
+    const auto add_cap_face = [&shell, radius](math::Vec3f origin,
+                                               math::Vec3f normal,
                                                FaceId id, EdgeId e_first,
                                                EdgeId e_second) {
         Face face(std::make_shared<PlaneSurface>(origin, normal));
         Loop loop;
         CoEdge first{e_first, false};
-        first.set_p_curve(sdf::sketch_arc(math::Vec2f{0, 0}, static_cast<float>(radius),
+        first.set_p_curve(sdf::sketch_arc(math::Vec2f{0, 0}, radius,
                                           /*hole=*/false,
                                           -0.5f * detail::kPi,
                                           detail::kPi));
         CoEdge second{e_second, false};
-        second.set_p_curve(sdf::sketch_arc(math::Vec2f{0, 0}, static_cast<float>(radius),
+        second.set_p_curve(sdf::sketch_arc(math::Vec2f{0, 0}, radius,
                                            /*hole=*/false,
                                            0.5f * detail::kPi,
                                            detail::kPi));
@@ -481,10 +470,10 @@ inline std::unique_ptr<BRepBody> make_tetrahedron() {
 
     // 4 vertices
     body->vertices = {
-        Vertex{{ 1.0,  1.0,  1.0}},
-        Vertex{{-1.0, -1.0,  1.0}},
-        Vertex{{-1.0,  1.0, -1.0}},
-        Vertex{{ 1.0, -1.0, -1.0}},
+        Vertex{{ 1.0f,  1.0f,  1.0f}},
+        Vertex{{-1.0f, -1.0f,  1.0f}},
+        Vertex{{-1.0f,  1.0f, -1.0f}},
+        Vertex{{ 1.0f, -1.0f, -1.0f}},
     };
     for (std::size_t i = 0; i < body->vertices.size(); ++i)
         body->vertices[i].set_id(static_cast<VertexId>(i));
@@ -508,7 +497,7 @@ inline std::unique_ptr<BRepBody> make_tetrahedron() {
         EdgeId e0, bool r0,
         EdgeId e1, bool r1,
         EdgeId e2, bool r2,
-        math::Vec3d origin, math::Vec3d normal
+        math::Vec3f origin, math::Vec3f normal
     ) {
         auto surf = std::make_shared<PlaneSurface>(origin, normal);
         Face face(surf);
@@ -531,7 +520,7 @@ inline std::unique_ptr<BRepBody> make_tetrahedron() {
     //         edge 4 (v1→v3) reversed → v3→v1.
     //   Face centroid: ((-1-1+1)/3, (-1+1-1)/3, (1-1-1)/3) = (-1/3, -1/3, -1/3).
     {
-        const math::Vec3d fc{-1.0 / 3.0, -1.0 / 3.0, -1.0 / 3.0};
+        const math::Vec3f fc{-1.0f/3.0f, -1.0f/3.0f, -1.0f/3.0f};
         add_tri_face(0,
             /*e0*/ 3, false,  // v1→v2  (edge 3: v1→v2)
             /*e1*/ 5, false,  // v2→v3  (edge 5: v2→v3)
@@ -551,7 +540,7 @@ inline std::unique_ptr<BRepBody> make_tetrahedron() {
     //                       (1 + (-1) + (-1))/3 = -1/3 for z.
     //   Centroid: (1/3, 1/3, -1/3). Outward normal: same direction.
     {
-        const math::Vec3d fc{1.0 / 3.0, 1.0 / 3.0, -1.0 / 3.0};
+        const math::Vec3f fc{1.0f/3.0f, 1.0f/3.0f, -1.0f/3.0f};
         add_tri_face(1,
             /*e0*/ 2, false,  // v0→v3  (edge 2: v0→v3)
             /*e1*/ 5, true,   // v3→v2  (edge 5: v2→v3 reversed)
@@ -569,7 +558,7 @@ inline std::unique_ptr<BRepBody> make_tetrahedron() {
     //                  (1 + 1 + (-1))/3 = 1/3 for z.
     //   Centroid: (1/3, -1/3, 1/3).
     {
-        const math::Vec3d fc{1.0 / 3.0, -1.0 / 3.0, 1.0 / 3.0};
+        const math::Vec3f fc{1.0f/3.0f, -1.0f/3.0f, 1.0f/3.0f};
         add_tri_face(2,
             /*e0*/ 0, false,  // v0→v1  (edge 0: v0→v1)
             /*e1*/ 4, false,  // v1→v3  (edge 4: v1→v3)
@@ -587,7 +576,7 @@ inline std::unique_ptr<BRepBody> make_tetrahedron() {
     //                  (1 + (-1) + 1)/3 = 1/3 for z.
     //   Centroid: (-1/3, 1/3, 1/3).
     {
-        const math::Vec3d fc{-1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0};
+        const math::Vec3f fc{-1.0f/3.0f, 1.0f/3.0f, 1.0f/3.0f};
         add_tri_face(3,
             /*e0*/ 1, false,  // v0→v2  (edge 1: v0→v2)
             /*e1*/ 3, true,   // v2→v1  (edge 3: v1→v2 reversed)

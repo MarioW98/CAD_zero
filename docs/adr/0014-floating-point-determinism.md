@@ -57,18 +57,3 @@ Both are set in `CMakeLists.txt` regardless of build type.
   Internal `double` values are not quantized.
 - Visual ray marching is non-deterministic (allowed); only the
   feature tree's serialized output is held to the determinism bar.
-
-## Amendment (2026-10-29) — the quantizer at the exact kernel's display boundary (ADR-0034)
-
-H1 (ADR-0034) pins the arithmetic boundary of the exact B-Rep path:
-double throughout, float32 only at the named one-direction
-conversions (the p-curve vocabulary, the display/mesh output, the
-faceted bridge's lossless promotion). This ADR's 12-decimal
-quantization rule gains its second named consumer there: at the
-double→float32 boundary **the float32 cast is itself the value's
-quantizer** (24-bit mantissa — coarser than the 12-decimal text
-quantizer, so the text rule stays authoritative wherever numbers
-are serialized); internal doubles remain unquantized, as this ADR
-always said. The determinism discipline is unchanged in shape: the
-goldens re-pin ONCE (declared in the migration's commit, per
-ADR-0034 D4) and bit-identity is required from that re-pin on.

@@ -271,19 +271,14 @@ job, and D2's output is a proposal, not a decision.
 - **The house has already proven it can do exact.** Not as a hope —
   as delivered artifacts: the 2D sketch kernel (typed entities with
   construction-time validation, the max-composition field semantics
-  derived to the ADR-0029 standard), **[Correction on the record
-  (H1, 2026-10-29, ADR-0034): the predicates were NOT this. What sat
-  in `third_party/robust_predicates/` was a hand-written
-  non-adaptive stub imitating Shewchuk's structure — the register
-  here claimed a vendoring that had not happened (the license audit
-  of 2026-10-16 was the one record that said the truth). The
-  authentic `robust.c` is vendored by H1's feat commit, with the
-  discriminating adaptivity tests as the proof.]** the radial-edge
-  topology with its integer invariants (χ exact, closure
-  structural), the seam-wired analytic primitives, and the convex
-  planar booleans whose assembly pipeline (canonical vertex keys,
-  order-independent dedup) is the proven pattern for turning
-  computed geometry into valid closed shells.
+  derived to the ADR-0029 standard), the vendored Shewchuk robust
+  predicates (public domain, `orient2d`/`orient3d`/`incircle`,
+  wrapped in `core/math`), the radial-edge topology with its
+  integer invariants (χ exact, closure structural), the seam-wired
+  analytic primitives, and the convex planar booleans whose assembly
+  pipeline (canonical vertex keys, order-independent dedup) is the
+  proven pattern for turning computed geometry into valid closed
+  shells.
 - **No governance change.** ADR-0003 stands unamended, the NOTICE
   gains nothing, the license surface of the distribution does not
   move. The fork costs zero in process.
@@ -689,15 +684,7 @@ subdivision — and their failure cases).
    closed forms. The G1 guide case needs exactly one entry:
    plane∩cylinder (the hole's wall against the box's faces —
    circles on the two cap planes, nothing else).
-2. **Robust classification, reused.** **[Correction on the record
-   (H1, 2026-10-29, ADR-0034): at the time this ADR was accepted the
-   "vendored" predicates were the Phase A stub — non-adaptive, naive
-   determinants in double — and no exact-path code called them
-   anyway; the strategy below described the INTENT, not the tree.
-   H1 lands the authentic adaptive `robust.c` (the orient2d/3d,
-   incircle sign now actually robust at ulp scale, proven by the
-   discriminating tests) and ADR-0034 pins the double arithmetic
-   boundary the classification runs in.]** The Shewchuk
+2. **Robust classification, reused.** The vendored Shewchuk
    predicates (`orient2d/3d`, `incircle`) classify the arrangement
    steps exactly; the 2D sketch kernel's typed entity machinery
    (ADR-0030) is the curve-arrangement engine in parameter domains

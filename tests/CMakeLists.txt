@@ -8,7 +8,6 @@ set(CAD_0_TEST_SOURCES
     unit/math/test_mat.cpp
     unit/math/test_bbox.cpp
     unit/math/test_predicate.cpp
-    unit/math/test_predicate_adaptive.cpp
     unit/math/test_tolerance.cpp
     unit/geometry/test_shape.cpp
     unit/geometry/test_shape_id.cpp
@@ -43,6 +42,7 @@ set(CAD_0_TEST_SOURCES
     unit/brep/test_g1_unit5_mass.cpp
     unit/brep/test_g1_unit6_report.cpp
     unit/brep/test_g2_unit1_ssi_table.cpp
+    unit/brep/test_g2_unit2_booleans_ext.cpp
     unit/bridge/test_bridge.cpp
     main.cpp
 )

@@ -163,7 +163,7 @@ namespace CAD_0::brep {
 // cosine band |n·â| vs {0, 1} — the kParallelDotMin discipline of
 // ADR-0025, now a parameter) and the LINEAR bands (the z-covering,
 // the tangency, the SAT separation, the containment margins — mm).
-inline constexpr double kSubtractTolerance = 1e-6;
+inline constexpr float kSubtractTolerance = 1e-6f;
 
 // ---------------------------------------------------------------------------
 // The SSI entry — plane ∩ cylinder (D5)
@@ -188,23 +188,23 @@ struct PlaneCylinderSSI {
     // radius (the cylinder's own); cylinder_v = the circle's height
     // above the cylinder's z_base (the horizontal Line2's v on the
     // (u,v) domain).
-    math::Vec3d circle_center{};
-    double circle_radius{0.0};
-    double cylinder_v{0.0};
+    math::Vec3f circle_center{};
+    float circle_radius{0.0f};
+    float cylinder_v{0.0f};
 
     // LinePair / TangentLine: a point on the first line (on the
     // cylinder, at the cylinder's z_base), the shared direction (the
     // axis), the two world azimuths (TangentLine: phi_a == phi_b),
     // and the signed axis-to-plane distance.
-    math::Vec3d line_point{};
-    math::Vec3d line_dir{};
-    double phi_a{0.0};
-    double phi_b{0.0};
-    double axis_distance{0.0};
+    math::Vec3f line_point{};
+    math::Vec3f line_dir{};
+    float phi_a{0.0f};
+    float phi_b{0.0f};
+    float axis_distance{0.0f};
 
     // Oblique: the angle between the plane's normal and the axis
     // (radians) — the refusal's own number.
-    double angle{0.0};
+    float angle{0.0f};
 };
 
 // ssi_plane_cylinder — the entry point. `angle_tol` is the cosine
@@ -214,7 +214,7 @@ struct PlaneCylinderSSI {
 // value. Pure function, deterministic (ADR-0014).
 inline PlaneCylinderSSI ssi_plane_cylinder(const PlaneSurface& plane,
                                            const CylinderZSurface& cyl,
-                                           double angle_tol, double linear_tol);
+                                           float angle_tol, float linear_tol);
 
 // ---------------------------------------------------------------------------
 // translate_body — the tool offset, on the exact side
@@ -229,36 +229,47 @@ inline PlaneCylinderSSI ssi_plane_cylinder(const PlaneSurface& plane,
 // the divergence ADR-0032 exists to prevent). Throws for a surface
 // family outside the analytic translation table (loud, never a
 // silent skip).
-void translate_body(BRepBody& body, math::Vec3d delta);
+void translate_body(BRepBody& body, math::Vec3f delta);
 
 // ---------------------------------------------------------------------------
 // exact_subtract — the G1 class (D7)
 // ---------------------------------------------------------------------------
 
-// Compute A \ (B + tool_offset) on the exact G1 class. THE GATE IS ON
-// THE MATERIALIZATION, NOT ON THE OPERATION: in-class inputs
-// materialize the exact result; every out-of-class input refuses with
-// an actionable std::invalid_argument (the diagnosis names what, the
-// remedy names how) — the caller records the refusal and the SDF path
-// stands (no silent downgrade, no regression).
+// Compute A \ (B + tool_offset) on the exact G1 class, EXTENDED by
+// G2 unit 2 (ADR-0033 D5.2): the pierced-target class (the SECOND cut
+// on an already-holed convex target — the two-holes body, the unit's
+// guide case) and the sphere-class targets (the bitten sphere, the
+// bead, the truncation family — dispatched to booleans_ext.cpp's own
+// gates and assemblies). THE GATE IS ON THE MATERIALIZATION, NOT ON
+// THE OPERATION: in-class inputs materialize the exact result; every
+// out-of-class input refuses with an actionable std::invalid_argument
+// (the diagnosis names what, the remedy names how) — the caller
+// records the refusal and the SDF path stands (no silent downgrade,
+// no regression).
 //
 // The in-class outcomes:
 //   * the THROUGH-hole (the guide case + the coplanar flush): the
 //     pinned topology — the pierced faces gain inner loops, the wall
 //     survives between the circles, the tool's caps die or absorb;
+//     each cut lowers chi by 2 (one genus per through hole), so the
+//     postcondition reads chi = chi(A) - 2 and H = H(A) + 2;
 //   * the MISS (the tool disjoint from the target, or touching it
 //     within the tolerance from outside — the deterministic
-//     tie-break: a touch removes nothing): the EXACT COPY of A.
-//
-// Postconditions (hard, the bridge's culture): the result passes
-// is_closed_orientable and loops_are_closed, every edge carries
-// exactly two oppositely-oriented co-edges, and χ equals the expected
-// value (0 for the through-hole; A's own χ for the miss) — a
-// violation throws std::runtime_error (an assembly defect, never a
-// returned broken body).
+//     tie-break: a touch removes nothing; NESTED circles on a pierced
+//     target — the tool inside an existing cavity): the EXACT COPY of
+//     A.
 std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A, const BRepBody& B,
-                                         math::Vec3d tool_offset,
-                                         double tol);
+                                         math::Vec3f tool_offset,
+                                         float tol);
+
+// The sphere-target branch (G2 unit 2): declared here, dispatched
+// above for the sphere-class targets, implemented in booleans_ext.cpp
+// beside the table it consumes. The class check there reads the
+// sphere-class body (the factory sphere or this unit's own
+// survivors); every refusal is its own actionable record.
+std::unique_ptr<BRepBody> exact_subtract_sphere_target(
+    const BRepBody& A, const BRepBody& B, math::Vec3f tool_offset,
+    float tol);
 
 // ===========================================================================
 // Implementation
@@ -266,39 +277,22 @@ std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A, const BRepBody& B,
 
 namespace subtract_detail {
 
-inline constexpr double kPi = 3.14159265358979;
-inline constexpr double kTwoPi = 6.28318530717958647692;
+inline constexpr float kPi = 3.14159265358979f;
+inline constexpr float kTwoPi = 6.28318530717958647692f;
 
 // The domain coordinates of a world point in a plane's (u,v) frame
 // (the factories' own projection — one inverse, no second frame).
-inline math::Vec2f plane_domain(const PlaneSurface& s, math::Vec3d p) {
-    // THE BOUNDARY CONVERSION (ADR-0034): the projection computes in
-    // double (the exact world), the p-curve payload converts to the
-    // sketch domain's float here - one direction, the only place.
-    const math::Vec3d d = p - s.origin();
-    return {static_cast<float>(d.dot(s.u_axis())),
-            static_cast<float>(d.dot(s.v_axis()))};
+inline math::Vec2f plane_domain(const PlaneSurface& s, math::Vec3f p) {
+    const math::Vec3f d = p - s.origin();
+    return {d.dot(s.u_axis()), d.dot(s.v_axis())};
 }
 
 // Normalize an angle to [0, 2π).
-inline double norm_two_pi(double a) {
-    double r = std::fmod(a, kTwoPi);
-    if (r < 0.0) r += kTwoPi;
+inline float norm_two_pi(float a) {
+    float r = std::fmod(a, kTwoPi);
+    if (r < 0.0f) r += kTwoPi;
     return r;
 }
-
-// THE BOUNDARY CONVERSION (ADR-0034): the exact world's double
-// quantized to the p-curve domain's float — one direction, the only
-// place it happens (every payload authoring in this file flows
-// through here or through the dom projections' own casts).
-inline math::Vec2f v2f(const math::Vec2d& p) {
-    return {static_cast<float>(p.x), static_cast<float>(p.y)};
-}
-
-// THE PAYLOAD DOMAIN TYPES: the p-curve payloads are the sketch
-// kernel's float vocabulary (ADR-0032 D2.1 — one opinion); the world
-// is double (ADR-0034). The conversions below are explicit and local.
-using math::Vec2f;
 
 } // namespace subtract_detail
 
@@ -307,36 +301,36 @@ using math::Vec2f;
 // ---------------------------------------------------------------------------
 inline PlaneCylinderSSI ssi_plane_cylinder(const PlaneSurface& plane,
                                            const CylinderZSurface& cyl,
-                                           double angle_tol, double linear_tol) {
+                                           float angle_tol, float linear_tol) {
     PlaneCylinderSSI out;
-    const math::Vec3d n = plane.normal_vec().normalized();
-    const math::Vec3d axis{0.0, 0.0, 1.0};
-    const double c = std::abs(n.dot(axis));  // |cos| of the normal-axis angle
+    const math::Vec3f n = plane.normal_vec().normalized();
+    const math::Vec3f axis{0.0f, 0.0f, 1.0f};
+    const float c = std::abs(n.dot(axis));  // |cos| of the normal-axis angle
 
-    if (c > angle_tol && c < 1.0 - angle_tol) {
+    if (c > angle_tol && c < 1.0f - angle_tol) {
         // OBLIQUE: the intersection is an ellipse; on the cylinder's
         // (θ, z) domain the p-curve is the SINUSOID z(θ) — not
         // typifiable in the G1 vocabulary (D5's honest boundary; the
         // G3 spline table owns it). Refused with the angle.
         out.kind = PlaneCylinderSSI::Kind::Oblique;
-        out.angle = std::acos(std::min(1.0, c));
+        out.angle = std::acos(std::min(1.0f, c));
         return out;
     }
 
-    const math::Vec3d p0 = plane.origin();
+    const math::Vec3f p0 = plane.origin();
     if (c <= angle_tol) {
         // Plane ∥ axis: the two vertical lines where the cylinder
         // meets the plane. The plane's horizontal normal direction:
         // mu = the azimuth of (n.x, n.y) (n is unit; |n.z| ≈ 0 here).
-        const double mu = std::atan2(n.y, n.x);
+        const float mu = std::atan2(n.y, n.x);
         // The signed offset of the plane from the axis, along the
         // plane's horizontal normal: D = (p0 - c)·n_xy. The cylinder
         // meets the plane where cos(phi - mu) = D/r (the classical
         // pair / tangent / empty trichotomy).
-        const double D = (p0.x - cyl.axis_center().x) * n.x +
+        const float D = (p0.x - cyl.axis_center().x) * n.x +
                         (p0.y - cyl.axis_center().y) * n.y;
-        const double d = D;
-        const double r = cyl.radius();
+        const float d = D;
+        const float r = cyl.radius();
         out.axis_distance = d;
         if (std::abs(d) > r + linear_tol) {
             out.kind = PlaneCylinderSSI::Kind::Empty;
@@ -346,7 +340,7 @@ inline PlaneCylinderSSI ssi_plane_cylinder(const PlaneSurface& plane,
             // Tangent: the double line at azimuth mu (for d ≈ +r the
             // touch is on the +mu side; for d ≈ -r on the -mu side).
             out.kind = PlaneCylinderSSI::Kind::TangentLine;
-            const double phi = d >= 0.0 ? mu : mu + subtract_detail::kPi;
+            const float phi = d >= 0.0f ? mu : mu + subtract_detail::kPi;
             out.phi_a = out.phi_b = phi;
             out.line_dir = axis;
             out.line_point = {cyl.axis_center().x + r * std::cos(phi),
@@ -356,7 +350,7 @@ inline PlaneCylinderSSI ssi_plane_cylinder(const PlaneSurface& plane,
         }
         // The pair: phi = mu ± arccos(d / r).
         out.kind = PlaneCylinderSSI::Kind::LinePair;
-        const double theta0 = std::acos(std::max(-1.0, std::min(1.0, d / r)));
+        const float theta0 = std::acos(std::max(-1.0f, std::min(1.0f, d / r)));
         out.phi_a = subtract_detail::norm_two_pi(mu + theta0);
         out.phi_b = subtract_detail::norm_two_pi(mu - theta0);
         out.line_dir = axis;
@@ -382,26 +376,7 @@ inline PlaneCylinderSSI ssi_plane_cylinder(const PlaneSurface& plane,
 // ---------------------------------------------------------------------------
 // translate_body
 // ---------------------------------------------------------------------------
-// The translation table's payload reader (H1, ADR-0034 D3): the
-// visitor — no string compare, no dynamic_cast chain.
-namespace subtract_detail {
-struct TranslateReader : SurfaceVisitor {
-    const PlaneSurface* plane{nullptr};
-    const CylinderSurface* cyl_y{nullptr};
-    const CylinderZSurface* cyl_z{nullptr};
-    const SphereSurface* sphere{nullptr};
-    const ConeSurface* cone{nullptr};
-    const TorusSurface* torus{nullptr};
-    void visit(const PlaneSurface& s) override { plane = &s; }
-    void visit(const CylinderSurface& s) override { cyl_y = &s; }
-    void visit(const CylinderZSurface& s) override { cyl_z = &s; }
-    void visit(const SphereSurface& s) override { sphere = &s; }
-    void visit(const ConeSurface& s) override { cone = &s; }
-    void visit(const TorusSurface& s) override { torus = &s; }
-};
-} // namespace subtract_detail
-
-inline void translate_body(BRepBody& body, math::Vec3d delta) {
+inline void translate_body(BRepBody& body, math::Vec3f delta) {
     for (auto& v : body.vertices)
         v.set_position(v.position() + delta);
     for (auto& f : body.solid.shell_mut().faces_mut()) {
@@ -410,28 +385,27 @@ inline void translate_body(BRepBody& body, math::Vec3d delta) {
             continue;  // (a faceless face cannot move; the class
                        // checks refuse such bodies long before here)
         }
-        subtract_detail::TranslateReader r;
-        surf->accept(r);
-        switch (surf->family()) {
-        case SurfaceFamily::Plane:
-            f.set_surface(std::make_shared<PlaneSurface>(
-                r.plane->origin() + delta, r.plane->normal_vec()));
-            break;
-        case SurfaceFamily::Cylinder:
+        const std::string family = surf->type_name();
+        if (family == "plane") {
+            const auto* pl = dynamic_cast<const PlaneSurface*>(surf);
+            f.set_surface(std::make_shared<PlaneSurface>(pl->origin() + delta,
+                                                         pl->normal_vec()));
+        } else if (family == "cylinder") {
             // The extrude's own Z-axis cylinder OR the primitive
             // factory's Y-axis one — both carry their placement in
             // the surface; both re-anchor the same way through their
             // own accessors.
-            if (r.cyl_z != nullptr) {
+            if (const auto* cz =
+                    dynamic_cast<const CylinderZSurface*>(surf)) {
                 f.set_surface(std::make_shared<CylinderZSurface>(
-                    r.cyl_z->axis_center() +
-                        math::Vec2d{delta.x, delta.y},
-                    r.cyl_z->radius(), r.cyl_z->z_base() + delta.z,
-                    r.cyl_z->u_sign() > 0.0 ? +1 : -1));
-            } else if (r.cyl_y != nullptr) {
+                    cz->axis_center() +
+                        math::Vec2f{delta.x, delta.y},
+                    cz->radius(), cz->z_base() + delta.z,
+                    cz->u_sign() > 0.0f ? +1 : -1));
+            } else if (const auto* cy =
+                           dynamic_cast<const CylinderSurface*>(surf)) {
                 f.set_surface(std::make_shared<CylinderSurface>(
-                    r.cyl_y->radius(), r.cyl_y->height(),
-                    r.cyl_y->origin() + delta));
+                    cy->radius(), cy->height(), cy->origin() + delta));
             } else {
                 throw std::invalid_argument(
                     "translate_body: unknown 'cylinder' surface subtype "
@@ -440,33 +414,31 @@ inline void translate_body(BRepBody& body, math::Vec3d delta) {
                     "extension, not a silent skip). Remedy: extend the "
                     "table with its own placement accessor.");
             }
-            break;
-        case SurfaceFamily::Sphere:
-        {
+        } else if (family == "sphere") {
+            const auto* sp = dynamic_cast<const SphereSurface*>(surf);
             // G2 unit 1: the sphere's frame is DERIVED state carried by
             // the surface (the re-frame rule) — the translation moves
             // the mathematical object (C, R) and keeps the frame, so a
             // re-framed face's p-curves stay valid verbatim (the same
             // mathematics, one code path — the header's own doctrine).
-            f.set_surface(std::make_shared<SphereSurface>(
-                r.sphere->radius(), r.sphere->origin() + delta,
-                r.sphere->pole(), r.sphere->azimuth()));
-            break;
-        }
-        case SurfaceFamily::Cone:
-            f.set_surface(std::make_shared<ConeSurface>(
-                r.cone->base_radius(), r.cone->height(),
-                r.cone->origin() + delta));
-            break;
-        case SurfaceFamily::Torus:
-            f.set_surface(std::make_shared<TorusSurface>(
-                r.torus->major_radius(), r.torus->minor_radius(),
-                r.torus->origin() + delta));
-            break;
-        default:
+            f.set_surface(std::make_shared<SphereSurface>(sp->radius(),
+                                                          sp->origin() +
+                                                              delta,
+                                                          sp->pole(),
+                                                          sp->azimuth()));
+        } else if (family == "cone") {
+            const auto* co = dynamic_cast<const ConeSurface*>(surf);
+            f.set_surface(std::make_shared<ConeSurface>(co->base_radius(),
+                                                        co->height(),
+                                                        co->origin() + delta));
+        } else if (family == "torus") {
+            const auto* to = dynamic_cast<const TorusSurface*>(surf);
+            f.set_surface(std::make_shared<TorusSurface>(to->major_radius(),
+                                                         to->minor_radius(),
+                                                         to->origin() + delta));
+        } else {
             throw std::invalid_argument(
-                "translate_body: the surface family '" +
-                std::string(family_name(surf->family())) +
+                "translate_body: the surface family '" + family +
                 "' is outside the analytic translation table (plane, "
                 "cylinder, sphere, cone, torus — the G1 surfaces with "
                 "exact consumers). Remedy: the operand's class does not "
@@ -486,15 +458,15 @@ namespace subtract_detail {
 struct WalkEntity {
     enum class Kind : std::uint8_t { Segment, Arc };
     Kind kind{Kind::Segment};
-    math::Vec2d p{}, q{};  // the traversal's world endpoints
+    math::Vec2f p{}, q{};  // the traversal's world endpoints
     // Arc only: the circle + the CCW world span the walk traverses
     // (the canonical walk runs psi-up on every fillet arc — the +Z
     // cap's loop is CCW around the profile, and a fillet arc's
     // material lies toward its centre).
-    math::Vec2d center{};
-    double radius{0.0};
-    double psi_start{0.0};
-    double sweep{0.0};
+    math::Vec2f center{};
+    float radius{0.0f};
+    float psi_start{0.0f};
+    float sweep{0.0f};
 };
 
 // The tool as the pipeline consumes it: the canonical walk + the
@@ -503,21 +475,20 @@ struct ToolWalk {
     std::vector<WalkEntity> entities;
     bool is_circle{false};  // the seam-wired special case (n = 2 arcs
                             // of one circle totalling 2π)
-    math::Vec2d circle_center{};
-    double circle_radius{0.0};
-    double z_lo{0.0}, z_hi{0.0};
+    math::Vec2f circle_center{};
+    float circle_radius{0.0f};
+    float z_lo{0.0f}, z_hi{0.0f};
 };
 
 // The +Z cap's surface, verified planar with a +Z normal.
 inline const PlaneSurface* cap_surface_of(const Face& f) {
     const auto* surf = f.surface();
     if (surf == nullptr) return nullptr;
-    if (surf->family() != SurfaceFamily::Plane) return nullptr;
-    TranslateReader r;
-    surf->accept(r);
-    if (r.plane == nullptr) return nullptr;
-    if (r.plane->normal_vec().z < 0.9) return nullptr;  // not +Z-ish
-    return r.plane;
+    if (std::string(surf->type_name()) != "plane") return nullptr;
+    const auto* pl = dynamic_cast<const PlaneSurface*>(surf);
+    if (pl == nullptr) return nullptr;
+    if (pl->normal_vec().z < 0.9f) return nullptr;  // not +Z-ish
+    return pl;
 }
 
 // Read the canonical walk from the +Z cap's outer loop. Guards (each
@@ -551,11 +522,10 @@ inline ToolWalk read_tool_walk(const BRepBody& B) {
     for (const auto& f : B.solid.shell().faces()) {
         const auto* surf = f.surface();
         if (surf == nullptr) continue;
-        if (surf->family() != SurfaceFamily::Plane) continue;
-        TranslateReader r;
-        surf->accept(r);
-        if (r.plane == nullptr || r.plane->normal_vec().z > -0.9) continue;
-        w.z_lo = r.plane->origin().z;
+        if (std::string(surf->type_name()) != "plane") continue;
+        const auto* pl = dynamic_cast<const PlaneSurface*>(surf);
+        if (pl == nullptr || pl->normal_vec().z > -0.9f) continue;
+        w.z_lo = pl->origin().z;
         break;
     }
 
@@ -582,18 +552,19 @@ inline ToolWalk read_tool_walk(const BRepBody& B) {
         WalkEntity e;
         if (pc->kind == sdf::SketchEntity::Kind::Segment) {
             e.kind = WalkEntity::Kind::Segment;
-            const math::Vec3d a = dom(pc->segment.a);
-            const math::Vec3d b = dom(pc->segment.b);
+            const math::Vec3f a = dom(pc->segment.a);
+            const math::Vec3f b = dom(pc->segment.b);
             e.p = {a.x, a.y};
             e.q = {b.x, b.y};
         } else {
             e.kind = WalkEntity::Kind::Arc;
-            const math::Vec3d c = dom(pc->arc.center);
+            const math::Vec3f c = dom(math::Vec2f{pc->arc.center.x,
+                                                  pc->arc.center.y});
             e.center = {c.x, c.y};
             e.radius = pc->arc.radius;
             e.sweep = pc->arc.sweep;
-            const math::Vec3d a = dom(sdf::arc_start_point(pc->arc));
-            const math::Vec3d b = dom(sdf::arc_end_point(pc->arc));
+            const math::Vec3f a = dom(sdf::arc_start_point(pc->arc));
+            const math::Vec3f b = dom(sdf::arc_end_point(pc->arc));
             e.p = {a.x, a.y};
             e.q = {b.x, b.y};
             // The world span: the cap's domain is right-handed around
@@ -601,11 +572,11 @@ inline ToolWalk read_tool_walk(const BRepBody& B) {
             // world's — verify the endpoints agree (the guard).
             e.psi_start = std::atan2(e.p.y - e.center.y,
                                      e.p.x - e.center.x);
-            const double psi_q = std::atan2(e.q.y - e.center.y,
+            const float psi_q = std::atan2(e.q.y - e.center.y,
                                            e.q.x - e.center.x);
-            double span = norm_two_pi(psi_q - e.psi_start);
-            if (std::abs(span - e.sweep) > 1e-4 &&
-                std::abs(span - e.sweep + kTwoPi) > 1e-4) {
+            float span = norm_two_pi(psi_q - e.psi_start);
+            if (std::abs(span - e.sweep) > 1e-4f &&
+                std::abs(span - e.sweep + kTwoPi) > 1e-4f) {
                 throw std::invalid_argument(
                     "exact_subtract: the tool's arc p-curve disagrees "
                     "with its world image (domain sweep " +
@@ -619,19 +590,19 @@ inline ToolWalk read_tool_walk(const BRepBody& B) {
     }
     // The chaining guard: the walk closes in the world.
     if (!w.entities.empty()) {
-        const math::Vec2d first = w.entities.front().p;
-        math::Vec2d cursor = w.entities.front().p;
+        const math::Vec2f first = w.entities.front().p;
+        math::Vec2f cursor = w.entities.front().p;
         for (const auto& e : w.entities) {
-            if (std::abs(e.p.x - cursor.x) > 1e-4 ||
-                std::abs(e.p.y - cursor.y) > 1e-4)
+            if (std::abs(e.p.x - cursor.x) > 1e-4f ||
+                std::abs(e.p.y - cursor.y) > 1e-4f)
                 throw std::invalid_argument(
                     "exact_subtract: the tool's canonical walk does not "
                     "chain endpoint-to-endpoint - a malformed prism cap. "
                     "Remedy: report the tool's construction.");
             cursor = e.q;
         }
-        if (std::abs(cursor.x - first.x) > 1e-4 ||
-            std::abs(cursor.y - first.y) > 1e-4)
+        if (std::abs(cursor.x - first.x) > 1e-4f ||
+            std::abs(cursor.y - first.y) > 1e-4f)
             throw std::invalid_argument(
                 "exact_subtract: the tool's canonical walk does not "
                 "close - a malformed prism cap. Remedy: report the "
@@ -649,10 +620,10 @@ inline ToolWalk read_tool_walk(const BRepBody& B) {
         w.entities[1].kind == WalkEntity::Kind::Arc) {
         const auto& e0 = w.entities[0];
         const auto& e1 = w.entities[1];
-        if (std::abs(e0.center.x - e1.center.x) <= 1e-5 &&
-            std::abs(e0.center.y - e1.center.y) <= 1e-5 &&
-            std::abs(e0.radius - e1.radius) <= 1e-5 &&
-            std::abs(e0.sweep + e1.sweep - kTwoPi) <= 1e-4) {
+        if (std::abs(e0.center.x - e1.center.x) <= 1e-5f &&
+            std::abs(e0.center.y - e1.center.y) <= 1e-5f &&
+            std::abs(e0.radius - e1.radius) <= 1e-5f &&
+            std::abs(e0.sweep + e1.sweep - kTwoPi) <= 1e-4f) {
             w.is_circle = true;
             w.circle_center = e0.center;
             w.circle_radius = e0.radius;
@@ -664,26 +635,26 @@ inline ToolWalk read_tool_walk(const BRepBody& B) {
 // The target as the pipeline consumes it (the class check's product).
 struct TargetInfo {
     std::size_t top_face{0}, bottom_face{0};  // the pierced pair
-    double z_top{0.0}, z_bot{0.0};
+    float z_top{0.0f}, z_bot{0.0f};
     // The footprint (the pierced faces' own polygon — the same region
     // for a convex all-vertical-sides body, read from the TOP face's
     // outer loop, verified CCW-in-world):
-    std::vector<math::Vec2d> verts;   // in loop order
-    std::vector<math::Vec2d> normals; // unit outward normal per edge
+    std::vector<math::Vec2f> verts;   // in loop order
+    std::vector<math::Vec2f> normals; // unit outward normal per edge
 };
 
 // The tool profile's support along a unit direction d (the coarse
 // cut of the centroid-then-predicate discipline: the vertices carry
 // the segments, the arcs add their extreme point when the direction's
 // azimuth falls inside the span).
-inline double profile_support(const ToolWalk& w, math::Vec2d d) {
-    double m = -std::numeric_limits<double>::infinity();
+inline float profile_support(const ToolWalk& w, math::Vec2f d) {
+    float m = -std::numeric_limits<float>::infinity();
     for (const auto& e : w.entities) {
         m = std::max(m, d.x * e.p.x + d.y * e.p.y);
         m = std::max(m, d.x * e.q.x + d.y * e.q.y);
         if (e.kind == WalkEntity::Kind::Arc) {
-            const double phi = norm_two_pi(std::atan2(d.y, d.x));
-            const double rel = norm_two_pi(phi - e.psi_start);
+            const float phi = norm_two_pi(std::atan2(d.y, d.x));
+            const float rel = norm_two_pi(phi - e.psi_start);
             if (rel <= e.sweep)
                 m = std::max(m, d.x * e.center.x + d.y * e.center.y +
                                       e.radius);
@@ -694,15 +665,15 @@ inline double profile_support(const ToolWalk& w, math::Vec2d d) {
 
 // Is a point inside the tool's profile (the convex region: every
 // entity's material side, with the tolerance band)?
-inline bool point_in_profile(const ToolWalk& w, math::Vec2d pt, double tol) {
+inline bool point_in_profile(const ToolWalk& w, math::Vec2f pt, float tol) {
     for (const auto& e : w.entities) {
         if (e.kind == WalkEntity::Kind::Segment) {
             // The profile's material is on the LEFT of p->q: the
             // outward normal is the right normal.
-            const math::Vec2d d{e.q.x - e.p.x, e.q.y - e.p.y};
-            const double len = std::sqrt(d.x * d.x + d.y * d.y);
-            if (len <= 1e-9) continue;
-            const math::Vec2d n{d.y / len, -d.x / len};
+            const math::Vec2f d{e.q.x - e.p.x, e.q.y - e.p.y};
+            const float len = std::sqrt(d.x * d.x + d.y * d.y);
+            if (len <= 1e-9f) continue;
+            const math::Vec2f n{d.y / len, -d.x / len};
             if ((pt.x - e.p.x) * n.x + (pt.y - e.p.y) * n.y > tol)
                 return false;
         } else {
@@ -721,50 +692,136 @@ inline bool point_in_profile(const ToolWalk& w, math::Vec2d pt, double tol) {
 // ---------------------------------------------------------------------------
 inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
                                                 const BRepBody& B,
-                                                math::Vec3d tool_offset,
-                                                double tol) {
+                                                math::Vec3f tool_offset,
+                                                float tol) {
+    // ==== THE SPHERE-CLASS DISPATCH (G2 unit 2) =======================
+    //
+    // A target carrying a sphere face goes to the sphere path (the
+    // bitten sphere, the bead, the truncation family — booleans_ext);
+    // a sphere TOOL on a prism target is the refused mixture (the
+    // sphere class takes the sphere as the PATIENT).
+    {
+        bool a_sphere = false, b_sphere = false;
+        for (const auto& f : A.solid.shell().faces())
+            if (f.surface() &&
+                std::string(f.surface()->type_name()) == "sphere") {
+                a_sphere = true;
+                break;
+            }
+        for (const auto& f : B.solid.shell().faces())
+            if (f.surface() &&
+                std::string(f.surface()->type_name()) == "sphere") {
+                b_sphere = true;
+                break;
+            }
+        if (a_sphere)
+            return exact_subtract_sphere_target(A, B, tool_offset, tol);
+        if (b_sphere)
+            throw std::invalid_argument(
+                "exact_subtract: a SPHERE tool on a prism target - the "
+                "extended class takes the sphere as the PATIENT (the "
+                "prism is the tool, the D6 class; the G1 path "
+                "unchanged). Remedy: swap the operands (subtract the "
+                "prism from the sphere), or accept the faceted path.");
+    }
+
     // ==== THE CLASS CHECK (D7.1/D7.3) — pinned BEFORE the algorithm =
     //
-    // A: convex, planar-faced, every face ⊥ or ∥ to the axis.
+    // A: convex, every face a plane (⊥ or ∥ to the axis) or a
+    // CylinderZ hole wall (the pierced-target class, G2 unit 2 — the
+    // SECOND cut lands on already-holed targets); the pierced faces'
+    // inner loops must be CIRCLE rims (the existing-hole records).
+    struct ExistingHole {
+        math::Vec2f center{};  // world xy of the rim circle's centre
+        float radius{0.0f};
+    };
+    std::vector<ExistingHole> existing_holes;
     {
         std::size_t pos_z = 0, neg_z = 0;
         for (const auto& f : A.solid.shell().faces()) {
             const auto* surf = f.surface();
-            if (surf == nullptr || surf->family() != SurfaceFamily::Plane)
+            const std::string fam =
+                surf ? std::string(surf->type_name()) : std::string("none");
+            if (surf == nullptr || (fam != "plane" && fam != "cylinder"))
                 throw std::invalid_argument(
                     "exact_subtract: the target carries a non-planar face "
-                    "(family '" +
-                    (surf ? std::string(family_name(surf->family()))
-                          : std::string(family_name(SurfaceFamily::None))) +
-                    "') - the G1 class takes convex PLANAR-faced targets (a "
-                    "box, a planar prism); a curved target face meets the "
-                    "tool in the general SSI table (G2's). Remedy: use a "
-                    "planar-faced target, or accept the faceted path (the "
-                    "SDF materialization stands).");
-            subtract_detail::TranslateReader rr;
-            surf->accept(rr);
-            const double nz = rr.plane->normal_vec().z;
-            if (std::abs(nz) > tol && std::abs(nz) < 1.0 - tol)
+                    "(family '" + fam +
+                    "') - the class takes convex PLANAR-faced targets "
+                    "(a box, a planar prism) and, since G2 unit 2, "
+                    "pierced targets whose hole walls are the extrude's "
+                    "own Z-axis cylinders. Remedy: use a planar-faced "
+                    "target, or accept the faceted path (the SDF "
+                    "materialization stands).");
+            if (fam == "cylinder") {
+                // The existing-hole wall: the extrude's Z placement only.
+                if (dynamic_cast<const CylinderZSurface*>(surf) == nullptr)
+                    throw std::invalid_argument(
+                        "exact_subtract: the target's hole wall is a "
+                        "Y-axis cylinder (the primitive factory's "
+                        "placement) - the pierced-target class reads the "
+                        "extrude's own Z-axis hole walls. Remedy: model "
+                        "the hole as an extruded circle profile, or "
+                        "accept the faceted path.");
+                continue;  // the walls are ∥ to the axis by construction
+            }
+            const auto* pl = dynamic_cast<const PlaneSurface*>(surf);
+            const float nz = pl->normal_vec().z;
+            if (std::abs(nz) > tol && std::abs(nz) < 1.0f - tol)
                 throw std::invalid_argument(
                     "exact_subtract: the target has an OBLIQUE face (its "
                     "normal makes angle " +
-                    std::to_string(std::acos(std::min(1.0, std::abs(nz)))) +
+                    std::to_string(std::acos(std::min(1.0f, std::abs(nz)))) +
                     " rad with the tool's axis) - the oblique plane∩cylinder "
                     "SSI is an ellipse whose cylinder-domain p-curve is a "
                     "SINUSOID, not typifiable in the G1 vocabulary "
                     "(ADR-0032 D5: the G3 spline table). Remedy: reorient "
                     "the target's face (axis-aligned), or accept the "
                     "faceted path.");
-            if (nz >= 1.0 - tol) ++pos_z;
-            if (nz <= -(1.0 - tol)) ++neg_z;
-            if (f.loops().size() != 1)
-                throw std::invalid_argument(
-                    "exact_subtract: the target carries a face with inner "
-                    "loops - not a convex planar body (a pierced or holed "
-                    "target is outside the G1 class: the exact subtract "
-                    "takes the FIRST cut on a convex target). Remedy: "
-                    "reorder the operations so this subtract's target is "
-                    "uncut, or accept the faceted path.");
+            if (nz >= 1.0f - tol) ++pos_z;
+            if (nz <= -(1.0f - tol)) ++neg_z;
+            if (f.loops().size() > 1) {
+                // The pierced faces' inner loops: CIRCLE rims only (the
+                // circle tools' own records); each contributes its
+                // world-space circle to the existing-hole set.
+                const PlaneSurface* here = pl;
+                for (std::size_t li = 1; li < f.loops().size(); ++li) {
+                    const auto& loop = f.loops()[li];
+                    bool rim_ok =
+                        loop.coedges().size() == 2 &&
+                        loop.coedges()[0].p_curve() != nullptr &&
+                        loop.coedges()[1].p_curve() != nullptr &&
+                        loop.coedges()[0].p_curve()->kind ==
+                            sdf::SketchEntity::Kind::Arc &&
+                        loop.coedges()[1].p_curve()->kind ==
+                            sdf::SketchEntity::Kind::Arc;
+                    if (rim_ok) {
+                        const auto& a1 = loop.coedges()[0].p_curve()->arc;
+                        const auto& a2 = loop.coedges()[1].p_curve()->arc;
+                        if (std::abs(a1.center.x - a2.center.x) > 1e-5f ||
+                            std::abs(a1.center.y - a2.center.y) > 1e-5f ||
+                            std::abs(a1.radius - a2.radius) > 1e-5f)
+                            rim_ok = false;
+                        else if (here != nullptr) {
+                            const math::Vec3f wc =
+                                here->evaluate(a1.center.x, a1.center.y);
+                            existing_holes.push_back(
+                                ExistingHole{math::Vec2f{wc.x, wc.y},
+                                              a1.radius});
+                        }
+                    }
+                    if (!rim_ok)
+                        throw std::invalid_argument(
+                            "exact_subtract: a pierced face carries an "
+                            "inner loop that is not a CIRCLE rim (two "
+                            "arc halves of one circle) - the "
+                            "pierced-target class reads the circle "
+                            "tools' own records (a slot from a chain "
+                            "tool, or any other rim shape, is out of "
+                            "the class). Remedy: re-order the cuts so "
+                            "the existing holes are circles, or accept "
+                            "the faceted path.");
+                }
+            }
         }
         if (pos_z != 1 || neg_z != 1)
             throw std::invalid_argument(
@@ -775,19 +832,24 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
                 "prism target, or accept the faceted path.");
     }
 
-    // A's half-space convexity: every vertex inside every face plane.
+    // A's half-space convexity: every vertex inside every face plane
+    // (the cylindrical hole walls have no half-space to check - they
+    // are interior boundaries of the removed region).
     for (const auto& f : A.solid.shell().faces()) {
-        subtract_detail::TranslateReader pr;
-        f.surface()->accept(pr);
-        const math::Vec3d o = pr.plane->origin();
-        const math::Vec3d n = pr.plane->normal_vec();
+        const auto* pl =
+            dynamic_cast<const PlaneSurface*>(f.surface());
+        if (pl == nullptr) continue;  // a CylinderZ hole wall
+        const math::Vec3f o = pl->origin();
+        const math::Vec3f n = pl->normal_vec();
         for (const auto& v : A.vertices) {
             if ((v.position() - o).dot(n) > tol)
                 throw std::invalid_argument(
                     "exact_subtract: the target is not CONVEX (a vertex "
-                    "lies outside a face's half-space) - the G1 class "
-                    "takes convex planar targets. Remedy: use a convex "
-                    "target, or accept the faceted path.");
+                    "lies outside a face's half-space) - the class "
+                    "takes convex planar targets (a pierced target "
+                    "keeps its outer convexity; the holes are interior). "
+                    "Remedy: use a convex target, or accept the "
+                    "faceted path.");
         }
     }
 
@@ -824,21 +886,20 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
         for (const auto& f : B.solid.shell().faces()) {
             const auto* surf = f.surface();
             if (surf == nullptr ||
-                (surf->family() != SurfaceFamily::Plane &&
-                 surf->family() != SurfaceFamily::Cylinder))
+                (std::string(surf->type_name()) != "plane" &&
+                 std::string(surf->type_name()) != "cylinder"))
                 throw std::invalid_argument(
                     "exact_subtract: the tool is not a Z-axis prism of "
                     "the D6 class (a face of family '" +
-                    (surf ? std::string(family_name(surf->family()))
-                          : std::string(family_name(SurfaceFamily::None))) +
+                    (surf ? std::string(surf->type_name())
+                          : std::string("none")) +
                     "') - the G1 exact subtract consumes the exact "
                     "extrude's prisms (a convex profile or a circle), "
                     "placed by the recipe's offset. Remedy: use an "
                     "extruded profile (or the fitted box) as the tool, "
                     "or accept the faceted path.");
-            if (surf->family() == SurfaceFamily::Cylinder &&
-                [&] { subtract_detail::TranslateReader tr;
-                      surf->accept(tr); return tr.cyl_z == nullptr; }())
+            if (std::string(surf->type_name()) == "cylinder" &&
+                dynamic_cast<const CylinderZSurface*>(surf) == nullptr)
                 throw std::invalid_argument(
                     "exact_subtract: the tool is not a Z-axis prism of "
                     "the D6 class (its cylinder's axis is Y - the "
@@ -846,14 +907,14 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
                     "subtract consumes the exact extrude's Z-axis "
                     "prisms. Remedy: model the tool as an extruded "
                     "circle profile, or accept the faceted path.");
-            subtract_detail::TranslateReader tr;
-            surf->accept(tr);
-            const double nz =
-                tr.plane != nullptr ? tr.plane->normal_vec().z
-                                    : 0.0;  // cylinder walls are ∥ to the axis
-            if (tr.plane != nullptr) {
-                if (nz > 1.0 - tol) ++pos_z;
-                else if (nz < -(1.0 - tol)) ++neg_z;
+            const float nz =
+                std::string(surf->type_name()) == "plane"
+                    ? dynamic_cast<const PlaneSurface*>(surf)
+                          ->normal_vec().z
+                    : 0.0f;  // cylinder walls are ∥ to the axis
+            if (std::string(surf->type_name()) == "plane") {
+                if (nz > 1.0f - tol) ++pos_z;
+                else if (nz < -(1.0f - tol)) ++neg_z;
                 else if (std::abs(nz) > tol)
                     throw std::invalid_argument(
                         "exact_subtract: the tool has an OBLIQUE face - "
@@ -883,11 +944,11 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
     // B's half-space convexity over its planar faces (the L-profile
     // and every non-convex segment chain land here).
     for (const auto& f : B.solid.shell().faces()) {
-        if (f.surface()->family() != SurfaceFamily::Plane) continue;
-        subtract_detail::TranslateReader pr;
-        f.surface()->accept(pr);
-        const math::Vec3d o = pr.plane->origin();
-        const math::Vec3d n = pr.plane->normal_vec();
+        if (std::string(f.surface()->type_name()) != "plane") continue;
+        const auto* pl =
+            dynamic_cast<const PlaneSurface*>(f.surface());
+        const math::Vec3f o = pl->origin();
+        const math::Vec3f n = pl->normal_vec();
         for (const auto& v : B.vertices) {
             if ((v.position() - o).dot(n) > tol)
                 throw std::invalid_argument(
@@ -914,15 +975,16 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
         bool have_top = false, have_bot = false;
         for (std::size_t i = 0; i < A.face_count(); ++i) {
             const auto& f = A.solid.shell().faces()[i];
-            subtract_detail::TranslateReader pr;
-            f.surface()->accept(pr);
-            const PlaneSurface* pl = pr.plane;
-            const double nz = pl->normal_vec().z;
-            if (nz >= 1.0 - tol) {
+            const auto* pl =
+                dynamic_cast<const PlaneSurface*>(f.surface());
+            if (pl == nullptr)
+                continue;  // a CylinderZ hole wall (the pierced class)
+            const float nz = pl->normal_vec().z;
+            if (nz >= 1.0f - tol) {
                 t.top_face = i;
                 t.z_top = pl->origin().z;
                 have_top = true;
-            } else if (nz <= -(1.0 - tol)) {
+            } else if (nz <= -(1.0f - tol)) {
                 t.bottom_face = i;
                 t.z_bot = pl->origin().z;
                 have_bot = true;
@@ -940,9 +1002,8 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
         // signed-area guard makes it loud if a foreign authoring
         // appears).
         const auto& top = A.solid.shell().faces()[t.top_face];
-        subtract_detail::TranslateReader tr;
-        top.surface()->accept(tr);
-        const PlaneSurface* top_plane = tr.plane;
+        const auto* top_plane =
+            dynamic_cast<const PlaneSurface*>(top.surface());
         double area2 = 0.0;
         for (const auto& ce : top.loops()[0].coedges()) {
             const VertexId vid = ce.start_vertex(A.edges);
@@ -950,13 +1011,13 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
                 {A.vertices[vid].position().x, A.vertices[vid].position().y});
         }
         for (std::size_t i = 0; i < t.verts.size(); ++i) {
-            const math::Vec2d& a = t.verts[i];
-            const math::Vec2d& b = t.verts[(i + 1) % t.verts.size()];
+            const math::Vec2f& a = t.verts[i];
+            const math::Vec2f& b = t.verts[(i + 1) % t.verts.size()];
             area2 += static_cast<double>(a.x) * b.y -
                      static_cast<double>(b.x) * a.y;
-            const math::Vec2d d{b.x - a.x, b.y - a.y};
-            const double len = std::sqrt(d.x * d.x + d.y * d.y);
-            if (len <= 1e-9)
+            const math::Vec2f d{b.x - a.x, b.y - a.y};
+            const float len = std::sqrt(d.x * d.x + d.y * d.y);
+            if (len <= 1e-9f)
                 throw std::invalid_argument(
                     "exact_subtract: the target's pierced face has a "
                     "degenerate edge - a malformed target. Remedy: "
@@ -977,8 +1038,8 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
     // (1) The z-side miss: the tool's span does not reach the
     //     target's, or touches it from outside within the tolerance
     //     (the deterministic tie-break: a touch removes nothing).
-    const double z_lo = w.z_lo;  // the translated caps
-    const double z_hi = w.z_hi;
+    const float z_lo = w.z_lo;  // the translated caps
+    const float z_hi = w.z_hi;
     if (z_hi <= t.z_bot + tol || z_lo >= t.z_top - tol) {
         // The EXACT COPY of A (see below — the same code path).
         auto r = std::make_unique<BRepBody>(A);
@@ -991,28 +1052,28 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
     {
         // The SAT axes: the footprint's edge normals + the profile's
         // segment normals + the arc-vertex radial directions.
-        std::vector<math::Vec2d> axes = t.normals;
+        std::vector<math::Vec2f> axes = t.normals;
         for (const auto& e : w.entities) {
             if (e.kind == subtract_detail::WalkEntity::Kind::Segment) {
-                const math::Vec2d d{e.q.x - e.p.x, e.q.y - e.p.y};
-                const double len = std::sqrt(d.x * d.x + d.y * d.y);
-                if (len > 1e-9)
+                const math::Vec2f d{e.q.x - e.p.x, e.q.y - e.p.y};
+                const float len = std::sqrt(d.x * d.x + d.y * d.y);
+                if (len > 1e-9f)
                     axes.push_back({d.y / len, -d.x / len});
             } else {
                 for (const auto& v : t.verts) {
-                    const math::Vec2d d{v.x - e.center.x, v.y - e.center.y};
-                    const double len = std::sqrt(d.x * d.x + d.y * d.y);
-                    if (len > 1e-9)
+                    const math::Vec2f d{v.x - e.center.x, v.y - e.center.y};
+                    const float len = std::sqrt(d.x * d.x + d.y * d.y);
+                    if (len > 1e-9f)
                         axes.push_back({d.x / len, d.y / len});
                 }
             }
         }
-        double best_gap = -std::numeric_limits<double>::infinity();
+        float best_gap = -std::numeric_limits<float>::infinity();
         for (const auto& a : axes) {
-            double fp_min = std::numeric_limits<double>::infinity();
+            float fp_min = std::numeric_limits<float>::infinity();
             for (const auto& v : t.verts)
                 fp_min = std::min(fp_min, a.x * v.x + a.y * v.y);
-            const double gap =
+            const float gap =
                 fp_min - subtract_detail::profile_support(w, a);
             best_gap = std::max(best_gap, gap);
         }
@@ -1045,14 +1106,14 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
         // by input order, so the same geometry always reports the
         // same edge.
         struct Trigger {
-            math::Vec2d origin, normal;
-            double margin;
+            math::Vec2f origin, normal;
+            float margin;
         };
         std::vector<Trigger> crossing, tangential;
         for (std::size_t i = 0; i < t.verts.size(); ++i) {
-            const math::Vec2d& n = t.normals[i];
-            const double line = n.x * t.verts[i].x + n.y * t.verts[i].y;
-            const double margin =
+            const math::Vec2f& n = t.normals[i];
+            const float line = n.x * t.verts[i].x + n.y * t.verts[i].y;
+            const float margin =
                 subtract_detail::profile_support(w, n) - line;
             if (margin > tol)
                 crossing.push_back({t.verts[i], n, margin});
@@ -1099,6 +1160,75 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
         }
     }
 
+    // (2b) The new tool vs the EXISTING holes (the pierced-target
+    //     class, G2 unit 2): the circles' relation on the pierced
+    //     plane — the non-annular refusals (the two holes merging
+    //     would break the annular faces) and the nested miss.
+    if (!existing_holes.empty()) {
+        for (const auto& hole : existing_holes) {
+            const float d = std::hypot(w.circle_center.x - hole.center.x,
+                                       w.circle_center.y - hole.center.y);
+            const float rn = w.circle_radius;
+            const float ro = hole.radius;
+            if (d >= rn + ro + tol)
+                continue;  // strictly disjoint — the annular case
+            if (d + rn <= ro - tol) {
+                // NESTED: the new circle strictly inside the existing
+                // hole — the tool lies in the cavity and removes
+                // nothing: the MISS (the exact copy).
+                auto r = std::make_unique<BRepBody>(A);
+                link_radial_edges(*r);
+                return r;
+            }
+            if (std::abs(d - (rn + ro)) <= tol ||
+                std::abs(d - std::abs(rn - ro)) <= tol)
+                throw std::invalid_argument(
+                    "exact_subtract: the new hole's circle is tangent to "
+                    "an existing hole's circle on the pierced face (the "
+                    "centres sit d = " + std::to_string(d) +
+                    ", the radii " + std::to_string(rn) + " and " +
+                    std::to_string(ro) +
+                    ") — the merged boundary would pinch at the "
+                    "tangency (a non-manifold vertex on the pierced "
+                    "face and its wall). The tie-break is DETERMINISTIC "
+                    "and the pinned disposition is: refuse. Remedy: move "
+                    "or resize the new hole by more than the declared "
+                    "tolerance (" + std::to_string(tol) +
+                    "), or accept the faceted path.");
+            // CROSSING: the circles overlap — the non-annular class.
+            if (std::abs(rn - ro) <= tol)
+                throw std::invalid_argument(
+                    "exact_subtract: the new hole's circle CROSSES an "
+                    "existing hole's circle on the pierced face (equal "
+                    "radii " + std::to_string(rn) + ", centre distance " +
+                    std::to_string(d) + ") — the merged hole's cross-"
+                    "section is non-annular (a peanut the typed "
+                    "vocabulary does not author), and the two walls "
+                    "would intersect in the cylinder×cylinder entry's "
+                    "mid-plane line pair (two typed lines at "
+                    "y = ±√(r²−d²/4), admitted by the criterion but "
+                    "consumed by no unit yet). Remedy: move the new hole "
+                    "so the circles are strictly disjoint, or accept "
+                    "the faceted path.");
+            throw std::invalid_argument(
+                "exact_subtract: the new hole's circle CROSSES an "
+                "existing hole's circle on the pierced face (UNEQUAL "
+                "radii " + std::to_string(rn) + " vs " +
+                std::to_string(ro) + ", centre distance " +
+                std::to_string(d) + ") — the merged hole's cross-section "
+                "is non-annular (outside this unit's class). The pair "
+                "itself is typable, on the record: the transverse case "
+                "|r1−r2| < d < r1+r2 is two typed lines in the offset "
+                "plane x = (d²+r1²−r2²)/(2d) (u = const on both "
+                "domains — admitted by the both-domain criterion, "
+                "awaiting the unit that consumes it — typable, on the "
+                "record). Remedy: move the new hole "
+                "so the circles are strictly disjoint, equalize the "
+                "radii and await the consuming unit, or accept the "
+                "faceted path.");
+        }
+    }
+
     // (3) The z-bands: the blind hole vs the through-hole.
     const bool blind_lo = z_lo > t.z_bot + tol && z_lo < t.z_top - tol;
     const bool blind_hi = z_hi > t.z_bot + tol && z_hi < t.z_top - tol;
@@ -1140,14 +1270,14 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
     const std::size_t e_base = R->edges.size();
     // (the new faces number themselves by the shell's running size,
     // which starts at A's own face count — the factories' discipline)
-    const double h = t.z_top - t.z_bot;
+    const float h = t.z_top - t.z_bot;
     const ProvenanceInfo prov = combined_provenance(A, B);
 
     const auto vid = [&](std::size_t i) { return static_cast<VertexId>(i); };
     const auto eid = [&](std::size_t i) { return static_cast<EdgeId>(i); };
 
     // The joints of the canonical walk: J_i = entity i's q.
-    std::vector<math::Vec2d> J(n), P(n);
+    std::vector<math::Vec2f> J(n), P(n);
     for (std::size_t i = 0; i < n; ++i) {
         J[i] = w.entities[i].q;
         P[i] = w.entities[i].p;  // == J[(i + n - 1) % n] (the guard proved it)
@@ -1155,11 +1285,11 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
 
     // ---- the new vertices: 2i = J_i at z_bot, 2i+1 = J_i at z_top
     for (std::size_t i = 0; i < n; ++i) {
-        Vertex vb{math::Vec3d{J[i].x, J[i].y, t.z_bot}};
+        Vertex vb{math::Vec3f{J[i].x, J[i].y, t.z_bot}};
         vb.set_id(vid(v_base + 2 * i));
         vb.set_provenance(prov);
         R->vertices.push_back(vb);
-        Vertex vt{math::Vec3d{J[i].x, J[i].y, t.z_top}};
+        Vertex vt{math::Vec3f{J[i].x, J[i].y, t.z_top}};
         vt.set_id(vid(v_base + 2 * i + 1));
         vt.set_provenance(prov);
         R->vertices.push_back(vt);
@@ -1194,7 +1324,6 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
 
     // A local Line2 authoring helper (region-on-right throughout —
     // the convention this unit pins for the surviving walls).
-    using subtract_detail::v2f;
     const auto line_rr = [](math::Vec2f a, math::Vec2f b) {
         return sdf::sketch_segment(a, b, /*interior_left=*/false);
     };
@@ -1221,16 +1350,16 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
             if (e.kind == subtract_detail::WalkEntity::Kind::Segment) {
                 // The cavity's outward normal: the LEFT normal of the
                 // canonical direction (the profile's interior side).
-                const math::Vec2d d{e.q.x - e.p.x, e.q.y - e.p.y};
-                const double len = std::sqrt(d.x * d.x + d.y * d.y);
-                const math::Vec2d ln{-d.y / len, d.x / len};
+                const math::Vec2f d{e.q.x - e.p.x, e.q.y - e.p.y};
+                const float len = std::sqrt(d.x * d.x + d.y * d.y);
+                const math::Vec2f ln{-d.y / len, d.x / len};
                 auto surf = std::make_shared<PlaneSurface>(
-                    math::Vec3d{e.p.x, e.p.y, t.z_bot},
-                    math::Vec3d{ln.x, ln.y, 0.0});
-                const auto dom = [&](const math::Vec2d& xy, double z) {
+                    math::Vec3f{e.p.x, e.p.y, t.z_bot},
+                    math::Vec3f{ln.x, ln.y, 0.0f});
+                const auto dom = [&](const math::Vec2f& xy, float z) {
                     return subtract_detail::plane_domain(
-                        *surf, math::Vec3d{xy.x, xy.y, z});
-                };  // Vec2f payload: plane_domain converts (ADR-0034)
+                        *surf, math::Vec3f{xy.x, xy.y, z});
+                };
                 CoEdge bot{eid(e_base + i), false};
                 bot.set_p_curve(line_rr(dom(e.p, t.z_bot), dom(e.q, t.z_bot)));
                 CoEdge up{eid(e_base + 2 * n + i), false};
@@ -1251,20 +1380,16 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
                 // [-psi_end, -psi_start] x [0, h].
                 auto surf = std::make_shared<CylinderZSurface>(
                     e.center, e.radius, t.z_bot, -1);
-                // Payload quantization at the window authoring
-                // (ADR-0034's boundary), one local conversion.
-                const float u_p = static_cast<float>(-e.psi_start);
-                const float u_q =
-                    static_cast<float>(-(e.psi_start + e.sweep));
-                const float vh = static_cast<float>(h);
+                const float u_p = -e.psi_start;
+                const float u_q = -(e.psi_start + e.sweep);
                 CoEdge bot{eid(e_base + i), false};
                 bot.set_p_curve(line_rr({u_p, 0.0f}, {u_q, 0.0f}));
                 CoEdge up{eid(e_base + 2 * n + i), false};
-                up.set_p_curve(line_rr({u_q, 0.0f}, {u_q, vh}));
+                up.set_p_curve(line_rr({u_q, 0.0f}, {u_q, h}));
                 CoEdge top{eid(e_base + n + i), true};
-                top.set_p_curve(line_rr({u_q, vh}, {u_p, vh}));
+                top.set_p_curve(line_rr({u_q, h}, {u_p, h}));
                 CoEdge down{eid(e_base + 2 * n + prev), true};
-                down.set_p_curve(line_rr({u_p, vh}, {u_p, 0.0f}));
+                down.set_p_curve(line_rr({u_p, h}, {u_p, 0.0f}));
                 loop.add_coedge(bot);
                 loop.add_coedge(up);
                 loop.add_coedge(top);
@@ -1278,37 +1403,31 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
         // REVERSED u, walked [seam down at u0 (REV), bottom west
         // (entity 1 then entity 0, both FWD), seam up at u0 - 2pi
         // (FWD), top east (entity 0 then entity 1, both REV)].
-        const double psi0 = std::atan2(J[0].y - w.circle_center.y,
+        const float psi0 = std::atan2(J[0].y - w.circle_center.y,
                                       J[0].x - w.circle_center.x);
-        const double u0 = -psi0;
+        const float u0 = -psi0;
         auto surf = std::make_shared<CylinderZSurface>(
             w.circle_center, w.circle_radius, t.z_bot, -1);
-        // The window payloads: the world's doubles quantized to the
-        // p-curve domain's float (ADR-0034), one local conversion.
-        const float f0 = static_cast<float>(u0);
-        const float fp = static_cast<float>(subtract_detail::kPi);
-        const float ftp = static_cast<float>(subtract_detail::kTwoPi);
-        const float fh = static_cast<float>(h);
         Loop loop;
         CoEdge s_down{eid(e_base + 2 * n), true};
-        s_down.set_p_curve(line_rr({f0, fh}, {f0, 0.0f}));
+        s_down.set_p_curve(line_rr({u0, h}, {u0, 0.0f}));
         CoEdge bot1{eid(e_base + 1), false};
-        bot1.set_p_curve(line_rr({f0, 0.0f}, {f0 - fp, 0.0f}));
+        bot1.set_p_curve(line_rr({u0, 0.0f}, {u0 - subtract_detail::kPi, 0.0f}));
         CoEdge bot0{eid(e_base + 0), false};
         bot0.set_p_curve(
-            line_rr({f0 - fp, 0.0f},
-                    {f0 - ftp, 0.0f}));
+            line_rr({u0 - subtract_detail::kPi, 0.0f},
+                    {u0 - subtract_detail::kTwoPi, 0.0f}));
         CoEdge s_up{eid(e_base + 2 * n), false};
         s_up.set_p_curve(
-            line_rr({f0 - ftp, 0.0f},
-                    {f0 - ftp, fh}));
+            line_rr({u0 - subtract_detail::kTwoPi, 0.0f},
+                    {u0 - subtract_detail::kTwoPi, h}));
         CoEdge top0{eid(e_base + n + 0), true};
         top0.set_p_curve(
-            line_rr({f0 - ftp, fh},
-                    {f0 - fp, fh}));
+            line_rr({u0 - subtract_detail::kTwoPi, h},
+                    {u0 - subtract_detail::kPi, h}));
         CoEdge top1{eid(e_base + n + 1), true};
         top1.set_p_curve(
-            line_rr({f0 - fp, fh}, {f0, fh}));
+            line_rr({u0 - subtract_detail::kPi, h}, {u0, h}));
         loop.add_coedge(s_down);
         loop.add_coedge(bot1);
         loop.add_coedge(bot0);
@@ -1327,18 +1446,17 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
     {
         const auto& top_f = A.solid.shell().faces()[t.top_face];
         const auto& bot_f = A.solid.shell().faces()[t.bottom_face];
-        subtract_detail::TranslateReader tpr, bpr;
-        top_f.surface()->accept(tpr);
-        bot_f.surface()->accept(bpr);
-        const PlaneSurface* top_plane = tpr.plane;
-        const PlaneSurface* bot_plane = bpr.plane;
-        const auto dom_top = [&](const math::Vec2d& xy) {
+        const auto* top_plane =
+            dynamic_cast<const PlaneSurface*>(top_f.surface());
+        const auto* bot_plane =
+            dynamic_cast<const PlaneSurface*>(bot_f.surface());
+        const auto dom_top = [&](const math::Vec2f& xy) {
             return subtract_detail::plane_domain(
-                *top_plane, math::Vec3d{xy.x, xy.y, t.z_top});
+                *top_plane, math::Vec3f{xy.x, xy.y, t.z_top});
         };
-        const auto dom_bot = [&](const math::Vec2d& xy) {
+        const auto dom_bot = [&](const math::Vec2f& xy) {
             return subtract_detail::plane_domain(
-                *bot_plane, math::Vec3d{xy.x, xy.y, t.z_bot});
+                *bot_plane, math::Vec3f{xy.x, xy.y, t.z_bot});
         };
 
         // The TOP inner loop: [entity 0 FWD, ..., entity n-1 FWD].
@@ -1354,9 +1472,8 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
                 const math::Vec2f c = dom_top(e.center);
                 const math::Vec2f s = dom_top(e.p);
                 ce.set_p_curve(sdf::sketch_arc(
-                    c, static_cast<float>(e.radius), /*hole=*/true,
-                    static_cast<float>(std::atan2(s.y - c.y, s.x - c.x)),
-                    static_cast<float>(e.sweep)));
+                    c, e.radius, /*hole=*/true,
+                    std::atan2(s.y - c.y, s.x - c.x), e.sweep));
             }
             top_inner.add_coedge(ce);
         }
@@ -1375,9 +1492,8 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
                 const math::Vec2f c = dom_bot(e.center);
                 const math::Vec2f s = dom_bot(e.q);  // the REVERSED start
                 ce.set_p_curve(sdf::sketch_arc(
-                    c, static_cast<float>(e.radius), /*hole=*/true,
-                    static_cast<float>(std::atan2(s.y - c.y, s.x - c.x)),
-                    static_cast<float>(e.sweep)));
+                    c, e.radius, /*hole=*/true,
+                    std::atan2(s.y - c.y, s.x - c.x), e.sweep));
             }
             bot_inner.add_coedge(ce);
         };
@@ -1389,6 +1505,11 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
     }
 
     // ---- the postconditions (hard, with the H term) ------------------
+    // Each through cut lowers chi by 2 (one genus per hole) and adds
+    // one inner loop per pierced face — the G1 single-cut values
+    // (chi 0, H 2) are the special case chi(A) = 2.
+    const std::int64_t chi_a = euler_characteristic(A);
+    const std::int64_t h_a = inner_loop_count(A);
     link_radial_edges(*R);
     if (!loops_are_closed(*R))
         throw std::runtime_error(
@@ -1409,12 +1530,19 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
                 " is not manifold-with-XOR (an assembly defect; report "
                 "this as a kernel bug)");
     }
-    if (euler_characteristic(*R) != 0)
+    if (inner_loop_count(*R) != h_a + 2)
+        throw std::runtime_error(
+            "exact_subtract: postcondition failed - H = " +
+            std::to_string(inner_loop_count(*R)) + " (the pinned value "
+            "is H(A)+2 = " + std::to_string(h_a + 2) +
+            "; report this as a kernel bug)");
+    if (euler_characteristic(*R) != chi_a - 2)
         throw std::runtime_error(
             "exact_subtract: postcondition failed - chi = " +
             std::to_string(euler_characteristic(*R)) +
-            " (the through-hole's pinned value is 0, genus 1; report "
-            "this as a kernel bug)");
+            " (the through-hole's pinned value is chi(A)-2 = " +
+            std::to_string(chi_a - 2) +
+            "; report this as a kernel bug)");
     return R;
 }
 

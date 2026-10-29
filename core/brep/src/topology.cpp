@@ -30,23 +30,6 @@
 
 namespace CAD_0::brep {
 
-// family_name — THE SINGLE NAMING AUTHORITY (H1, ADR-0034 D3): one
-// switch, derived from the typed enum; every message, report and
-// query string flows through here, so the string can never drift
-// from the typed truth a typo could once hide in.
-const char* family_name(SurfaceFamily f) noexcept {
-    switch (f) {
-    case SurfaceFamily::None:     return "(no surface)";
-    case SurfaceFamily::Plane:    return "plane";
-    case SurfaceFamily::Cylinder: return "cylinder";
-    case SurfaceFamily::Sphere:   return "sphere";
-    case SurfaceFamily::Cone:     return "cone";
-    case SurfaceFamily::Torus:    return "torus";
-    case SurfaceFamily::Unknown:  return "unknown";
-    }
-    return "unknown";
-}
-
 ProvenanceInfo::ProvenanceInfo(Provenance k, double tol)
     : kind(k), linear_tolerance(tol) {
     // The pairing validation (ADR-0032 D2.4): loud, actionable, never a

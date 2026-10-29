@@ -56,7 +56,7 @@ namespace b = CAD_0::brep;
 namespace s = CAD_0::sdf;
 namespace br = CAD_0::bridge;
 using CAD_0::math::Vec2f;
-using CAD_0::math::Vec3d;
+using CAD_0::math::Vec3f;
 
 // ---------------------------------------------------------------------------
 // D2.1 — the compile-time proof: the B-Rep p-curve vocabulary IS the
@@ -186,8 +186,8 @@ std::unique_ptr<b::BRepBody> make_annulus_body() {
     for (std::size_t i = 0; i < body->edges.size(); ++i)
         body->edges[i].set_id(static_cast<b::EdgeId>(i));
 
-    b::Face face(std::make_shared<b::PlaneSurface>(Vec3d{0, 0, 0},
-                                                   Vec3d{0, 0, 1}));
+    b::Face face(std::make_shared<b::PlaneSurface>(Vec3f{0, 0, 0},
+                                                   Vec3f{0, 0, 1}));
     // Outer loop CCW (material on the left of traversal): 0→1→2→3→0.
     b::Loop outer;
     outer.add_coedge(b::CoEdge{0, false});
@@ -239,8 +239,8 @@ std::unique_ptr<b::BRepBody> make_two_hole_disk_body() {
     for (std::size_t i = 0; i < body->edges.size(); ++i)
         body->edges[i].set_id(static_cast<b::EdgeId>(i));
 
-    b::Face face(std::make_shared<b::PlaneSurface>(Vec3d{0, 0, 0},
-                                                   Vec3d{0, 0, 1}));
+    b::Face face(std::make_shared<b::PlaneSurface>(Vec3f{0, 0, 0},
+                                                   Vec3f{0, 0, 1}));
     b::Loop outer;  // 0→1→2→3→0, CCW
     outer.add_coedge(b::CoEdge{0, false});
     outer.add_coedge(b::CoEdge{1, false});
@@ -370,7 +370,7 @@ TEST_CASE("G1-U1 D2.4: Layer-2 fields — tolerance + provenance on vertex, edge
     // Default: exact, tolerance 0 — the mathematical ideal of a
     // constructed point/edge/face. The declaration burden falls on the
     // SAMPLING paths (the bridge declares; the tests pin it).
-    const b::Vertex v{Vec3d{1, 2, 3}};
+    const b::Vertex v{Vec3f{1, 2, 3}};
     CHECK(v.provenance().is_exact());
     CHECK(v.provenance().linear_tolerance == 0.0);
 
@@ -383,7 +383,7 @@ TEST_CASE("G1-U1 D2.4: Layer-2 fields — tolerance + provenance on vertex, edge
     CHECK(f.provenance().linear_tolerance == 0.0);
 
     // "Is this edge exact?" is a query, not an investigation (D8):
-    b::Vertex vs{Vec3d{0, 0, 0}};
+    b::Vertex vs{Vec3f{0, 0, 0}};
     vs.set_provenance(b::ProvenanceInfo::approximated(0.0625));
     CHECK_FALSE(vs.provenance().is_exact());
     CHECK(vs.provenance().linear_tolerance == 0.0625);
@@ -491,7 +491,7 @@ TEST_CASE("G1-U1 D3: euler_characteristic counts inner loops — the annulus cou
 
 TEST_CASE("G1-U1 D3: backward compatibility — every factory body is disk-faced, χ unchanged") {
     const std::pair<const char*, std::unique_ptr<b::BRepBody>> bodies[] = {
-        {"make_box", b::make_box(Vec3d{1, 1, 1})},
+        {"make_box", b::make_box(Vec3f{1, 1, 1})},
         {"make_sphere", b::make_sphere(1.5f)},
         {"make_cylinder", b::make_cylinder(0.5f, 2.0f)},
         {"make_tetrahedron", b::make_tetrahedron()},
@@ -527,10 +527,10 @@ TEST_CASE("G1-U1 D3: backward compatibility — boolean outputs are disk-faced, 
     // touching/corner geometries only (overlapping union is the
     // ADR-0025 v5 documented open-shell limitation, out of scope here).
     {
-        auto A = b::make_box(Vec3d{1, 1, 1});
-        auto B = b::make_box(Vec3d{1, 1, 1});
+        auto A = b::make_box(Vec3f{1, 1, 1});
+        auto B = b::make_box(Vec3f{1, 1, 1});
         for (auto& v : B->vertices)
-            v.set_position(v.position() + Vec3d{0.5f, 0, 0});
+            v.set_position(v.position() + Vec3f{0.5f, 0, 0});
         auto r = b::bool_intersect(*A, *B);
         REQUIRE(r != nullptr);
         CHECK(r->vertex_count() == 8);
@@ -540,10 +540,10 @@ TEST_CASE("G1-U1 D3: backward compatibility — boolean outputs are disk-faced, 
         CHECK(b::euler_characteristic(*r) == 2);
     }
     {
-        auto A = b::make_box(Vec3d{1, 1, 1});
-        auto B = b::make_box(Vec3d{1, 1, 1});
+        auto A = b::make_box(Vec3f{1, 1, 1});
+        auto B = b::make_box(Vec3f{1, 1, 1});
         for (auto& v : B->vertices)
-            v.set_position(v.position() + Vec3d{0, 0, 2.0f});
+            v.set_position(v.position() + Vec3f{0, 0, 2.0f});
         auto r = b::bool_union(*A, *B);
         REQUIRE(r != nullptr);
         CHECK(r->vertex_count() == 12);
@@ -553,10 +553,10 @@ TEST_CASE("G1-U1 D3: backward compatibility — boolean outputs are disk-faced, 
         CHECK(b::euler_characteristic(*r) == 2);
     }
     {
-        auto A = b::make_box(Vec3d{1, 1, 1});
-        auto B = b::make_box(Vec3d{1, 1, 1});
+        auto A = b::make_box(Vec3f{1, 1, 1});
+        auto B = b::make_box(Vec3f{1, 1, 1});
         for (auto& v : B->vertices)
-            v.set_position(v.position() + Vec3d{1.0f, 1.0f, 1.0f});
+            v.set_position(v.position() + Vec3f{1.0f, 1.0f, 1.0f});
         auto r = b::bool_subtract(*A, *B);
         REQUIRE(r != nullptr);
         CHECK(r->vertex_count() == 17);
@@ -688,7 +688,7 @@ TEST_CASE("G1-U1 D3: backward compatibility — every GOLDEN body is disk-faced,
 TEST_CASE("G1-U1 D8: factories write exact, tolerance 0") {
     // Closed forms (D8): every entity of every factory body.
     const std::pair<const char*, std::unique_ptr<b::BRepBody>> bodies[] = {
-        {"make_box", b::make_box(Vec3d{1, 2, 3})},
+        {"make_box", b::make_box(Vec3f{1, 2, 3})},
         {"make_sphere", b::make_sphere(2.0f)},
         {"make_cylinder", b::make_cylinder(1.0f, 3.0f)},
         {"make_tetrahedron", b::make_tetrahedron()},
@@ -706,7 +706,7 @@ TEST_CASE("G1-U1 D8: the bridge's primitive path writes exact — closed forms, 
     opts.fit_primitives = true;
     const std::pair<const char*, s::SDFBody> fixtures[] = {
         {"sphere", s::make_sphere(2.0f)},
-        {"box", s::make_box(CAD_0::math::Vec3f{1, 1, 1})},
+        {"box", s::make_box(Vec3f{1, 1, 1})},
         {"cylinder", s::make_cylinder(0.5f, 2.0f)},
     };
     for (auto& entry : fixtures) {
@@ -779,7 +779,7 @@ TEST_CASE("G1-U1 D8: booleans propagate the worst of their operands — approxim
     // factory boxes RELABELED as samples — the geometry stays inside
     // the supported class, the RECORD is the thing under test: the
     // machinery must honor the record, never launder it.
-    const auto marked_box = [](Vec3d half, Vec3d shift, double tol) {
+    const auto marked_box = [](Vec3f half, Vec3f shift, double tol) {
         auto body = b::make_box(half);
         const b::ProvenanceInfo approx = b::ProvenanceInfo::approximated(tol);
         for (auto& v : body->vertices) v.set_provenance(approx);
@@ -793,10 +793,10 @@ TEST_CASE("G1-U1 D8: booleans propagate the worst of their operands — approxim
 
     // exact ∘ exact → exact (the closed-form world stays closed-form).
     {
-        auto A = b::make_box(Vec3d{1, 1, 1});
-        auto B = b::make_box(Vec3d{1, 1, 1});
+        auto A = b::make_box(Vec3f{1, 1, 1});
+        auto B = b::make_box(Vec3f{1, 1, 1});
         for (auto& v : B->vertices)
-            v.set_position(v.position() + Vec3d{0.5f, 0, 0});
+            v.set_position(v.position() + Vec3f{0.5f, 0, 0});
         auto r = b::bool_intersect(*A, *B);
         REQUIRE(r != nullptr);
         CHECK(r->vertex_count() == 8);
@@ -809,8 +809,8 @@ TEST_CASE("G1-U1 D8: booleans propagate the worst of their operands — approxim
     // bound: one sampled operand makes every fragment a sample's
     // descendant — never silently reset to exact.
     {
-        auto A = b::make_box(Vec3d{1, 1, 1});
-        auto B = marked_box(Vec3d{1, 1, 1}, Vec3d{0.5f, 0, 0}, 0.05);
+        auto A = b::make_box(Vec3f{1, 1, 1});
+        auto B = marked_box(Vec3f{1, 1, 1}, Vec3f{0.5f, 0, 0}, 0.05);
         auto r = b::bool_intersect(*A, *B);
         REQUIRE(r != nullptr);
         CHECK(r->vertex_count() == 8);
@@ -821,8 +821,8 @@ TEST_CASE("G1-U1 D8: booleans propagate the worst of their operands — approxim
     // marked(tol_a) ∘ marked(tol_b) → approximated with the WORST of
     // the bounds — the max, never the average, never the min.
     {
-        auto A = marked_box(Vec3d{1, 1, 1}, Vec3d{0, 0, 0}, 0.05);
-        auto B = marked_box(Vec3d{1, 1, 1}, Vec3d{0.5f, 0, 0}, 0.02);
+        auto A = marked_box(Vec3f{1, 1, 1}, Vec3f{0, 0, 0}, 0.05);
+        auto B = marked_box(Vec3f{1, 1, 1}, Vec3f{0.5f, 0, 0}, 0.02);
         auto r = b::bool_intersect(*A, *B);
         REQUIRE(r != nullptr);
         CHECK(all_entities_approximated_with(*r, 0.05));
@@ -831,8 +831,8 @@ TEST_CASE("G1-U1 D8: booleans propagate the worst of their operands — approxim
     // marked − exact (the corner notch): the subtract's cavity caps
     // inherit the record like every other fragment.
     {
-        auto A = b::make_box(Vec3d{1, 1, 1});
-        auto B = marked_box(Vec3d{1, 1, 1}, Vec3d{1, 1, 1}, 0.03125);
+        auto A = b::make_box(Vec3f{1, 1, 1});
+        auto B = marked_box(Vec3f{1, 1, 1}, Vec3f{1, 1, 1}, 0.03125);
         auto r = b::bool_subtract(*A, *B);
         REQUIRE(r != nullptr);
         CHECK(r->vertex_count() == 17);
@@ -845,8 +845,8 @@ TEST_CASE("G1-U1 D8: booleans propagate the worst of their operands — approxim
     // marked ∪ marked, identical operands — the A == B shortcut path
     // must propagate too (a copy of a sample is a sample).
     {
-        auto A = marked_box(Vec3d{1, 1, 1}, Vec3d{0, 0, 0}, 0.05);
-        auto B = marked_box(Vec3d{1, 1, 1}, Vec3d{0, 0, 0}, 0.05);
+        auto A = marked_box(Vec3f{1, 1, 1}, Vec3f{0, 0, 0}, 0.05);
+        auto B = marked_box(Vec3f{1, 1, 1}, Vec3f{0, 0, 0}, 0.05);
         auto r = b::bool_union(*A, *B);
         REQUIRE(r != nullptr);
         CHECK(b::euler_characteristic(*r) == 2);
@@ -870,7 +870,7 @@ TEST_CASE("G1-U1 D8: booleans propagate the worst of their operands — approxim
 TEST_CASE("G1-U1 (amended at U2): the factories write p-curves; the bridge and the booleans still do not") {
     // The writers (unit 2): every co-edge of every factory body.
     const std::pair<const char*, std::unique_ptr<b::BRepBody>> factories[] = {
-        {"make_box", b::make_box(Vec3d{1, 1, 1})},
+        {"make_box", b::make_box(Vec3f{1, 1, 1})},
         {"make_sphere", b::make_sphere(1.0f)},
         {"make_cylinder", b::make_cylinder(0.5f, 2.0f)},
         {"make_tetrahedron", b::make_tetrahedron()},
@@ -909,13 +909,13 @@ TEST_CASE("G1-U1 (amended at U2): the factories write p-curves; the bridge and t
     // (the heaviest existing path, marked factory boxes as in the
     // propagation test above):
     {
-        auto A = b::make_box(Vec3d{1, 1, 1});
-        auto B = b::make_box(Vec3d{1, 1, 1});
+        auto A = b::make_box(Vec3f{1, 1, 1});
+        auto B = b::make_box(Vec3f{1, 1, 1});
         const b::ProvenanceInfo approx =
             b::ProvenanceInfo::approximated(0.03125);
         for (auto& e : B->edges) e.set_provenance(approx);
         for (auto& v : B->vertices)
-            v.set_position(v.position() + Vec3d{1.0f, 1.0f, 1.0f});
+            v.set_position(v.position() + Vec3f{1.0f, 1.0f, 1.0f});
         auto r = b::bool_subtract(*A, *B);
         REQUIRE(r != nullptr);
         CHECK(body_has_no_p_curves(*r));

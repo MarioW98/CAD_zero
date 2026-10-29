@@ -134,18 +134,17 @@ struct SsiCurve {
 
     // Circle payload: the center, the radius, and the DERIVED
     // in-plane frame — evaluate(t) = center + r·(cos t·u_ref +
-    // sin t·v_ref), the CircleCurve vocabulary's own form. DOUBLE
-    // throughout (H1, ADR-0034): the exact world's answers.
-    math::Vec3d center{};
-    double radius{0.0};
-    math::Vec3d u_ref{};
-    math::Vec3d v_ref{};
+    // sin t·v_ref), the CircleCurve vocabulary's own form.
+    math::Vec3f center{};
+    float radius{0.0f};
+    math::Vec3f u_ref{};
+    math::Vec3f v_ref{};
 
     // Line payload: a point on the line and the (unit) direction.
-    math::Vec3d point{};
-    math::Vec3d dir{};
+    math::Vec3f point{};
+    math::Vec3f dir{};
 
-    math::Vec3d evaluate(double t) const {
+    math::Vec3f evaluate(float t) const {
         if (kind == Kind::Circle)
             return center + u_ref * (radius * std::cos(t)) +
                    v_ref * (radius * std::sin(t));
@@ -162,10 +161,9 @@ struct SsiDomainAnswer {
     bool reframe_needed{false};
     // The derived frame, when reframe_needed: the new pole (v = 0)
     // and the new azimuth reference (u = 0) — the re-frame rule's
-    // (n̂, e₀), e₁ = e₀×n̂ (the SphereSurface form). Double: the
-    // declared frame is exact-world data (ADR-0034).
-    math::Vec3d frame_pole{};
-    math::Vec3d frame_azimuth{};
+    // (n̂, e₀), e₁ = e₀×n̂ (the SphereSurface form).
+    math::Vec3f frame_pole{};
+    math::Vec3f frame_azimuth{};
     // The typed p-curves, in the 3D curves' order. Neutral region
     // bits (see the header's REGION-SIDE NEUTRALITY note).
     std::vector<PCurve> pcurves{};
@@ -199,7 +197,7 @@ struct SsiResult {
     std::string family_b{};
 
     // The tangency point (Kind::Point).
-    math::Vec3d point{};
+    math::Vec3f point{};
 
     // The 3D curves (Circle/CirclePair/LinePair/TangentLine), in the
     // derivation's canonical order (documented per entry in ssi.cpp).
@@ -231,13 +229,13 @@ struct SsiResult {
 // capability ceiling is explicit and queryable, a recorded answer,
 // never a missing one.
 SsiResult ssi_query(const BRepBody& body_a, FaceId face_a,
-                    const BRepBody& body_b, FaceId face_b, double tol);
+                    const BRepBody& body_b, FaceId face_b, float tol);
 
 // The re-frame record: the derived frame the face was rebuilt on (or
 // that the query declared).
 struct ReframeRecord {
-    math::Vec3d pole{};      // n̂: the new v = 0 axis
-    math::Vec3d azimuth{};   // e₀: u = 0 is the meridian through +e₀
+    math::Vec3f pole{};      // n̂: the new v = 0 axis
+    math::Vec3f azimuth{};   // e₀: u = 0 is the meridian through +e₀
 };
 
 // reframe_sphere_face — the re-frame rule's standalone act: rebuild
@@ -261,7 +259,7 @@ struct ReframeRecord {
 //     unit's own step (unit 2 re-authors the cuts beside the frame) —
 //     the refusal says so, it does not guess.
 ReframeRecord reframe_sphere_face(BRepBody& body, FaceId face,
-                                  const math::Vec3d& pole,
-                                  const math::Vec3d& azimuth, double tol);
+                                  const math::Vec3f& pole,
+                                  const math::Vec3f& azimuth, float tol);
 
 } // namespace CAD_0::brep

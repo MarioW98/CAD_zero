@@ -18,9 +18,6 @@
 // convex polygon, so Greiner-Hormann degenerates to a simpler case
 // but the algorithm is correct in general.
 //
-// H1 (ADR-0034): the whole pipeline is DOUBLE - the exact
-// path's arithmetic (this file has no p-curve payload sites;
-// the conversion is mechanical and total).
 // Determinism (ADR-0014): all FP operations (dot, cross, lerp, divide)
 // are deterministic under -ffp-contract=off. Vertex welding uses
 // grid-snapped integer keys, order-independent.
@@ -42,23 +39,23 @@ namespace CAD_0::brep {
 
 namespace {
 
-using Polygon = std::vector<math::Vec3d>;
+using Polygon = std::vector<math::Vec3f>;
 
-constexpr double kWeldGrid = 1e-6;
-constexpr double kPlaneTol = 1e-6;  // Plane classification tolerance (ADR-0025 FASE 3)
-constexpr double kEps       = 1e-9;
+constexpr float kWeldGrid = 1e-6f;
+constexpr float kPlaneTol = 1e-6f;  // Plane classification tolerance (ADR-0025 FASE 3)
+constexpr float kEps       = 1e-9f;
 // Degenerate-denominator guard for the edge/plane crossing
 // interpolation in IntersectionTable: below this |d0 − d1| the crossing
 // point is not computed and the edge start vertex is reused. Purely a
 // numeric division guard — NOT a geometric tolerance.
-constexpr double kIsectDenomEps = 1e-12;
+constexpr float kIsectDenomEps = 1e-12f;
 // Loose normal-parallelity pre-filter (polygons_coplanar): |n1·n2| − 1 |
 // above this means the normals are not parallel (≈ 2.6°). Deliberately
 // loose — a cheap rejection before the distance test.
-constexpr double kNormalParallelTol = 1e-3;
+constexpr float kNormalParallelTol = 1e-3f;
 // Strict parallelity threshold (classify_parallel_plane): |n1·n2| below
 // this (after normalization) means NotParallel. 1 − 1e-6 ≈ cos(0.081°).
-constexpr double kParallelDotMin = 1.0 - 1e-6;
+constexpr float kParallelDotMin = 1.0f - 1e-6f;
 
 struct SnappedKey {
     std::int64_t x, y, z;
@@ -74,7 +71,7 @@ struct SnappedKey {
 
 using SnappedKeySet = std::set<SnappedKey>;
 
-SnappedKey snap(const math::Vec3d& p) noexcept {
+SnappedKey snap(const math::Vec3f& p) noexcept {
     return {
         static_cast<std::int64_t>(std::llround(p.x / kWeldGrid)),
         static_cast<std::int64_t>(std::llround(p.y / kWeldGrid)),
@@ -96,8 +93,8 @@ bool get_face_plane(
     const Face& face,
     const std::vector<Edge>& edges,
     const std::vector<Vertex>& vertices,
-    math::Vec3d& origin,
-    math::Vec3d& normal
+    math::Vec3f& origin,
+    math::Vec3f& normal
 ) {
     const auto* surf = face.surface();
     if (!surf) return false;
@@ -147,34 +144,34 @@ Polygon extract_face_polygon(
 // Returns origin (any point on the plane — we use the first vertex).
 // Currently unused — kept for the future Greiner-Hormann implementation.
 struct LocalFrame {
-    math::Vec3d origin;
-    math::Vec3d u_axis;
-    math::Vec3d v_axis;
-    math::Vec3d normal;
+    math::Vec3f origin;
+    math::Vec3f u_axis;
+    math::Vec3f v_axis;
+    math::Vec3f normal;
 };
 
-[[maybe_unused]] LocalFrame build_local_frame(math::Vec3d normal, math::Vec3d origin) {
+[[maybe_unused]] LocalFrame build_local_frame(math::Vec3f normal, math::Vec3f origin) {
     LocalFrame f;
     f.origin = origin;
     f.normal = normal;
     // Pick u_axis perpendicular to normal.
-    if (std::abs(normal.y) > 0.9) {
-        f.u_axis = normal.cross(math::Vec3d{1, 0, 0}).normalized();
+    if (std::abs(normal.y) > 0.9f) {
+        f.u_axis = normal.cross(math::Vec3f{1, 0, 0}).normalized();
     } else {
-        f.u_axis = normal.cross(math::Vec3d{0, 1, 0}).normalized();
+        f.u_axis = normal.cross(math::Vec3f{0, 1, 0}).normalized();
     }
     f.v_axis = normal.cross(f.u_axis).normalized();
     return f;
 }
 
-struct Vec2 { double x, y; };
+struct Vec2 { float x, y; };
 
-[[maybe_unused]] Vec2 project(const LocalFrame& f, math::Vec3d p) {
-    const math::Vec3d d = p - f.origin;
+[[maybe_unused]] Vec2 project(const LocalFrame& f, math::Vec3f p) {
+    const math::Vec3f d = p - f.origin;
     return {d.dot(f.u_axis), d.dot(f.v_axis)};
 }
 
-[[maybe_unused]] math::Vec3d unproject(const LocalFrame& f, Vec2 q) {
+[[maybe_unused]] math::Vec3f unproject(const LocalFrame& f, Vec2 q) {
     return f.origin + f.u_axis * q.x + f.v_axis * q.y;
 }
 
@@ -259,21 +256,21 @@ enum class IntersectionType { None, Point, Overlap };
 // occurs.
 IntersectionType segment_intersection(
     Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4,
-    double& t_lo, double& t_hi
+    float& t_lo, float& t_hi
 ) {
-    const double dx1 = p2.x - p1.x;
-    const double dy1 = p2.y - p1.y;
-    const double dx2 = p4.x - p3.x;
-    const double dy2 = p4.y - p3.y;
-    const double denom = dx1 * dy2 - dy1 * dx2;
-    const double dx3 = p3.x - p1.x;
-    const double dy3 = p3.y - p1.y;
+    const float dx1 = p2.x - p1.x;
+    const float dy1 = p2.y - p1.y;
+    const float dx2 = p4.x - p3.x;
+    const float dy2 = p4.y - p3.y;
+    const float denom = dx1 * dy2 - dy1 * dx2;
+    const float dx3 = p3.x - p1.x;
+    const float dy3 = p3.y - p1.y;
 
     if (std::abs(denom) > kEps) {
         // Not parallel — classic single-point intersection.
-        const double t = (dx3 * dy2 - dy3 * dx2) / denom;
-        const double u = (dx3 * dy1 - dy3 * dx1) / denom;
-        if (t > kEps && t < 1.0 - kEps && u > kEps && u < 1.0 - kEps) {
+        const float t = (dx3 * dy2 - dy3 * dx2) / denom;
+        const float u = (dx3 * dy1 - dy3 * dx1) / denom;
+        if (t > kEps && t < 1.0f - kEps && u > kEps && u < 1.0f - kEps) {
             t_lo = t;
             t_hi = t;
             return IntersectionType::Point;
@@ -283,40 +280,40 @@ IntersectionType segment_intersection(
 
     // Parallel — check if collinear (cross product of (p3-p1) with d1
     // is zero).
-    const double cross = dx3 * dy1 - dy3 * dx1;
+    const float cross = dx3 * dy1 - dy3 * dx1;
     if (std::abs(cross) > kEps) {
         return IntersectionType::None;  // parallel but not collinear
     }
 
     // Collinear. Project both segments onto the d1 axis (use whichever
     // component has larger magnitude for numerical stability).
-    const double len1_sq = dx1 * dx1 + dy1 * dy1;
+    const float len1_sq = dx1 * dx1 + dy1 * dy1;
     if (len1_sq < kEps * kEps) return IntersectionType::None;
     // Parameter of p3 along (p1,p2).
-    const double t3 = (dx3 * dx1 + dy3 * dy1) / len1_sq;
+    const float t3 = (dx3 * dx1 + dy3 * dy1) / len1_sq;
     // Parameter of p4 along (p1,p2).
-    const double t4 = ((p4.x - p1.x) * dx1 + (p4.y - p1.y) * dy1) / len1_sq;
-    const double ta = std::min(t3, t4);
-    const double tb = std::max(t3, t4);
+    const float t4 = ((p4.x - p1.x) * dx1 + (p4.y - p1.y) * dy1) / len1_sq;
+    const float ta = std::min(t3, t4);
+    const float tb = std::max(t3, t4);
     // Overlap range on (p1,p2) is [max(0,ta), min(1,tb)].
-    t_lo = std::max(0.0, ta);
-    t_hi = std::min(1.0, tb);
+    t_lo = std::max(0.0f, ta);
+    t_hi = std::min(1.0f, tb);
     if (t_hi - t_lo < kEps) {
         // Touch at a single point (e.g. shared endpoint).
         // Treat as a Point intersection at t_lo.
-        if (t_lo > kEps && t_lo < 1.0 - kEps) {
+        if (t_lo > kEps && t_lo < 1.0f - kEps) {
             t_hi = t_lo;
             return IntersectionType::Point;
         }
         return IntersectionType::None;
     }
     // Make sure the overlap is strictly interior.
-    if (t_lo < kEps && t_hi > 1.0 - kEps) {
+    if (t_lo < kEps && t_hi > 1.0f - kEps) {
         // (p1,p2) entirely inside (p3,p4). Treat as overlap covering
         // the full segment — but for GH we still want to insert
         // intersection vertices at t_lo and t_hi.
         t_lo = kEps;
-        t_hi = 1.0 - kEps;
+        t_hi = 1.0f - kEps;
     }
     return IntersectionType::Overlap;
 }
@@ -325,27 +322,27 @@ IntersectionType segment_intersection(
 enum class PointClass { Inside, Outside, OnBoundary };
 
 // Distance from point `p` to segment (a, b) — for on-boundary test.
-double point_segment_distance_sq(Vec2 p, Vec2 a, Vec2 b) {
-    const double dx = b.x - a.x;
-    const double dy = b.y - a.y;
-    const double len_sq = dx * dx + dy * dy;
+float point_segment_distance_sq(Vec2 p, Vec2 a, Vec2 b) {
+    const float dx = b.x - a.x;
+    const float dy = b.y - a.y;
+    const float len_sq = dx * dx + dy * dy;
     if (len_sq < kEps * kEps) {
-        const double ex = p.x - a.x;
-        const double ey = p.y - a.y;
+        const float ex = p.x - a.x;
+        const float ey = p.y - a.y;
         return ex * ex + ey * ey;
     }
-    double t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len_sq;
-    t = std::max(0.0, std::min(1.0, t));
-    const double cx = a.x + t * dx;
-    const double cy = a.y + t * dy;
-    const double ex = p.x - cx;
-    const double ey = p.y - cy;
+    float t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / len_sq;
+    t = std::max(0.0f, std::min(1.0f, t));
+    const float cx = a.x + t * dx;
+    const float cy = a.y + t * dy;
+    const float ex = p.x - cx;
+    const float ey = p.y - cy;
     return ex * ex + ey * ey;
 }
 
 PointClass classify_point(Vec2 p, const Polygon2D& poly) {
     // First check if p is on any edge.
-    const double tol_sq = (kWeldGrid * 0.5) * (kWeldGrid * 0.5);
+    const float tol_sq = (kWeldGrid * 0.5f) * (kWeldGrid * 0.5f);
     const std::size_t n = poly.size();
     for (std::size_t i = 0, j = n - 1; i < n; j = i++) {
         if (point_segment_distance_sq(p, poly[j], poly[i]) <= tol_sq) {
@@ -422,7 +419,7 @@ void compute_intersections(
             GHVertex* c = &*c_it;
             GHVertex* c_next = c->next;
             if (!c_next) continue;
-            double t_lo, t_hi;
+            float t_lo, t_hi;
             const auto itype = segment_intersection(
                 s->pos, s_next->pos, c->pos, c_next->pos, t_lo, t_hi);
             if (itype == IntersectionType::None) continue;
@@ -577,9 +574,9 @@ struct GHResult {
 // (ADR-0025 FASE B: single-source-of-truth fix).
 //
 // Canonicalizes every vertex position through a single pool. The pool
-// maps a SnappedKey to the FIRST Vec3 inserted for that cell. When
+// maps a SnappedKey to the FIRST Vec3f inserted for that cell. When
 // two paths produce vertices in the SAME cell, both receive the SAME
-// canonical Vec3 — bit-identical by construction.
+// canonical Vec3f — bit-identical by construction.
 //
 // For the grid-straddle case, the pool is fed by IntersectionTable
 // which computes each interface point ONCE and reuses it across all
@@ -588,7 +585,7 @@ struct GHResult {
 // kWeldGrid stays at 1e-6. ADR-0014 untouched.
 class SharedVertexPool {
 public:
-    const math::Vec3d& canonicalize(const math::Vec3d& pos) {
+    const math::Vec3f& canonicalize(const math::Vec3f& pos) {
         SnappedKey key = snap(pos);
         auto it = pool_.find(key);
         if (it != pool_.end()) {
@@ -605,7 +602,7 @@ public:
     }
 
 private:
-    std::map<SnappedKey, math::Vec3d> pool_;
+    std::map<SnappedKey, math::Vec3f> pool_;
 };
 
 // IntersectionTable — pre-computed interface points (ADR-0025 FASE B).
@@ -613,20 +610,20 @@ private:
 // For each (edge of A, face of B) pair where the edge crosses the face
 // plane, the intersection point is computed ONCE and stored. Both
 // clip_inside_3d calls (Part 1: A's faces against B, Part 2: B's faces
-// against A) consume the SAME Vec3 from the table, eliminating the
+// against A) consume the SAME Vec3f from the table, eliminating the
 // dual-computation that caused grid-straddle welding failures.
 class IntersectionTable {
 public:
-    const math::Vec3d& get_or_compute(
-        const math::Vec3d& v0, const math::Vec3d& v1,
-        math::Vec3d plane_origin, math::Vec3d plane_normal
+    const math::Vec3f& get_or_compute(
+        const math::Vec3f& v0, const math::Vec3f& v1,
+        math::Vec3f plane_origin, math::Vec3f plane_normal
     ) {
-        const double d0 = (v0 - plane_origin).dot(plane_normal);
-        const double d1 = (v1 - plane_origin).dot(plane_normal);
-        const double denom = d0 - d1;
-        math::Vec3d point;
+        const float d0 = (v0 - plane_origin).dot(plane_normal);
+        const float d1 = (v1 - plane_origin).dot(plane_normal);
+        const float denom = d0 - d1;
+        math::Vec3f point;
         if (std::abs(denom) > kIsectDenomEps) {
-            const double t = d0 / denom;
+            const float t = d0 / denom;
             point = v0 + (v1 - v0) * t;
         } else {
             point = v0;
@@ -649,11 +646,11 @@ private:
 //
 // If `table` is non-null, intersection points are computed via the
 // table (single-source-of-truth) so both Part 1 and Part 2 of
-// bool_union/subtract receive the SAME Vec3 for interface ring points.
+// bool_union/subtract receive the SAME Vec3f for interface ring points.
 Polygon clip_polygon_sh(
     const Polygon& poly,
-    math::Vec3d plane_origin,
-    math::Vec3d plane_normal,
+    math::Vec3f plane_origin,
+    math::Vec3f plane_normal,
     bool keep_inside,
     IntersectionTable* table
 ) {
@@ -664,8 +661,8 @@ Polygon clip_polygon_sh(
     for (std::size_t i = 0; i < n; ++i) {
         const auto& curr = poly[i];
         const auto& next = poly[(i + 1) % n];
-        const double d_curr = (curr - plane_origin).dot(plane_normal);
-        const double d_next = (next - plane_origin).dot(plane_normal);
+        const float d_curr = (curr - plane_origin).dot(plane_normal);
+        const float d_next = (next - plane_origin).dot(plane_normal);
         const bool curr_keep = keep_inside ? (d_curr <= kPlaneTol)
                                            : (d_curr >= -kPlaneTol);
         const bool next_keep = keep_inside ? (d_next <= kPlaneTol)
@@ -674,13 +671,13 @@ Polygon clip_polygon_sh(
             result.push_back(curr);
         }
         if (curr_keep != next_keep) {
-            const double denom = d_curr - d_next;
+            const float denom = d_curr - d_next;
             if (std::abs(denom) > kPlaneTol) {
                 if (table) {
                     result.push_back(table->get_or_compute(
                         curr, next, plane_origin, plane_normal));
                 } else {
-                    const double t = d_curr / denom;
+                    const float t = d_curr / denom;
                     result.push_back(curr + (next - curr) * t);
                 }
             }
@@ -692,8 +689,8 @@ Polygon clip_polygon_sh(
 // Backward-compatible wrapper: keep_inside=true.
 Polygon clip_polygon_inside(
     const Polygon& poly,
-    math::Vec3d plane_origin,
-    math::Vec3d plane_normal,
+    math::Vec3f plane_origin,
+    math::Vec3f plane_normal,
     IntersectionTable* table
 ) {
     return clip_polygon_sh(poly, plane_origin, plane_normal, true, table);
@@ -712,7 +709,7 @@ Polygon clip_inside_3d(
 ) {
     Polygon poly = in_poly;
     for (const auto& clip_face : clipper.solid.shell().faces()) {
-        math::Vec3d origin, normal;
+        math::Vec3f origin, normal;
         if (!get_face_plane(clip_face, clipper.edges, clipper.vertices, origin, normal)) continue;
         poly = clip_polygon_inside(poly, origin, normal, table);
         if (poly.size() < 3) return {};
@@ -729,9 +726,9 @@ Polygon clip_inside_3d(
             deduped.push_back(p);
         } else {
             const auto& last = deduped.back();
-            const double dx = p.x - last.x;
-            const double dy = p.y - last.y;
-            const double dz = p.z - last.z;
+            const float dx = p.x - last.x;
+            const float dy = p.y - last.y;
+            const float dz = p.z - last.z;
             if (dx*dx + dy*dy + dz*dz > kWeldGrid * kWeldGrid) {
                 deduped.push_back(p);
             }
@@ -742,9 +739,9 @@ Polygon clip_inside_3d(
     if (deduped.size() >= 2) {
         const auto& first = deduped.front();
         const auto& last = deduped.back();
-        const double dx = first.x - last.x;
-        const double dy = first.y - last.y;
-        const double dz = first.z - last.z;
+        const float dx = first.x - last.x;
+        const float dy = first.y - last.y;
+        const float dz = first.z - last.z;
         if (dx*dx + dy*dy + dz*dz <= kWeldGrid * kWeldGrid) {
             deduped.pop_back();
         }
@@ -758,12 +755,12 @@ Polygon clip_inside_3d(
 // complete inside test (ADR-0024 §2).
 [[maybe_unused]] bool point_inside_convex(
     const BRepBody& body,
-    const math::Vec3d& p
+    const math::Vec3f& p
 ) {
     for (const auto& face : body.solid.shell().faces()) {
-        math::Vec3d origin, normal;
+        math::Vec3f origin, normal;
         if (!get_face_plane(face, body.edges, body.vertices, origin, normal)) continue;
-        const double d = (p - origin).dot(normal);
+        const float d = (p - origin).dot(normal);
         if (d > kWeldGrid) return false;  // outside this half-space
     }
     return true;
@@ -775,14 +772,14 @@ Polygon clip_inside_3d(
 bool polygons_coplanar(
     const Polygon& poly_A,
     const Polygon& poly_B,
-    math::Vec3d normal_A,
-    math::Vec3d normal_B
+    math::Vec3f normal_A,
+    math::Vec3f normal_B
 ) {
-    const double dot = normal_A.dot(normal_B);
-    if (std::abs(std::abs(dot) - 1.0) > kNormalParallelTol) return false;
+    const float dot = normal_A.dot(normal_B);
+    if (std::abs(std::abs(dot) - 1.0f) > kNormalParallelTol) return false;
     if (poly_A.empty() || poly_B.empty()) return false;
-    const math::Vec3d origin_A = poly_A[0];
-    const double d = (poly_B[0] - origin_A).dot(normal_A);
+    const math::Vec3f origin_A = poly_A[0];
+    const float d = (poly_B[0] - origin_A).dot(normal_A);
     return std::abs(d) < kWeldGrid;
 }
 
@@ -803,7 +800,7 @@ GHResult greiner_hormann_2d(
         for (std::size_t j = 0; j < clip_poly.size(); ++j) {
             const Vec2& b1 = clip_poly[j];
             const Vec2& b2 = clip_poly[(j + 1) % clip_poly.size()];
-            double t_lo, t_hi;
+            float t_lo, t_hi;
             const auto itype = segment_intersection(a1, a2, b1, b2, t_lo, t_hi);
             if (itype != IntersectionType::None) {
                 any_intersect = true;
@@ -852,7 +849,7 @@ GHResult greiner_hormann_2d(
 std::vector<Polygon> polygon_subtract_3d(
     const Polygon& subject_poly,
     const Polygon& clip_poly,
-    math::Vec3d plane_normal
+    math::Vec3f plane_normal
 ) {
     std::vector<Polygon> result;
     if (subject_poly.size() < 3 || clip_poly.size() < 3) return result;
@@ -885,10 +882,10 @@ std::vector<Polygon> polygon_subtract_3d(
     for (std::size_t j = 0; j < cn; ++j) {
         const Vec2& a = clip_2d[j];
         const Vec2& b = clip_2d[(j + 1) % cn];
-        const double dx = b.x - a.x;
-        const double dy = b.y - a.y;
+        const float dx = b.x - a.x;
+        const float dy = b.y - a.y;
         // Outward normal (for CCW polygon): (dy, -dx) normalized.
-        const double len = std::sqrt(dx * dx + dy * dy);
+        const float len = std::sqrt(dx * dx + dy * dy);
         if (len < kEps) continue;
         Vec2 outward{dy / len, -dx / len};
         clip_planes.push_back({a, outward});
@@ -911,9 +908,9 @@ std::vector<Polygon> polygon_subtract_3d(
         for (std::size_t i = 0; i < n; ++i) {
             const Vec2& curr = poly[i];
             const Vec2& next = poly[(i + 1) % n];
-            const double d_curr = (curr.x - origin.x) * outward_normal.x
+            const float d_curr = (curr.x - origin.x) * outward_normal.x
                                + (curr.y - origin.y) * outward_normal.y;
-            const double d_next = (next.x - origin.x) * outward_normal.x
+            const float d_next = (next.x - origin.x) * outward_normal.x
                                + (next.y - origin.y) * outward_normal.y;
             // keep_inside=true: keep d <= tol (inside the half-space)
             // keep_inside=false: keep d >= -tol (outside/complement)
@@ -923,9 +920,9 @@ std::vector<Polygon> polygon_subtract_3d(
                                                : (d_next >= -kPlaneTol);
             if (curr_keep) res.push_back(curr);
             if (curr_keep != next_keep) {
-                const double denom = d_curr - d_next;
+                const float denom = d_curr - d_next;
                 if (std::abs(denom) > kPlaneTol) {
-                    const double t = d_curr / denom;
+                    const float t = d_curr / denom;
                     res.push_back({curr.x + t * (next.x - curr.x),
                                    curr.y + t * (next.y - curr.y)});
                 }
@@ -953,8 +950,8 @@ std::vector<Polygon> polygon_subtract_3d(
                 deduped.push_back(p);
             } else {
                 const auto& last = deduped.back();
-                const double dx = p.x - last.x;
-                const double dy = p.y - last.y;
+                const float dx = p.x - last.x;
+                const float dy = p.y - last.y;
                 if (dx * dx + dy * dy > kPlaneTol * kPlaneTol) {
                     deduped.push_back(p);
                 }
@@ -964,8 +961,8 @@ std::vector<Polygon> polygon_subtract_3d(
         if (deduped.size() >= 2) {
             const auto& first = deduped.front();
             const auto& last = deduped.back();
-            const double dx = first.x - last.x;
-            const double dy = first.y - last.y;
+            const float dx = first.x - last.x;
+            const float dy = first.y - last.y;
             if (dx * dx + dy * dy <= kPlaneTol * kPlaneTol) {
                 deduped.pop_back();
             }
@@ -1022,15 +1019,15 @@ enum class ParallelPlaneClass {
 
 ParallelPlaneClass classify_parallel_plane(
     const Polygon& subject,
-    math::Vec3d subject_normal,
-    math::Vec3d plane_origin,
-    math::Vec3d plane_normal
+    math::Vec3f subject_normal,
+    math::Vec3f plane_origin,
+    math::Vec3f plane_normal
 ) {
-    const double plen = plane_normal.length();
-    const double slen = subject_normal.length();
+    const float plen = plane_normal.length();
+    const float slen = subject_normal.length();
     if (plen < kEps || slen < kEps) return ParallelPlaneClass::NotParallel;
-    const math::Vec3d pn = plane_normal * (1.0 / plen);
-    const math::Vec3d sn = subject_normal * (1.0 / slen);
+    const math::Vec3f pn = plane_normal * (1.0f / plen);
+    const math::Vec3f sn = subject_normal * (1.0f / slen);
     if (std::abs(pn.dot(sn)) < kParallelDotMin) {
         return ParallelPlaneClass::NotParallel;
     }
@@ -1039,10 +1036,10 @@ ParallelPlaneClass classify_parallel_plane(
     // parallel planes; the min/max window rejects near-parallel inputs
     // whose d drifts across the tolerance band — those fall back to
     // per-vertex clipping).
-    double d_min = 0.0, d_max = 0.0;
+    float d_min = 0.0f, d_max = 0.0f;
     bool first = true;
     for (const auto& v : subject) {
-        const double d = (v - plane_origin).dot(pn);
+        const float d = (v - plane_origin).dot(pn);
         if (first) {
             d_min = d_max = d;
             first = false;
@@ -1091,7 +1088,7 @@ void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces,
         }
     }
     std::map<SnappedKey, VertexId> weld_map;
-    auto weld_vertex = [&](const math::Vec3d& pos) -> VertexId {
+    auto weld_vertex = [&](const math::Vec3f& pos) -> VertexId {
         SnappedKey key = snap(pos);
         auto it = weld_map.find(key);
         if (it != weld_map.end()) return it->second;
@@ -1112,7 +1109,7 @@ void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces,
         // bound to it so later lookups through either key hit the
         // same id.
         for (VertexId k = 0; k < static_cast<VertexId>(result.vertices.size()); ++k) {
-            const math::Vec3d d = result.vertices[k].position() - pos;
+            const math::Vec3f d = result.vertices[k].position() - pos;
             if (d.x * d.x + d.y * d.y + d.z * d.z <= kWeldGrid * kWeldGrid) {
                 weld_map.emplace(key, k);
                 return k;
@@ -1171,31 +1168,31 @@ void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces,
     // ends up with exactly two co-edges.
     auto t_points_on_edge = [&](VertexId v0, VertexId v1) -> std::vector<VertexId> {
         std::vector<VertexId> out;
-        const math::Vec3d p0 = result.vertices[v0].position();
-        const math::Vec3d p1 = result.vertices[v1].position();
-        const math::Vec3d d = p1 - p0;
-        const double len2 = d.dot(d);
+        const math::Vec3f p0 = result.vertices[v0].position();
+        const math::Vec3f p1 = result.vertices[v1].position();
+        const math::Vec3f d = p1 - p0;
+        const float len2 = d.dot(d);
         if (len2 <= kEps * kEps) return out;
-        const double len = std::sqrt(len2);
+        const float len = std::sqrt(len2);
         for (VertexId k = 0; k < static_cast<VertexId>(result.vertices.size()); ++k) {
             if (k == v0 || k == v1) continue;
-            const math::Vec3d m = result.vertices[k].position() - p0;
-            const double md = m.dot(d);
-            const double t = md / len2;
-            if (t <= 0.0 || t >= 1.0) continue;
+            const math::Vec3f m = result.vertices[k].position() - p0;
+            const float md = m.dot(d);
+            const float t = md / len2;
+            if (t <= 0.0f || t >= 1.0f) continue;
             // At least kWeldGrid away from both endpoints ALONG the
             // edge (closer than that is the endpoint's own weld zone).
-            if (t * len <= kWeldGrid || (1.0 - t) * len <= kWeldGrid) continue;
+            if (t * len <= kWeldGrid || (1.0f - t) * len <= kWeldGrid) continue;
             // Within kWeldGrid of the supporting line (Pythagoras,
             // clamped against FP cancellation).
-            double dist2 = m.dot(m) - md * md / len2;
-            if (dist2 < 0.0) dist2 = 0.0;
+            float dist2 = m.dot(m) - md * md / len2;
+            if (dist2 < 0.0f) dist2 = 0.0f;
             if (dist2 <= kWeldGrid * kWeldGrid) out.push_back(k);
         }
         // Deterministic order: by position along the edge, ties by id.
         std::sort(out.begin(), out.end(), [&](VertexId a, VertexId b) {
-            const double ta = (result.vertices[a].position() - p0).dot(d);
-            const double tb = (result.vertices[b].position() - p0).dot(d);
+            const float ta = (result.vertices[a].position() - p0).dot(d);
+            const float tb = (result.vertices[b].position() - p0).dot(d);
             if (ta != tb) return ta < tb;
             return a < b;
         });
@@ -1287,7 +1284,7 @@ std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
     for (const auto& face_A : shell_A.faces()) {
         Polygon poly_A = extract_face_polygon(face_A, A.edges, A.vertices);
         if (poly_A.size() < 3) continue;
-        math::Vec3d o_A, n_A;
+        math::Vec3f o_A, n_A;
         if (!get_face_plane(face_A, A.edges, A.vertices, o_A, n_A)) continue;
         // Use Sutherland-Hodgman sequential clipping (works correctly
         // for convex polyhedra, ADR-0023 primitive). This is equivalent
@@ -1303,7 +1300,7 @@ std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
     for (const auto& face_B : shell_B.faces()) {
         Polygon poly_B = extract_face_polygon(face_B, B.edges, B.vertices);
         if (poly_B.size() < 3) continue;
-        math::Vec3d o_B, n_B;
+        math::Vec3f o_B, n_B;
         if (!get_face_plane(face_B, B.edges, B.vertices, o_B, n_B)) continue;
         Polygon inside = clip_inside_3d(A, poly_B, nullptr);
         if (inside.size() >= 3) {
@@ -1387,7 +1384,7 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
         for (const auto& face_A : A.solid.shell().faces()) {
             Polygon poly_A = extract_face_polygon(face_A, A.edges, A.vertices);
             if (poly_A.size() < 3) continue;
-            math::Vec3d o_A, n_A;
+            math::Vec3f o_A, n_A;
             if (!get_face_plane(face_A, A.edges, A.vertices, o_A, n_A)) continue;
             clipped_faces.push_back(
                 {std::make_shared<PlaneSurface>(poly_A[0], n_A), poly_A});
@@ -1409,7 +1406,7 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
         for (const auto& face : self.solid.shell().faces()) {
             Polygon poly = extract_face_polygon(face, self.edges, self.vertices);
             if (poly.size() < 3) continue;
-            math::Vec3d o, n;
+            math::Vec3f o, n;
             if (!get_face_plane(face, self.edges, self.vertices, o, n)) continue;
 
             // Compute the part of `poly` that is inside `other`.
@@ -1509,7 +1506,7 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
     for (const auto& face_A : A.solid.shell().faces()) {
         Polygon poly_A = extract_face_polygon(face_A, A.edges, A.vertices);
         if (poly_A.size() < 3) continue;
-        math::Vec3d o_A, n_A;
+        math::Vec3f o_A, n_A;
         if (!get_face_plane(face_A, A.edges, A.vertices, o_A, n_A)) continue;
 
         Polygon inside = clip_inside_3d(B, poly_A, &table);
@@ -1545,7 +1542,7 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
     for (const auto& face_B : B.solid.shell().faces()) {
         Polygon poly_B = extract_face_polygon(face_B, B.edges, B.vertices);
         if (poly_B.size() < 3) continue;
-        math::Vec3d o_B, n_B;
+        math::Vec3f o_B, n_B;
         if (!get_face_plane(face_B, B.edges, B.vertices, o_B, n_B)) continue;
 
         // ADR-0025 v5: classify poly_B against every face plane of A
@@ -1553,7 +1550,7 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
         // value to classify).
         bool skip_cap = false;
         for (const auto& face_A : A.solid.shell().faces()) {
-            math::Vec3d o_A, n_A;
+            math::Vec3f o_A, n_A;
             if (!get_face_plane(face_A, A.edges, A.vertices, o_A, n_A)) continue;
             const auto cls = classify_parallel_plane(poly_B, n_B, o_A, n_A);
             if (cls == ParallelPlaneClass::CoplanarBand) {
@@ -1585,7 +1582,7 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
         }
         // The part of B's face strictly inside A, re-oriented to point
         // into the cavity (toward where B was removed).
-        math::Vec3d inverted_normal = n_B * -1.0;
+        math::Vec3f inverted_normal = n_B * -1.0f;
         // The loop arrives wound CCW w.r.t. B's ORIGINAL outward normal
         // (clip_inside_3d preserves the source face's winding). The cap
         // is emitted with the INVERTED normal, so the loop must be
@@ -1611,13 +1608,13 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
 // test-only seam header CAD_0/brep/detail/boolean_test_hooks.hpp
 // (ADR-0025 v5 FASE 2). Exposes the internal polygon_subtract_3d slab
 // decomposition to the unit-test suite.
-std::vector<std::vector<math::Vec3d>> polygon_subtract_fragments_for_tests(
-    const std::vector<math::Vec3d>& subject,
-    const std::vector<math::Vec3d>& clip,
-    math::Vec3d plane_normal
+std::vector<std::vector<math::Vec3f>> polygon_subtract_fragments_for_tests(
+    const std::vector<math::Vec3f>& subject,
+    const std::vector<math::Vec3f>& clip,
+    math::Vec3f plane_normal
 ) {
     const std::vector<Polygon> fragments = polygon_subtract_3d(subject, clip, plane_normal);
-    std::vector<std::vector<math::Vec3d>> out;
+    std::vector<std::vector<math::Vec3f>> out;
     out.reserve(fragments.size());
     for (const auto& f : fragments) {
         out.emplace_back(f.begin(), f.end());

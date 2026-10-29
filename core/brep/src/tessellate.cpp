@@ -1,14 +1,7 @@
 // core/brep/src/tessellate.cpp
-//
-// THE DISPLAY BOUNDARY (H1, ADR-0034): the tessellation is the
-// float pipeline's own domain (the SDF mesh world); the exact
-// surfaces are double. The conversion is ONE DIRECTION (double ->
-// float), explicit at each site below, and the parameter windows are
-// dispatched on the TYPED family enum (no string compare).
 #include "CAD_0/brep/tessellate.hpp"
 
 #include <cmath>
-#include <string>
 
 namespace CAD_0::brep {
 
@@ -18,57 +11,43 @@ sdf::TriangleMesh tessellate_face(const Face& face, const TessellationOptions& o
     if (!surf) return mesh;
 
     const std::uint32_t N = opts.resolution;
-    const double pi = 3.14159265358979;
+    const float pi = 3.14159265358979f;
 
-    // Determine parametric range based on the TYPED surface family
-    // (a typo in a case label does not compile — ADR-0034 D3). For
-    // MVP, we use full parametric range for closed surfaces and a
-    // fixed range for open ones.
-    double u_min = 0.0, u_max = 2.0 * pi;
-    double v_min = 0.0, v_max = 1.0;
+    // Determine parametric range based on surface type.
+    // For MVP, we use full parametric range for closed surfaces
+    // and a fixed range for open ones.
+    float u_min = 0.0f, u_max = 2.0f * pi;
+    float v_min = 0.0f, v_max = 1.0f;
 
-    switch (surf->family()) {
-    case SurfaceFamily::Plane:
-        u_min = -10.0; u_max = 10.0;
-        v_min = -10.0; v_max = 10.0;
-        break;
-    case SurfaceFamily::Cylinder:
-        v_min = -1.0; v_max = 1.0;  // half-height
-        break;
-    case SurfaceFamily::Sphere:
-        v_min = 0.0; v_max = pi;
-        break;
-    case SurfaceFamily::Cone:
-        v_min = 0.0; v_max = 1.0;
-        break;
-    case SurfaceFamily::Torus:
-        u_min = 0.0; u_max = 2.0 * pi;
-        v_min = 0.0; v_max = 2.0 * pi;
-        break;
-    default:
-        break;
+    const char* tn = surf->type_name();
+    if (std::string(tn) == "plane") {
+        u_min = -10.0f; u_max = 10.0f;
+        v_min = -10.0f; v_max = 10.0f;
+    } else if (std::string(tn) == "cylinder") {
+        v_min = -1.0f; v_max = 1.0f;  // half-height
+    } else if (std::string(tn) == "sphere") {
+        v_min = 0.0f; v_max = pi;
+    } else if (std::string(tn) == "cone") {
+        v_min = 0.0f; v_max = 1.0f;
+    } else if (std::string(tn) == "torus") {
+        u_min = 0.0f; u_max = 2.0f * pi;
+        v_min = 0.0f; v_max = 2.0f * pi;
     }
 
     // Sample grid
     const std::uint32_t Nu = N + 1;
     const std::uint32_t Nv = N + 1;
-    const double du = (u_max - u_min) / double(N);
-    const double dv = (v_max - v_min) / double(N);
+    const float du = (u_max - u_min) / float(N);
+    const float dv = (v_max - v_min) / float(N);
 
-    // Generate vertices (the double->float boundary conversion, one
-    // direction, declared here — the mesh's own domain).
-    const auto to_f3 = [](const math::Vec3d& p) {
-        return math::Vec3f{static_cast<float>(p.x),
-                           static_cast<float>(p.y),
-                           static_cast<float>(p.z)};
-    };
+    // Generate vertices
     for (std::uint32_t j = 0; j < Nv; ++j) {
         for (std::uint32_t i = 0; i < Nu; ++i) {
-            const double u = u_min + double(i) * du;
-            const double v = v_min + double(j) * dv;
-            mesh.positions.push_back(to_f3(surf->evaluate(u, v)));
+            const float u = u_min + float(i) * du;
+            const float v = v_min + float(j) * dv;
+            mesh.positions.push_back(surf->evaluate(u, v));
             if (opts.compute_normals) {
-                mesh.normals.push_back(to_f3(surf->normal(u, v)));
+                mesh.normals.push_back(surf->normal(u, v));
             }
         }
     }

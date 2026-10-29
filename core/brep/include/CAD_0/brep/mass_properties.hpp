@@ -77,12 +77,8 @@
 // recurrences and the disc/sphere constants; no sqrt anywhere in
 // this machinery), the iteration orders are the shell/loop/co-edge
 // orders, and the doubles are deterministic under -ffp-contract=off.
-//
-// H1 (ADR-0034) amends the D4 storage: the answer is FULL double —
-// the historical float centroid/inertia fields were the last float
-// store inside the exact path; the closed-form values the tests pin
-// are unchanged (they were always compared through double
-// tolerances).
+// The API's storage (double volume; float centroid/inertia, the
+// pinned struct) casts once, deterministically.
 #pragma once
 
 #include "CAD_0/brep/topology.hpp"
@@ -92,12 +88,12 @@
 
 namespace CAD_0::brep {
 
-// The answer, as plain values (the ADR-0032 D4 pinned shape, amended
-// by ADR-0034 to full double). Density 1 throughout: consumers scale.
+// The answer, as plain values (the ADR-0032 D4 pinned shape).
+// Density 1 throughout: consumers scale.
 struct MassProperties {
     double volume{0.0};
-    math::Vec3d centroid{};
-    math::Mat3d inertia_about_centroid{};  // row-major access via (r, c)
+    math::Vec3f centroid{};
+    math::Mat3 inertia_about_centroid{};  // row-major access via (r, c)
     // Provenance of every contributing face was 'exact'.
     bool all_exact{true};
 };

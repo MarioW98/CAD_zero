@@ -115,11 +115,11 @@ TEST_CASE("ADR-0023: bool_intersect of two overlapping boxes produces a box") {
     // Box B: half-extents (1,1,1), centered at (0.5, 0, 0) → [-0.5, 1.5]³
     // Intersection: [−0.5, 1] × [−1, 1] × [−1, 1]
     // Expected: 8V / 12E / 6F, χ = 2.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     // Translate B by (0.5, 0, 0): shift all vertices.
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{0.5f, 0, 0});
+        v.set_position(v.position() + Vec3f{0.5f, 0, 0});
     }
 
     auto result = bool_intersect(*A, *B);
@@ -133,11 +133,11 @@ TEST_CASE("ADR-0023: bool_intersect of two overlapping boxes produces a box") {
 }
 
 TEST_CASE("ADR-0023: bool_intersect of disjoint boxes is empty") {
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     // Move B far away — no overlap.
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{10, 0, 0});
+        v.set_position(v.position() + Vec3f{10, 0, 0});
     }
     auto result = bool_intersect(*A, *B);
     REQUIRE(result != nullptr);
@@ -147,8 +147,8 @@ TEST_CASE("ADR-0023: bool_intersect of disjoint boxes is empty") {
 
 TEST_CASE("ADR-0023: bool_intersect of nested boxes returns the inner box") {
     // A = big box (half-extents 2), B = small box (half-extents 1) inside A.
-    auto A = make_box(Vec3d{2, 2, 2});
-    auto B = make_box(Vec3d{1, 1, 1});  // centered at origin, inside A
+    auto A = make_box(Vec3f{2, 2, 2});
+    auto B = make_box(Vec3f{1, 1, 1});  // centered at origin, inside A
     auto result = bool_intersect(*A, *B);
     REQUIRE(result != nullptr);
     // B is entirely inside A, so A ∩ B = B.
@@ -161,8 +161,8 @@ TEST_CASE("ADR-0023: bool_intersect of nested boxes returns the inner box") {
 }
 
 TEST_CASE("ADR-0023: bool_intersect of identical boxes returns the same box") {
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     auto result = bool_intersect(*A, *B);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 8);
@@ -176,10 +176,10 @@ TEST_CASE("ADR-0023: bool_intersect of identical boxes returns the same box") {
 TEST_CASE("ADR-0023: bool_intersect result is a closed manifold") {
     // A=[-1,1]³, B shift (0.5,0.5,0.5) → A ∩ B = [-0.5,1]³, a box:
     // 8V/12E/6F, χ=2, closed manifold.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{0.5f, 0.5f, 0.5f});
+        v.set_position(v.position() + Vec3f{0.5f, 0.5f, 0.5f});
     }
     auto result = bool_intersect(*A, *B);
     REQUIRE(result != nullptr);
@@ -199,10 +199,10 @@ TEST_CASE("ADR-0023: bool_intersect every edge has opposite coedge orientations"
     // A=[-1,1]³, B shift (0.5,0,0) → A ∩ B = [-0.5,1]×[-1,1]×[-1,1]:
     // 8V/12E/6F, χ=2, closed manifold; every edge carries one forward
     // and one reversed coedge.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{0.5f, 0, 0});
+        v.set_position(v.position() + Vec3f{0.5f, 0, 0});
     }
     auto result = bool_intersect(*A, *B);
     REQUIRE(result != nullptr);
@@ -225,7 +225,7 @@ TEST_CASE("ADR-0023: bool_intersect every edge has opposite coedge orientations"
 // ---------------------------------------------------------------------------
 
 TEST_CASE("ADR-0023: bool_intersect with sphere throws invalid_argument") {
-    auto A = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
     auto B = make_sphere(2.0f);  // curved surface, not planar
     CHECK_THROWS_AS(bool_intersect(*A, *B), std::invalid_argument);
 }
@@ -250,10 +250,10 @@ TEST_CASE("ADR-0025: bool_intersect of boxes touching at a face returns the dege
     // keeps only that square (welded once): V=4, E=4, F=1,
     // χ = 4−4+1 = 1 (a disk), loops closed, is_closed_manifold=false
     // (every edge has a single coedge — the body has a boundary).
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{2.0f, 0, 0});
+        v.set_position(v.position() + Vec3f{2.0f, 0, 0});
     }
     auto result = bool_intersect(*A, *B);
     REQUIRE(result != nullptr);
@@ -271,10 +271,10 @@ TEST_CASE("ADR-0025: bool_intersect of stacked boxes (coplanar contact faces) re
     // Same zero-volume contract as the face-touching case above: the
     // result is the single shared square z=1 → V=4, E=4, F=1, χ=1,
     // loops closed, not a closed manifold.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{0, 0, 2.0f});
+        v.set_position(v.position() + Vec3f{0, 0, 2.0f});
     }
     auto result = bool_intersect(*A, *B);
     REQUIRE(result != nullptr);
@@ -297,10 +297,10 @@ TEST_CASE("ADR-0025: bool_union of boxes touching at a face — strict closed-ma
     //     inside A) = 10F
     //   - χ = 12 - 20 + 10 = 2 ✓
     //   - is_closed_manifold: every edge has 2 co-edges with opposite orientations
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{0, 0, 2.0f});
+        v.set_position(v.position() + Vec3f{0, 0, 2.0f});
     }
     auto result = bool_union(*A, *B);
     REQUIRE(result != nullptr);
@@ -330,10 +330,10 @@ TEST_CASE("ADR-0025 v5: bool_subtract of box minus a corner — exact counts, cl
     //   is_closed_manifold: every edge exactly 2 co-edges with opposite
     //   orientations (the T-junction subdivision splits the long L-split
     //   edges at the shared vertices so all edges match pairwise).
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{1.0f, 1.0f, 1.0f});
+        v.set_position(v.position() + Vec3f{1.0f, 1.0f, 1.0f});
     }
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
@@ -349,10 +349,10 @@ TEST_CASE("ADR-0025: bool_subtract of disjoint boxes returns A unchanged") {
     // A \ (disjoint B) = A. B is entirely outside A: every face of A
     // survives intact as its own outside fragment, and no face of B
     // lies inside A, so no caps are emitted. Result: 8V/12E/6F.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{10, 0, 0});
+        v.set_position(v.position() + Vec3f{10, 0, 0});
     }
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
@@ -368,8 +368,8 @@ TEST_CASE("ADR-0025: bool_subtract where B contains A returns empty") {
     // A is entirely inside B: every face of A is fully inside B and is
     // dropped; no face of B is inside A (B is larger), so no caps are
     // emitted. Result: empty body.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{3, 3, 3});  // A is entirely inside B
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{3, 3, 3});  // A is entirely inside B
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
     CHECK(result->face_count() == 0);
@@ -378,8 +378,8 @@ TEST_CASE("ADR-0025: bool_subtract where B contains A returns empty") {
 
 TEST_CASE("ADR-0025: bool_subtract of identical boxes returns empty") {
     // A == B → bodies_identical shortcut triggers → empty body.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
     CHECK(result->face_count() == 0);
@@ -392,10 +392,10 @@ TEST_CASE("ADR-0025 v5: bool_subtract of overlapping boxes — exact counts, clo
     // A \ B = A with the [0,1] × [-1,1] × [-1,1] slab removed.
     // Expected: V=8, E=12, F=6, χ=2, is_closed_manifold=true (clean snap:
     // 0.5/kWeldGrid = 500000 exactly, no grid-straddle).
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{0.5f, 0, 0});
+        v.set_position(v.position() + Vec3f{0.5f, 0, 0});
     }
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
@@ -412,10 +412,10 @@ TEST_CASE("ADR-0025: bool_subtract partial-overlap with grid-straddle (regressio
     // A \ B = [-1,-0.7]×[-1,1]×[-1,1] (slab of A left of B's -X face).
     // The cut plane is x=-0.7 = B's -X face → Part 2 cap, no missing face.
     // Expected: V=8, E=12, F=6, χ=2, is_closed_manifold=true, loops_are_closed=true.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{0.3f, 0, 0});
+        v.set_position(v.position() + Vec3f{0.3f, 0, 0});
     }
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
@@ -434,10 +434,10 @@ TEST_CASE("ADR-0025: bool_subtract slab decomposition (subject shares edge with 
     // This is the slab decomposition primitive test: polygon_subtract_3d
     // must produce the outside fragment [-1,-0.5]×[-1,1] for each lateral face.
     // V=8, E=12, F=6, χ=2, is_closed_manifold=true.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{0.5f, 0, 0});
+        v.set_position(v.position() + Vec3f{0.5f, 0, 0});
     }
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
@@ -458,14 +458,14 @@ TEST_CASE("ADR-0025 v5 FASE 2: minimal slab decomposition — exactly 1 outside 
     // rectangle x ∈ [-1,-0.7], z ∈ [-1,1]. The three degenerate slivers
     // from the coincident boundary edges (x=1, z=±1) collapse to ≤ 2
     // vertices after deduplication and are dropped (FASE 1 evidence).
-    const std::vector<Vec3d> subject = {
-        Vec3d{ 1.0f, 1.0f, -1.0f}, Vec3d{-1.0f, 1.0f, -1.0f},
-        Vec3d{-1.0f, 1.0f,  1.0f}, Vec3d{ 1.0f, 1.0f,  1.0f}};
-    const std::vector<Vec3d> clip = {
-        Vec3d{ 1.0f, 1.0f, -1.0f}, Vec3d{-0.7f, 1.0f, -1.0f},
-        Vec3d{-0.7f, 1.0f,  1.0f}, Vec3d{ 1.0f, 1.0f,  1.0f}};
+    const std::vector<Vec3f> subject = {
+        Vec3f{ 1.0f, 1.0f, -1.0f}, Vec3f{-1.0f, 1.0f, -1.0f},
+        Vec3f{-1.0f, 1.0f,  1.0f}, Vec3f{ 1.0f, 1.0f,  1.0f}};
+    const std::vector<Vec3f> clip = {
+        Vec3f{ 1.0f, 1.0f, -1.0f}, Vec3f{-0.7f, 1.0f, -1.0f},
+        Vec3f{-0.7f, 1.0f,  1.0f}, Vec3f{ 1.0f, 1.0f,  1.0f}};
     const auto frags = polygon_subtract_fragments_for_tests(
-        subject, clip, Vec3d{0.0f, 1.0f, 0.0f});
+        subject, clip, Vec3f{0.0f, 1.0f, 0.0f});
     REQUIRE(frags.size() == 1);
     REQUIRE(frags[0].size() == 4);
     // The single fragment is the outside rectangle: every vertex lies in
@@ -482,8 +482,8 @@ TEST_CASE("ADR-0025 v5 FASE 2: minimal slab decomposition — exactly 1 outside 
 TEST_CASE("ADR-0025: bool_intersect of nested boxes (B inside A) returns B") {
     // Box A: half-extents (3,3,3) → [-3,3]³
     // Box B: half-extents (1,1,1) → [-1,1]³ (inside A)
-    auto A = make_box(Vec3d{3, 3, 3});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{3, 3, 3});
+    auto B = make_box(Vec3f{1, 1, 1});
     auto result = bool_intersect(*A, *B);
     REQUIRE(result != nullptr);
     // B is entirely inside A, so A ∩ B = B.
@@ -497,8 +497,8 @@ TEST_CASE("ADR-0025: bool_intersect of nested boxes (B inside A) returns B") {
 
 TEST_CASE("ADR-0025: bool_union of identical boxes returns one box (regression)") {
     // ADR-0025 identical-body shortcut must trigger.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     auto result = bool_union(*A, *B);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 8);
@@ -510,8 +510,8 @@ TEST_CASE("ADR-0025: bool_union of identical boxes returns one box (regression)"
 }
 
 TEST_CASE("ADR-0025: bool_subtract of identical boxes returns empty (regression)") {
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
     CHECK(result->face_count() == 0);
@@ -519,8 +519,8 @@ TEST_CASE("ADR-0025: bool_subtract of identical boxes returns empty (regression)
 }
 
 TEST_CASE("ADR-0025: bool_intersect of identical boxes returns one box (regression)") {
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     auto result = bool_intersect(*A, *B);
     REQUIRE(result != nullptr);
     // A ∩ A = A: Sutherland-Hodgman keeps all 6 faces of the first
@@ -558,10 +558,10 @@ TEST_CASE("ADR-0024: bool_union of overlapping boxes — open shell, partial cop
     //   V = 8+8 = 16, E = 12+12 = 24, F = 5+5 = 10, χ = 16−24+10 = 2,
     //   loops closed; NOT a closed manifold: the 8 rim edges (4 at
     //   x=-0.5, 4 at x=1) carry a single coedge each.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{0.5f, 0, 0});
+        v.set_position(v.position() + Vec3f{0.5f, 0, 0});
     }
     auto result = bool_union(*A, *B);
     REQUIRE(result != nullptr);
@@ -576,8 +576,8 @@ TEST_CASE("ADR-0024: bool_union of overlapping boxes — open shell, partial cop
 TEST_CASE("ADR-0024: bool_union of identical boxes returns A (identical-body shortcut)") {
     // ADR-0025: bodies_identical() shortcut detects A == B and returns
     // a copy of A. The result is 8V/12E/6F with χ = 2 and is_closed_manifold.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});  // same position
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});  // same position
     auto result = bool_union(*A, *B);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 8);
@@ -593,10 +593,10 @@ TEST_CASE("ADR-0024: bool_union of overlapping boxes — exact coedge census (op
     // edges of the two closed half-shell "rings" carry exactly 2
     // coedges, the 8 open-rim edges (4 at x=-0.5, 4 at x=1) carry
     // exactly 1. No edge is an orphan and none exceeds 2 coedges.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{0.5f, 0, 0});
+        v.set_position(v.position() + Vec3f{0.5f, 0, 0});
     }
     auto result = bool_union(*A, *B);
     REQUIRE(result != nullptr);
@@ -632,10 +632,10 @@ TEST_CASE("ADR-0024: bool_subtract of overlapping boxes — corner notch, exact 
     //   F = 12: 3 intact faces + 2 rectangles per L-shaped face
     //           (slab decomposition split) + 3 cavity caps
     //   E = 27, χ = 17 − 27 + 12 = 2, closed manifold, loops closed.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{0.5f, 0.5f, 0.5f});
+        v.set_position(v.position() + Vec3f{0.5f, 0.5f, 0.5f});
     }
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
@@ -651,10 +651,10 @@ TEST_CASE("ADR-0024: bool_subtract of disjoint boxes returns A unchanged") {
     // A \ (disjoint B) = A: every face of A survives intact (no overlap
     // with B), and no face of B lies inside A, so Part 2 emits no caps.
     // Result is A: 8V/12E/6F.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{10, 0, 0});
+        v.set_position(v.position() + Vec3f{10, 0, 0});
     }
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
@@ -667,8 +667,8 @@ TEST_CASE("ADR-0024: bool_subtract of disjoint boxes returns A unchanged") {
 }
 
 TEST_CASE("ADR-0024: bool_subtract where B contains A returns empty") {
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{3, 3, 3});  // A is entirely inside B
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{3, 3, 3});  // A is entirely inside B
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
     CHECK(result->face_count() == 0);
@@ -679,10 +679,10 @@ TEST_CASE("ADR-0024: bool_subtract of overlapping boxes — every edge has exact
     // Corner-notch result (17V/27E/12F): the T-junction subdivision
     // makes every edge match pairwise, so all 27 edges carry exactly
     // 2 coedges (closed-manifold contract).
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{0.5f, 0.5f, 0.5f});
+        v.set_position(v.position() + Vec3f{0.5f, 0.5f, 0.5f});
     }
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
@@ -695,10 +695,10 @@ TEST_CASE("ADR-0024: bool_subtract of overlapping boxes — every edge has exact
 TEST_CASE("ADR-0024: bool_subtract of overlapping boxes — χ = 2 on the corner notch") {
     // Same corner-notch input as the tests above: 17V/27E/12F gives
     // χ = 17 − 27 + 12 = 2 on a closed manifold.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{0.5f, 0.5f, 0.5f});
+        v.set_position(v.position() + Vec3f{0.5f, 0.5f, 0.5f});
     }
     auto result = bool_subtract(*A, *B);
     REQUIRE(result != nullptr);
@@ -720,10 +720,10 @@ TEST_CASE("ADR-0024: bool_union and bool_intersect of overlapping boxes — exac
     //   union = the open shell of the partial coplanar overlap
     //           (ADR-0025 v5 known limitation): 16V/24E/10F, χ=2,
     //           loops closed, not a closed manifold.
-    auto A = make_box(Vec3d{1, 1, 1});
-    auto B = make_box(Vec3d{1, 1, 1});
+    auto A = make_box(Vec3f{1, 1, 1});
+    auto B = make_box(Vec3f{1, 1, 1});
     for (auto& v : B->vertices) {
-        v.set_position(v.position() + Vec3d{0.5f, 0, 0});
+        v.set_position(v.position() + Vec3f{0.5f, 0, 0});
     }
     auto u = bool_union(*A, *B);
     auto i = bool_intersect(*A, *B);
@@ -757,8 +757,8 @@ TEST_CASE("ADR-0027: wrapper equivalence on the genus-0 boolean fixtures") {
               (is_closed_orientable(b) && euler_characteristic(b) == 2));
     };
 
-    auto box_at = [](Vec3d shift) {
-        auto b = make_box(Vec3d{1, 1, 1});
+    auto box_at = [](Vec3f shift) {
+        auto b = make_box(Vec3f{1, 1, 1});
         for (auto& v : b->vertices) {
             v.set_position(v.position() + shift);
         }
@@ -767,35 +767,35 @@ TEST_CASE("ADR-0027: wrapper equivalence on the genus-0 boolean fixtures") {
 
     // bool_intersect of overlapping boxes: the overlap box, 8V/12E/6F.
     {
-        auto i = bool_intersect(*make_box(Vec3d{1, 1, 1}), *box_at({0.5f, 0, 0}));
+        auto i = bool_intersect(*make_box(Vec3f{1, 1, 1}), *box_at({0.5f, 0, 0}));
         REQUIRE(i != nullptr);
         CHECK(euler_characteristic(*i) == 2);
         check(*i);
     }
     // bool_union of boxes touching at a face: 12V/20E/10F, χ = 2.
     {
-        auto u = bool_union(*make_box(Vec3d{1, 1, 1}), *box_at({0, 0, 2.0f}));
+        auto u = bool_union(*make_box(Vec3f{1, 1, 1}), *box_at({0, 0, 2.0f}));
         REQUIRE(u != nullptr);
         CHECK(euler_characteristic(*u) == 2);
         check(*u);
     }
     // The corner notch (the ADR-0025 v5 flagship): 17V/27E/12F, χ = 2.
     {
-        auto d = bool_subtract(*make_box(Vec3d{1, 1, 1}), *box_at({1.0f, 1.0f, 1.0f}));
+        auto d = bool_subtract(*make_box(Vec3f{1, 1, 1}), *box_at({1.0f, 1.0f, 1.0f}));
         REQUIRE(d != nullptr);
         CHECK(euler_characteristic(*d) == 2);
         check(*d);
     }
     // The slab (clean snap): 8V/12E/6F, χ = 2.
     {
-        auto d = bool_subtract(*make_box(Vec3d{1, 1, 1}), *box_at({0.5f, 0, 0}));
+        auto d = bool_subtract(*make_box(Vec3f{1, 1, 1}), *box_at({0.5f, 0, 0}));
         REQUIRE(d != nullptr);
         CHECK(euler_characteristic(*d) == 2);
         check(*d);
     }
     // Disjoint subtract: A unchanged, 8V/12E/6F, χ = 2.
     {
-        auto d = bool_subtract(*make_box(Vec3d{1, 1, 1}), *box_at({10, 0, 0}));
+        auto d = bool_subtract(*make_box(Vec3f{1, 1, 1}), *box_at({10, 0, 0}));
         REQUIRE(d != nullptr);
         CHECK(euler_characteristic(*d) == 2);
         check(*d);
@@ -804,7 +804,7 @@ TEST_CASE("ADR-0027: wrapper equivalence on the genus-0 boolean fixtures") {
     // limitation): χ = 2 but an open shell — both sides of the
     // equivalence false through the STRUCTURAL half, never through χ.
     {
-        auto u = bool_union(*make_box(Vec3d{1, 1, 1}), *box_at({0.5f, 0, 0}));
+        auto u = bool_union(*make_box(Vec3f{1, 1, 1}), *box_at({0.5f, 0, 0}));
         REQUIRE(u != nullptr);
         CHECK(euler_characteristic(*u) == 2);
         CHECK_FALSE(is_closed_manifold(*u));
@@ -853,14 +853,14 @@ namespace prop = CAD_0::test::property;
 // coherent translate of brep::make_box (factory.hpp): same vertex/edge/
 // face numbering and outward normals, PlaneSurface origins translated
 // WITH the vertices so every face's vertices lie on its own plane.
-std::unique_ptr<BRepBody> make_box_at(Vec3d e, Vec3d c) {
+std::unique_ptr<BRepBody> make_box_at(Vec3f e, Vec3f c) {
     auto body = std::make_unique<BRepBody>();
     auto& solid = body->solid;
     auto& shell = solid.shell_mut();
     shell.set_closed(true);
 
-    const double x = e.x, y = e.y, z = e.z;
-    const double cx = c.x, cy = c.y, cz = c.z;
+    const float x = e.x, y = e.y, z = e.z;
+    const float cx = c.x, cy = c.y, cz = c.z;
     body->vertices = {
         Vertex{{cx - x, cy - y, cz - z}}, Vertex{{cx + x, cy - y, cz - z}},
         Vertex{{cx + x, cy + y, cz - z}}, Vertex{{cx - x, cy + y, cz - z}},
@@ -879,7 +879,7 @@ std::unique_ptr<BRepBody> make_box_at(Vec3d e, Vec3d c) {
         body->edges[i].set_id(static_cast<EdgeId>(i));
 
     auto add_plane_face = [&shell](
-        Vec3d origin, Vec3d normal, FaceId id,
+        Vec3f origin, Vec3f normal, FaceId id,
         EdgeId e0, bool r0, EdgeId e1, bool r1,
         EdgeId e2, bool r2, EdgeId e3, bool r3) {
         Face face(std::make_shared<PlaneSurface>(origin, normal));
@@ -916,29 +916,29 @@ TEST_CASE("property: bool_intersect of random axis-aligned boxes matches the ana
     constexpr float kOracleWeldGrid = 1e-6f;
 
     for (int iter = 0; iter < 25; ++iter) {
-        const Vec3d eA{prng.frange(0.5f, 1.5f),
+        const Vec3f eA{prng.frange(0.5f, 1.5f),
                        prng.frange(0.5f, 1.5f),
                        prng.frange(0.5f, 1.5f)};
-        const Vec3d eB{prng.frange(0.5f, 1.5f),
+        const Vec3f eB{prng.frange(0.5f, 1.5f),
                        prng.frange(0.5f, 1.5f),
                        prng.frange(0.5f, 1.5f)};
 
         // Rejection sampling until in-class (deterministic: the same
         // seed replays the same draws, so a failure is reproducible).
-        Vec3d shift{};
-        Vec3d lo{}, hi{};
+        Vec3f shift{};
+        Vec3f lo{}, hi{};
         {
             int tries = 0;
             for (;;) {
                 ++tries;
                 REQUIRE(tries < 100000);  // generator bug if exhausted
-                shift = Vec3d{prng.frange(-0.8f, 0.8f),
+                shift = Vec3f{prng.frange(-0.8f, 0.8f),
                               prng.frange(-0.8f, 0.8f),
                               prng.frange(-0.8f, 0.8f)};
-                const double sa[3] = {shift.x, shift.y, shift.z};
-                const double ea[3] = {eA.x, eA.y, eA.z};
-                const double eb[3] = {eB.x, eB.y, eB.z};
-                double l3[3], h3[3];
+                const float sa[3] = {shift.x, shift.y, shift.z};
+                const float ea[3] = {eA.x, eA.y, eA.z};
+                const float eb[3] = {eB.x, eB.y, eB.z};
+                float l3[3], h3[3];
                 bool ok = true;
                 for (int i = 0; i < 3; ++i) {
                     l3[i] = std::max(-ea[i], sa[i] - eb[i]);
@@ -948,14 +948,14 @@ TEST_CASE("property: bool_intersect of random axis-aligned boxes matches the ana
                     if (std::abs((sa[i] + eb[i]) - ea[i]) < 1e-3f) ok = false;
                 }
                 if (ok) {
-                    lo = Vec3d{l3[0], l3[1], l3[2]};
-                    hi = Vec3d{h3[0], h3[1], h3[2]};
+                    lo = Vec3f{l3[0], l3[1], l3[2]};
+                    hi = Vec3f{h3[0], h3[1], h3[2]};
                     break;
                 }
             }
         }
 
-        auto A = make_box_at(eA, Vec3d{0, 0, 0});
+        auto A = make_box_at(eA, Vec3f{0, 0, 0});
         auto B = make_box_at(eB, shift);
         auto result = bool_intersect(*A, *B);
 
@@ -978,7 +978,7 @@ TEST_CASE("property: bool_intersect of random axis-aligned boxes matches the ana
         CHECK(loops_are_closed(*result));
 
         // Positions: the 8 analytic corners of [lo, hi]^3.
-        const Vec3d corners[8] = {
+        const Vec3f corners[8] = {
             {lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z},
             {lo.x, hi.y, lo.z}, {hi.x, hi.y, lo.z},
             {lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z},
@@ -986,12 +986,12 @@ TEST_CASE("property: bool_intersect of random axis-aligned boxes matches the ana
         };
         bool covered[8] = {false, false, false, false, false, false, false, false};
         for (std::size_t i = 0; i < result->vertex_count(); ++i) {
-            const Vec3d p = result->vertices[i].position();
-            double best = 1e30f;
+            const Vec3f p = result->vertices[i].position();
+            float best = 1e30f;
             int best_j = -1;
             for (int j = 0; j < 8; ++j) {
-                const Vec3d d = p - corners[j];
-                const double dl = d.length();
+                const Vec3f d = p - corners[j];
+                const float dl = d.length();
                 if (dl < best) { best = dl; best_j = j; }
             }
             INFO("vertex ", i, " p=(", p.x, ",", p.y, ",", p.z, ")",
@@ -1012,10 +1012,10 @@ TEST_CASE("property: bool_intersect of random axis-aligned boxes matches the ana
 // still be a closed orientable manifold on its own. If this fails, the
 // ORACLE FAMILY's failures are generator bugs, not kernel bugs.
 TEST_CASE("property-family factory sanity: make_box_at is a coherent closed box") {
-    const Vec3d e{1.25f, 0.75f, 1.0f};
-    const Vec3d c{0.3f, -0.4f, 0.2f};
+    const Vec3f e{1.25f, 0.75f, 1.0f};
+    const Vec3f c{0.3f, -0.4f, 0.2f};
 
-    auto at_origin = make_box_at(e, Vec3d{0, 0, 0});
+    auto at_origin = make_box_at(e, Vec3f{0, 0, 0});
     auto reference = make_box(e);
     CHECK(at_origin->vertex_count() == reference->vertex_count());
     CHECK(at_origin->edge_count() == reference->edge_count());
@@ -1030,7 +1030,7 @@ TEST_CASE("property-family factory sanity: make_box_at is a coherent closed box"
     // Vertices really at c +- e (the factory translated them).
     bool found_min = false, found_max = false;
     for (const auto& v : moved->vertices) {
-        const Vec3d p = v.position();
+        const Vec3f p = v.position();
         if (p.x == c.x - e.x && p.y == c.y - e.y && p.z == c.z - e.z) found_min = true;
         if (p.x == c.x + e.x && p.y == c.y + e.y && p.z == c.z + e.z) found_max = true;
     }
@@ -1039,8 +1039,8 @@ TEST_CASE("property-family factory sanity: make_box_at is a coherent closed box"
 
     // Identical boxes through the property factory: intersection = the
     // box itself (mirrors the pinned "identical boxes" case).
-    auto same = bool_intersect(*make_box_at(e, Vec3d{0, 0, 0}),
-                               *make_box_at(e, Vec3d{0, 0, 0}));
+    auto same = bool_intersect(*make_box_at(e, Vec3f{0, 0, 0}),
+                               *make_box_at(e, Vec3f{0, 0, 0}));
     REQUIRE(same != nullptr);
     CHECK(same->vertex_count() == 8);
     CHECK(same->edge_count() == 12);
@@ -1050,8 +1050,8 @@ TEST_CASE("property-family factory sanity: make_box_at is a coherent closed box"
 
     // The pinned overlapping case through the property factory: A at
     // the origin, B shifted by (0.5, 0, 0) — expected [-0.5, 1]^3.
-    auto ov = bool_intersect(*make_box_at(Vec3d{1, 1, 1}, Vec3d{0, 0, 0}),
-                             *make_box_at(Vec3d{1, 1, 1}, Vec3d{0.5f, 0, 0}));
+    auto ov = bool_intersect(*make_box_at(Vec3f{1, 1, 1}, Vec3f{0, 0, 0}),
+                             *make_box_at(Vec3f{1, 1, 1}, Vec3f{0.5f, 0, 0}));
     REQUIRE(ov != nullptr);
     CHECK(ov->vertex_count() == 8);
     CHECK(ov->edge_count() == 12);
@@ -1072,20 +1072,20 @@ TEST_CASE("property-family factory sanity: make_box_at is a coherent closed box"
 // vertices ~1e-10 apart. The repair (proximity pass honoring the
 // kWeldGrid contract) welds them; the oracle holds exactly.
 TEST_CASE("pinned regression: weld grid-boundary straddle on a box-pair intersection") {
-    const Vec3d eA{1.0915029f, 1.08884263f, 1.40153289f};
-    const Vec3d eB{1.12535167f, 1.38211584f, 1.032341f};
-    const Vec3d shift{0.738804758f, -0.448618621f, -0.154364496f};
+    const Vec3f eA{1.0915029f, 1.08884263f, 1.40153289f};
+    const Vec3f eB{1.12535167f, 1.38211584f, 1.032341f};
+    const Vec3f shift{0.738804758f, -0.448618621f, -0.154364496f};
 
-    auto A = make_box_at(eA, Vec3d{0, 0, 0});
+    auto A = make_box_at(eA, Vec3f{0, 0, 0});
     auto B = make_box_at(eB, shift);
     auto result = bool_intersect(*A, *B);
     REQUIRE(result != nullptr);
 
     // Analytic oracle: [max(-eA, shift-eB), min(eA, shift+eB)] per axis.
-    const Vec3d lo{std::max(-eA.x, shift.x - eB.x),
+    const Vec3f lo{std::max(-eA.x, shift.x - eB.x),
                    std::max(-eA.y, shift.y - eB.y),
                    std::max(-eA.z, shift.z - eB.z)};
-    const Vec3d hi{std::min(eA.x, shift.x + eB.x),
+    const Vec3f hi{std::min(eA.x, shift.x + eB.x),
                    std::min(eA.y, shift.y + eB.y),
                    std::min(eA.z, shift.z + eB.z)};
 
@@ -1098,18 +1098,18 @@ TEST_CASE("pinned regression: weld grid-boundary straddle on a box-pair intersec
 
     // Positions within kWeldGrid (1e-6) of the analytic corners.
     constexpr float kTol = 1e-6f;
-    const Vec3d corners[8] = {
+    const Vec3f corners[8] = {
         {lo.x, lo.y, lo.z}, {hi.x, lo.y, lo.z},
         {lo.x, hi.y, lo.z}, {hi.x, hi.y, lo.z},
         {lo.x, lo.y, hi.z}, {hi.x, lo.y, hi.z},
         {lo.x, hi.y, hi.z}, {hi.x, hi.y, hi.z},
     };
     for (std::size_t i = 0; i < result->vertex_count(); ++i) {
-        const Vec3d p = result->vertices[i].position();
-        double best = 1e30f;
-        for (const Vec3d& c : corners) {
-            const Vec3d d = p - c;
-            const double dl = d.length();
+        const Vec3f p = result->vertices[i].position();
+        float best = 1e30f;
+        for (const Vec3f& c : corners) {
+            const Vec3f d = p - c;
+            const float dl = d.length();
             if (dl < best) best = dl;
         }
         INFO("vertex ", i, " dist to nearest oracle corner = ", best);
