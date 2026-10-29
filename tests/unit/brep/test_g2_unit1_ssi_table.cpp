@@ -96,14 +96,14 @@ using CAD_0::brep::BRepBody;
 using CAD_0::brep::FaceId;
 using CAD_0::brep::SsiResult;
 using CAD_0::math::Vec2f;
-using CAD_0::math::Vec3f;
+using CAD_0::math::Vec3d;
 
 constexpr float kTol = 1e-6f;
 constexpr float kPi = 3.14159265358979f;
 constexpr float kTwoPi = 6.28318530717958647692f;
 
-bool close(float a, float b, float tol = 1e-5f) { return std::abs(a - b) <= tol; }
-bool close3(Vec3f a, Vec3f b, float tol = 1e-5f) {
+bool close(double a, double b, double tol = 1e-5) { return std::abs(a - b) <= tol; }
+bool close3(Vec3d a, Vec3d b, double tol = 1e-5) {
     return close(a.x, b.x, tol) && close(a.y, b.y, tol) && close(a.z, b.z, tol);
 }
 
@@ -135,12 +135,14 @@ FaceId box_posx_face(const BRepBody& box) {
 }
 
 // --- the digest (ADR-0014): every number as a hex float -------------
-void af(std::string& out, float v) {
+// H1 (ADR-0034): the digest reads the exact world's doubles; the
+// p-curve payloads promote (float -> double) losslessly at the read.
+void af(std::string& out, double v) {
     char buf[64];
-    std::snprintf(buf, sizeof(buf), "%a", static_cast<double>(v));
+    std::snprintf(buf, sizeof(buf), "%a", v);
     out += buf;
 }
-void av3(std::string& out, const Vec3f& v) {
+void av3(std::string& out, const Vec3d& v) {
     out += '(';
     af(out, v.x); out += ',';
     af(out, v.y); out += ',';
@@ -243,7 +245,7 @@ std::unique_ptr<BRepBody> one_face_body(
     CAD_0::brep::Face face(std::move(surf));
     face.set_id(0);
     shell.add_face(std::move(face));
-    body->vertices.emplace_back(Vec3f{0, 0, 0});
+    body->vertices.emplace_back(Vec3d{0, 0, 0});
     body->vertices.back().set_id(0);
     body->edges.emplace_back(CAD_0::brep::Edge{0, 0});
     body->edges.back().set_id(0);
@@ -284,9 +286,9 @@ TEST_CASE("G2-U1 plane×sphere: the circle at the foot, Circle2 + the re-framed 
     const auto* pl = dynamic_cast<const CAD_0::brep::PlaneSurface*>(
         box->solid.shell().faces()[pf].surface());
     for (float t : {0.0f, 1.0f, 2.0f, 4.0f}) {
-        const Vec3f p = r.curves[0].evaluate(t);
+        const Vec3d p = r.curves[0].evaluate(t);
         CHECK(close((p - pl->origin()).dot(pl->normal_vec()), 0.0f, 1e-5f));
-        CHECK(close((p - Vec3f{0, 0, 0}).length(), 2.0f, 1e-5f));
+        CHECK(close((p - Vec3d{0, 0, 0}).length(), 2.0f, 1e-5f));
     }
 
     // The plane-domain p-curve: the Circle2 at the foot's domain
@@ -370,9 +372,9 @@ TEST_CASE("G2-U1 sphere×sphere: the circle in the radical plane, both re-framed
     CHECK(close3(r.curves[0].center, {1.85f, 0.0f, 0.0f}, 1e-4f));
     // Every point of the curve sits on BOTH spheres (the definition).
     for (float t : {0.5f, 2.0f, 4.5f}) {
-        const Vec3f p = r.curves[0].evaluate(t);
-        CHECK(close((p - Vec3f{0, 0, 0}).length(), 2.0f, 1e-4f));
-        CHECK(close((p - Vec3f{2.5f, 0, 0}).length(), 1.0f, 1e-4f));
+        const Vec3d p = r.curves[0].evaluate(t);
+        CHECK(close((p - Vec3d{0, 0, 0}).length(), 2.0f, 1e-4f));
+        CHECK(close((p - Vec3d{2.5f, 0, 0}).length(), 1.0f, 1e-4f));
     }
 
     // Both spheres re-frame to the center line (+X), azimuth = the
@@ -474,8 +476,8 @@ TEST_CASE("G2-U1 cylinder×sphere coaxial: two circles at ±√(R²−r²), no r
     // The geometric identity: on both surfaces.
     for (int i = 0; i < 2; ++i)
         for (float t : {0.0f, 2.0f, 5.0f}) {
-            const Vec3f p = r.curves[i].evaluate(t);
-            CHECK(close((p - Vec3f{0, 0, 0}).length(), 2.0f, 1e-5f));
+            const Vec3d p = r.curves[i].evaluate(t);
+            CHECK(close((p - Vec3d{0, 0, 0}).length(), 2.0f, 1e-5f));
             CHECK(close(std::sqrt(p.x * p.x + p.z * p.z), 1.0f, 1e-5f));
         }
 
@@ -568,7 +570,7 @@ TEST_CASE("G2-U1 cylinder×cylinder equal radii: the two lines in the mid-plane"
     // The geometric identity: both lines lie on BOTH cylinders.
     for (int i = 0; i < 2; ++i)
         for (float s : {-1.0f, 0.0f, 1.5f}) {
-            const Vec3f p = r.curves[i].point + r.curves[i].dir * s;
+            const Vec3d p = r.curves[i].point + r.curves[i].dir * s;
             CHECK(close(std::sqrt(p.x * p.x + p.z * p.z), 1.0f, 1e-5f));
             CHECK(close(std::sqrt((p.x - 0.8f) * (p.x - 0.8f) + p.z * p.z),
                         1.0f, 1e-5f));
@@ -759,7 +761,7 @@ TEST_CASE("G2-U1 the wall: landed pairs, no-writer families, the fillet's regist
     {
         const auto faceted = one_face_body(
             std::make_shared<CAD_0::brep::PlaneSurface>(
-                Vec3f{1, 0, 0}, Vec3f{1, 0, 0}));
+                Vec3d{1, 0, 0}, Vec3d{1, 0, 0}));
         faceted->solid.shell_mut().faces_mut()[0].set_provenance(
             CAD_0::brep::ProvenanceInfo::approximated(0.01));
         const auto sph = CAD_0::brep::make_sphere(2.0f);
@@ -791,8 +793,8 @@ TEST_CASE("G2-U1 the wall: landed pairs, no-writer families, the fillet's regist
 // ===========================================================================
 TEST_CASE("G2-U1 the re-frame: the seam-only sphere rebuilds on the canonical axis") {
     auto sph = CAD_0::brep::make_sphere(2.0f);
-    const Vec3f pole = Vec3f{1.0f, 1.0f, 1.0f}.normalized();
-    const Vec3f azimuth = Vec3f{1.0f, -1.0f, 0.0f}.normalized();  // ⊥ pole
+    const Vec3d pole = Vec3d{1.0f, 1.0f, 1.0f}.normalized();
+    const Vec3d azimuth = Vec3d{1.0f, -1.0f, 0.0f}.normalized();  // ⊥ pole
 
     const auto rec = CAD_0::brep::reframe_sphere_face(
         *sph, 0, pole, azimuth, kTol);
@@ -811,8 +813,8 @@ TEST_CASE("G2-U1 the re-frame: the seam-only sphere rebuilds on the canonical ax
     CHECK(close3(surf->pole(), pole));
     for (float u : {0.0f, 1.3f, 4.0f})
         for (float v : {0.3f, 1.2f, 2.7f}) {
-            const Vec3f p = surf->evaluate(u, v);
-            CHECK(close((p - Vec3f{0, 0, 0}).length(), 2.0f, 1e-5f));
+            const Vec3d p = surf->evaluate(u, v);
+            CHECK(close((p - Vec3d{0, 0, 0}).length(), 2.0f, 1e-5f));
         }
     CHECK(close3(surf->evaluate(0.0f, 0.0f), (pole * 2.0f)));
     CHECK(close3(surf->evaluate(0.0f, kPi), (pole * -2.0f)));
@@ -852,10 +854,10 @@ TEST_CASE("G2-U1 the re-frame: the seam-only sphere rebuilds on the canonical ax
 }
 
 TEST_CASE("G2-U1 the re-frame is a pure function of the recipe: bit-identical at regeneration") {
-    const Vec3f pole = Vec3f{0.3f, -0.8f, 0.52f}.normalized();
+    const Vec3d pole = Vec3d{0.3f, -0.8f, 0.52f}.normalized();
     // An azimuth ⊥ the pole, derived the way the entries derive theirs
     // (the cross product with a reference axis, normalized).
-    const Vec3f azimuth = Vec3f{-0.8f, -0.3f, 0.0f}.normalized();
+    const Vec3d azimuth = Vec3d{-0.8f, -0.3f, 0.0f}.normalized();
 
     std::string d1, d2;
     for (int rep = 0; rep < 2; ++rep) {
@@ -930,7 +932,7 @@ TEST_CASE("G2-U1 the frame budget: the incompatible family that arrives later fi
     bool threw = false;
     try {
         (void)CAD_0::brep::reframe_sphere_face(
-            *cut_sph, f0, Vec3f{1, 0, 0}, Vec3f{0, 1, 0}, kTol);
+            *cut_sph, f0, Vec3d{1, 0, 0}, Vec3d{0, 1, 0}, kTol);
     } catch (const std::invalid_argument& e) {
         threw = true;
         const std::string m = e.what();
@@ -946,14 +948,14 @@ TEST_CASE("G2-U1 the frame budget: the incompatible family that arrives later fi
         bool t1 = false, t2 = false;
         try {
             (void)CAD_0::brep::reframe_sphere_face(
-                *cyl, 0, Vec3f{0, 1, 0}, Vec3f{1, 0, 0}, kTol);
+                *cyl, 0, Vec3d{0, 1, 0}, Vec3d{1, 0, 0}, kTol);
         } catch (const std::invalid_argument& e) {
             t1 = true;
             CHECK(std::string(e.what()).find("cylinder") != std::string::npos);
         }
         try {
             (void)CAD_0::brep::reframe_sphere_face(
-                *cyl, 9, Vec3f{0, 1, 0}, Vec3f{1, 0, 0}, kTol);
+                *cyl, 9, Vec3d{0, 1, 0}, Vec3d{1, 0, 0}, kTol);
         } catch (const std::invalid_argument& e) {
             t2 = true;
             CHECK(std::string(e.what()).find("no face with id") !=

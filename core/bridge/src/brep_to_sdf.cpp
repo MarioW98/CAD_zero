@@ -133,10 +133,21 @@ std::unique_ptr<sdf::SDFBody> brep_to_sdf(const brep::BRepBody& body) {
     // Check if it's a sphere (1 face of type "sphere")
     if (faces.size() == 1) {
         const auto* surf = faces[0].surface();
-        if (surf && std::string(surf->type_name()) == "sphere") {
-            const auto* sph = dynamic_cast<const brep::SphereSurface*>(surf);
-            if (sph) {
-                return std::make_unique<sdf::SDFBody>(sdf::make_sphere(sph->radius()));
+        // H1 (ADR-0034 D3): the typed dispatch — the family enum, the
+        // visitor for the payload; the SDF consumes the double world
+        // through the declared double→float boundary.
+        if (surf && surf->family() == brep::SurfaceFamily::Sphere) {
+            struct SphereReader : brep::SurfaceVisitor {
+                const brep::SphereSurface* found{nullptr};
+                void visit(const brep::SphereSurface& s) override {
+                    found = &s;
+                }
+            } reader;
+            surf->accept(reader);
+            if (reader.found) {
+                return std::make_unique<sdf::SDFBody>(
+                    sdf::make_sphere(static_cast<float>(
+                        reader.found->radius())));
             }
         }
     }
@@ -144,11 +155,18 @@ std::unique_ptr<sdf::SDFBody> brep_to_sdf(const brep::BRepBody& body) {
     // Check if it's a cylinder (3 faces: cylinder + 2 planes)
     if (faces.size() == 3) {
         const auto* surf = faces[0].surface();
-        if (surf && std::string(surf->type_name()) == "cylinder") {
-            const auto* cyl = dynamic_cast<const brep::CylinderSurface*>(surf);
-            if (cyl) {
-                return std::make_unique<sdf::SDFBody>(
-                    sdf::make_cylinder(cyl->radius(), cyl->height()));
+        if (surf && surf->family() == brep::SurfaceFamily::Cylinder) {
+            struct CylReader : brep::SurfaceVisitor {
+                const brep::CylinderSurface* found{nullptr};
+                void visit(const brep::CylinderSurface& s) override {
+                    found = &s;
+                }
+            } reader;
+            surf->accept(reader);
+            if (reader.found) {
+                return std::make_unique<sdf::SDFBody>(sdf::make_cylinder(
+                    static_cast<float>(reader.found->radius()),
+                    static_cast<float>(reader.found->height())));
             }
         }
     }
@@ -156,10 +174,12 @@ std::unique_ptr<sdf::SDFBody> brep_to_sdf(const brep::BRepBody& body) {
     // Check if it's a box (6 plane faces, 8 vertices, 12 edges)
     if (faces.size() == 6 && body.vertex_count() == 8 && body.edge_count() == 12) {
         // Compute half-extents from vertex positions
+        // THE DISPLAY BOUNDARY (ADR-0034): the double bounds read
+        // into the SDF's float world, one direction, here.
         auto b = body.bounds();
-        math::Vec3f half = {(b.max.x - b.min.x) * 0.5f,
-                             (b.max.y - b.min.y) * 0.5f,
-                             (b.max.z - b.min.z) * 0.5f};
+        math::Vec3f half = {static_cast<float>((b.max.x - b.min.x) * 0.5),
+                            static_cast<float>((b.max.y - b.min.y) * 0.5),
+                            static_cast<float>((b.max.z - b.min.z) * 0.5)};
         return std::make_unique<sdf::SDFBody>(sdf::make_box(half));
     }
 

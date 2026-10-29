@@ -19,7 +19,7 @@ using namespace CAD_0::sdf;
 // PlaneSurface — test approfonditi
 // ---------------------------------------------------------------------------
 TEST_CASE("PlaneSurface: normal is always the same regardless of (u,v)") {
-    PlaneSurface plane(Vec3f{1, 2, 3}, Vec3f{0, 0, 1});
+    PlaneSurface plane(Vec3d{1, 2, 3}, Vec3d{0, 0, 1});
     const auto n1 = plane.normal(0, 0);
     const auto n2 = plane.normal(5, -3);
     CHECK(n1.x == doctest::Approx(n2.x));
@@ -28,7 +28,7 @@ TEST_CASE("PlaneSurface: normal is always the same regardless of (u,v)") {
 }
 
 TEST_CASE("PlaneSurface: evaluate at origin") {
-    PlaneSurface plane(Vec3f{1, 2, 3}, Vec3f{0, 1, 0});
+    PlaneSurface plane(Vec3d{1, 2, 3}, Vec3d{0, 1, 0});
     auto p = plane.evaluate(0, 0);
     CHECK(p.x == doctest::Approx(1.0f));
     CHECK(p.y == doctest::Approx(2.0f));
@@ -36,7 +36,7 @@ TEST_CASE("PlaneSurface: evaluate at origin") {
 }
 
 TEST_CASE("PlaneSurface: evaluate is linear in u and v") {
-    PlaneSurface plane(Vec3f{0, 0, 0}, Vec3f{0, 1, 0});
+    PlaneSurface plane(Vec3d{0, 0, 0}, Vec3d{0, 1, 0});
     auto p0 = plane.evaluate(0, 0);
     auto p1 = plane.evaluate(1, 0);
     auto p2 = plane.evaluate(2, 0);
@@ -49,13 +49,13 @@ TEST_CASE("PlaneSurface: evaluate is linear in u and v") {
 }
 
 TEST_CASE("PlaneSurface: normal is unit length") {
-    PlaneSurface plane(Vec3f{0, 0, 0}, Vec3f{1, 1, 1});
+    PlaneSurface plane(Vec3d{0, 0, 0}, Vec3d{1, 1, 1});
     auto n = plane.normal(0, 0);
     CHECK(n.length() == doctest::Approx(1.0f).epsilon(0.001f));
 }
 
 TEST_CASE("PlaneSurface: bounds is universe") {
-    PlaneSurface plane(Vec3f{0, 0, 0}, Vec3f{0, 1, 0});
+    PlaneSurface plane(Vec3d{0, 0, 0}, Vec3d{0, 1, 0});
     auto b = plane.bounds();
     CHECK(b.empty() == false);
 }
@@ -138,9 +138,9 @@ TEST_CASE("CylinderSurface: all surface points at distance R from axis") {
     CylinderSurface cyl(2.5f, 10.0f);
     for (int i = 0; i < 10; ++i) {
         float u = float(i) * 0.628f;
-        float v = float(i) - 4.5f;
+        double v = double(i) - 4.5;
         auto p = cyl.evaluate(u, v);
-        float r = std::sqrt(p.x * p.x + p.z * p.z);
+        double r = std::sqrt(p.x * p.x + p.z * p.z);
         CHECK(r == doctest::Approx(2.5f).epsilon(0.01f));
     }
 }
@@ -173,7 +173,7 @@ TEST_CASE("SphereSurface: all points at distance R from center") {
         float u = float(i) * 0.628f;
         float v = float(i) * 0.314f;
         auto p = sph.evaluate(u, v);
-        float r = p.length();
+        double r = p.length();
         CHECK(r == doctest::Approx(3.0f).epsilon(0.01f));
     }
 }
@@ -204,7 +204,7 @@ TEST_CASE("SphereSurface: north and south pole") {
 }
 
 TEST_CASE("SphereSurface: bounds with center offset") {
-    SphereSurface sph(2.0f, Vec3f{1, 2, 3});
+    SphereSurface sph(2.0f, Vec3d{1, 2, 3});
     auto b = sph.bounds();
     CHECK(b.min.x == doctest::Approx(-1.0f));
     CHECK(b.max.x == doctest::Approx(3.0f));
@@ -235,8 +235,8 @@ TEST_CASE("ConeSurface: radius decreases linearly with v") {
     ConeSurface cone(4.0f, 8.0f);
     auto p0 = cone.evaluate(0.0f, 0.0f);  // v=0, r=4
     auto p4 = cone.evaluate(0.0f, 4.0f);  // v=4, r should be 2
-    float r0 = std::sqrt(p0.x * p0.x + p0.z * p0.z);
-    float r4 = std::sqrt(p4.x * p4.x + p4.z * p4.z);
+    double r0 = std::sqrt(p0.x * p0.x + p0.z * p0.z);
+    double r4 = std::sqrt(p4.x * p4.x + p4.z * p4.z);
     CHECK(r0 == doctest::Approx(4.0f));
     CHECK(r4 == doctest::Approx(2.0f).epsilon(0.01f));
 }
@@ -247,7 +247,7 @@ TEST_CASE("ConeSurface: radius decreases linearly with v") {
 TEST_CASE("TorusSurface: point on outer equator") {
     TorusSurface tor(3.0f, 0.5f);
     auto p = tor.evaluate(0.0f, 0.0f);  // outermost point
-    float r = std::sqrt(p.x * p.x + p.z * p.z);
+    double r = std::sqrt(p.x * p.x + p.z * p.z);
     CHECK(r == doctest::Approx(3.5f));
 }
 
@@ -255,7 +255,7 @@ TEST_CASE("TorusSurface: point on inner equator") {
     TorusSurface tor(3.0f, 0.5f);
     
     auto p = tor.evaluate(0.0f, 3.14159f);  // innermost point
-    float r = std::sqrt(p.x * p.x + p.z * p.z);
+    double r = std::sqrt(p.x * p.x + p.z * p.z);
     CHECK(r == doctest::Approx(2.5f).epsilon(0.01f));
 }
 
@@ -273,9 +273,9 @@ TEST_CASE("TorusSurface: all points at distance r from ring center") {
         float v = float(i) * 0.785f;
         auto p = tor.evaluate(u, v);
         // Distance from ring center (in XZ plane)
-        float ring_r = std::sqrt(p.x * p.x + p.z * p.z);
+        double ring_r = std::sqrt(p.x * p.x + p.z * p.z);
         // Distance from tube center
-        float tube_d = std::sqrt((ring_r - 3.0f) * (ring_r - 3.0f) + p.y * p.y);
+        double tube_d = std::sqrt((ring_r - 3.0) * (ring_r - 3.0) + p.y * p.y);
         CHECK(tube_d == doctest::Approx(0.7f).epsilon(0.01f));
     }
 }
@@ -284,7 +284,7 @@ TEST_CASE("TorusSurface: all points at distance r from ring center") {
 // Curve tests
 // ---------------------------------------------------------------------------
 TEST_CASE("LineCurve: evaluate at t=0 returns origin") {
-    LineCurve line(Vec3f{1, 2, 3}, Vec3f{0, 0, 1});
+    LineCurve line(Vec3d{1, 2, 3}, Vec3d{0, 0, 1});
     auto p = line.evaluate(0.0f);
     CHECK(p.x == doctest::Approx(1.0f));
     CHECK(p.y == doctest::Approx(2.0f));
@@ -292,7 +292,7 @@ TEST_CASE("LineCurve: evaluate at t=0 returns origin") {
 }
 
 TEST_CASE("LineCurve: tangent is constant") {
-    LineCurve line(Vec3f{0, 0, 0}, Vec3f{1, 1, 1});
+    LineCurve line(Vec3d{0, 0, 0}, Vec3d{1, 1, 1});
     auto t0 = line.tangent(0.0f);
     auto t1 = line.tangent(10.0f);
     CHECK(t0.x == doctest::Approx(t1.x));
@@ -318,7 +318,7 @@ TEST_CASE("CircleCurve: evaluate at t=π/2") {
 
 TEST_CASE("CircleCurve: arc length = 2πR") {
     CircleCurve circle(3.0f);
-    float len = circle.length();
+    double len = circle.length();
     CHECK(len == doctest::Approx(18.849f).epsilon(0.01f));
 }
 
@@ -341,7 +341,7 @@ TEST_CASE("EllipseCurve: evaluate at t=π/2") {
 // Factory tests — struttura completa
 // ---------------------------------------------------------------------------
 TEST_CASE("Factory: box has correct vertex positions") {
-    auto body = make_box(Vec3f{1, 2, 3});
+    auto body = make_box(Vec3d{1, 2, 3});
     // Vertex 0: (-1, -2, -3)
     CHECK(body->vertices[0].position().x == doctest::Approx(-1.0f));
     CHECK(body->vertices[0].position().y == doctest::Approx(-2.0f));
@@ -353,7 +353,7 @@ TEST_CASE("Factory: box has correct vertex positions") {
 }
 
 TEST_CASE("Factory: box has correct edge connectivity") {
-    auto body = make_box(Vec3f{1, 1, 1});
+    auto body = make_box(Vec3d{1, 1, 1});
     // Edge 0: vertices 0→1
     CHECK(body->edges[0].vertex(0) == 0);
     CHECK(body->edges[0].vertex(1) == 1);
@@ -363,7 +363,7 @@ TEST_CASE("Factory: box has correct edge connectivity") {
 }
 
 TEST_CASE("Factory: box has 6 plane faces") {
-    auto body = make_box(Vec3f{1, 1, 1});
+    auto body = make_box(Vec3d{1, 1, 1});
     for (const auto& face : body->solid.shell().faces()) {
         CHECK(std::string(face.surface()->type_name()) == "plane");
     }
@@ -371,7 +371,7 @@ TEST_CASE("Factory: box has 6 plane faces") {
 }
 
 TEST_CASE("Factory: box shell is closed") {
-    auto body = make_box(Vec3f{1, 1, 1});
+    auto body = make_box(Vec3d{1, 1, 1});
     CHECK(body->solid.shell().is_closed() == true);
 }
 
@@ -393,7 +393,7 @@ TEST_CASE("Factory: cylinder has 3 faces") {
 }
 
 TEST_CASE("Factory: box bounds match half-extents") {
-    auto body = make_box(Vec3f{2, 3, 4});
+    auto body = make_box(Vec3d{2, 3, 4});
     auto b = body->bounds();
     CHECK(b.min.x == doctest::Approx(-2.0f));
     CHECK(b.max.x == doctest::Approx(2.0f));
@@ -407,7 +407,7 @@ TEST_CASE("Factory: box bounds match half-extents") {
 // Tessellation tests
 // ---------------------------------------------------------------------------
 TEST_CASE("Tessellation: box face produces mesh") {
-    auto body = make_box(Vec3f{1, 1, 1});
+    auto body = make_box(Vec3d{1, 1, 1});
     TessellationOptions opts;
     opts.resolution = 4;
     auto mesh = tessellate_body(*body, opts);
@@ -425,7 +425,7 @@ TEST_CASE("Tessellation: sphere produces mesh") {
     CHECK(mesh.triangle_count() > 0);
     // All vertices should be at distance ~2 from origin
     for (const auto& p : mesh.positions) {
-        float r = p.length();
+        double r = p.length();
         CHECK(r == doctest::Approx(2.0f).epsilon(0.05f));
     }
 }
@@ -484,7 +484,7 @@ TEST_CASE("Topology: loop with 4 coedges") {
 }
 
 TEST_CASE("Topology: face forward/reverse") {
-    auto surf = std::make_shared<PlaneSurface>(Vec3f{0,0,0}, Vec3f{0,1,0});
+    auto surf = std::make_shared<PlaneSurface>(Vec3d{0,0,0}, Vec3d{0,1,0});
     Face face(surf);
     CHECK(face.forward() == true);
     face.set_forward(false);
@@ -493,8 +493,8 @@ TEST_CASE("Topology: face forward/reverse") {
 
 TEST_CASE("Topology: BRepBody bounds from vertices") {
     BRepBody body;
-    body.vertices.push_back(Vertex{Vec3f{-1, -2, -3}});
-    body.vertices.push_back(Vertex{Vec3f{1, 2, 3}});
+    body.vertices.push_back(Vertex{Vec3d{-1, -2, -3}});
+    body.vertices.push_back(Vertex{Vec3d{1, 2, 3}});
     auto b = body.bounds();
     CHECK(b.min.x == doctest::Approx(-1.0f));
     CHECK(b.max.x == doctest::Approx(1.0f));

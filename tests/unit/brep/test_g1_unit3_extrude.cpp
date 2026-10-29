@@ -78,18 +78,18 @@ namespace {
 namespace b = CAD_0::brep;
 namespace s = CAD_0::sdf;
 using CAD_0::math::Vec2f;
-using CAD_0::math::Vec3f;
+using CAD_0::math::Vec3d;
 
 constexpr float kPi = 3.14159265358979f;
 constexpr float kTwoPi = 6.28318530717958647692f;
 
-bool close(float a, float b, float tol = 1e-5f) {
+bool close(double a, double b, double tol = 1e-5) {
     return std::abs(a - b) <= tol;
 }
 bool close2(const Vec2f& a, const Vec2f& b, float tol = 1e-5f) {
     return close(a.x, b.x, tol) && close(a.y, b.y, tol);
 }
-bool close3(const Vec3f& a, const Vec3f& b, float tol = 1e-5f) {
+bool close3(const Vec3d& a, const Vec3d& b, float tol = 1e-5f) {
     return close(a.x, b.x, tol) && close(a.y, b.y, tol) &&
            close(a.z, b.z, tol);
 }
@@ -382,16 +382,16 @@ void check_loop_conventions(const b::BRepBody& body, const b::Face& face,
 
         // DIRECTION — the p-curve's evaluated start/end are the
         // co-edge's start/end vertex images (± the u period).
-        const Vec3f vstart =
+        const Vec3d vstart =
             body.vertices[static_cast<std::size_t>(
                 ce.start_vertex(body.edges))].position();
-        const Vec3f vend =
+        const Vec3d vend =
             body.vertices[static_cast<std::size_t>(
                 ce.end_vertex(body.edges))].position();
         REQUIRE(surf != nullptr);
         if (pc.kind == s::SketchEntity::Kind::Segment) {
-            const Vec3f es = surf->evaluate(pc.segment.a.x, pc.segment.a.y);
-            const Vec3f ee = surf->evaluate(pc.segment.b.x, pc.segment.b.y);
+            const Vec3d es = surf->evaluate(pc.segment.a.x, pc.segment.a.y);
+            const Vec3d ee = surf->evaluate(pc.segment.b.x, pc.segment.b.y);
             CHECK(close3(es, vstart));
             CHECK(close3(ee, vend));
         } else {  // Arc
@@ -442,7 +442,7 @@ void check_loop_conventions(const b::BRepBody& body, const b::Face& face,
 void check_face_conventions(const b::BRepBody& body, const b::Face& face,
                             const std::vector<RegionSpec>& loop_regions,
                             const std::vector<Vec2f>& domain_samples,
-                            const Vec3f& outward_hint,
+                            const Vec3d& outward_hint,
                             const std::vector<bool>& seam_flags = {}) {
     const auto* surf = face.surface();
     REQUIRE(surf != nullptr);
@@ -450,13 +450,13 @@ void check_face_conventions(const b::BRepBody& body, const b::Face& face,
     REQUIRE(loop_regions.size() == nl);
 
     for (const Vec2f& p : domain_samples) {
-        const Vec3f pu = surf->evaluate(p.x + 1e-3f, p.y);
-        const Vec3f pm = surf->evaluate(p.x, p.y);
-        const Vec3f pv = surf->evaluate(p.x, p.y + 1e-3f);
-        const Vec3f du{pu.x - pm.x, pu.y - pm.y, pu.z - pm.z};
-        const Vec3f dv{pv.x - pm.x, pv.y - pm.y, pv.z - pm.z};
-        const Vec3f cross = du.cross(dv);
-        const Vec3f nrm = surf->normal(p.x, p.y);
+        const Vec3d pu = surf->evaluate(p.x + 1e-3f, p.y);
+        const Vec3d pm = surf->evaluate(p.x, p.y);
+        const Vec3d pv = surf->evaluate(p.x, p.y + 1e-3f);
+        const Vec3d du{pu.x - pm.x, pu.y - pm.y, pu.z - pm.z};
+        const Vec3d dv{pv.x - pm.x, pv.y - pm.y, pv.z - pm.z};
+        const Vec3d cross = du.cross(dv);
+        const Vec3d nrm = surf->normal(p.x, p.y);
         CHECK(cross.dot(nrm) > 0.0f);
         CHECK(nrm.dot(outward_hint) > 0.0f);
     }
@@ -574,7 +574,7 @@ std::string sdf_digest(const s::SDFBody& body) {
     for (int i = 0; i <= 4; ++i)
         for (int j = 0; j <= 4; ++j)
             for (int k = 0; k <= 4; ++k) {
-                const Vec3f p{
+                const CAD_0::math::Vec3f p{
                     bb.min.x + (bb.max.x - bb.min.x) * static_cast<float>(i) / 4.0f,
                     bb.min.y + (bb.max.y - bb.min.y) * static_cast<float>(j) / 4.0f,
                     bb.min.z + (bb.max.z - bb.min.z) * static_cast<float>(k) / 4.0f};
@@ -732,7 +732,7 @@ TEST_CASE("G1-U3 golden: the segment prism (n=4) — the full pinned tables") {
     // Vertices: id 2i = the bottom copy of joint J_i (entity i's
     // END), id 2i+1 = its top copy; z spans [0, 1.5] (direction +1).
     //   J0=(2,-1)  J1=(2,1)  J2=(-2,1)  J3=(-2,-1)
-    const Vec3f pv[8] = {
+    const Vec3d pv[8] = {
         {2.0f, -1.0f, 0.0f}, {2.0f, -1.0f, 1.5f},    // J0 bottom, top
         {2.0f, 1.0f, 0.0f}, {2.0f, 1.0f, 1.5f},      // J1
         {-2.0f, 1.0f, 0.0f}, {-2.0f, 1.0f, 1.5f},    // J2
@@ -862,7 +862,7 @@ TEST_CASE("G1-U3 golden: the segment prism (n=4) — the full pinned tables") {
     // + the frame rule), each against its region model.
     {
         s::ProfileSDF profile(rect_chains());
-        const Vec3f hints[4] = {{0.0f, -1.0f, 0.0f}, {1.0f, 0.0f, 0.0f},
+        const Vec3d hints[4] = {{0.0f, -1.0f, 0.0f}, {1.0f, 0.0f, 0.0f},
                                 {0.0f, 1.0f, 0.0f}, {-1.0f, 0.0f, 0.0f}};
         for (std::size_t fi = 0; fi < 4; ++fi) {
             // The lateral rectangle in the entity's plane domain: the
@@ -955,8 +955,8 @@ TEST_CASE("G1-U3 golden: the sector (segments + arc) — the arc's cylindrical p
     const Vec2f c0{0.0f, 0.0f};
     const Vec2f ps = c0 + Vec2f{1.5f * std::cos(a0), 1.5f * std::sin(a0)};
     const Vec2f pe = c0 + Vec2f{1.5f * std::cos(a1), 1.5f * std::sin(a1)};
-    const Vec3f n0 = Vec3f{ps.y - c0.y, -(ps.x - c0.x), 0.0f}.normalized();
-    const Vec3f n2 = Vec3f{-(pe.y - c0.y), pe.x - c0.x, 0.0f}.normalized();
+    const Vec3d n0 = Vec3d{ps.y - c0.y, -(ps.x - c0.x), 0.0f}.normalized();
+    const Vec3d n2 = Vec3d{-(pe.y - c0.y), pe.x - c0.x, 0.0f}.normalized();
     for (std::size_t fi : {std::size_t{0}, std::size_t{2}}) {
         std::vector<Vec2f> corners;
         for (const auto& ce : faces[fi].loops()[0].coedges())
@@ -1258,8 +1258,12 @@ TEST_CASE("G1-U3 landing: the extrude node owns BOTH materializations, bridge to
     // samples identical to the node's display body.
     CHECK(n->hybrid->sdf->bounds().min.x == n->body.bounds().min.x);
     CHECK(n->hybrid->sdf->bounds().max.z == n->body.bounds().max.z);
-    for (const Vec3f p : {Vec3f{0.5f, 0.25f, 1.5f}, Vec3f{2.0f, 0.25f, 1.5f},
-                          Vec3f{0.5f, 0.25f, -0.1f}}) {
+    for (const Vec3d pd : {Vec3d{0.5f, 0.25f, 1.5f}, Vec3d{2.0f, 0.25f, 1.5f},
+                           Vec3d{0.5f, 0.25f, -0.1f}}) {
+        // il confine display (ADR-0034): il campionamento SDF e' float
+        const CAD_0::math::Vec3f p{static_cast<float>(pd.x),
+                                   static_cast<float>(pd.y),
+                                   static_cast<float>(pd.z)};
         CHECK(n->hybrid->sdf->sample(p).value == n->body.sample(p).value);
     }
 

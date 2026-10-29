@@ -1,7 +1,14 @@
 // core/math/src/predicate.cpp
 //
 // Wraps Shewchuk's robust predicates C implementation.
-// The C source is vendored under third_party/robust_predicates/.
+// The C source is vendored under third_party/robust_predicates/ — the
+// AUTHENTIC robust.c since H1 (adaptive, revision May 18, 1996; the
+// provenance header and the exhaustive local-modification list live in
+// the file). The public contract of this wrapper is unchanged: the
+// same signatures, the same initialize discipline — only the answers
+// on near-degenerate inputs are new, because only those were wrong
+// (the sign at ulp scale; the discriminating tests pin the
+// difference — tests/unit/math/test_predicate_adaptive.cpp).
 //
 #include "CAD_0/math/predicate.hpp"
 

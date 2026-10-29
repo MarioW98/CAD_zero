@@ -695,7 +695,15 @@ check is part of the operation's input contract.
    faces); A's planar faces × B's caps via the existing
    plane∩plane path (Greiner-Hormann, unchanged).
 2. **Classify:** fragments by the proven centroid-then-predicate
-   discipline — the centroid for the coarse cut, the vendored
+   discipline — the centroid for the coarse cut, **[Correction on
+   the record (H1, 2026-10-29, ADR-0034): the landed G1 subtract
+   never called the Shewchuk predicates — the "vendored" file was
+   the Phase A stub (non-adaptive), and the band classification ran
+   on the unit's own float arithmetic. The register described the
+   discipline, not the tree. H1 lands the authentic adaptive
+   `robust.c` and ADR-0034 pins the band arithmetic to double;
+   the boolean unit that first CONSUMES the predicates wires them
+   (the wrapper contract is unchanged since Phase A).]** the
    Shewchuk predicates (`orient3d`) for the band, per ADR-0004's
    explicit tolerance.
 3. **Assemble:** the proven pattern, verbatim — canonical vertex
