@@ -49,6 +49,7 @@
 #pragma once
 
 #include "CAD_0/brep/topology.hpp"
+#include "CAD_0/geometry/shape_id.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -113,6 +114,15 @@ struct FaceInfo {
     // bound for the faceted one — never guessed, never laundered.
     bool exact{true};
     double linear_tolerance{0.0};
+
+    // The NAME (ADR-0036 D1, H2-u6 morso 2): the entity's identity
+    // beside its address — the ShapeId (structure) and the canonical
+    // render. The default id and the EMPTY name are the honest
+    // "unnamed" answer (the v1 named classes are the three
+    // factories; the faceted world, the booleans' born entities and
+    // the classes outside v1's tables read empty, never a guess).
+    geometry::ShapeId id{};
+    std::string name{};
 };
 
 // query_face — the face with this id, as plain values. Faces are
@@ -125,6 +135,39 @@ FaceInfo query_face(const BRepBody& body, FaceId face_id);
 // An empty body returns an empty vector (a legitimate answer, not an
 // error: an empty shell has no faces to describe).
 std::vector<FaceInfo> query_all_faces(const BRepBody& body);
+
+// ---------------------------------------------------------------------------
+// The edge query (ADR-0036 D1, H2-u6 morso 2): the face query's own
+// contract one entity kind over — the fillet references EDGES, so
+// the edge's answer carries the name beside the address from day
+// one of the naming (D4's first consumer is edge-granular).
+// ---------------------------------------------------------------------------
+
+// One edge's answer, in full: the endpoints (the Edge's own pair),
+// the manifoldness (exactly two co-edges, the radial contract), the
+// Layer-2 record — and the NAME, with the same honest-empty rule as
+// FaceInfo's (unnamed is unnamed, never a guess).
+struct EdgeInfo {
+    VertexId v0{0};
+    VertexId v1{0};
+    bool manifold{false};
+    std::size_t coedge_count{0};
+
+    bool exact{true};
+    double linear_tolerance{0.0};
+
+    geometry::ShapeId id{};
+    std::string name{};
+};
+
+// query_edge — the edge with this id, as plain values. Throws
+// std::invalid_argument naming the valid range and the remedy when
+// the id is outside the body's own edge array (the same loud-miss
+// culture as query_face).
+EdgeInfo query_edge(const BRepBody& body, EdgeId edge_id);
+
+// query_all_edges — every edge of the body, in the body's own order.
+std::vector<EdgeInfo> query_all_edges(const BRepBody& body);
 
 // ---------------------------------------------------------------------------
 // The body query (G1 unit 6, ADR-0032 D8 at the body level)

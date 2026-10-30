@@ -50,10 +50,28 @@
 // BREP domain's DOUBLE vocabulary — the projection below crosses no
 // boundary at all (double in, double stored), and the periodic
 // constants are double. The old demotions are gone, not converted.
+//
+// THE NAMES (ADR-0036 D1, H2-u6 morso 2 — the roots): every face
+// and every edge of these bodies carries its ShapeId (the creating
+// feature + the path of indices into the NORMATIVE role tables of
+// naming.hpp) and its canonical render — stamped HERE, in the pass
+// that builds, as pure role bootstrapping: the construction index
+// is already in hand, the tables are compile-time constants, and
+// there is NO external input, NO global counter, NO state — two
+// identical calls produce identical names, bit for bit (the purity
+// the tests pin by calling twice). The optional `feature`
+// parameter carries the DAG identity when the caller has one (the
+// guide case's box#1); the default serves the bridge's primitive
+// fit and the standalone tests, and nothing downstream moves. The
+// tetrahedron is OUTSIDE v1's named classes (ADR-0036 D4 names the
+// three factories; the grammar's kind vocabulary has no 'tet') —
+// its entities read honestly unnamed, the empty name, never a
+// guess.
 #pragma once
 
 #include "CAD_0/brep/topology.hpp"
 #include "CAD_0/brep/analytic.hpp"
+#include "CAD_0/brep/naming.hpp"
 
 #include <memory>
 
@@ -130,7 +148,8 @@ inline CoEdge line_coedge(EdgeId e, bool reversed, const PlaneSurface& s,
 //   4: left    (-X)   loop 3→0→4→7→3    (edges 3,8 forward; 7,11 reversed)
 //   5: right   (+X)   loop 1→2→6→5→1    (edges 1,10 forward; 5,9 reversed)
 //
-inline std::unique_ptr<BRepBody> make_box(math::Vec3d half_extents) {
+inline std::unique_ptr<BRepBody> make_box(math::Vec3d half_extents,
+                                          geometry::FeatureId feature = {}) {
     auto body = std::make_unique<BRepBody>();
     auto& solid = body->solid;
     auto& shell = solid.shell_mut();
@@ -147,21 +166,34 @@ inline std::unique_ptr<BRepBody> make_box(math::Vec3d half_extents) {
     for (std::size_t i = 0; i < body->vertices.size(); ++i)
         body->vertices[i].set_id(static_cast<VertexId>(i));
 
-    // 12 edges (see numbering in the header comment).
+    // 12 edges (see numbering in the header comment). The NAME is
+    // stamped in the same pass (ADR-0036 D1): the role table's
+    // index is the construction index in hand — the edges' normative
+    // table (naming.hpp's kBoxEdgeRoles) is this comment's own
+    // vocabulary, frozen by the goldens.
     body->edges = {
         Edge{0,1}, Edge{1,2}, Edge{2,3}, Edge{3,0},  // bottom ring
         Edge{4,5}, Edge{5,6}, Edge{6,7}, Edge{7,4},  // top ring
         Edge{0,4}, Edge{1,5}, Edge{2,6}, Edge{3,7},  // verticals
     };
-    for (std::size_t i = 0; i < body->edges.size(); ++i)
+    for (std::size_t i = 0; i < body->edges.size(); ++i) {
         body->edges[i].set_id(static_cast<EdgeId>(i));
+        const geometry::SubshapeRef ref =
+            geometry::SubshapeRef{}.push(static_cast<std::uint32_t>(i));
+        body->edges[i].set_shape_id({feature, ref, {}});
+        body->edges[i].set_name(naming::render_name(
+            feature, ref, naming::kBoxNaming.edges()));
+    }
 
     // Helper: append a planar face with a single 4-coedge outer loop,
     // every co-edge carrying its Line2 p-curve — the projected
     // rectangle of the face's region in the plane's (u,v) domain
     // (unit 2's trimming contract; the pins live in
-    // test_g1_unit2_pcurves.cpp).
-    auto add_plane_face = [&shell, &body](
+    // test_g1_unit2_pcurves.cpp). The NAME is stamped in the same
+    // pass (ADR-0036 D1): the role table's index IS the face id —
+    // kBoxFaceRoles' normative vocabulary, the numbering comment's
+    // own table above.
+    auto add_plane_face = [&shell, &body, feature](
         math::Vec3d origin, math::Vec3d normal, FaceId id,
         EdgeId e0, bool r0,
         EdgeId e1, bool r1,
@@ -181,6 +213,11 @@ inline std::unique_ptr<BRepBody> make_box(math::Vec3d half_extents) {
                                             body->vertices, body->edges));
         face.add_loop(std::move(loop));
         face.set_id(id);
+        const geometry::SubshapeRef ref =
+            geometry::SubshapeRef{}.push(static_cast<std::uint32_t>(id));
+        face.set_shape_id({feature, ref, {}});
+        face.set_name(naming::render_name(
+            feature, ref, naming::kBoxNaming.faces()));
         shell.add_face(std::move(face));
     };
 
@@ -263,7 +300,9 @@ inline std::unique_ptr<BRepBody> make_box(math::Vec3d half_extents) {
 //   seam fwd (north→south): the RIGHT edge, Line2 (2π,0) → (2π,π);
 //   seam rev (south→north): the LEFT edge, Line2 (0,π) → (0,0).
 // Both carry material on the left (the rectangle's interior).
-inline std::unique_ptr<BRepBody> make_sphere(double radius, math::Vec3d center = {}) {
+inline std::unique_ptr<BRepBody> make_sphere(double radius,
+                                          math::Vec3d center = {},
+                                          geometry::FeatureId feature = {}) {
     auto body = std::make_unique<BRepBody>();
     auto& shell = body->solid.shell_mut();
     shell.set_closed(true);
@@ -276,9 +315,18 @@ inline std::unique_ptr<BRepBody> make_sphere(double radius, math::Vec3d center =
     for (std::size_t i = 0; i < body->vertices.size(); ++i)
         body->vertices[i].set_id(static_cast<VertexId>(i));
 
-    // 1 edge: the seam meridian from north to south.
+    // 1 edge: the seam meridian from north to south. The NAME in
+    // the same pass (ADR-0036 D1): kSphereEdgeRoles' 'seam' — the
+    // ADR-0023 convention's own e_seam, token-legal.
     body->edges = { Edge{0, 1} };
     body->edges[0].set_id(0);
+    {
+        const geometry::SubshapeRef ref =
+            geometry::SubshapeRef{}.push(0u);
+        body->edges[0].set_shape_id({feature, ref, {}});
+        body->edges[0].set_name(naming::render_name(
+            feature, ref, naming::kSphereNaming.edges()));
+    }
 
     // 1 face: the spherical surface. Its loop uses the seam edge twice
     // — once forward (north→south) and once reversed (south→north) —
@@ -301,6 +349,15 @@ inline std::unique_ptr<BRepBody> make_sphere(double radius, math::Vec3d center =
     }
     face.add_loop(std::move(loop));
     face.set_id(0);
+    {
+        // The NAME in the same pass (ADR-0036 D1): kSphereFaceRoles'
+        // 'sphere' — the ADR-0023 convention's own f_sphere.
+        const geometry::SubshapeRef ref =
+            geometry::SubshapeRef{}.push(0u);
+        face.set_shape_id({feature, ref, {}});
+        face.set_name(naming::render_name(
+            feature, ref, naming::kSphereNaming.faces()));
+    }
     shell.add_face(std::move(face));
 
     link_radial_edges(*body);
@@ -346,7 +403,9 @@ inline std::unique_ptr<BRepBody> make_sphere(double radius, math::Vec3d center =
 //     rim's full circle walked CCW as two π-sweep Arc2 (the caps'
 //     frames put v_top1/v_bot1 at domain angle −π/2 and the antipode
 //     at +π/2; both caps read the same angles, see the golden pins).
-inline std::unique_ptr<BRepBody> make_cylinder(double radius, double height) {
+inline std::unique_ptr<BRepBody> make_cylinder(double radius,
+                                              double height,
+                                              geometry::FeatureId feature = {}) {
     auto body = std::make_unique<BRepBody>();
     auto& shell = body->solid.shell_mut();
     shell.set_closed(true);
@@ -362,7 +421,10 @@ inline std::unique_ptr<BRepBody> make_cylinder(double radius, double height) {
     for (std::size_t i = 0; i < body->vertices.size(); ++i)
         body->vertices[i].set_id(static_cast<VertexId>(i));
 
-    // 5 edges (see numbering in the header comment).
+    // 5 edges (see numbering in the header comment). The NAME in
+    // the same pass (ADR-0036 D1): kCylinderEdgeRoles — the
+    // ADR-0023 convention's own e_top1/e_top2/e_bot1/e_bot2/e_seam,
+    // token-legal, the numbering frozen by the goldens.
     body->edges = {
         Edge{0, 1},  // e_top1: v_top1 → v_top2   (−Z side)
         Edge{1, 0},  // e_top2: v_top2 → v_top1   (+Z side)
@@ -370,8 +432,14 @@ inline std::unique_ptr<BRepBody> make_cylinder(double radius, double height) {
         Edge{3, 2},  // e_bot2: v_bot2 → v_bot1   (−Z side)
         Edge{2, 0},  // e_seam: v_bot1 → v_top1   (at u=0)
     };
-    for (std::size_t i = 0; i < body->edges.size(); ++i)
+    for (std::size_t i = 0; i < body->edges.size(); ++i) {
         body->edges[i].set_id(static_cast<EdgeId>(i));
+        const geometry::SubshapeRef ref =
+            geometry::SubshapeRef{}.push(static_cast<std::uint32_t>(i));
+        body->edges[i].set_shape_id({feature, ref, {}});
+        body->edges[i].set_name(naming::render_name(
+            feature, ref, naming::kCylinderNaming.edges()));
+    }
 
     // Face 0: the wall — the slit rectangle's CCW walk in the (u,v)
     // window [0,2π]×[−h,h], starting up the RIGHT seam copy:
@@ -411,6 +479,16 @@ inline std::unique_ptr<BRepBody> make_cylinder(double radius, double height) {
         loop.add_coedge(bot1_rev);
         face.add_loop(std::move(loop));
         face.set_id(0);
+        {
+            // The NAME in the same pass (ADR-0036 D1):
+            // kCylinderFaceRoles' 'lateral' — the ADR-0023
+            // convention's own f_lateral, the wall.
+            const geometry::SubshapeRef ref =
+                geometry::SubshapeRef{}.push(0u);
+            face.set_shape_id({feature, ref, {}});
+            face.set_name(naming::render_name(
+                feature, ref, naming::kCylinderNaming.faces()));
+        }
         shell.add_face(std::move(face));
     }
 
@@ -419,10 +497,10 @@ inline std::unique_ptr<BRepBody> make_cylinder(double radius, double height) {
     // ((−Z,−X) top, (Z,−X) bottom) put v_top1/v_bot1 (the seam-side
     // rim vertex, +X in 3D) at domain angle −π/2 and the antipode at
     // +π/2 — the same table for both caps, pinned by the goldens.
-    const auto add_cap_face = [&shell, radius](math::Vec3d origin,
-                                               math::Vec3d normal,
-                                               FaceId id, EdgeId e_first,
-                                               EdgeId e_second) {
+    const auto add_cap_face = [&shell, radius, feature](math::Vec3d origin,
+                                                        math::Vec3d normal,
+                                                        FaceId id, EdgeId e_first,
+                                                        EdgeId e_second) {
         Face face(std::make_shared<PlaneSurface>(origin, normal));
         Loop loop;
         CoEdge first{e_first, false};
@@ -439,6 +517,17 @@ inline std::unique_ptr<BRepBody> make_cylinder(double radius, double height) {
         loop.add_coedge(second);
         face.add_loop(std::move(loop));
         face.set_id(id);
+        {
+            // The NAME in the same pass (ADR-0036 D1):
+            // kCylinderFaceRoles' 'top'/'bot' — the ADR-0023
+            // convention's own f_top/f_bot, the caps.
+            const geometry::SubshapeRef ref =
+                geometry::SubshapeRef{}.push(
+                    static_cast<std::uint32_t>(id));
+            face.set_shape_id({feature, ref, {}});
+            face.set_name(naming::render_name(
+                feature, ref, naming::kCylinderNaming.faces()));
+        }
         shell.add_face(std::move(face));
     };
 

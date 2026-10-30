@@ -44,6 +44,7 @@ set(CAD_0_TEST_SOURCES
     unit/brep/test_g1_unit6_report.cpp
     unit/brep/test_g2_unit1_ssi_table.cpp
     unit/brep/test_h2_u3_pcurve_double.cpp
+    unit/brep/test_h2_u6_m2_factory_names.cpp
     unit/bridge/test_bridge.cpp
     main.cpp
 )

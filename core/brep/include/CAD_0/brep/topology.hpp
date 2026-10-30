@@ -13,6 +13,11 @@
 #include "CAD_0/math/bbox.hpp"
 #include "CAD_0/math/tolerance.hpp"
 #include "CAD_0/brep/pcurve.hpp"
+// The naming ABI (ADR-0005, as amended by ADR-0036 D1): the ShapeId
+// the naming morsi populate on the entities — a leaf header (no
+// brep dependency on its side), included here so Face/Edge carry
+// the identity beside the address.
+#include "CAD_0/geometry/shape_id.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -145,11 +150,33 @@ public:
     // query the exact-kernel rungs consume.
     const ProvenanceInfo& provenance() const noexcept { return provenance_; }
     void set_provenance(ProvenanceInfo p) noexcept { provenance_ = p; }
+
+    // The NAME (ADR-0036 D1, H2-u6 morso 2): the entity's identity
+    // BESIDE its address — the ShapeId (structure: creating feature
+    // + path of indices into the declared role tables + generation)
+    // and its canonical render, stamped at materialization by the
+    // site that owns the table. Additive, defaulted: an entity no
+    // path named reads the default id and the EMPTY name — honestly
+    // unnamed (the faceted world, the booleans' born entities until
+    // their morso, the classes outside v1's tables), never a guess.
+    // Equality, hash and comparison are STRUCTURAL (ShapeId's own
+    // operators); the string serves the register, the report and
+    // the human. The address plan is INTACT (D1's split): every
+    // existing golden, count and positional query is untouched.
+    const geometry::ShapeId& shape_id() const noexcept {
+        return shape_id_;
+    }
+    void set_shape_id(geometry::ShapeId id) noexcept { shape_id_ = id; }
+    const std::string& name() const noexcept { return name_; }
+    void set_name(std::string n) noexcept { name_ = std::move(n); }
+
 private:
     VertexId v_[2]{0, 0};
     EdgeId id_{0};
     std::vector<const CoEdge*> coedges_;  // ADR-0012 radial-edge list; ADR-0021 ownership
     ProvenanceInfo provenance_{};
+    geometry::ShapeId shape_id_{};
+    std::string name_{};
 };
 
 // CoEdge — oriented use of an Edge within a Loop
@@ -286,12 +313,34 @@ public:
     // sampling bound; an analytic face reads exact/0.
     const ProvenanceInfo& provenance() const noexcept { return provenance_; }
     void set_provenance(ProvenanceInfo p) noexcept { provenance_ = p; }
+
+    // The NAME (ADR-0036 D1, H2-u6 morso 2): the entity's identity
+    // BESIDE its address — the ShapeId (structure: creating feature
+    // + path of indices into the declared role tables + generation)
+    // and its canonical render, stamped at materialization by the
+    // site that owns the table. Additive, defaulted: an entity no
+    // path named reads the default id and the EMPTY name — honestly
+    // unnamed (the faceted world, the booleans' born entities until
+    // their morso, the classes outside v1's tables), never a guess.
+    // Equality, hash and comparison are STRUCTURAL (ShapeId's own
+    // operators); the string serves the register, the report and
+    // the human. The address plan is INTACT (D1's split): every
+    // existing golden, count and positional query is untouched.
+    const geometry::ShapeId& shape_id() const noexcept {
+        return shape_id_;
+    }
+    void set_shape_id(geometry::ShapeId id) noexcept { shape_id_ = id; }
+    const std::string& name() const noexcept { return name_; }
+    void set_name(std::string n) noexcept { name_ = std::move(n); }
+
 private:
     std::shared_ptr<SurfaceGeometry> surface_;
     std::vector<Loop> loops_;
     FaceId id_{0};
     bool forward_{true};
     ProvenanceInfo provenance_{};
+    geometry::ShapeId shape_id_{};
+    std::string name_{};
 };
 
 // Shell — set of connected faces

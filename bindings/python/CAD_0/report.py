@@ -100,6 +100,36 @@ def provenance_totals(data: dict) -> tuple:
     return n_exact, n_approx, max_tol
 
 
+def face_table_text(brep_body: Any) -> str:
+    """The per-face table with the NAME column (ADR-0036 D4, morso 2).
+
+    One row per face, in address order: the address, the name (the
+    canonical render — "- " when honestly unnamed: the v1 named
+    classes are the three factories), the surface family, the loop
+    counts, and the Layer-2 provenance. Every value is
+    ``CAD_0.brep.face_query``'s own answer, verbatim — pure string
+    building beside ``body_report_text``, which does not move (the
+    existing report's goldens are untouched; this is a NEW surface).
+
+    Deterministic (ADR-0014): the names carry no floating-point
+    content, so the table is bit-identical across calls, processes
+    and platforms.
+    """
+    brep = _brep_module()
+    n = brep.face_count(brep_body)
+    lines: list = ["Faces (address | name | family | loops | provenance):"]
+    for i in range(n):
+        q = brep.face_query(brep_body, i)
+        name = q["name"] if q["name"] else "-"
+        loops = "{} loop(s) ({} outer, {} inner)".format(
+            q["loop_count"], q["outer_loop_count"], q["inner_loop_count"])
+        prov = "exact" if q["exact"] else "approx({:g})".format(
+            q["linear_tolerance"])
+        lines.append("  {} | {} | {} | {} | {}".format(
+            i, name, q["family"], loops, prov))
+    return "\n".join(lines)
+
+
 def _fmt(x: float) -> str:
     """Readable, not a wall: 9 significant digits (the machinery's
     double precision, without the float-noise tail)."""

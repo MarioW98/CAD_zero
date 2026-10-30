@@ -39,6 +39,12 @@
 //     and the sphere pairs / the offset cylinder pairs need distance.
 //     In place, like the C++ act; the loops, co-edges and p-curves
 //     are untouched (the frames move with their surfaces).
+//   * CAD_0.brep.edge_count(body) / CAD_0.brep.edge_query(body,
+//     edge_id) — the edge's answer (ADR-0036 D1, H2-u6 morso 2):
+//     endpoints, manifoldness, the Layer-2 record, and the NAME
+//     beside the address (the fillet's references are edge-granular
+//     — D4's first consumer). The same loud-miss culture as the
+//     face's.
 //
 // BRepBody arrives as the OPAQUE handle the bridge submodule already
 // registers (one registration per module — the factories' bodies and
@@ -52,6 +58,8 @@
 //   {"family": str, "has_surface": bool,
 //    "loop_count": int, "outer_loop_count": int, "inner_loop_count": int,
 //    "exact": bool, "linear_tolerance": float,
+//    "name": str, "shape_id": {"feature": int, "path": [int],
+//                              "generation": int},
 //    "loops": [ {"is_outer": bool,
 //                "coedges": [ {"edge": int, "reversed": bool,
 //                               "pcurve": None | line/circle/arc dict } ]} ]}
@@ -60,6 +68,11 @@
 // entities verbatim: line {a, b, interior_left}, circle {center,
 // radius, hole}, arc {center, radius, hole, start_angle, sweep} —
 // the same numbers the sketcher would read, untranslated (D2.1).
+// The name/shape_id pair (ADR-0036 D1): the string is the CANONICAL
+// RENDER of the structure ("box#1:top") — empty when honestly
+// unnamed (the v1 named classes are the three factories: box, sph,
+// cyl); the shape_id dict is the STRUCTURE the kernel compares
+// (never the string — the kernel does not parse names).
 //
 // Errors: a face id that does not exist crosses as a ValueError
 // carrying the C++ message's diagnosis + remedy verbatim (the
@@ -80,6 +93,7 @@ using CAD_0::brep::BRepBody;
 using CAD_0::brep::BodySummary;
 using CAD_0::brep::FaceId;
 using CAD_0::brep::FaceInfo;
+using CAD_0::brep::EdgeInfo;
 using CAD_0::brep::LoopInfo;
 using CAD_0::brep::PCurve;
 using CAD_0::brep::PCurveInfo;
@@ -135,6 +149,22 @@ nb::dict face_info_dict(const FaceInfo& info) {
     out["inner_loop_count"] = info.inner_loop_count;
     out["exact"] = info.exact;
     out["linear_tolerance"] = info.linear_tolerance;
+    // The name (ADR-0036 D1, H2-u6 morso 2): the canonical render —
+    // the empty string is the honest "unnamed" answer (the v1
+    // named classes are the three factories), and the shape_id
+    // dict carries the STRUCTURE (feature + path of role-table
+    // indices + generation) — equality and comparison are
+    // structural, the string is the record for the report and the
+    // human. The id fields read as default when the name is empty.
+    out["name"] = info.name;
+    nb::dict sid;
+    sid["feature"] = info.id.feature.value;
+    nb::list path;
+    for (std::uint8_t i = 0; i < info.id.subshape.depth; ++i)
+        path.append(info.id.subshape.path[i]);
+    sid["path"] = path;
+    sid["generation"] = info.id.generation.value;
+    out["shape_id"] = sid;
     nb::list loops;
     for (const LoopInfo& loop : info.loops) {
         nb::dict ld;
@@ -151,6 +181,29 @@ nb::dict face_info_dict(const FaceInfo& info) {
         loops.append(ld);
     }
     out["loops"] = loops;
+    return out;
+}
+
+// One edge's answer as plain values (ADR-0036 D1, morso 2): the
+// endpoints, the manifoldness, the Layer-2 record, and the name
+// with the same honest-empty rule as the face's.
+nb::dict edge_info_dict(const EdgeInfo& info) {
+    nb::dict out;
+    out["v0"] = info.v0;
+    out["v1"] = info.v1;
+    out["manifold"] = info.manifold;
+    out["coedge_count"] = info.coedge_count;
+    out["exact"] = info.exact;
+    out["linear_tolerance"] = info.linear_tolerance;
+    out["name"] = info.name;
+    nb::dict sid;
+    sid["feature"] = info.id.feature.value;
+    nb::list path;
+    for (std::uint8_t i = 0; i < info.id.subshape.depth; ++i)
+        path.append(info.id.subshape.path[i]);
+    sid["path"] = path;
+    sid["generation"] = info.id.generation.value;
+    out["shape_id"] = sid;
     return out;
 }
 
@@ -340,8 +393,32 @@ void bind_brep(nb::module_& m) {
         "interior_left; circle: center, radius, hole; arc: center,\n"
         "radius, hole, start_angle, sweep) — or None in the faceted\n"
         "world, where the provenance says approximated and the\n"
-        "distinction is never a guess. Raises ValueError for a face id\n"
-        "the body does not carry (diagnosis + remedy verbatim).");
+        "distinction is never a guess. The name (ADR-0036 D1) is the\n"
+        "entity's identity beside its address — the canonical render\n"
+        "of the shape_id dict, empty when honestly unnamed. Raises\n"
+        "ValueError for a face id the body does not carry (diagnosis\n"
+        "+ remedy verbatim).");
+
+    brep_mod.def("edge_count",
+        [](const BRepBody& body) { return body.edge_count(); },
+        nb::arg("body"),
+        "Number of edges in the body's own array — the valid range\n"
+        "for edge_query's edge_id.");
+
+    brep_mod.def("edge_query",
+        [](const BRepBody& body, CAD_0::brep::EdgeId edge_id) {
+            return edge_info_dict(
+                CAD_0::brep::query_edge(body, edge_id));
+        },
+        nb::arg("body"), nb::arg("edge_id"),
+        "Ask an edge what it is, as plain values (the face query's\n"
+        "own contract one entity kind over — ADR-0036 D1): the\n"
+        "endpoints (v0, v1), the manifoldness (exactly two\n"
+        "co-edges), the Layer-2 provenance, and the NAME — the\n"
+        "canonical render beside the address, empty when honestly\n"
+        "unnamed (the fillet references edges: D4's first consumer\n"
+        "is edge-granular). Raises ValueError for an edge id the\n"
+        "body does not carry (diagnosis + remedy verbatim).");
 
     // The mass properties (G1 unit 5, ADR-0032 D4): the divergence
     // theorem over the exact faces — the numbers as plain values, the

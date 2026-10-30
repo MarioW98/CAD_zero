@@ -67,6 +67,10 @@ FaceInfo describe_face(const Face& face) {
     }
     info.exact = face.provenance().is_exact();
     info.linear_tolerance = face.provenance().linear_tolerance;
+    // The name (ADR-0036 D1): the entity's own fields, verbatim —
+    // the id and the render the materialization stamped.
+    info.id = face.shape_id();
+    info.name = face.name();
     return info;
 }
 
@@ -93,6 +97,53 @@ std::vector<FaceInfo> query_all_faces(const BRepBody& body) {
     out.reserve(body.face_count());
     for (const auto& face : body.solid.shell().faces())
         out.push_back(describe_face(face));
+    return out;
+}
+
+// ---------------------------------------------------------------------------
+// The edge query (ADR-0036 D1, H2-u6 morso 2)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+EdgeInfo describe_edge(const Edge& edge) {
+    EdgeInfo info;
+    info.v0 = edge.vertex(0);
+    info.v1 = edge.vertex(1);
+    info.coedge_count = edge.coedges().size();
+    info.manifold = edge.is_manifold();
+    info.exact = edge.provenance().is_exact();
+    info.linear_tolerance = edge.provenance().linear_tolerance;
+    info.id = edge.shape_id();
+    info.name = edge.name();
+    return info;
+}
+
+} // namespace
+
+EdgeInfo query_edge(const BRepBody& body, EdgeId edge_id) {
+    if (edge_id >= body.edges.size()) {
+        // Loud, with the remedy (the query_face culture): an edge id
+        // outside the body's own array is a caller bug — name the
+        // range and the enumeration entry point.
+        std::ostringstream os;
+        os << "query_edge: no edge with id " << edge_id
+           << " in this body (" << body.edges.size()
+           << " edge(s)) — remedy: edge ids are the body's own "
+              "array positions (the factories number by construction "
+              "order, the booleans by their walk); enumerate with "
+              "query_all_edges() or CAD_0.brep.edge_count() before "
+              "querying.";
+        throw std::invalid_argument(os.str());
+    }
+    return describe_edge(body.edges[static_cast<std::size_t>(edge_id)]);
+}
+
+std::vector<EdgeInfo> query_all_edges(const BRepBody& body) {
+    std::vector<EdgeInfo> out;
+    out.reserve(body.edges.size());
+    for (const auto& edge : body.edges)
+        out.push_back(describe_edge(edge));
     return out;
 }
 
