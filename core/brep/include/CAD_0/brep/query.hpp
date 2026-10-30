@@ -32,10 +32,11 @@
 //   * PCurveInfo::Kind::None is the FACETED world's honest answer
 //     (the bridge's plane-per-triangle faces carry no p-curves; the
 //     provenance fields distinguish the worlds, never a guess).
-//   * The p-curve payload mirrors the sketch kernel's typed entities
-//     VERBATIM (Line2's a/b/interior_left, Arc2's
-//     center/radius/hole/start_angle/sweep) — the D2.1 discipline:
-//     the same numbers the sketcher would read, no translation.
+//   * The p-curve payload mirrors the BREP parametric domain's typed
+//     entities VERBATIM (Line2's a/b/interior_left, Arc2's
+//     center/radius/hole/start_angle/sweep) — the D2.1 discipline as
+//     amended by ADR-0035 D4 (one opinion PER WORLD): the same
+//     DOUBLE numbers the exact path stored, no translation.
 //   * A face id that does not exist is LOUD: std::invalid_argument
 //     naming the valid range and the remedy, the ProvenanceInfo
 //     construction-time culture. A silent empty record would be a
@@ -62,9 +63,9 @@ namespace CAD_0::brep {
 struct PCurveInfo {
     enum class Kind : std::uint8_t {
         None,    // no p-curve — the faceted world
-        Line,    // Line2  (SketchSegment): a → b, region side
-        Circle,  // Circle2 (SketchCircle): center, radius, disc|complement
-        Arc      // Arc2   (SketchArc): center, radius, span, region side
+        Line,    // Line2  (the BREP domain's double segment): a → b, region side
+        Circle,  // Circle2 (the double circle): center, radius, disc|complement
+        Arc      // Arc2   (the double arc): center, radius, span, region side
     };
 
     Kind kind{Kind::None};
@@ -73,19 +74,22 @@ struct PCurveInfo {
     EdgeId edge{0};
     bool reversed{false};
 
-    // Line payload: domain endpoints + region side.
-    math::Vec2f a{};
-    math::Vec2f b{};
+    // Line payload: domain endpoints + region side. DOUBLE (morso 3,
+    // ADR-0035 D4): the payload mirrors the BREP parametric domain's
+    // own double vocabulary verbatim — the same numbers the exact
+    // path stored, untranslated.
+    math::Vec2d a{};
+    math::Vec2d b{};
     bool interior_left{false};
 
     // Circle/Arc payload: center, radius, region side; the arc adds
-    // the CCW angular span (radians; sweep in (0, 2π) per the sketch
-    // vocabulary's construction rules).
-    math::Vec2f center{};
-    float radius{0.0f};
+    // the CCW angular span (radians; sweep in (0, 2π) per the
+    // vocabulary's mirrored construction rules).
+    math::Vec2d center{};
+    double radius{0.0};
     bool hole{false};
-    float start_angle{0.0f};
-    float sweep{0.0f};
+    double start_angle{0.0};
+    double sweep{0.0};
 };
 
 // One loop of the face, outer or inner (ADR-0021: "subsequent loops

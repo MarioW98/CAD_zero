@@ -117,10 +117,12 @@ namespace CAD_0::brep {
 
 namespace extrude_detail {
 
-// The periodic domain's constant (the sketch kernel's own value —
-// mathematical constants, not mirrored layouts).
-inline constexpr float kPi = 3.14159265358979f;
-inline constexpr float kTwoPi = 6.28318530717958647692f;
+// The periodic domain's constants, DOUBLE since morso 3 (ADR-0035
+// D4): they feed the p-curve payloads, the BREP parametric domain's
+// own world — the sketch kernel keeps its float constants in its own
+// world (mathematical constants, not mirrored layouts).
+inline constexpr double kPi = 3.14159265358979;
+inline constexpr double kTwoPi = 6.28318530717958647692;
 
 // One chain's per-entity walk data, resolved once: the joints, the
 // authored material side, the per-entity curve endpoints.
@@ -192,31 +194,39 @@ inline double chain_signed_area(const sdf::SketchChain& c) {
     return twice * 0.5;
 }
 
-// The cap loop co-edge for one entity, authored in the cap's own
-// plane domain BY PROJECTION (the frame stays the surface's — no
-// second frame copy). `walk_forward` selects the traversal vs the
-// entity's authored direction; the SIDE BIT is the authored one
-// (the cap's region is the profile region — the same mathematics).
+// THE SKETCH FRONTIER (ADR-0035 D4): the cap loop co-edge for one
+// entity, authored in the cap's own plane domain BY PROJECTION (the
+// frame stays the surface's — no second frame copy). This is THE
+// named site where sketch entities enter the BREP parametric
+// domain: the conversion is float→double, EXACT (every float32 is
+// exactly a double — the payload carries the sketch's own numbers
+// bit-for-bit), ONE direction (there is no bridge back; the lossy
+// direction died with the demotions), and EXPLICIT — every scalar
+// crosses as a named static_cast<double> below, never an implicit
+// narrowing or widening that hides the boundary. `walk_forward`
+// selects the traversal vs the entity's authored direction; the
+// SIDE BIT is the authored one (the cap's region is the profile
+// region — the same mathematics).
 inline CoEdge cap_coedge(const PlaneSurface& cap,
                          const sdf::SketchEntity& e, EdgeId edge,
                          bool walk_forward) {
     math::Vec2f a, b;
     entity_endpoints(e, a, b);
     const auto dom = [&cap](const math::Vec2f& p) {
-        // THE BOUNDARY CONVERSION (ADR-0034): projection in double,
-        // payload quantized to the p-curve domain's float, one
-        // direction, right here.
-        const math::Vec3d d = math::Vec3d{p.x, p.y, 0.0} - cap.origin();
-        return math::Vec2f{static_cast<float>(d.dot(cap.u_axis())),
-                           static_cast<float>(d.dot(cap.v_axis()))};
+        // The projection computes in double; the payload IS double
+        // (the BREP domain's own world — morso 3 removed the
+        // demotion that lived here since ADR-0034 D1's table row).
+        const math::Vec3d d =
+            math::Vec3d{p.x, p.y, 0.0} - cap.origin();
+        return math::Vec2d{d.dot(cap.u_axis()), d.dot(cap.v_axis())};
     };
     CoEdge ce{edge, !walk_forward};
     switch (e.kind) {
     case sdf::SketchEntity::Kind::Segment: {
-        const math::Vec2f s = walk_forward ? dom(a) : dom(b);
-        const math::Vec2f t = walk_forward ? dom(b) : dom(a);
+        const math::Vec2d s = walk_forward ? dom(a) : dom(b);
+        const math::Vec2d t = walk_forward ? dom(b) : dom(a);
         ce.set_p_curve(
-            sdf::sketch_segment(s, t, e.segment.interior_left));
+            pcurve_segment(s, t, e.segment.interior_left));
         return ce;
     }
     case sdf::SketchEntity::Kind::Arc: {
@@ -225,14 +235,17 @@ inline CoEdge cap_coedge(const PlaneSurface& cap,
         // (the rotation frame) a forward walk starts at the arc's
         // own start; on the -Z cap (the mirror frame) a reversed
         // walk does — both read CCW in the domain, the only
-        // direction the vocabulary stores.
-        const math::Vec2f c_dom = dom(e.arc.center);
-        const math::Vec2f s_pt = walk_forward ? dom(a) : dom(b);
-        const math::Vec2f d = s_pt - c_dom;
-        const float start = std::atan2(d.y, d.x);
-        ce.set_p_curve(sdf::sketch_arc(c_dom, e.arc.radius,
-                                       /*hole=*/false, start,
-                                       e.arc.sweep));
+        // direction the vocabulary stores. The arc's radius and
+        // sweep cross the frontier as the EXACT promotions of the
+        // sketch's own floats.
+        const math::Vec2d c_dom = dom(e.arc.center);
+        const math::Vec2d s_pt = walk_forward ? dom(a) : dom(b);
+        const math::Vec2d d = s_pt - c_dom;
+        const double start = std::atan2(d.y, d.x);
+        ce.set_p_curve(pcurve_arc(c_dom,
+                                  static_cast<double>(e.arc.radius),
+                                  /*hole=*/false, start,
+                                  static_cast<double>(e.arc.sweep)));
         return ce;
     }
     case sdf::SketchEntity::Kind::Circle:
@@ -242,8 +255,9 @@ inline CoEdge cap_coedge(const PlaneSurface& cap,
         // loop (the solid circle goes through the seam-wired path);
         // this is the hole rim's authoring.
         ce.set_p_curve(
-            sdf::sketch_circle(dom(e.circle.center), e.circle.radius,
-                               e.circle.hole));
+            pcurve_circle(dom(e.circle.center),
+                          static_cast<double>(e.circle.radius),
+                          e.circle.hole));
         return ce;
     }
     return ce;
@@ -525,10 +539,17 @@ inline std::unique_ptr<BRepBody> make_prism(
                 // in the surface's (u,v), u running the walk's
                 // azimuth direction (the frame rule's sign).
                 const auto& arc = e.arc;
-                const float u0 = fwd ? arc.start_angle
-                                     : arc.start_angle + arc.sweep;
-                const float u1 = fwd ? arc.start_angle + arc.sweep
-                                     : arc.start_angle;
+                // THE SKETCH FRONTIER (ADR-0035 D4): the sketch
+                // payload's angles enter the BREP domain as the
+                // EXACT promotions of the authored floats — one
+                // direction, lossless, right here; the span is
+                // stored in the domain's own double.
+                const double u0 = fwd ? static_cast<double>(arc.start_angle)
+                                      : static_cast<double>(arc.start_angle +
+                                                            arc.sweep);
+                const double u1 = fwd ? static_cast<double>(arc.start_angle +
+                                                           arc.sweep)
+                                      : static_cast<double>(arc.start_angle);
                 // The sketch payload promoted to the exact world's
                 // parameters (lossless, ADR-0034).
                 auto surf = std::make_shared<CylinderZSurface>(
@@ -536,21 +557,22 @@ inline std::unique_ptr<BRepBody> make_prism(
                     arc.radius, z_lo, fwd ? +1 : -1);
                 Face face(surf);
                 Loop loop;
-                // The window payloads: the world's double span
-                // quantized to the p-curve domain's float (ADR-0034).
-                const float vh = static_cast<float>(h);
-                const auto wall_line = [&](math::Vec2f a, math::Vec2f b) {
-                    return sdf::sketch_segment(a, b,
-                                               /*interior_left=*/true);
+                // The window payloads: the world's double span,
+                // stored as the domain's own double (morso 3: the
+                // quantizer retired with the float payload).
+                const double vh = h;
+                const auto wall_line = [&](math::Vec2d a, math::Vec2d b) {
+                    return pcurve_segment(a, b,
+                                          /*interior_left=*/true);
                 };
                 CoEdge bot{eid(e_bot), !fwd};
-                bot.set_p_curve(wall_line({u0, 0.0f}, {u1, 0.0f}));
+                bot.set_p_curve(wall_line({u0, 0.0}, {u1, 0.0}));
                 CoEdge up{eid(e_v_end), false};
-                up.set_p_curve(wall_line({u1, 0.0f}, {u1, vh}));
+                up.set_p_curve(wall_line({u1, 0.0}, {u1, vh}));
                 CoEdge top{eid(e_top), fwd};
                 top.set_p_curve(wall_line({u1, vh}, {u0, vh}));
                 CoEdge down{eid(e_v_start), true};
-                down.set_p_curve(wall_line({u0, vh}, {u0, 0.0f}));
+                down.set_p_curve(wall_line({u0, vh}, {u0, 0.0}));
                 loop.add_coedge(bot);
                 loop.add_coedge(up);
                 loop.add_coedge(top);
@@ -595,8 +617,14 @@ inline std::unique_ptr<BRepBody> make_prism(
     // ---- one solid circle: the seam-wired pattern VERBATIM ------
     const auto add_solid_circle = [&](std::size_t ci) {
         const auto& circ = chains[ci].entities[0].circle;
-        const math::Vec2f& c = circ.center;
-        const float r = circ.radius;
+        // THE SKETCH FRONTIER (ADR-0035 D4): the sketch circle's own
+        // numbers enter the BREP parametric domain here, promoted
+        // ONCE — float→double is exact by construction, one
+        // direction, no bridge back. Everything downstream reads
+        // these doubles.
+        const math::Vec2d c{static_cast<double>(circ.center.x),
+                            static_cast<double>(circ.center.y)};
+        const double r = static_cast<double>(circ.radius);
         const std::size_t v_base = body->vertices.size();
         const std::size_t e_base = body->edges.size();
 
@@ -641,30 +669,30 @@ inline std::unique_ptr<BRepBody> make_prism(
                 math::Vec2d{c.x, c.y}, r, z_lo, +1);
             Face face(surf);
             Loop loop;
-            const float vh = static_cast<float>(h);
-            const auto wall_line = [](math::Vec2f a, math::Vec2f b) {
-                return sdf::sketch_segment(a, b,
-                                           /*interior_left=*/true);
+            const double vh = h;
+            const auto wall_line = [](math::Vec2d a, math::Vec2d b) {
+                return pcurve_segment(a, b,
+                                      /*interior_left=*/true);
             };
             CoEdge s_fwd{eid(e_base + 4), false};  // up the right
             s_fwd.set_p_curve(
-                wall_line({extrude_detail::kTwoPi, 0.0f},
+                wall_line({extrude_detail::kTwoPi, 0.0},
                           {extrude_detail::kTwoPi, vh}));
             CoEdge top_b_rev{eid(e_base + 3), true};
             top_b_rev.set_p_curve(wall_line(
                 {extrude_detail::kTwoPi, vh}, {extrude_detail::kPi, vh}));
             CoEdge top_a_rev{eid(e_base + 2), true};
             top_a_rev.set_p_curve(wall_line(
-                {extrude_detail::kPi, vh}, {0.0f, vh}));
+                {extrude_detail::kPi, vh}, {0.0, vh}));
             CoEdge s_rev{eid(e_base + 4), true};  // down the left
-            s_rev.set_p_curve(wall_line({0.0f, vh}, {0.0f, 0.0f}));
+            s_rev.set_p_curve(wall_line({0.0, vh}, {0.0, 0.0}));
             CoEdge bot_a_fwd{eid(e_base), false};
             bot_a_fwd.set_p_curve(wall_line(
-                {0.0f, 0.0f}, {extrude_detail::kPi, 0.0f}));
+                {0.0, 0.0}, {extrude_detail::kPi, 0.0}));
             CoEdge bot_b_fwd{eid(e_base + 1), false};
             bot_b_fwd.set_p_curve(wall_line(
-                {extrude_detail::kPi, 0.0f},
-                {extrude_detail::kTwoPi, 0.0f}));
+                {extrude_detail::kPi, 0.0},
+                {extrude_detail::kTwoPi, 0.0}));
             loop.add_coedge(s_fwd);
             loop.add_coedge(top_b_rev);
             loop.add_coedge(top_a_rev);
@@ -681,24 +709,24 @@ inline std::unique_ptr<BRepBody> make_prism(
         // keeps the XOR: the wall walks the bottom rim east and the
         // top rim west; the -Z cap walks the bottom rim in the
         // authored direction's opposite, the +Z cap the top's).
-        const auto dom_lo = [&](const math::Vec2f& p) {
+        const auto dom_lo = [&](const math::Vec2d& p) {
             const math::Vec3d d =
                 math::Vec3d{p.x, p.y, 0.0} - cap_lo.origin();
-            return math::Vec2f{static_cast<float>(d.dot(cap_lo.u_axis())),
-                               static_cast<float>(d.dot(cap_lo.v_axis()))};
+            return math::Vec2d{d.dot(cap_lo.u_axis()),
+                               d.dot(cap_lo.v_axis())};
         };
-        const auto dom_hi = [&](const math::Vec2f& p) {
+        const auto dom_hi = [&](const math::Vec2d& p) {
             const math::Vec3d d =
                 math::Vec3d{p.x, p.y, 0.0} - cap_hi.origin();
-            return math::Vec2f{static_cast<float>(d.dot(cap_hi.u_axis())),
-                               static_cast<float>(d.dot(cap_hi.v_axis()))};
+            return math::Vec2d{d.dot(cap_hi.u_axis()),
+                               d.dot(cap_hi.v_axis())};
         };
-        const auto arc_at = [](const math::Vec2f& center, float radius,
-                               const math::Vec2f& from) {
-            const math::Vec2f d = from - center;
-            return sdf::sketch_arc(center, radius, /*hole=*/false,
-                                   std::atan2(d.y, d.x),
-                                   extrude_detail::kPi);
+        const auto arc_at = [](const math::Vec2d& center, double radius,
+                               const math::Vec2d& from) {
+            const math::Vec2d d = from - center;
+            return pcurve_arc(center, radius, /*hole=*/false,
+                              std::atan2(d.y, d.x),
+                              extrude_detail::kPi);
         };
         {
             // -Z cap: [rim_bot_a rev (antipode→seam), rim_bot_b rev
@@ -733,8 +761,11 @@ inline std::unique_ptr<BRepBody> make_prism(
     // carries the rim as ONE closed trim curve, the Circle2.)
     const auto add_hole_circle = [&](std::size_t ci) {
         const auto& circ = chains[ci].entities[0].circle;
-        const math::Vec2f& c = circ.center;
-        const float r = circ.radius;
+        // THE SKETCH FRONTIER (ADR-0035 D4): as above — the sketch
+        // circle's own numbers, promoted once, exactly, one way.
+        const math::Vec2d c{static_cast<double>(circ.center.x),
+                            static_cast<double>(circ.center.y)};
+        const double r = static_cast<double>(circ.radius);
         const std::size_t v_base = body->vertices.size();
         const std::size_t e_base = body->edges.size();
 
@@ -766,22 +797,22 @@ inline std::unique_ptr<BRepBody> make_prism(
                 math::Vec2d{c.x, c.y}, r, z_lo, -1);
             Face face(surf);
             Loop loop;
-            const float vh = static_cast<float>(h);
-            const auto wall_line = [](math::Vec2f a, math::Vec2f b) {
-                return sdf::sketch_segment(a, b,
-                                           /*interior_left=*/true);
+            const double vh = h;
+            const auto wall_line = [](math::Vec2d a, math::Vec2d b) {
+                return pcurve_segment(a, b,
+                                      /*interior_left=*/true);
             };
             CoEdge s_fwd{eid(e_base + 2), false};
-            s_fwd.set_p_curve(wall_line({0.0f, 0.0f}, {0.0f, vh}));
+            s_fwd.set_p_curve(wall_line({0.0, 0.0}, {0.0, vh}));
             CoEdge top{eid(e_base + 1), false};
             top.set_p_curve(wall_line(
-                {0.0f, vh}, {-extrude_detail::kTwoPi, vh}));
+                {0.0, vh}, {-extrude_detail::kTwoPi, vh}));
             CoEdge s_rev{eid(e_base + 2), true};
             s_rev.set_p_curve(wall_line(
-                {-extrude_detail::kTwoPi, vh}, {-extrude_detail::kTwoPi, 0.0f}));
+                {-extrude_detail::kTwoPi, vh}, {-extrude_detail::kTwoPi, 0.0}));
             CoEdge bot{eid(e_base), false};
             bot.set_p_curve(wall_line(
-                {-extrude_detail::kTwoPi, 0.0f}, {0.0f, 0.0f}));
+                {-extrude_detail::kTwoPi, 0.0}, {0.0, 0.0}));
             loop.add_coedge(s_fwd);
             loop.add_coedge(top);
             loop.add_coedge(s_rev);
@@ -795,24 +826,27 @@ inline std::unique_ptr<BRepBody> make_prism(
         // Circle2 with the authored hole bit (the annulus is the
         // entity's region — the first Circle2 writer). The co-edge
         // is REVERSED (the wall used the rim forward): the XOR.
+        // The center crosses the projection in double (the cap's
+        // own frame); the radius is the sketch's own float, promoted
+        // EXACTLY at the frontier (ADR-0035 D4).
         {
             const math::Vec3d d =
                 math::Vec3d{c.x, c.y, 0.0} - cap_lo.origin();
-            const math::Vec2f center{static_cast<float>(d.dot(cap_lo.u_axis())),
-                                     static_cast<float>(d.dot(cap_lo.v_axis()))};
+            const math::Vec2d center{d.dot(cap_lo.u_axis()),
+                                     d.dot(cap_lo.v_axis())};
             CoEdge ce{eid(e_base), true};
-            ce.set_p_curve(sdf::sketch_circle(center, r,
-                                              /*hole=*/true));
+            ce.set_p_curve(pcurve_circle(center, r,
+                                         /*hole=*/true));
             cap_lo_loops.push_back(std::vector<CoEdge>{ce});
         }
         {
             const math::Vec3d d =
                 math::Vec3d{c.x, c.y, 0.0} - cap_hi.origin();
-            const math::Vec2f center{static_cast<float>(d.dot(cap_hi.u_axis())),
-                                     static_cast<float>(d.dot(cap_hi.v_axis()))};
+            const math::Vec2d center{d.dot(cap_hi.u_axis()),
+                                     d.dot(cap_hi.v_axis())};
             CoEdge ce{eid(e_base + 1), true};
-            ce.set_p_curve(sdf::sketch_circle(center, r,
-                                              /*hole=*/true));
+            ce.set_p_curve(pcurve_circle(center, r,
+                                         /*hole=*/true));
             cap_hi_loops.push_back(std::vector<CoEdge>{ce});
         }
     };

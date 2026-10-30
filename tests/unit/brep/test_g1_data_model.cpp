@@ -64,23 +64,34 @@ inline constexpr CAD_0::brep::BooleanTolerance kHouseTol =
 namespace b = CAD_0::brep;
 namespace s = CAD_0::sdf;
 namespace br = CAD_0::bridge;
+using CAD_0::math::Vec2d;
 using CAD_0::math::Vec2f;
 using CAD_0::math::Vec3d;
 
 // ---------------------------------------------------------------------------
-// D2.1 — the compile-time proof: the B-Rep p-curve vocabulary IS the
-// sketch kernel's entity set. Not "compatible with", not "mirrors" —
-// the SAME types (the aliases in brep/pcurve.hpp). If anyone ever
-// introduces a second 2D vocabulary, these lines stop compiling.
+// D2.1 as amended by ADR-0035 D4/D6 (H2 unit 3, morso 3) — ONE OPINION
+// PER WORLD, the compile-time proof. The BREP parametric domain's
+// vocabulary is its OWN double set (mirrored semantics, declared in
+// pcurve.hpp's contract); the sketch kernel's stays the sketch
+// world's float set. They are NOT the same types anymore — and the
+// only bridge is the one-direction, lossless pcurve_from_sketch.
+// A silent reunification or a silent re-fork stops compiling here.
 // ---------------------------------------------------------------------------
-static_assert(std::is_same_v<b::Line2, s::SketchSegment>,
-              "D2.1: Line2 must BE the sketch kernel's SketchSegment");
-static_assert(std::is_same_v<b::Circle2, s::SketchCircle>,
-              "D2.1: Circle2 must BE the sketch kernel's SketchCircle");
-static_assert(std::is_same_v<b::Arc2, s::SketchArc>,
-              "D2.1: Arc2 must BE the sketch kernel's SketchArc");
-static_assert(std::is_same_v<b::PCurve, s::SketchEntity>,
-              "D2.1: PCurve must BE the sketch kernel's SketchEntity");
+static_assert(std::is_same_v<decltype(b::Line2::a), CAD_0::math::Vec2d> &&
+                  std::is_same_v<decltype(b::Circle2::radius), double> &&
+                  std::is_same_v<decltype(b::Arc2::sweep), double>,
+              "D4: the BREP domain's vocabulary is double, all of it");
+static_assert(std::is_same_v<decltype(s::SketchSegment::a), CAD_0::math::Vec2f> &&
+                  std::is_same_v<decltype(s::SketchCircle::radius), float> &&
+                  std::is_same_v<decltype(s::SketchArc::sweep), float>,
+              "D4: the sketch kernel's vocabulary stays float — the "
+              "canvas world's own, untouched");
+static_assert(!std::is_same_v<b::Line2, s::SketchSegment> &&
+                  !std::is_same_v<b::Circle2, s::SketchCircle> &&
+                  !std::is_same_v<b::Arc2, s::SketchArc> &&
+                  !std::is_same_v<b::PCurve, s::SketchEntity>,
+              "D4: two worlds, two vocabularies — bridged ONLY by "
+              "pcurve_from_sketch (one direction, lossless)");
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -305,37 +316,51 @@ std::string read_file(const std::filesystem::path& p) {
 // provenance query, the loop semantics of euler_characteristic.
 // ---------------------------------------------------------------------------
 
-TEST_CASE("G1-U1 D2.1: the p-curve vocabulary is the sketch kernel's — one opinion, one code") {
+TEST_CASE("G1-U1 D2.1 (as amended by ADR-0035 D4): one opinion PER WORLD — the BREP domain's own double vocabulary") {
     // The static_asserts at the top of this file are the compile-time
-    // half. The runtime half: a p-curve is BUILT with the sketch
-    // kernel's own factories — no B-Rep-side constructor exists, and
-    // none is needed. The same typed entities, the same
-    // construction-time validation, the same code.
-    const b::PCurve seg = s::sketch_segment(Vec2f{0, 0}, Vec2f{2, 0}, true);
-    CHECK(seg.kind == s::SketchEntity::Kind::Segment);
-    CHECK(seg.segment.a == Vec2f{0, 0});
-    CHECK(seg.segment.b == Vec2f{2, 0});
+    // half. The runtime half: a p-curve is BUILT with the BREP
+    // domain's OWN factories (pcurve.hpp, double — the mirrored
+    // construction rules), and the sketch's entities cross into it
+    // ONLY through the one-direction frontier, exactly.
+    const b::PCurve seg = b::pcurve_segment(Vec2d{0, 0}, Vec2d{2, 0}, true);
+    CHECK(seg.kind == b::PCurve::Kind::Segment);
+    CHECK(seg.segment.a == Vec2d{0, 0});
+    CHECK(seg.segment.b == Vec2d{2, 0});
     CHECK(seg.segment.interior_left == true);
 
-    const b::PCurve circ = s::sketch_circle(Vec2f{1, 1}, 0.25f, true);
-    CHECK(circ.kind == s::SketchEntity::Kind::Circle);
-    CHECK(circ.circle.center == Vec2f{1, 1});
-    CHECK(circ.circle.radius == 0.25f);
+    const b::PCurve circ = b::pcurve_circle(Vec2d{1, 1}, 0.25, true);
+    CHECK(circ.kind == b::PCurve::Kind::Circle);
+    CHECK(circ.circle.center == Vec2d{1, 1});
+    CHECK(circ.circle.radius == 0.25);
     CHECK(circ.circle.hole == true);
 
-    const b::PCurve arc = s::sketch_arc(Vec2f{0, 0}, 1.0f, false, 0.0f, 1.5f);
-    CHECK(arc.kind == s::SketchEntity::Kind::Arc);
-    CHECK(arc.arc.radius == 1.0f);
-    CHECK(arc.arc.sweep == 1.5f);
+    const b::PCurve arc = b::pcurve_arc(Vec2d{0, 0}, 1.0, false, 0.0, 1.5);
+    CHECK(arc.kind == b::PCurve::Kind::Arc);
+    CHECK(arc.arc.radius == 1.0);
+    CHECK(arc.arc.sweep == 1.5);
 
-    // The typed alias set reads naturally in B-Rep-side code — that is
-    // the whole point of the names (D2.1):
-    const b::Line2   line{Vec2f{0, 0}, Vec2f{1, 0}, true};  // a SketchSegment
-    const b::Circle2 hole{Vec2f{0, 0}, 0.5f, true};         // a SketchCircle
-    const b::Arc2    fillet{Vec2f{0, 0}, 0.5f, false, 0.0f, 1.5707964f};
+    // THE FRONTIER (D4): the sketch's own entity crosses into the
+    // BREP domain EXACTLY — every float32 is exactly a double, so
+    // the payload carries the sketch's numbers bit-for-bit. The one
+    // declared bridge; there is no bridge back.
+    const s::SketchEntity sk =
+        s::sketch_segment(Vec2f{0.5f, -0.25f}, Vec2f{1.5f, 2.75f}, false);
+    const b::PCurve via = b::pcurve_from_sketch(sk);
+    CHECK(via.kind == b::PCurve::Kind::Segment);
+    CHECK(via.segment.a.x == static_cast<double>(sk.segment.a.x));
+    CHECK(via.segment.a.y == static_cast<double>(sk.segment.a.y));
+    CHECK(via.segment.b.x == static_cast<double>(sk.segment.b.x));
+    CHECK(via.segment.b.y == static_cast<double>(sk.segment.b.y));
+    CHECK(via.segment.interior_left == sk.segment.interior_left);
+
+    // The typed set reads naturally in B-Rep-side code — the names
+    // keep their point (D2.1's readability) in the double world:
+    const b::Line2   line{Vec2d{0, 0}, Vec2d{1, 0}, true};
+    const b::Circle2 hole{Vec2d{0, 0}, 0.5, true};
+    const b::Arc2    fillet{Vec2d{0, 0}, 0.5, false, 0.0, 1.5707963267948966};
     CHECK(line.interior_left);
     CHECK(hole.hole);
-    CHECK(fillet.sweep == 1.5707964f);
+    CHECK(fillet.sweep == 1.5707963267948966);
 }
 
 TEST_CASE("G1-U1 D2.2: CoEdge carries a p-curve in the owning face's parameter domain") {
@@ -346,15 +371,15 @@ TEST_CASE("G1-U1 D2.2: CoEdge carries a p-curve in the owning face's parameter d
     CHECK(bare.p_curve() == nullptr);
 
     // Round-trip, verbatim: the writer's entity IS the reader's entity
-    // (same code, D2.1) — a trimming loop and the sketch chain that
-    // produced it cannot disagree because there is nothing to
-    // translate.
+    // (the BREP domain's own double vocabulary, one code) — a
+    // trimming loop and the domain answer that produced it cannot
+    // disagree because there is nothing to translate.
     b::CoEdge ce{3, true};
-    ce.set_p_curve(s::sketch_segment(Vec2f{0, 0}, Vec2f{4, 0}, true));
+    ce.set_p_curve(b::pcurve_segment(Vec2d{0, 0}, Vec2d{4, 0}, true));
     REQUIRE(ce.p_curve() != nullptr);
-    CHECK(ce.p_curve()->kind == s::SketchEntity::Kind::Segment);
-    CHECK(ce.p_curve()->segment.a == Vec2f{0, 0});
-    CHECK(ce.p_curve()->segment.b == Vec2f{4, 0});
+    CHECK(ce.p_curve()->kind == b::PCurve::Kind::Segment);
+    CHECK(ce.p_curve()->segment.a == Vec2d{0, 0});
+    CHECK(ce.p_curve()->segment.b == Vec2d{4, 0});
     CHECK(ce.p_curve()->segment.interior_left == true);
     // The 3D reference is untouched — the p-curve sits ALONGSIDE it.
     CHECK(ce.edge() == 3);
@@ -365,14 +390,14 @@ TEST_CASE("G1-U1 D2.2: CoEdge carries a p-curve in the owning face's parameter d
     // structure of the exact B-Rep: one edge, one p-curve per use).
     b::CoEdge use_in_face_a{3, false};
     b::CoEdge use_in_face_b{3, false};
-    use_in_face_a.set_p_curve(s::sketch_circle(Vec2f{0, 0}, 1.0f, false));
-    use_in_face_b.set_p_curve(s::sketch_arc(Vec2f{0, 0}, 2.0f, true, 0.5f, 2.0f));
+    use_in_face_a.set_p_curve(b::pcurve_circle(Vec2d{0, 0}, 1.0, false));
+    use_in_face_b.set_p_curve(b::pcurve_arc(Vec2d{0, 0}, 2.0, true, 0.5, 2.0));
     REQUIRE(use_in_face_a.p_curve() != nullptr);
     REQUIRE(use_in_face_b.p_curve() != nullptr);
-    CHECK(use_in_face_a.p_curve()->kind == s::SketchEntity::Kind::Circle);
-    CHECK(use_in_face_b.p_curve()->kind == s::SketchEntity::Kind::Arc);
-    CHECK(use_in_face_a.p_curve()->circle.radius == 1.0f);
-    CHECK(use_in_face_b.p_curve()->arc.radius == 2.0f);
+    CHECK(use_in_face_a.p_curve()->kind == b::PCurve::Kind::Circle);
+    CHECK(use_in_face_b.p_curve()->kind == b::PCurve::Kind::Arc);
+    CHECK(use_in_face_a.p_curve()->circle.radius == 1.0);
+    CHECK(use_in_face_b.p_curve()->arc.radius == 2.0);
 }
 
 TEST_CASE("G1-U1 D2.4: Layer-2 fields — tolerance + provenance on vertex, edge, face") {

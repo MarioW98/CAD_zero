@@ -271,13 +271,13 @@ inline constexpr double kTwoPi = 6.28318530717958647692;
 
 // The domain coordinates of a world point in a plane's (u,v) frame
 // (the factories' own projection — one inverse, no second frame).
-inline math::Vec2f plane_domain(const PlaneSurface& s, math::Vec3d p) {
-    // THE BOUNDARY CONVERSION (ADR-0034): the projection computes in
-    // double (the exact world), the p-curve payload converts to the
-    // sketch domain's float here - one direction, the only place.
+// DOUBLE END TO END (morso 3, ADR-0035 D4): the projection computes
+// in the exact world and the payload IS the exact world's — the
+// demotion that quantized it to the sketch domain's float is
+// retired with the float payload itself.
+inline math::Vec2d plane_domain(const PlaneSurface& s, math::Vec3d p) {
     const math::Vec3d d = p - s.origin();
-    return {static_cast<float>(d.dot(s.u_axis())),
-            static_cast<float>(d.dot(s.v_axis()))};
+    return {d.dot(s.u_axis()), d.dot(s.v_axis())};
 }
 
 // Normalize an angle to [0, 2π).
@@ -287,18 +287,12 @@ inline double norm_two_pi(double a) {
     return r;
 }
 
-// THE BOUNDARY CONVERSION (ADR-0034): the exact world's double
-// quantized to the p-curve domain's float — one direction, the only
-// place it happens (every payload authoring in this file flows
-// through here or through the dom projections' own casts).
-inline math::Vec2f v2f(const math::Vec2d& p) {
-    return {static_cast<float>(p.x), static_cast<float>(p.y)};
-}
-
-// THE PAYLOAD DOMAIN TYPES: the p-curve payloads are the sketch
-// kernel's float vocabulary (ADR-0032 D2.1 — one opinion); the world
-// is double (ADR-0034). The conversions below are explicit and local.
-using math::Vec2f;
+// THE PAYLOAD DOMAIN (morso 3, ADR-0035 D4): the p-curve payloads
+// are the BREP parametric domain's own DOUBLE vocabulary
+// (pcurve.hpp — one opinion per world); the exact world and the
+// payload world are the SAME world now, so the v2f quantizer that
+// lived here is gone — there is nothing to convert. The sketch
+// world is never entered from this file.
 
 } // namespace subtract_detail
 
@@ -565,14 +559,14 @@ inline ToolWalk read_tool_walk(const BRepBody& B) {
             "exact_subtract: the tool's cap carries no loop - a "
             "malformed prism. Remedy: report the tool's construction.");
 
-    const auto dom = [cap](const math::Vec2f& uv) {
+    const auto dom = [cap](const math::Vec2d& uv) {
         return cap->evaluate(uv.x, uv.y);
     };
     for (const auto& ce : loop[0].coedges()) {
         const auto* pc = ce.p_curve();
         if (pc == nullptr ||
-            (pc->kind != sdf::SketchEntity::Kind::Segment &&
-             pc->kind != sdf::SketchEntity::Kind::Arc)) {
+            (pc->kind != PCurve::Kind::Segment &&
+             pc->kind != PCurve::Kind::Arc)) {
             throw std::invalid_argument(
                 "exact_subtract: the tool's cap carries a p-curve outside "
                 "the prism vocabulary (a Segment or an Arc per co-edge, "
@@ -580,7 +574,7 @@ inline ToolWalk read_tool_walk(const BRepBody& B) {
                 "tool's construction.");
         }
         WalkEntity e;
-        if (pc->kind == sdf::SketchEntity::Kind::Segment) {
+        if (pc->kind == PCurve::Kind::Segment) {
             e.kind = WalkEntity::Kind::Segment;
             const math::Vec3d a = dom(pc->segment.a);
             const math::Vec3d b = dom(pc->segment.b);
@@ -592,8 +586,8 @@ inline ToolWalk read_tool_walk(const BRepBody& B) {
             e.center = {c.x, c.y};
             e.radius = pc->arc.radius;
             e.sweep = pc->arc.sweep;
-            const math::Vec3d a = dom(sdf::arc_start_point(pc->arc));
-            const math::Vec3d b = dom(sdf::arc_end_point(pc->arc));
+            const math::Vec3d a = dom(pcurve_arc_start_point(pc->arc));
+            const math::Vec3d b = dom(pcurve_arc_end_point(pc->arc));
             e.p = {a.x, a.y};
             e.q = {b.x, b.y};
             // The world span: the cap's domain is right-handed around
@@ -1194,9 +1188,8 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
 
     // A local Line2 authoring helper (region-on-right throughout —
     // the convention this unit pins for the surviving walls).
-    using subtract_detail::v2f;
-    const auto line_rr = [](math::Vec2f a, math::Vec2f b) {
-        return sdf::sketch_segment(a, b, /*interior_left=*/false);
+    const auto line_rr = [](math::Vec2d a, math::Vec2d b) {
+        return pcurve_segment(a, b, /*interior_left=*/false);
     };
 
     // ---- the walls ---------------------------------------------------
@@ -1230,7 +1223,8 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
                 const auto dom = [&](const math::Vec2d& xy, double z) {
                     return subtract_detail::plane_domain(
                         *surf, math::Vec3d{xy.x, xy.y, z});
-                };  // Vec2f payload: plane_domain converts (ADR-0034)
+                };  // Vec2d payload: the domain stores the exact
+                    // world's own double (morso 3 — no conversion).
                 CoEdge bot{eid(e_base + i), false};
                 bot.set_p_curve(line_rr(dom(e.p, t.z_bot), dom(e.q, t.z_bot)));
                 CoEdge up{eid(e_base + 2 * n + i), false};
@@ -1251,20 +1245,20 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
                 // [-psi_end, -psi_start] x [0, h].
                 auto surf = std::make_shared<CylinderZSurface>(
                     e.center, e.radius, t.z_bot, -1);
-                // Payload quantization at the window authoring
-                // (ADR-0034's boundary), one local conversion.
-                const float u_p = static_cast<float>(-e.psi_start);
-                const float u_q =
-                    static_cast<float>(-(e.psi_start + e.sweep));
-                const float vh = static_cast<float>(h);
+                // The window payloads: the world's doubles, stored
+                // as the domain's own doubles (morso 3 — the
+                // quantizer retired with the float payload).
+                const double u_p = -e.psi_start;
+                const double u_q = -(e.psi_start + e.sweep);
+                const double vh = h;
                 CoEdge bot{eid(e_base + i), false};
-                bot.set_p_curve(line_rr({u_p, 0.0f}, {u_q, 0.0f}));
+                bot.set_p_curve(line_rr({u_p, 0.0}, {u_q, 0.0}));
                 CoEdge up{eid(e_base + 2 * n + i), false};
-                up.set_p_curve(line_rr({u_q, 0.0f}, {u_q, vh}));
+                up.set_p_curve(line_rr({u_q, 0.0}, {u_q, vh}));
                 CoEdge top{eid(e_base + n + i), true};
                 top.set_p_curve(line_rr({u_q, vh}, {u_p, vh}));
                 CoEdge down{eid(e_base + 2 * n + prev), true};
-                down.set_p_curve(line_rr({u_p, vh}, {u_p, 0.0f}));
+                down.set_p_curve(line_rr({u_p, vh}, {u_p, 0.0}));
                 loop.add_coedge(bot);
                 loop.add_coedge(up);
                 loop.add_coedge(top);
@@ -1283,24 +1277,24 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
         const double u0 = -psi0;
         auto surf = std::make_shared<CylinderZSurface>(
             w.circle_center, w.circle_radius, t.z_bot, -1);
-        // The window payloads: the world's doubles quantized to the
-        // p-curve domain's float (ADR-0034), one local conversion.
-        const float f0 = static_cast<float>(u0);
-        const float fp = static_cast<float>(subtract_detail::kPi);
-        const float ftp = static_cast<float>(subtract_detail::kTwoPi);
-        const float fh = static_cast<float>(h);
+        // The window payloads: the world's doubles, stored as the
+        // domain's own doubles (morso 3 — the quantizer retired).
+        const double f0 = u0;
+        const double fp = subtract_detail::kPi;
+        const double ftp = subtract_detail::kTwoPi;
+        const double fh = h;
         Loop loop;
         CoEdge s_down{eid(e_base + 2 * n), true};
-        s_down.set_p_curve(line_rr({f0, fh}, {f0, 0.0f}));
+        s_down.set_p_curve(line_rr({f0, fh}, {f0, 0.0}));
         CoEdge bot1{eid(e_base + 1), false};
-        bot1.set_p_curve(line_rr({f0, 0.0f}, {f0 - fp, 0.0f}));
+        bot1.set_p_curve(line_rr({f0, 0.0}, {f0 - fp, 0.0}));
         CoEdge bot0{eid(e_base + 0), false};
         bot0.set_p_curve(
-            line_rr({f0 - fp, 0.0f},
-                    {f0 - ftp, 0.0f}));
+            line_rr({f0 - fp, 0.0},
+                    {f0 - ftp, 0.0}));
         CoEdge s_up{eid(e_base + 2 * n), false};
         s_up.set_p_curve(
-            line_rr({f0 - ftp, 0.0f},
+            line_rr({f0 - ftp, 0.0},
                     {f0 - ftp, fh}));
         CoEdge top0{eid(e_base + n + 0), true};
         top0.set_p_curve(
@@ -1348,15 +1342,15 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
             const auto& e = w.entities[i];
             CoEdge ce{eid(e_base + n + i), false};
             if (e.kind == subtract_detail::WalkEntity::Kind::Segment) {
-                ce.set_p_curve(sdf::sketch_segment(
+                ce.set_p_curve(pcurve_segment(
                     dom_top(e.p), dom_top(e.q), /*interior_left=*/false));
             } else {
-                const math::Vec2f c = dom_top(e.center);
-                const math::Vec2f s = dom_top(e.p);
-                ce.set_p_curve(sdf::sketch_arc(
-                    c, static_cast<float>(e.radius), /*hole=*/true,
-                    static_cast<float>(std::atan2(s.y - c.y, s.x - c.x)),
-                    static_cast<float>(e.sweep)));
+                const math::Vec2d c = dom_top(e.center);
+                const math::Vec2d s = dom_top(e.p);
+                ce.set_p_curve(pcurve_arc(
+                    c, e.radius, /*hole=*/true,
+                    std::atan2(s.y - c.y, s.x - c.x),
+                    e.sweep));
             }
             top_inner.add_coedge(ce);
         }
@@ -1369,15 +1363,15 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
             const auto& e = w.entities[i];
             CoEdge ce{eid(e_base + i), true};
             if (e.kind == subtract_detail::WalkEntity::Kind::Segment) {
-                ce.set_p_curve(sdf::sketch_segment(
+                ce.set_p_curve(pcurve_segment(
                     dom_bot(e.q), dom_bot(e.p), /*interior_left=*/false));
             } else {
-                const math::Vec2f c = dom_bot(e.center);
-                const math::Vec2f s = dom_bot(e.q);  // the REVERSED start
-                ce.set_p_curve(sdf::sketch_arc(
-                    c, static_cast<float>(e.radius), /*hole=*/true,
-                    static_cast<float>(std::atan2(s.y - c.y, s.x - c.x)),
-                    static_cast<float>(e.sweep)));
+                const math::Vec2d c = dom_bot(e.center);
+                const math::Vec2d s = dom_bot(e.q);  // the REVERSED start
+                ce.set_p_curve(pcurve_arc(
+                    c, e.radius, /*hole=*/true,
+                    std::atan2(s.y - c.y, s.x - c.x),
+                    e.sweep));
             }
             bot_inner.add_coedge(ce);
         };

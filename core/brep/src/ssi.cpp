@@ -6,16 +6,31 @@
 // nowhere else. Pure functions throughout (ADR-0014): the same
 // operands answer the same bytes.
 //
-// H1 (ADR-0034) — THE ARITHMETIC AND THE DISPATCH:
-//   * every derivation computes in DOUBLE (the exact path's domain);
-//     the p-curve payloads convert to the sketch kernel's float at
-//     the authoring sites, one direction, declared inline;
+// H1 (ADR-0034) — THE ARITHMETIC AND THE DISPATCH, as completed by
+//   H2 unit 3 morso 3 (ADR-0035 D4):
+//   * every derivation computes in DOUBLE (the exact path's domain)
+//     and the p-curve payloads are STORED in double — the BREP
+//     parametric domain's own vocabulary (pcurve.hpp, one opinion
+//     per world). The double→float demotions that lived at the
+//     authoring sites since ADR-0034 D1's boundary row are REMOVED,
+//     not converted; the sketch world is entered only at the
+//     extrude caps' frontier (float→double, exact, one direction);
 //   * the dispatch is TYPED (D3): the operand records are a
 //     std::variant of typed payloads built through the surface
 //     VISITOR, and the entry selection is a std::visit overload set
 //     — the landed pairs are overloads on the REC TYPES, the wall is
 //     the generic fallback. No string compare, no dynamic_cast chain:
 //     a typo'd family name does not compile.
+//
+// HYGIENE, verified at morso 3 (the order's pending item): this
+// file carries ZERO dynamic_cast — the chain it carried before
+// c39ad8b (ADR-0034's acceptance) died with the typed dispatch, all
+// of it, and no residue came back (grep is the witness; the exact
+// path as a whole — ssi, boolean, factories, extrude, subtract —
+// is dynamic_cast-free). The only dynamic_cast chains left in the
+// tree are core/io's SDF serializer (native.cpp — the serialization
+// world, outside the exact path's jurisdiction and outside this
+// morso's scope) and the tests' own type assertions.
 #include "CAD_0/brep/ssi.hpp"
 
 #include <algorithm>
@@ -29,12 +44,10 @@
 namespace CAD_0::brep {
 namespace {
 
-// The periodic domain's constants: FLOAT on purpose — they feed the
-// p-curve payloads (the sketch kernel's domain, ADR-0032 D2.1), the
-// same bytes the factories author.
-constexpr float kPi_f = 3.14159265358979f;
-constexpr float kTwoPi_f = 6.28318530717958647692f;
-constexpr double kTwoPi = 6.28318530717958647692;
+// The periodic domain's constants come from the vocabulary itself
+// (pcurve.hpp: kPi/kTwoPi, DOUBLE — the BREP parametric domain's own
+// world since morso 3, ADR-0035 D4). No local copy: one declaration
+// per constant, the same bytes the factories author.
 
 // --- small helpers --------------------------------------------------------
 
@@ -48,23 +61,24 @@ std::string num(double v) { return std::to_string(v); }
 
 // The full-period latitude p-curve: ONE Line2 spanning the domain's
 // period at v = const (the wall's full-window precedent; the closed
-// periodic loop as the domain's horizontal line).
-// THE BOUNDARY CONVERSION (ADR-0034): the double latitude quantized
-// to the p-curve domain's float, one direction, right here.
+// periodic loop as the domain's horizontal line). DOUBLE END TO END
+// (morso 3, ADR-0035 D4): the latitude the derivation computes IS
+// the latitude stored — the quantizer that demoted it to the float
+// payload died with the float payload itself.
 PCurve latitude_pc(double v) {
-    const float vf = static_cast<float>(v);
-    return sdf::sketch_segment(math::Vec2f{0.0f, vf},
-                               math::Vec2f{kTwoPi_f, vf},
-                               /*interior_left=*/true);
+    return pcurve_segment(math::Vec2d{0.0, v},
+                          math::Vec2d{kTwoPi, v},
+                          /*interior_left=*/true);
 }
 
 // The vertical line p-curve at u = const over the face's authored
 // v-window (the boolean will trim within it — the answer spans what
-// the face itself spans). Payload domain: float, as authored.
-PCurve vline_pc(float u, float v0, float v1) {
-    return sdf::sketch_segment(math::Vec2f{u, v0},
-                               math::Vec2f{u, v1},
-                               /*interior_left=*/true);
+// the face itself spans). Payload domain: double, the BREP domain's
+// own world.
+PCurve vline_pc(double u, double v0, double v1) {
+    return pcurve_segment(math::Vec2d{u, v0},
+                          math::Vec2d{u, v1},
+                          /*interior_left=*/true);
 }
 
 // --- the operand records (typed payloads, ADR-0034 D3) ----------------------
@@ -260,14 +274,15 @@ bool pole_serves(const SphereRec& s, const math::Vec3d& axis, double tol) {
 // The face's authored v-window (the line p-curves' span), from its
 // own segment p-curves. False when not derivable — the caller refuses
 // loudly (never a guessed span). PAYLOAD DOMAIN: the window is the
-// face's own authored float bytes, read verbatim.
-bool face_v_window(const Face& f, float& v0, float& v1) {
+// face's own authored double bytes, read verbatim (morso 3: the
+// window reads the same world the payloads store).
+bool face_v_window(const Face& f, double& v0, double& v1) {
     bool any = false;
     for (const auto& loop : f.loops())
         for (const auto& ce : loop.coedges()) {
             const PCurve* p = ce.p_curve();
             if (p == nullptr || p->kind != PCurve::Kind::Segment) continue;
-            for (const math::Vec2f pt : {p->segment.a, p->segment.b}) {
+            for (const math::Vec2d pt : {p->segment.a, p->segment.b}) {
                 if (!any) {
                     v0 = v1 = pt.y;
                     any = true;
@@ -449,13 +464,12 @@ SsiResult entry_plane_sphere(const PlaneRec& pl, const SphereRec& sp,
 
     // The plane-domain p-curve: the Circle2 at the foot's domain
     // coordinates (the same numbers the sketcher would read).
-    // BOUNDARY (ADR-0034): the projection in double, the payload in
-    // the domain's float.
+    // DOUBLE END TO END (morso 3): the projection in double, the
+    // payload in the domain's own double — the demotion died.
     const math::Vec3d rel = foot - pl.origin;
     const math::Vec2d cu{rel.dot(pl.u_axis), rel.dot(pl.v_axis)};
-    plane_dom.pcurves.push_back(sdf::sketch_circle(
-        math::Vec2f{static_cast<float>(cu.x), static_cast<float>(cu.y)},
-        static_cast<float>(rr), /*hole=*/false));
+    plane_dom.pcurves.push_back(
+        pcurve_circle(cu, rr, /*hole=*/false));
 
     // The sphere-domain p-curve: the latitude. The stored frame
     // serves when its pole is parallel to the plane's normal; else
@@ -778,8 +792,8 @@ SsiResult entry_cyl_cyl(const CylRec& c1, const CylRec& c2,
         c.dir = a1;
         out.curves.push_back(c);
         // The p-curve span: the faces' authored v-windows (the
-        // sketch-domain bytes, read verbatim — ADR-0034's boundary).
-        float w1a = 0, w1b = 0, w2a = 0, w2b = 0;
+        // domain's own double bytes, read verbatim — morso 3).
+        double w1a = 0, w1b = 0, w2a = 0, w2b = 0;
         if (!face_v_window(*ra.face, w1a, w1b) ||
             !face_v_window(*rb.face, w2a, w2b)) {
             return wall(out,
@@ -792,9 +806,9 @@ SsiResult entry_cyl_cyl(const CylRec& c1, const CylRec& c2,
                         "path skipped the window).");
         }
         out.a.pcurves.push_back(
-            vline_pc(static_cast<float>(c1.u_of(dh)), w1a, w1b));
+            vline_pc(c1.u_of(dh), w1a, w1b));
         out.b.pcurves.push_back(
-            vline_pc(static_cast<float>(c2.u_of(dh * -1.0)), w2a, w2b));
+            vline_pc(c2.u_of(dh * -1.0), w2a, w2b));
         return out;
     }
     if (d > 2.0 * r + tol) {
@@ -821,7 +835,7 @@ SsiResult entry_cyl_cyl(const CylRec& c1, const CylRec& c2,
         c.dir = a1;
         out.curves.push_back(c);
     }
-    float w1a = 0, w1b = 0, w2a = 0, w2b = 0;
+    double w1a = 0, w1b = 0, w2a = 0, w2b = 0;
     if (!face_v_window(*ra.face, w1a, w1b) ||
         !face_v_window(*rb.face, w2a, w2b)) {
         return wall(out,
@@ -834,12 +848,10 @@ SsiResult entry_cyl_cyl(const CylRec& c1, const CylRec& c2,
     }
     for (int i = 0; i < 2; ++i) {
         out.a.pcurves.push_back(
-            vline_pc(static_cast<float>(
-                         c1.u_of((pts[i] - c1.axis_point).normalized())),
+            vline_pc(c1.u_of((pts[i] - c1.axis_point).normalized()),
                      w1a, w1b));
         out.b.pcurves.push_back(
-            vline_pc(static_cast<float>(
-                         c2.u_of((pts[i] - c2.axis_point).normalized())),
+            vline_pc(c2.u_of((pts[i] - c2.axis_point).normalized()),
                      w2a, w2b));
     }
     return out;
@@ -1015,18 +1027,19 @@ ReframeRecord reframe_sphere_face(BRepBody& body, FaceId face,
     // The rebuilt face: the same mathematical object (C, R), the NEW
     // frame, the seam pair re-wired in the SAME slit-rectangle form,
     // the id / provenance / orientation preserved. The seam payloads
-    // are the sketch domain's float constants (the same bytes the
-    // factories author — ADR-0034's boundary).
+    // are the BREP domain's own double constants (the same bytes the
+    // factories author — morso 3: the frontier reversed, the float
+    // constants retired with it).
     Face nf(std::make_shared<SphereSurface>(next));
     {
         Loop loop;
         CoEdge seam_fwd{seam, false};  // north → south, the RIGHT edge
-        seam_fwd.set_p_curve(sdf::sketch_segment(
-            math::Vec2f{kTwoPi_f, 0.0f}, math::Vec2f{kTwoPi_f, kPi_f},
+        seam_fwd.set_p_curve(pcurve_segment(
+            math::Vec2d{kTwoPi, 0.0}, math::Vec2d{kTwoPi, kPi},
             /*interior_left=*/true));
         CoEdge seam_rev{seam, true};  // south → north, the LEFT edge
-        seam_rev.set_p_curve(sdf::sketch_segment(
-            math::Vec2f{0.0f, kPi_f}, math::Vec2f{0.0f, 0.0f},
+        seam_rev.set_p_curve(pcurve_segment(
+            math::Vec2d{0.0, kPi}, math::Vec2d{0.0, 0.0},
             /*interior_left=*/true));
         loop.add_coedge(seam_fwd);
         loop.add_coedge(seam_rev);

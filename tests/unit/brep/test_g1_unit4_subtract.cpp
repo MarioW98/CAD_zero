@@ -77,16 +77,20 @@ using CAD_0::brep::BRepBody;
 using CAD_0::brep::EdgeId;
 using CAD_0::brep::FaceId;
 using CAD_0::brep::VertexId;
+using CAD_0::math::Vec2d;
 using CAD_0::math::Vec2f;
 using CAD_0::math::Vec3d;
 namespace b = CAD_0::brep;
 namespace s = CAD_0::sdf;
 
-constexpr float kPi = 3.14159265358979f;
-constexpr float kTwoPi = 6.28318530717958647692f;
+constexpr double kPi = 3.14159265358979;
+constexpr double kTwoPi = 6.28318530717958647692;
+// The SKETCH-side constants (the tool chains author float entities).
+constexpr float kPi_f = 3.14159265358979f;
+constexpr float kTwoPi_f = 6.28318530717958647692f;
 
 bool close(double a, double b, double tol = 1e-5) { return std::abs(a - b) <= tol; }
-bool close2(Vec2f a, Vec2f b, float tol = 1e-5f) {
+bool close2(Vec2d a, Vec2d b, double tol = 1e-5) {
     return close(a.x, b.x, tol) && close(a.y, b.y, tol);
 }
 bool close3(Vec3d a, Vec3d b, double tol = 1e-5) {
@@ -116,7 +120,7 @@ std::vector<s::SketchChain> square_chains(Vec2f lo = {-0.3f, -0.3f},
 // The sector: 2 segments from the centre + the closing arc
 // (n = 3, segments + a fillet arc — the mixed profile).
 std::vector<s::SketchChain> sector_chains() {
-    const float a0 = -0.2f * kPi, a1 = 0.35f * kPi;
+    const float a0 = -0.2f * kPi_f, a1 = 0.35f * kPi_f;
     const float r = 0.4f;
     const Vec2f c{0.0f, 0.0f};
     const Vec2f ps = c + Vec2f{r * std::cos(a0), r * std::sin(a0)};
@@ -281,18 +285,18 @@ bool pcurves_chain(const BRepBody& body, const CAD_0::brep::Face& face,
         if (pc == nullptr) return false;
         const auto* next = loop.coedges()[(i + 1) % n].p_curve();
         if (next == nullptr) return false;
-        Vec2f end{}, next_start{};
-        if (pc->kind == s::SketchEntity::Kind::Segment) {
+        Vec2d end{}, next_start{};
+        if (pc->kind == b::PCurve::Kind::Segment) {
             end = pc->segment.b;
-        } else if (pc->kind == s::SketchEntity::Kind::Arc) {
-            end = s::arc_end_point(pc->arc);
+        } else if (pc->kind == b::PCurve::Kind::Arc) {
+            end = b::pcurve_arc_end_point(pc->arc);
         } else {
             return false;  // a Circle2 is closed: single-co-edge loops only
         }
-        if (next->kind == s::SketchEntity::Kind::Segment) {
+        if (next->kind == b::PCurve::Kind::Segment) {
             next_start = next->segment.a;
-        } else if (next->kind == s::SketchEntity::Kind::Arc) {
-            next_start = s::arc_start_point(next->arc);
+        } else if (next->kind == b::PCurve::Kind::Arc) {
+            next_start = b::pcurve_arc_start_point(next->arc);
         } else {
             return false;
         }
@@ -552,7 +556,7 @@ TEST_CASE("G1-U4 guide: box minus the circle prism - THE pinned table 12/17/7/2"
         REQUIRE(outer.is_outer());
         for (const auto& ce : outer.coedges()) {
             REQUIRE(ce.p_curve() != nullptr);
-            CHECK(ce.p_curve()->kind == s::SketchEntity::Kind::Segment);
+            CHECK(ce.p_curve()->kind == b::PCurve::Kind::Segment);
             CHECK(ce.p_curve()->segment.interior_left == true);
         }
         // The inner loop is NOT the outer (the flag says so, and the
@@ -581,9 +585,9 @@ TEST_CASE("G1-U4 guide: the wall - ONE CylinderSurface-family face, the sketch r
     const auto* cyl = dynamic_cast<const b::CylinderZSurface*>(wall.surface());
     REQUIRE(cyl != nullptr);
     CHECK(close(cyl->radius(), 0.25f, 0.0f));
-    CHECK(close2(CAD_0::math::Vec2f{
-                     static_cast<float>(cyl->axis_center().x),
-                     static_cast<float>(cyl->axis_center().y)},
+    CHECK(close2(CAD_0::math::Vec2d{
+                     cyl->axis_center().x,
+                     cyl->axis_center().y},
                  {0.0f, 0.0f}, 0.0f));
     CHECK(close(cyl->z_base(), -1.0f, 0.0f));
     // The hole side: the frame rule forces u_sign = -1 (the outward
@@ -609,7 +613,7 @@ TEST_CASE("G1-U4 guide: the wall - ONE CylinderSurface-family face, the sketch r
         CHECK(ces[i].edge() == want[i].first);
         CHECK(ces[i].reversed() == want[i].second);
         REQUIRE(ces[i].p_curve() != nullptr);
-        CHECK(ces[i].p_curve()->kind == s::SketchEntity::Kind::Segment);
+        CHECK(ces[i].p_curve()->kind == b::PCurve::Kind::Segment);
         CHECK(ces[i].p_curve()->segment.interior_left == false);
     }
     // The window walk's Line2 payloads (the domain rectangle):
@@ -668,8 +672,8 @@ TEST_CASE("G1-U4 guide: the pierced faces' INNER LOOPS - the circle as Arc2 pair
         const auto* a1 = inner.coedges()[1].p_curve();
         REQUIRE(a0 != nullptr);
         REQUIRE(a1 != nullptr);
-        CHECK(a0->kind == s::SketchEntity::Kind::Arc);
-        CHECK(a1->kind == s::SketchEntity::Kind::Arc);
+        CHECK(a0->kind == b::PCurve::Kind::Arc);
+        CHECK(a1->kind == b::PCurve::Kind::Arc);
         CHECK(close2(a0->arc.center, {0.0f, 0.0f}));
         CHECK(close(a0->arc.radius, 0.25f));
         CHECK(a0->arc.hole == true);
@@ -701,8 +705,8 @@ TEST_CASE("G1-U4 guide: the pierced faces' INNER LOOPS - the circle as Arc2 pair
         const auto* a1 = inner.coedges()[1].p_curve();
         REQUIRE(a0 != nullptr);
         REQUIRE(a1 != nullptr);
-        CHECK(a0->kind == s::SketchEntity::Kind::Arc);
-        CHECK(a1->kind == s::SketchEntity::Kind::Arc);
+        CHECK(a0->kind == b::PCurve::Kind::Arc);
+        CHECK(a1->kind == b::PCurve::Kind::Arc);
         CHECK(close2(a0->arc.center, {0.0f, 0.0f}));
         CHECK(close(a0->arc.radius, 0.25f));
         CHECK(a0->arc.hole == true);
@@ -783,7 +787,7 @@ TEST_CASE("G1-U4 formulas: the square prism tool (n=4) - V=16 E=24 F=10 H=2") {
         REQUIRE(f.loops()[0].coedges().size() == 4);
         for (const auto& ce : f.loops()[0].coedges()) {
             REQUIRE(ce.p_curve() != nullptr);
-            CHECK(ce.p_curve()->kind == s::SketchEntity::Kind::Segment);
+            CHECK(ce.p_curve()->kind == b::PCurve::Kind::Segment);
             CHECK(ce.p_curve()->segment.interior_left == false);
         }
         CHECK(pcurves_chain(*r, f, 0));
@@ -796,7 +800,7 @@ TEST_CASE("G1-U4 formulas: the square prism tool (n=4) - V=16 E=24 F=10 H=2") {
         REQUIRE(inner.coedges().size() == 4);
         for (const auto& ce : inner.coedges()) {
             REQUIRE(ce.p_curve() != nullptr);
-            CHECK(ce.p_curve()->kind == s::SketchEntity::Kind::Segment);
+            CHECK(ce.p_curve()->kind == b::PCurve::Kind::Segment);
             CHECK(ce.p_curve()->segment.interior_left == false);
         }
         CHECK(pcurves_chain(*r, r->solid.shell().faces()[fid], 1));
@@ -831,7 +835,7 @@ TEST_CASE("G1-U4 formulas: the sector tool (n=3, segments + arc) - the mixed pro
             REQUIRE(f.loops().size() == 1);
             for (const auto& ce : f.loops()[0].coedges()) {
                 REQUIRE(ce.p_curve() != nullptr);
-                CHECK(ce.p_curve()->kind == s::SketchEntity::Kind::Segment);
+                CHECK(ce.p_curve()->kind == b::PCurve::Kind::Segment);
                 CHECK(ce.p_curve()->segment.interior_left == false);
             }
             CHECK(pcurves_chain(*r, f, 0));
@@ -850,13 +854,13 @@ TEST_CASE("G1-U4 formulas: the sector tool (n=3, segments + arc) - the mixed pro
         std::size_t arcs = 0, lines = 0;
         for (const auto& ce : inner.coedges()) {
             REQUIRE(ce.p_curve() != nullptr);
-            if (ce.p_curve()->kind == s::SketchEntity::Kind::Arc) {
+            if (ce.p_curve()->kind == b::PCurve::Kind::Arc) {
                 ++arcs;
                 CHECK(close(ce.p_curve()->arc.radius, 0.4f));
                 CHECK(ce.p_curve()->arc.hole == true);
                 CHECK(close(ce.p_curve()->arc.sweep, 0.55f * kPi));
             } else {
-                CHECK(ce.p_curve()->kind == s::SketchEntity::Kind::Segment);
+                CHECK(ce.p_curve()->kind == b::PCurve::Kind::Segment);
                 CHECK(ce.p_curve()->segment.interior_left == false);
                 ++lines;
             }

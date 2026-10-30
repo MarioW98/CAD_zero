@@ -99,8 +99,8 @@ using CAD_0::math::Vec2f;
 using CAD_0::math::Vec3d;
 
 constexpr float kTol = 1e-6f;
-constexpr float kPi = 3.14159265358979f;
-constexpr float kTwoPi = 6.28318530717958647692f;
+constexpr double kPi = 3.14159265358979;
+constexpr double kTwoPi = 6.28318530717958647692;
 
 bool close(double a, double b, double tol = 1e-5) { return std::abs(a - b) <= tol; }
 bool close3(Vec3d a, Vec3d b, double tol = 1e-5) {
@@ -148,25 +148,25 @@ void av3(std::string& out, const Vec3d& v) {
     af(out, v.y); out += ',';
     af(out, v.z); out += ')';
 }
-void av2(std::string& out, const Vec2f& v) {
+void av2(std::string& out, const CAD_0::math::Vec2d& v) {
     out += '(';
     af(out, v.x); out += ',';
     af(out, v.y); out += ')';
 }
 void apc(std::string& out, const CAD_0::brep::PCurve& p) {
-    af(out, static_cast<float>(static_cast<int>(p.kind)));
+    af(out, static_cast<double>(static_cast<int>(p.kind)));
     switch (p.kind) {
     case CAD_0::brep::PCurve::Kind::Segment:
         av2(out, p.segment.a); av2(out, p.segment.b);
-        af(out, p.segment.interior_left ? 1.0f : 0.0f);
+        af(out, p.segment.interior_left ? 1.0 : 0.0);
         break;
     case CAD_0::brep::PCurve::Kind::Circle:
         av2(out, p.circle.center); af(out, p.circle.radius);
-        af(out, p.circle.hole ? 1.0f : 0.0f);
+        af(out, p.circle.hole ? 1.0 : 0.0);
         break;
     case CAD_0::brep::PCurve::Kind::Arc:
         av2(out, p.arc.center); af(out, p.arc.radius);
-        af(out, p.arc.hole ? 1.0f : 0.0f);
+        af(out, p.arc.hole ? 1.0 : 0.0);
         af(out, p.arc.start_angle); af(out, p.arc.sweep);
         break;
     }
@@ -195,7 +195,7 @@ std::string ssi_digest(const SsiResult& r) {
 
 // One segment p-curve of the answer, as (a, b, interior_left).
 struct SegPC {
-    Vec2f a{}, b{};
+    CAD_0::math::Vec2d a{}, b{};
     bool interior_left{true};
 };
 SegPC seg_of(const CAD_0::brep::SsiDomainAnswer& d, std::size_t i) {
@@ -219,11 +219,13 @@ std::unique_ptr<BRepBody> budgeted_sphere(float radius) {
     body->edges.back().set_id(1);
     auto& face = body->solid.shell_mut().faces_mut()[0];
     CAD_0::brep::CoEdge cut_fwd{1, false};
-    cut_fwd.set_p_curve(CAD_0::sdf::sketch_segment(
-        Vec2f{0.5f, kPi / 3.0f}, Vec2f{1.5f, kPi / 3.0f}, true));
+    cut_fwd.set_p_curve(CAD_0::brep::pcurve_segment(
+        CAD_0::math::Vec2d{0.5, kPi / 3.0},
+        CAD_0::math::Vec2d{1.5, kPi / 3.0}, true));
     CAD_0::brep::CoEdge cut_rev{1, true};
-    cut_rev.set_p_curve(CAD_0::sdf::sketch_segment(
-        Vec2f{1.5f, kPi / 3.0f}, Vec2f{0.5f, kPi / 3.0f}, true));
+    cut_rev.set_p_curve(CAD_0::brep::pcurve_segment(
+        CAD_0::math::Vec2d{1.5, kPi / 3.0},
+        CAD_0::math::Vec2d{0.5, kPi / 3.0}, true));
     CAD_0::brep::Loop extra;
     extra.add_coedge(cut_fwd);
     extra.add_coedge(cut_rev);
@@ -579,11 +581,11 @@ TEST_CASE("G2-U1 cylinder×cylinder equal radii: the two lines in the mid-plane"
     // The p-curves: the vertical Line2s at the derived azimuths,
     // spanning the face's OWN authored v-window (the factory wall's
     // [−h, +h] = [−1, +1]).
-    const float xa = 0.4f, za = zhalf;
-    const float u1p = std::atan2(-za, xa);            // cyl 1, +z line
-    const float u1m = std::atan2(+za, xa);            // cyl 1, −z line
-    const auto norm2pi = [](float a) {
-        float x = std::fmod(a, kTwoPi);
+    const double xa = 0.4, za = zhalf;
+    const double u1p = std::atan2(-za, xa);           // cyl 1, +z line
+    const double u1m = std::atan2(+za, xa);           // cyl 1, −z line
+    const auto norm2pi = [](double a) {
+        double x = std::fmod(a, kTwoPi);
         if (x < 0) x += kTwoPi;
         return x;
     };
@@ -598,8 +600,8 @@ TEST_CASE("G2-U1 cylinder×cylinder equal radii: the two lines in the mid-plane"
     }
     {
         // Cylinder 2's azimuths: measured from ITS axis at x = 0.8.
-        const float u2p = std::atan2(-za, xa - 0.8f);
-        const float u2m = std::atan2(+za, xa - 0.8f);
+        const double u2p = std::atan2(-za, xa - 0.8);
+        const double u2m = std::atan2(+za, xa - 0.8);
         const SegPC up = seg_of(r.b, 0), dn = seg_of(r.b, 1);
         CHECK(close(up.a.x, norm2pi(u2p)));
         CHECK(close(dn.a.x, norm2pi(u2m)));
@@ -877,12 +879,12 @@ TEST_CASE("G2-U1 the re-frame is a pure function of the recipe: bit-identical at
         av3(out, sph->vertices[1].position());
         for (const auto& loop : fi.loops)
             for (const auto& ce : loop.coedges) {
-                af(out, static_cast<float>(ce.edge));
-                af(out, ce.reversed ? 1.0f : 0.0f);
-                af(out, static_cast<float>(static_cast<int>(ce.kind)));
+                af(out, static_cast<double>(ce.edge));
+                af(out, ce.reversed ? 1.0 : 0.0);
+                af(out, static_cast<double>(static_cast<int>(ce.kind)));
                 av2(out, ce.a);
                 av2(out, ce.b);
-                af(out, ce.interior_left ? 1.0f : 0.0f);
+                af(out, ce.interior_left ? 1.0 : 0.0);
             }
         (rep == 0 ? d1 : d2) = out;
     }

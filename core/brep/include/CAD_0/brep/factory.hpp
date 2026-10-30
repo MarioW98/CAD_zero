@@ -42,8 +42,14 @@
 // hand-copied corners); the sphere's and cylinder's seam/rim
 // p-curves are authored as the domain constants they are (the slit
 // window's edges), pinned bit-for-bit by the unit-2 goldens and
-// cross-checked against the surfaces' evaluate() by the unit-2
-// conventions tests.
+// cross-checked against the surfaces' evaluate() by the coherence
+// contract (test_h2_u3_pcurve_double.cpp — the endpoint and
+// round-trip pins).
+//
+// H2 unit 3, morso 3 (ADR-0035 D4): the p-curve payloads are the
+// BREP domain's DOUBLE vocabulary — the projection below crosses no
+// boundary at all (double in, double stored), and the periodic
+// constants are double. The old demotions are gone, not converted.
 #pragma once
 
 #include "CAD_0/brep/topology.hpp"
@@ -57,25 +63,22 @@ namespace detail {
 
 // The periodic domain's constants, shared by the seam authoring
 // here and pinned bit-for-bit by the unit-2 goldens (the sketch
-// kernel's own kTwoPi carries the same value — mathematical
-// constants, not mirrored layouts). These stay FLOAT: they feed the
-// p-curve payloads (the sketch kernel's domain, ADR-0032 D2.1; the
-// H1 boundary converts world double -> domain float at the
-// authoring site, one direction, declared here).
-inline constexpr float kPi = 3.14159265358979f;
-inline constexpr float kTwoPi = 6.28318530717958647692f;
+// kernel's own float constants carry the same mathematical values
+// in ITS world; the BREP domain's are double — mathematical
+// constants, not mirrored layouts — ADR-0035 D4, morso 3: the
+// payloads no longer round-trip through the sketch's float).
+inline constexpr double kPi = 3.14159265358979;
+inline constexpr double kTwoPi = 6.28318530717958647692;
 
 // The domain coordinates of a 3D point in a plane's (u,v) frame —
 // the inverse of PlaneSurface::evaluate (a frame the surface now
 // exposes for exactly this: one projection, no second frame copy).
-// THE BOUNDARY CONVERSION (ADR-0034): the projection computes in
-// double (the exact world), the payload converts to float here —
-// the p-curve vocabulary's own domain, one direction, the only
-// place it happens.
-inline math::Vec2f plane_domain(const PlaneSurface& s, math::Vec3d p) {
+// DOUBLE END TO END (morso 3, ADR-0035 D4): the projection computes
+// in the exact world and the payload IS the exact world's — no
+// conversion, no cast, the demotion retired.
+inline math::Vec2d plane_domain(const PlaneSurface& s, math::Vec3d p) {
     const math::Vec3d d = p - s.origin();
-    return {static_cast<float>(d.dot(s.u_axis())),
-            static_cast<float>(d.dot(s.v_axis()))};
+    return {d.dot(s.u_axis()), d.dot(s.v_axis())};
 }
 
 // A co-edge with its Line2 p-curve authored by projection through
@@ -90,7 +93,7 @@ inline CoEdge line_coedge(EdgeId e, bool reversed, const PlaneSurface& s,
                           const std::vector<Vertex>& vertices,
                           const std::vector<Edge>& edges) {
     CoEdge ce{e, reversed};
-    ce.set_p_curve(sdf::sketch_segment(
+    ce.set_p_curve(pcurve_segment(
         plane_domain(s, vertices[ce.start_vertex(edges)].position()),
         plane_domain(s, vertices[ce.end_vertex(edges)].position()),
         /*interior_left=*/true));
@@ -284,14 +287,14 @@ inline std::unique_ptr<BRepBody> make_sphere(double radius, math::Vec3d center =
     Loop loop;
     {
         CoEdge seam_fwd{0, false};  // north → south, the RIGHT edge
-        seam_fwd.set_p_curve(sdf::sketch_segment(
-            math::Vec2f{detail::kTwoPi, 0.0f},
-            math::Vec2f{detail::kTwoPi, detail::kPi},
+        seam_fwd.set_p_curve(pcurve_segment(
+            math::Vec2d{detail::kTwoPi, 0.0},
+            math::Vec2d{detail::kTwoPi, detail::kPi},
             /*interior_left=*/true));
         CoEdge seam_rev{0, true};   // south → north, the LEFT edge
-        seam_rev.set_p_curve(sdf::sketch_segment(
-            math::Vec2f{0.0f, detail::kPi},
-            math::Vec2f{0.0f, 0.0f},
+        seam_rev.set_p_curve(pcurve_segment(
+            math::Vec2d{0.0, detail::kPi},
+            math::Vec2d{0.0, 0.0},
             /*interior_left=*/true));
         loop.add_coedge(seam_fwd);
         loop.add_coedge(seam_rev);
@@ -377,12 +380,13 @@ inline std::unique_ptr<BRepBody> make_cylinder(double radius, double height) {
     {
         Face face(std::make_shared<CylinderSurface>(radius, height));
         Loop loop;
-        const auto wall_line = [](math::Vec2f a, math::Vec2f b) {
-            return sdf::sketch_segment(a, b, /*interior_left=*/true);
+        const auto wall_line = [](math::Vec2d a, math::Vec2d b) {
+            return pcurve_segment(a, b, /*interior_left=*/true);
         };
-        // The window payloads: the exact world's double h quantized to
-        // the p-curve domain's float, one direction (ADR-0034).
-        const float vh = static_cast<float>(h);
+        // The window payloads: the exact world's double span, stored
+        // as the domain's own double (ADR-0035 D4 — the quantizer
+        // retired with the float payload).
+        const double vh = h;
         CoEdge seam_fwd{4, false};  // v_bot1 → v_top1: the RIGHT edge
         seam_fwd.set_p_curve(wall_line({detail::kTwoPi, -vh},
                                        {detail::kTwoPi, vh}));
@@ -390,11 +394,11 @@ inline std::unique_ptr<BRepBody> make_cylinder(double radius, double height) {
         top2_rev.set_p_curve(wall_line({detail::kTwoPi, vh},
                                        {detail::kPi, vh}));
         CoEdge top1_rev{0, true};   // v_top2 → v_top1: −Z half, west
-        top1_rev.set_p_curve(wall_line({detail::kPi, vh}, {0.0f, vh}));
+        top1_rev.set_p_curve(wall_line({detail::kPi, vh}, {0.0, vh}));
         CoEdge seam_rev{4, true};   // v_top1 → v_bot1: the LEFT edge
-        seam_rev.set_p_curve(wall_line({0.0f, vh}, {0.0f, -vh}));
+        seam_rev.set_p_curve(wall_line({0.0, vh}, {0.0, -vh}));
         CoEdge bot2_rev{3, true};   // v_bot1 → v_bot2: −Z half, east
-        bot2_rev.set_p_curve(wall_line({0.0f, -vh},
+        bot2_rev.set_p_curve(wall_line({0.0, -vh},
                                        {detail::kPi, -vh}));
         CoEdge bot1_rev{2, true};   // v_bot2 → v_bot1: +Z half, east
         bot1_rev.set_p_curve(wall_line({detail::kPi, -vh},
@@ -422,15 +426,15 @@ inline std::unique_ptr<BRepBody> make_cylinder(double radius, double height) {
         Face face(std::make_shared<PlaneSurface>(origin, normal));
         Loop loop;
         CoEdge first{e_first, false};
-        first.set_p_curve(sdf::sketch_arc(math::Vec2f{0, 0}, static_cast<float>(radius),
-                                          /*hole=*/false,
-                                          -0.5f * detail::kPi,
-                                          detail::kPi));
+        first.set_p_curve(pcurve_arc(math::Vec2d{0, 0}, radius,
+                                     /*hole=*/false,
+                                     -0.5 * detail::kPi,
+                                     detail::kPi));
         CoEdge second{e_second, false};
-        second.set_p_curve(sdf::sketch_arc(math::Vec2f{0, 0}, static_cast<float>(radius),
-                                           /*hole=*/false,
-                                           0.5f * detail::kPi,
-                                           detail::kPi));
+        second.set_p_curve(pcurve_arc(math::Vec2d{0, 0}, radius,
+                                      /*hole=*/false,
+                                      0.5 * detail::kPi,
+                                      detail::kPi));
         loop.add_coedge(first);
         loop.add_coedge(second);
         face.add_loop(std::move(loop));

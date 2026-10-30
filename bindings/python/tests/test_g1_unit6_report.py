@@ -134,7 +134,7 @@ def test_guide_case_report_text_the_debug_menu_surface():
     # wall of floats) and the visible flag.
     assert "Mass properties (density 1, divergence theorem): " \
            "exact (all_exact = True)" in text
-    assert "Volume = 7.60730091" in text
+    assert "Volume = 7.60730092" in text
     assert "diagonal  Ixx =" in text
     assert "products  Ixy =" in text
 
@@ -300,7 +300,7 @@ def test_the_example_walks_the_chain_in_ci():
     assert "bit-identical" in out
     assert "ONE undo entry" in out or "1 entry" in out
     # The guide numbers, visible for the hand-check.
-    assert "7.60730091" in out
+    assert "7.60730092" in out
     assert "12 - 17 + 7 - 2 = 0" in out
 
 

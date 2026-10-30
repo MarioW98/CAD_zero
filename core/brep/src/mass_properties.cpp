@@ -317,7 +317,7 @@ Contrib planar_contrib(const PlaneSurface& pl, const Face& f, double tol,
         // rim, direction-free — the vocabulary's honest answer).
         if (loop.coedges().size() == 1) {
             const auto* pc = loop.coedges()[0].p_curve();
-            if (pc != nullptr && pc->kind == sdf::SketchEntity::Kind::Circle) {
+            if (pc != nullptr && pc->kind == PCurve::Kind::Circle) {
                 if (li == 0)
                     throw std::invalid_argument(
                         "mass_properties: face " + std::to_string(face_index) +
@@ -346,10 +346,10 @@ Contrib planar_contrib(const PlaneSurface& pl, const Face& f, double tol,
                     "trimming) is violated. Remedy: report the body's "
                     "construction (a relabeled faceted body is a lied "
                     "record, and the machinery does not launder it).");
-            if (pc->kind == sdf::SketchEntity::Kind::Segment) {
+            if (pc->kind == PCurve::Kind::Segment) {
                 add_segment(L, pc->segment.a.x, pc->segment.a.y,
                             pc->segment.b.x, pc->segment.b.y);
-            } else if (pc->kind == sdf::SketchEntity::Kind::Arc) {
+            } else if (pc->kind == PCurve::Kind::Arc) {
                 add_arc(L, pc->arc.center.x, pc->arc.center.y,
                         pc->arc.radius, pc->arc.start_angle, pc->arc.sweep);
             } else {
@@ -641,7 +641,7 @@ MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
                             " is exact but a co-edge carries no p-curve - "
                             "the exact world's invariant is violated. "
                             "Remedy: report the body's construction.");
-                    if (pc->kind != sdf::SketchEntity::Kind::Segment)
+                    if (pc->kind != PCurve::Kind::Segment)
                         throw std::invalid_argument(
                             "mass_properties: face " + std::to_string(fi) +
                             "'s cylindrical loop carries a non-Line2 "

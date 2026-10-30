@@ -77,19 +77,24 @@ namespace {
 
 namespace b = CAD_0::brep;
 namespace s = CAD_0::sdf;
+using CAD_0::math::Vec2d;
 using CAD_0::math::Vec2f;
 using CAD_0::math::Vec3d;
 
-constexpr float kPi = 3.14159265358979f;
-constexpr float kTwoPi = 6.28318530717958647692f;
+constexpr double kPi = 3.14159265358979;
+constexpr double kTwoPi = 6.28318530717958647692;
+// The SKETCH-side constants (the chains below author float entities —
+// the sketch world's own; the p-curve domain reads the double ones).
+constexpr float kPi_f = 3.14159265358979f;
+constexpr float kTwoPi_f = 6.28318530717958647692f;
 
 bool close(double a, double b, double tol = 1e-5) {
     return std::abs(a - b) <= tol;
 }
-bool close2(const Vec2f& a, const Vec2f& b, float tol = 1e-5f) {
+bool close2(const Vec2d& a, const Vec2d& b, double tol = 1e-5) {
     return close(a.x, b.x, tol) && close(a.y, b.y, tol);
 }
-bool close3(const Vec3d& a, const Vec3d& b, float tol = 1e-5f) {
+bool close3(const Vec3d& a, const Vec3d& b, double tol = 1e-5) {
     return close(a.x, b.x, tol) && close(a.y, b.y, tol) &&
            close(a.z, b.z, tol);
 }
@@ -132,7 +137,7 @@ std::vector<s::SketchChain> ring_chains() {
 std::vector<s::SketchChain> sector_chains() {
     // Centre C=(0,0), r=1.5, from angle a0=-0.2π to a1=+0.35π
     // (nothing special — the pins must hold for ANY span).
-    const float a0 = -0.2f * kPi, a1 = 0.35f * kPi;
+    const float a0 = -0.2f * kPi_f, a1 = 0.35f * kPi_f;
     const float r = 1.5f;
     const Vec2f c{0.0f, 0.0f};
     const Vec2f ps = c + Vec2f{r * std::cos(a0), r * std::sin(a0)};
@@ -160,11 +165,11 @@ std::vector<s::SketchChain> lens_chains() {
     const float ang_b1 = std::atan2(bb.y - c1.y, bb.x - c1.x);
     const float ang_a1 = std::atan2(a.y - c1.y, a.x - c1.x);
     float span1 = ang_a1 - ang_b1;
-    if (span1 < 0.0f) span1 += kTwoPi;
+    if (span1 < 0.0f) span1 += kTwoPi_f;
     const float ang_a2 = std::atan2(a.y - c2.y, a.x - c2.x);
     const float ang_b2 = std::atan2(bb.y - c2.y, bb.x - c2.x);
     float span2 = ang_b2 - ang_a2;
-    if (span2 < 0.0f) span2 += kTwoPi;
+    if (span2 < 0.0f) span2 += kTwoPi_f;
     return {s::SketchChain{{
         s::sketch_arc(c1, r, false, ang_b1, span1),
         s::sketch_arc(c2, r, false, ang_a2, span2),
@@ -186,7 +191,7 @@ std::vector<s::SketchChain> notch_chains() {
     return {s::SketchChain{{
         s::sketch_segment({0.0f, 0.0f}, {0.0f, 2.0f}, false),   // left, up
         s::sketch_segment({0.0f, 2.0f}, {1.6f, 2.0f}, false),   // top, east
-        s::sketch_arc({3.0f, 2.0f}, 1.4f, true, kPi, 0.5f * kPi),
+        s::sketch_arc({3.0f, 2.0f}, 1.4f, true, kPi_f, 0.5f * kPi_f),
         s::sketch_segment({3.0f, 0.6f}, {3.0f, 0.0f}, false),   // right, down
         s::sketch_segment({3.0f, 0.0f}, {0.0f, 0.0f}, false),   // bottom, west
     }}};
@@ -208,34 +213,34 @@ std::uint32_t add_extrude(CAD_0::scene::Scene& sc, const std::string& name,
 
 // ---- the conventions checker (unit 2's, extended to authored bits) --
 
-Vec2f pcurve_start(const b::PCurve& p) {
+Vec2d pcurve_start(const b::PCurve& p) {
     switch (p.kind) {
-    case s::SketchEntity::Kind::Segment: return p.segment.a;
-    case s::SketchEntity::Kind::Arc:     return s::arc_start_point(p.arc);
-    case s::SketchEntity::Kind::Circle:  return p.circle.center;
+    case b::PCurve::Kind::Segment: return p.segment.a;
+    case b::PCurve::Kind::Arc:     return b::pcurve_arc_start_point(p.arc);
+    case b::PCurve::Kind::Circle:  return p.circle.center;
     }
     return {};
 }
-Vec2f pcurve_end(const b::PCurve& p) {
+Vec2d pcurve_end(const b::PCurve& p) {
     switch (p.kind) {
-    case s::SketchEntity::Kind::Segment: return p.segment.b;
-    case s::SketchEntity::Kind::Arc:     return s::arc_end_point(p.arc);
-    case s::SketchEntity::Kind::Circle:  return p.circle.center;
+    case b::PCurve::Kind::Segment: return p.segment.b;
+    case b::PCurve::Kind::Arc:     return b::pcurve_arc_end_point(p.arc);
+    case b::PCurve::Kind::Circle:  return p.circle.center;
     }
     return {};
 }
-Vec2f pcurve_mid(const b::PCurve& p) {
+Vec2d pcurve_mid(const b::PCurve& p) {
     switch (p.kind) {
-    case s::SketchEntity::Kind::Segment:
-        return Vec2f{(p.segment.a.x + p.segment.b.x) * 0.5f,
-                     (p.segment.a.y + p.segment.b.y) * 0.5f};
-    case s::SketchEntity::Kind::Arc: {
-        const float t = p.arc.start_angle + p.arc.sweep * 0.5f;
-        return p.arc.center + Vec2f{p.arc.radius * std::cos(t),
-                                    p.arc.radius * std::sin(t)};
+    case b::PCurve::Kind::Segment:
+        return Vec2d{(p.segment.a.x + p.segment.b.x) * 0.5,
+                     (p.segment.a.y + p.segment.b.y) * 0.5};
+    case b::PCurve::Kind::Arc: {
+        const double t = p.arc.start_angle + p.arc.sweep * 0.5;
+        return p.arc.center + Vec2d{p.arc.radius * std::cos(t),
+                                          p.arc.radius * std::sin(t)};
     }
-    case s::SketchEntity::Kind::Circle:
-        return p.circle.center + Vec2f{p.circle.radius, 0.0f};
+    case b::PCurve::Kind::Circle:
+        return p.circle.center + Vec2d{p.circle.radius, 0.0};
     }
     return {};
 }
@@ -245,9 +250,9 @@ Vec2f pcurve_mid(const b::PCurve& p) {
 // region semantics, read from the payload verbatim.
 bool material_left(const b::PCurve& p) {
     switch (p.kind) {
-    case s::SketchEntity::Kind::Segment: return p.segment.interior_left;
-    case s::SketchEntity::Kind::Circle:  return !p.circle.hole;
-    case s::SketchEntity::Kind::Arc:     return !p.arc.hole;
+    case b::PCurve::Kind::Segment: return p.segment.interior_left;
+    case b::PCurve::Kind::Circle:  return !p.circle.hole;
+    case b::PCurve::Kind::Arc:     return !p.arc.hole;
     }
     return false;
 }
@@ -256,38 +261,38 @@ bool material_left(const b::PCurve& p) {
 // is the CCW sweep direction (the vocabulary stores CCW sweeps only);
 // the Circle2's is CCW at the checkpoint (0° — the same point
 // pcurve_mid uses).
-Vec2f tangent(const b::PCurve& p) {
+Vec2d tangent(const b::PCurve& p) {
     switch (p.kind) {
-    case s::SketchEntity::Kind::Segment: {
-        Vec2f d = p.segment.b - p.segment.a;
-        const float len = d.length();
-        if (len > 0) d = Vec2f{d.x / len, d.y / len};
+    case b::PCurve::Kind::Segment: {
+        Vec2d d = p.segment.b - p.segment.a;
+        const double len = d.length();
+        if (len > 0) d = Vec2d{d.x / len, d.y / len};
         return d;
     }
-    case s::SketchEntity::Kind::Arc: {
-        const float t = p.arc.start_angle + p.arc.sweep * 0.5f;
-        return Vec2f{-std::sin(t), std::cos(t)};
+    case b::PCurve::Kind::Arc: {
+        const double t = p.arc.start_angle + p.arc.sweep * 0.5;
+        return Vec2d{-std::sin(t), std::cos(t)};
     }
-    case s::SketchEntity::Kind::Circle:
-        return Vec2f{0.0f, 1.0f};
+    case b::PCurve::Kind::Circle:
+        return Vec2d{0.0, 1.0};
     }
-    return {1.0f, 0.0f};
+    return {1.0, 0.0};
 }
-Vec2f offset_to_material(const b::PCurve& p, float eps) {
+Vec2d offset_to_material(const b::PCurve& p, double eps) {
     // The side the entity's region lies on: left of the tangent iff
     // material_left(p), else right — the extended convention.
-    const Vec2f t = tangent(p);
-    const Vec2f left{-t.y, t.x};
-    const float side = material_left(p) ? 1.0f : -1.0f;
-    const Vec2f m = pcurve_mid(p);
-    return Vec2f{m.x + side * left.x * eps, m.y + side * left.y * eps};
+    const Vec2d t = tangent(p);
+    const Vec2d left{-t.y, t.x};
+    const double side = material_left(p) ? 1.0 : -1.0;
+    const Vec2d m = pcurve_mid(p);
+    return Vec2d{m.x + side * left.x * eps, m.y + side * left.y * eps};
 }
-Vec2f offset_away_from_material(const b::PCurve& p, float eps) {
-    const Vec2f t = tangent(p);
-    const Vec2f left{-t.y, t.x};
-    const float side = material_left(p) ? -1.0f : 1.0f;
-    const Vec2f m = pcurve_mid(p);
-    return Vec2f{m.x + side * left.x * eps, m.y + side * left.y * eps};
+Vec2d offset_away_from_material(const b::PCurve& p, double eps) {
+    const Vec2d t = tangent(p);
+    const Vec2d left{-t.y, t.x};
+    const double side = material_left(p) ? -1.0 : 1.0;
+    const Vec2d m = pcurve_mid(p);
+    return Vec2d{m.x + side * left.x * eps, m.y + side * left.y * eps};
 }
 
 // The face's region, as the checker's per-family model. The prism's
@@ -301,46 +306,52 @@ Vec2f offset_away_from_material(const b::PCurve& p, float eps) {
 // coordinates first — the region is the same mathematics, read in
 // its own frame.
 struct RegionSpec {
-    // Convex CCW polygon in the domain (walk order).
-    std::vector<Vec2f> polygon{};
+    // Convex CCW polygon in the domain (walk order) — the BREP
+    // domain's double world since morso 3.
+    std::vector<Vec2d> polygon{};
     // Window (possibly u-periodic): [umin,umax] x [vmin,vmax].
     bool window{false};
     bool periodic_u{false};
-    float umin{0}, umax{0}, vmin{0}, vmax{0};
+    double umin{0}, umax{0}, vmin{0}, vmax{0};
     // Cap: the region is the 2D profile's, in the sketch's own
     // coordinates — reached from the domain through `to_sketch`.
     const s::ProfileSDF* profile{nullptr};
     enum class SketchMap { Identity, MirrorY, Rot180 };
     SketchMap to_sketch{SketchMap::Identity};
 
-    bool contains(const Vec2f& p) const {
+    bool contains(const Vec2d& p) const {
         if (profile != nullptr) {
-            Vec2f sp = p;
+            // The cap's region is the SKETCH profile's — the float
+            // world's own mathematics. The domain point crosses to
+            // the sketch side here, explicitly (the test's own
+            // bridge; the samples sit eps = 1e-3 from every
+            // boundary, far outside the float noise).
+            Vec2f sp{static_cast<float>(p.x), static_cast<float>(p.y)};
             switch (to_sketch) {
-            case SketchMap::MirrorY: sp = Vec2f{p.x, -p.y}; break;
-            case SketchMap::Rot180:  sp = Vec2f{-p.x, -p.y}; break;
+            case SketchMap::MirrorY: sp = Vec2f{sp.x, -sp.y}; break;
+            case SketchMap::Rot180:  sp = Vec2f{-sp.x, -sp.y}; break;
             case SketchMap::Identity: break;
             }
             return profile->sample(sp).value < 0.0f;
         }
         if (window) {
-            float u = p.x;
+            double u = p.x;
             if (periodic_u) {
-                const float w = umax - umin;
+                const double w = umax - umin;
                 u = std::fmod(u - umin, w);
                 if (u < 0) u += w;
                 u += umin;
             }
-            return u >= umin - 1e-4f && u <= umax + 1e-4f &&
-                   p.y >= vmin - 1e-4f && p.y <= vmax + 1e-4f;
+            return u >= umin - 1e-4 && u <= umax + 1e-4 &&
+                   p.y >= vmin - 1e-4 && p.y <= vmax + 1e-4;
         }
         const std::size_t n = polygon.size();
         for (std::size_t i = 0; i < n; ++i) {
-            const Vec2f& a = polygon[i];
-            const Vec2f& b = polygon[(i + 1) % n];
-            const float cross =
+            const Vec2d& a = polygon[i];
+            const Vec2d& b = polygon[(i + 1) % n];
+            const double cross =
                 (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-            if (cross < -1e-5f) return false;
+            if (cross < -1e-5) return false;
         }
         return true;
     }
@@ -356,9 +367,9 @@ struct RegionSpec {
 void check_loop_conventions(const b::BRepBody& body, const b::Face& face,
                             const b::Loop& loop, const RegionSpec& region,
                             const b::SurfaceGeometry* surf,
-                            bool periodic_u, float period,
+                            bool periodic_u, double period,
                             const std::vector<bool>& is_seam) {
-    const float eps = 1e-3f;
+    const double eps = 1e-3;
     const auto& coedges = loop.coedges();
     const std::size_t n = coedges.size();
     REQUIRE(n > 0);
@@ -374,7 +385,7 @@ void check_loop_conventions(const b::BRepBody& body, const b::Face& face,
         // chain and no traversal direction to pin (the co-edge's
         // orientation flag still obeys the radial XOR, checked by
         // is_closed_orientable). Its REGION SIDE is checked.
-        if (pc.kind == s::SketchEntity::Kind::Circle) {
+        if (pc.kind == b::PCurve::Kind::Circle) {
             CHECK(region.contains(offset_to_material(pc, eps)));
             CHECK_FALSE(region.contains(offset_away_from_material(pc, eps)));
             continue;
@@ -389,14 +400,14 @@ void check_loop_conventions(const b::BRepBody& body, const b::Face& face,
             body.vertices[static_cast<std::size_t>(
                 ce.end_vertex(body.edges))].position();
         REQUIRE(surf != nullptr);
-        if (pc.kind == s::SketchEntity::Kind::Segment) {
+        if (pc.kind == b::PCurve::Kind::Segment) {
             const Vec3d es = surf->evaluate(pc.segment.a.x, pc.segment.a.y);
             const Vec3d ee = surf->evaluate(pc.segment.b.x, pc.segment.b.y);
             CHECK(close3(es, vstart));
             CHECK(close3(ee, vend));
         } else {  // Arc
-            const Vec2f as = s::arc_start_point(pc.arc);
-            const Vec2f ae = s::arc_end_point(pc.arc);
+            const Vec2d as = b::pcurve_arc_start_point(pc.arc);
+            const Vec2d ae = b::pcurve_arc_end_point(pc.arc);
             CHECK(close3(surf->evaluate(as.x, as.y), vstart));
             CHECK(close3(surf->evaluate(ae.x, ae.y), vend));
         }
@@ -407,10 +418,10 @@ void check_loop_conventions(const b::BRepBody& body, const b::Face& face,
         // loop is structural — loops_are_closed).
         const b::CoEdge& next = coedges[(i + 1) % n];
         if (next.p_curve() != nullptr &&
-            next.p_curve()->kind != s::SketchEntity::Kind::Circle &&
-            pc.kind != s::SketchEntity::Kind::Circle) {
-            const Vec2f e = pcurve_end(pc);
-            const Vec2f ns = pcurve_start(*next.p_curve());
+            next.p_curve()->kind != b::PCurve::Kind::Circle &&
+            pc.kind != b::PCurve::Kind::Circle) {
+            const Vec2d e = pcurve_end(pc);
+            const Vec2d ns = pcurve_start(*next.p_curve());
             if (periodic_u) {
                 const bool chains =
                     close2(e, ns) ||
@@ -441,7 +452,7 @@ void check_loop_conventions(const b::BRepBody& body, const b::Face& face,
 // normal's outwardness at those same points).
 void check_face_conventions(const b::BRepBody& body, const b::Face& face,
                             const std::vector<RegionSpec>& loop_regions,
-                            const std::vector<Vec2f>& domain_samples,
+                            const std::vector<Vec2d>& domain_samples,
                             const Vec3d& outward_hint,
                             const std::vector<bool>& seam_flags = {}) {
     const auto* surf = face.surface();
@@ -449,10 +460,10 @@ void check_face_conventions(const b::BRepBody& body, const b::Face& face,
     const std::size_t nl = face.loops().size();
     REQUIRE(loop_regions.size() == nl);
 
-    for (const Vec2f& p : domain_samples) {
-        const Vec3d pu = surf->evaluate(p.x + 1e-3f, p.y);
+    for (const Vec2d& p : domain_samples) {
+        const Vec3d pu = surf->evaluate(p.x + 1e-3, p.y);
         const Vec3d pm = surf->evaluate(p.x, p.y);
-        const Vec3d pv = surf->evaluate(p.x, p.y + 1e-3f);
+        const Vec3d pv = surf->evaluate(p.x, p.y + 1e-3);
         const Vec3d du{pu.x - pm.x, pu.y - pm.y, pu.z - pm.z};
         const Vec3d dv{pv.x - pm.x, pv.y - pm.y, pv.z - pm.z};
         const Vec3d cross = du.cross(dv);
@@ -462,7 +473,7 @@ void check_face_conventions(const b::BRepBody& body, const b::Face& face,
     }
 
     bool periodic = false;
-    float period = 0.0f;
+    double period = 0.0;
     const std::string fam = surf->type_name();
     if (fam == "cylinder" || fam == "sphere")
         periodic = true, period = kTwoPi;
@@ -515,12 +526,12 @@ void check_exact_provenance(const b::BRepBody& body) {
 // Append one float with full precision (hex — bit-exact round-trip;
 // ADR-0014's quantization: two materializations are identical iff
 // every field re-serializes to the same bytes).
-void append_float(std::string& out, float v) {
+void append_float(std::string& out, double v) {
     char buf[64];
-    std::snprintf(buf, sizeof(buf), "%a", static_cast<double>(v));
+    std::snprintf(buf, sizeof(buf), "%a", v);
     out += buf;
 }
-void append_vec2(std::string& out, const Vec2f& v) {
+void append_vec2(std::string& out, const Vec2d& v) {
     out += '(';
     append_float(out, v.x);
     out += ',';
@@ -546,15 +557,15 @@ std::string query_digest(const b::BRepBody& body) {
             for (const auto& ce : loop.coedges) {
                 out += "<";
                 append_float(out, static_cast<float>(ce.edge));
-                append_float(out, ce.reversed ? 1.0f : 0.0f);
-                append_float(out, static_cast<float>(
+                append_float(out, ce.reversed ? 1.0 : 0.0);
+                append_float(out, static_cast<double>(
                                       static_cast<int>(ce.kind)));
                 append_vec2(out, ce.a);
                 append_vec2(out, ce.b);
-                append_float(out, ce.interior_left ? 1.0f : 0.0f);
+                append_float(out, ce.interior_left ? 1.0 : 0.0);
                 append_vec2(out, ce.center);
                 append_float(out, ce.radius);
-                append_float(out, ce.hole ? 1.0f : 0.0f);
+                append_float(out, ce.hole ? 1.0 : 0.0);
                 append_float(out, ce.start_angle);
                 append_float(out, ce.sweep);
                 out += ">";
@@ -787,7 +798,7 @@ TEST_CASE("G1-U3 golden: the segment prism (n=4) — the full pinned tables") {
         // The p-curves: Line2 by projection, material on the left.
         for (const auto& ce : ces) {
             REQUIRE(ce.p_curve() != nullptr);
-            CHECK(ce.p_curve()->kind == s::SketchEntity::Kind::Segment);
+            CHECK(ce.p_curve()->kind == b::PCurve::Kind::Segment);
             CHECK(ce.p_curve()->segment.interior_left == true);
         }
         // The plane's frame for normal (0,-1,0) is (u=+Z, v=-X): the
@@ -867,7 +878,7 @@ TEST_CASE("G1-U3 golden: the segment prism (n=4) — the full pinned tables") {
         for (std::size_t fi = 0; fi < 4; ++fi) {
             // The lateral rectangle in the entity's plane domain: the
             // four p-curve starts, CCW (the walk order).
-            std::vector<Vec2f> corners;
+            std::vector<Vec2d> corners;
             for (const auto& ce : faces[fi].loops()[0].coedges())
                 corners.push_back(ce.p_curve()->segment.a);
             check_face_conventions(*body, faces[fi], {{RegionSpec{corners}}},
@@ -894,7 +905,7 @@ TEST_CASE("G1-U3 golden: the sector (segments + arc) — the arc's cylindrical p
     REQUIRE(body->face_count() == 5);
 
     const auto& faces = body->solid.shell().faces();
-    const float a0 = -0.2f * kPi, a1 = 0.35f * kPi;
+    const float a0 = -0.2f * kPi_f, a1 = 0.35f * kPi_f;
     const float am = 0.5f * (a0 + a1);
 
     // Face 1 = the arc's lateral face (entity 1): a cylindrical patch.
@@ -910,7 +921,7 @@ TEST_CASE("G1-U3 golden: the sector (segments + arc) — the arc's cylindrical p
     REQUIRE(ces.size() == 4);
     for (const auto& ce : ces) {
         REQUIRE(ce.p_curve() != nullptr);
-        CHECK(ce.p_curve()->kind == s::SketchEntity::Kind::Segment);
+        CHECK(ce.p_curve()->kind == b::PCurve::Kind::Segment);
         CHECK(ce.p_curve()->segment.interior_left == true);
     }
     // The bottom co-edge runs the walk's u direction: from a0 to a1
@@ -958,7 +969,7 @@ TEST_CASE("G1-U3 golden: the sector (segments + arc) — the arc's cylindrical p
     const Vec3d n0 = Vec3d{ps.y - c0.y, -(ps.x - c0.x), 0.0f}.normalized();
     const Vec3d n2 = Vec3d{-(pe.y - c0.y), pe.x - c0.x, 0.0f}.normalized();
     for (std::size_t fi : {std::size_t{0}, std::size_t{2}}) {
-        std::vector<Vec2f> corners;
+        std::vector<Vec2d> corners;
         for (const auto& ce : faces[fi].loops()[0].coedges())
             corners.push_back(ce.p_curve()->segment.a);
         check_face_conventions(*body, faces[fi], {{RegionSpec{corners}}},
@@ -1065,7 +1076,7 @@ TEST_CASE("G1-U3 golden: the circle — the seam-wired pattern VERBATIM on Z") {
         REQUIRE(ces.size() == 2);
         for (const auto& ce : ces) {
             REQUIRE(ce.p_curve() != nullptr);
-            CHECK(ce.p_curve()->kind == s::SketchEntity::Kind::Arc);
+            CHECK(ce.p_curve()->kind == b::PCurve::Kind::Arc);
             const auto& arc = ce.p_curve()->arc;
             CHECK(close2(arc.center, {0.5f, -0.25f}));
             CHECK(close(arc.radius, 1.25f, 0.0f));
@@ -1149,14 +1160,14 @@ TEST_CASE("G1-U3 golden: the ring — the caps carry the hole as an inner Circle
         // The outer loop: 4 Line2 (the chain).
         REQUIRE(f.loops()[0].coedges().size() == 4);
         for (const auto& ce : f.loops()[0].coedges()) {
-            CHECK(ce.p_curve()->kind == s::SketchEntity::Kind::Segment);
+            CHECK(ce.p_curve()->kind == b::PCurve::Kind::Segment);
             CHECK(ce.p_curve()->segment.interior_left == true);
         }
         // The inner loop: 1 co-edge, the Circle2, hole=true.
         const auto& inner = f.loops()[1].coedges();
         REQUIRE(inner.size() == 1);
         REQUIRE(inner[0].p_curve() != nullptr);
-        CHECK(inner[0].p_curve()->kind == s::SketchEntity::Kind::Circle);
+        CHECK(inner[0].p_curve()->kind == b::PCurve::Kind::Circle);
         const auto& circ = inner[0].p_curve()->circle;
         CHECK(close(circ.radius, 0.2f, 0.0f));
         CHECK(circ.hole == true);

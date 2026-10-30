@@ -164,13 +164,18 @@ public:
     VertexId start_vertex(const std::vector<Edge>& edges) const;
     VertexId end_vertex(const std::vector<Edge>& edges) const;
 
-    // The p-curve (ADR-0032 D2.2): this co-edge's use of its edge,
-    // typed in the OWNING face's surface parameter domain, alongside
-    // the 3D edge reference above — the pair that defines an exact
-    // B-Rep. The type is the sketch kernel's own (pcurve.hpp, D2.1):
-    // a trimming loop and the sketch chain that produced it are the
-    // same code and cannot diverge. Conventions (direction, region
-    // side, faceted world) are pinned in pcurve.hpp.
+    // The p-curve (ADR-0032 D2.2, as amended by ADR-0035 D4): this
+    // co-edge's use of its edge, typed in the OWNING face's surface
+    // parameter domain, alongside the 3D edge reference above — the
+    // pair that defines an exact B-Rep. The type is the BREP
+    // parametric domain's OWN double vocabulary (pcurve.hpp, one
+    // opinion PER WORLD since morso 3: the sketch kernel's float set
+    // stays the sketch world's; the only bridge is the one-direction
+    // pcurve_from_sketch, at the extrude caps' frontier). The
+    // mirrored construction rules keep a trimming loop and the chain
+    // that produced it in the same mathematics — they cannot diverge
+    // in either world. Conventions (direction, region side, faceted
+    // world) are pinned in pcurve.hpp.
     //
     // Returns nullptr when the co-edge carries no p-curve — the
     // faceted world (bridge output, plane-per-triangle) never does;

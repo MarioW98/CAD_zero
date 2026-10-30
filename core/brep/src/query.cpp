@@ -3,8 +3,9 @@
 // The face query's implementation — ADR-0032 D8 (G1 unit 2): plain
 // values out, one pass over the shell, no evaluation, no allocation
 // beyond the records themselves. The p-curve payload is copied
-// verbatim from the typed entities the factories wrote (D2.1: the
-// sketch kernel's own numbers, untranslated).
+// verbatim from the typed entities the exact path wrote (D2.1 as
+// amended by ADR-0035 D4: the BREP parametric domain's own double
+// numbers, untranslated).
 #include "CAD_0/brep/query.hpp"
 
 #include <sstream>

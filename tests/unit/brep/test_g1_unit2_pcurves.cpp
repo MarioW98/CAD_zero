@@ -104,26 +104,26 @@
 namespace b = CAD_0::brep;
 namespace s = CAD_0::sdf;
 namespace br = CAD_0::bridge;
-using CAD_0::math::Vec2f;
+using CAD_0::math::Vec2d;
 using CAD_0::math::Vec3d;
 
 namespace {
 
-constexpr float kPi = 3.14159265358979f;
-constexpr float kTwoPi = 6.28318530717958647692f;
+constexpr double kPi = 3.14159265358979;
+constexpr double kTwoPi = 6.28318530717958647692;
 // The sketch chain's own joint discipline (sketch_profile.hpp
 // kJointCoincidenceTol), mirrored — the p-curve chaining uses the
 // same coincidence rule the sketcher enforces on its chains.
-constexpr float kCoincidenceTol = 1e-5f;
+constexpr double kCoincidenceTol = 1e-5;
 // 3D cross-check tolerance: float trig on the way, O(1) coordinates —
 // a wrong endpoint is off by O(1), noise is off by ~1e-6.
-constexpr float kEvalTol = 1e-4f;
+constexpr double kEvalTol = 1e-4;
 
 bool close(double a, double b, double tol = kCoincidenceTol) {
     return std::abs(a - b) <= tol;
 }
 
-bool close2(const Vec2f& a, const Vec2f& b, float tol = kCoincidenceTol) {
+bool close2(const Vec2d& a, const Vec2d& b, double tol = kCoincidenceTol) {
     return close(a.x, b.x, tol) && close(a.y, b.y, tol);
 }
 
@@ -136,20 +136,20 @@ bool close3(const Vec3d& a, const Vec3d& b, double tol = kEvalTol) {
 // the sketch kernel's own arc_start_point/arc_end_point — one
 // opinion, one code (the D2.1 discipline; a second endpoint formula
 // here would be exactly the divergence the reuse exists to prevent).
-Vec2f pcurve_start(const b::PCurve& p) {
+Vec2d pcurve_start(const b::PCurve& p) {
     switch (p.kind) {
-    case s::SketchEntity::Kind::Segment: return p.segment.a;
-    case s::SketchEntity::Kind::Arc:     return s::arc_start_point(p.arc);
-    case s::SketchEntity::Kind::Circle:  return p.circle.center;
+    case b::PCurve::Kind::Segment: return p.segment.a;
+    case b::PCurve::Kind::Arc:     return b::pcurve_arc_start_point(p.arc);
+    case b::PCurve::Kind::Circle:  return p.circle.center;
     }
     return {};
 }
 
-Vec2f pcurve_end(const b::PCurve& p) {
+Vec2d pcurve_end(const b::PCurve& p) {
     switch (p.kind) {
-    case s::SketchEntity::Kind::Segment: return p.segment.b;
-    case s::SketchEntity::Kind::Arc:     return s::arc_end_point(p.arc);
-    case s::SketchEntity::Kind::Circle:  return p.circle.center;
+    case b::PCurve::Kind::Segment: return p.segment.b;
+    case b::PCurve::Kind::Arc:     return b::pcurve_arc_end_point(p.arc);
+    case b::PCurve::Kind::Circle:  return p.circle.center;
     }
     return {};
 }
@@ -159,7 +159,7 @@ Vec2f pcurve_end(const b::PCurve& p) {
 // domain, and the walk crosses between them at the poles (sphere) or
 // not at all (cylinder wall). Consecutive p-curves chain if their
 // endpoints coincide, OR coincide after a ±period shift in u.
-bool coincident(Vec2f a, Vec2f b, bool periodic_u, float period) {
+bool coincident(Vec2d a, Vec2d b, bool periodic_u, double period) {
     if (close2(a, b)) return true;
     if (periodic_u) {
         if (close(a.x, b.x + period) && close(a.y, b.y)) return true;
@@ -175,13 +175,13 @@ bool coincident(Vec2f a, Vec2f b, bool periodic_u, float period) {
 // a disc (the caps). u-periodic windows identify u modulo their
 // width (the seam).
 struct RegionSpec {
-    std::vector<Vec2f> polygon{};  // CCW corners (walk order)
+    std::vector<Vec2d> polygon{};  // CCW corners (walk order)
     bool periodic_u{false};
-    float umin{0}, umax{0}, vmin{0}, vmax{0};
+    double umin{0}, umax{0}, vmin{0}, vmax{0};
     bool disc{false};
-    float radius{0};
+    double radius{0};
 
-    bool contains(const Vec2f& p) const {
+    bool contains(const Vec2d& p) const {
         if (disc) return p.length() <= radius + kCoincidenceTol;
         if (!polygon.empty()) {
             // Point in convex CCW polygon: on the LEFT of every edge
@@ -191,17 +191,17 @@ struct RegionSpec {
             // discrimination the convention test wants.
             const std::size_t n = polygon.size();
             for (std::size_t i = 0; i < n; ++i) {
-                const Vec2f& a = polygon[i];
-                const Vec2f& b = polygon[(i + 1) % n];
-                const float cross =
+                const Vec2d& a = polygon[i];
+                const Vec2d& b = polygon[(i + 1) % n];
+                const double cross =
                     (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
-                if (cross < -1e-6f) return false;
+                if (cross < -1e-6) return false;
             }
             return true;
         }
-        float u = p.x;
+        double u = p.x;
         if (periodic_u) {
-            const float w = umax - umin;
+            const double w = umax - umin;
             u = std::fmod(u - umin, w);
             if (u < 0) u += w;
             u += umin;
@@ -216,67 +216,67 @@ struct RegionSpec {
 // (the sketch vocabulary stores CCW sweeps only), whose left is
 // toward the circle's center — the disc side, as the region-side
 // convention reads.
-Vec2f pcurve_mid(const b::PCurve& p) {
+Vec2d pcurve_mid(const b::PCurve& p) {
     switch (p.kind) {
-    case s::SketchEntity::Kind::Segment:
-        return Vec2f{(p.segment.a.x + p.segment.b.x) * 0.5f,
-                     (p.segment.a.y + p.segment.b.y) * 0.5f};
-    case s::SketchEntity::Kind::Arc: {
-        const float t = p.arc.start_angle + p.arc.sweep * 0.5f;
-        return p.arc.center + Vec2f{p.arc.radius * std::cos(t),
+    case b::PCurve::Kind::Segment:
+        return Vec2d{(p.segment.a.x + p.segment.b.x) * 0.5,
+                     (p.segment.a.y + p.segment.b.y) * 0.5};
+    case b::PCurve::Kind::Arc: {
+        const double t = p.arc.start_angle + p.arc.sweep * 0.5;
+        return p.arc.center + Vec2d{p.arc.radius * std::cos(t),
                                     p.arc.radius * std::sin(t)};
     }
-    case s::SketchEntity::Kind::Circle:
-        return p.circle.center + Vec2f{p.circle.radius, 0};
+    case b::PCurve::Kind::Circle:
+        return p.circle.center + Vec2d{p.circle.radius, 0};
     }
     return {};
 }
 
-Vec2f left_offset(const b::PCurve& p, float eps) {
-    Vec2f t{1, 0};
+Vec2d left_offset(const b::PCurve& p, double eps) {
+    Vec2d t{1, 0};
     switch (p.kind) {
-    case s::SketchEntity::Kind::Segment: {
-        const Vec2f d = p.segment.b - p.segment.a;
-        const float len = d.length();
-        if (len > 0) t = Vec2f{d.x / len, d.y / len};
+    case b::PCurve::Kind::Segment: {
+        const Vec2d d = p.segment.b - p.segment.a;
+        const double len = d.length();
+        if (len > 0) t = Vec2d{d.x / len, d.y / len};
         break;
     }
-    case s::SketchEntity::Kind::Arc: {
-        const float ang = p.arc.start_angle + p.arc.sweep * 0.5f;
-        t = Vec2f{-std::sin(ang), std::cos(ang)};
+    case b::PCurve::Kind::Arc: {
+        const double ang = p.arc.start_angle + p.arc.sweep * 0.5;
+        t = Vec2d{-std::sin(ang), std::cos(ang)};
         break;
     }
-    case s::SketchEntity::Kind::Circle:
-        t = Vec2f{0, 1};
+    case b::PCurve::Kind::Circle:
+        t = Vec2d{0, 1};
         break;
     }
     // Left of the heading = the heading rotated +90° (CCW): perp(t).
-    const Vec2f left{-t.y, t.x};
-    const Vec2f m = pcurve_mid(p);
-    return m + Vec2f{left.x * eps, left.y * eps};
+    const Vec2d left{-t.y, t.x};
+    const Vec2d m = pcurve_mid(p);
+    return m + Vec2d{left.x * eps, left.y * eps};
 }
 
-Vec2f right_offset(const b::PCurve& p, float eps) {
-    Vec2f t{1, 0};
+Vec2d right_offset(const b::PCurve& p, double eps) {
+    Vec2d t{1, 0};
     switch (p.kind) {
-    case s::SketchEntity::Kind::Segment: {
-        const Vec2f d = p.segment.b - p.segment.a;
-        const float len = d.length();
-        if (len > 0) t = Vec2f{d.x / len, d.y / len};
+    case b::PCurve::Kind::Segment: {
+        const Vec2d d = p.segment.b - p.segment.a;
+        const double len = d.length();
+        if (len > 0) t = Vec2d{d.x / len, d.y / len};
         break;
     }
-    case s::SketchEntity::Kind::Arc: {
-        const float ang = p.arc.start_angle + p.arc.sweep * 0.5f;
-        t = Vec2f{-std::sin(ang), std::cos(ang)};
+    case b::PCurve::Kind::Arc: {
+        const double ang = p.arc.start_angle + p.arc.sweep * 0.5;
+        t = Vec2d{-std::sin(ang), std::cos(ang)};
         break;
     }
-    case s::SketchEntity::Kind::Circle:
-        t = Vec2f{0, 1};
+    case b::PCurve::Kind::Circle:
+        t = Vec2d{0, 1};
         break;
     }
-    const Vec2f left{-t.y, t.x};
-    const Vec2f m = pcurve_mid(p);
-    return m - Vec2f{left.x * eps, left.y * eps};
+    const Vec2d left{-t.y, t.x};
+    const Vec2d m = pcurve_mid(p);
+    return m - Vec2d{left.x * eps, left.y * eps};
 }
 
 // ---- the pinned tables ------------------------------------------------
@@ -284,18 +284,18 @@ Vec2f right_offset(const b::PCurve& p, float eps) {
 struct PinnedLine {
     b::EdgeId edge;
     bool reversed;
-    Vec2f a;
-    Vec2f b;
+    Vec2d a;
+    Vec2d b;
 };
 
 struct PinnedArc {
     b::EdgeId edge;
     bool reversed;
-    Vec2f center;
-    float radius;
+    Vec2d center;
+    double radius;
     bool hole;
-    float start_angle;
-    float sweep;
+    double start_angle;
+    double sweep;
 };
 
 // Compare one face's single outer loop against a pinned Line2 table
@@ -310,7 +310,7 @@ void check_loop_lines(const b::Face& face, const PinnedLine* pinned,
     for (std::size_t i = 0; i < n; ++i) {
         const b::CoEdge& ce = coedges[i];
         REQUIRE(ce.p_curve() != nullptr);
-        CHECK(ce.p_curve()->kind == s::SketchEntity::Kind::Segment);
+        CHECK(ce.p_curve()->kind == b::PCurve::Kind::Segment);
         CHECK(ce.edge() == pinned[i].edge);
         CHECK(ce.reversed() == pinned[i].reversed);
         CHECK(ce.p_curve()->segment.interior_left == true);
@@ -327,10 +327,10 @@ void check_loop_arcs(const b::Face& face, const PinnedArc* pinned,
     for (std::size_t i = 0; i < n; ++i) {
         const b::CoEdge& ce = coedges[i];
         REQUIRE(ce.p_curve() != nullptr);
-        CHECK(ce.p_curve()->kind == s::SketchEntity::Kind::Arc);
+        CHECK(ce.p_curve()->kind == b::PCurve::Kind::Arc);
         CHECK(ce.edge() == pinned[i].edge);
         CHECK(ce.reversed() == pinned[i].reversed);
-        const s::SketchArc& arc = ce.p_curve()->arc;
+        const b::Arc2& arc = ce.p_curve()->arc;
         CHECK(close2(arc.center, pinned[i].center));
         CHECK(close(arc.radius, pinned[i].radius));
         CHECK(arc.hole == pinned[i].hole);
@@ -360,8 +360,8 @@ void check_conventions(const b::BRepBody& body, const b::Face& face,
                        const RegionSpec& region,
                        const std::vector<bool>& is_seam) {
     const bool periodic = region.periodic_u;
-    const float period = region.umax - region.umin;
-    const float eps = 1e-3f;  // ≪ region extents, ≫ float noise
+    const double period = region.umax - region.umin;
+    const double eps = 1e-3;  // ≪ region extents, ≫ float noise
 
     REQUIRE(face.loops().size() == 1);
     const auto& coedges = face.loops()[0].coedges();
@@ -376,8 +376,8 @@ void check_conventions(const b::BRepBody& body, const b::Face& face,
         CAPTURE(i);
         CAPTURE(ce.edge());
         REQUIRE(ce.p_curve() != nullptr);
-        const Vec2f ps = pcurve_start(*ce.p_curve());
-        const Vec2f pe = pcurve_end(*ce.p_curve());
+        const Vec2d ps = pcurve_start(*ce.p_curve());
+        const Vec2d pe = pcurve_end(*ce.p_curve());
 
         // DIRECTION (start vertex): try u as stored, then ± period.
         const Vec3d want_start =
@@ -404,7 +404,7 @@ void check_conventions(const b::BRepBody& body, const b::Face& face,
         // CHAINING: my end meets the next co-edge's start (mod period).
         const b::CoEdge& next = coedges[(i + 1) % n];
         REQUIRE(next.p_curve() != nullptr);
-        const Vec2f next_start = pcurve_start(*next.p_curve());
+        const Vec2d next_start = pcurve_start(*next.p_curve());
         CHECK(coincident(pe, next_start, periodic, period));
 
         // REGION SIDE: left is material, right is not — unless seam.
@@ -429,7 +429,7 @@ RegionSpec polygon_from_corners(const b::Face& face) {
     for (const auto& loop : face.loops())
         for (const auto& ce : loop.coedges()) {
             REQUIRE(ce.p_curve() != nullptr);
-            REQUIRE(ce.p_curve()->kind == s::SketchEntity::Kind::Segment);
+            REQUIRE(ce.p_curve()->kind == b::PCurve::Kind::Segment);
             r.polygon.push_back(ce.p_curve()->segment.a);
         }
     return r;
@@ -587,7 +587,7 @@ TEST_CASE("G1-U2 golden: make_tetrahedron — 4 planar faces, 3 Line2 each (the 
         REQUIRE(coedges.size() == 3);
         for (const auto& ce : coedges) {
             REQUIRE(ce.p_curve() != nullptr);
-            CHECK(ce.p_curve()->kind == s::SketchEntity::Kind::Segment);
+            CHECK(ce.p_curve()->kind == b::PCurve::Kind::Segment);
             CHECK(ce.p_curve()->segment.interior_left == true);
         }
     }
@@ -808,8 +808,8 @@ TEST_CASE("G1-U2 query: the box through query_face — family, loops, per-co-edg
     CHECK(c0.reversed);
     CHECK(c0.kind == b::PCurveInfo::Kind::Line);
     CHECK(c0.interior_left);
-    CHECK(close2(c0.a, Vec2f{-1, 2}));
-    CHECK(close2(c0.b, Vec2f{-1, -2}));
+    CHECK(close2(c0.a, Vec2d{-1, 2}));
+    CHECK(close2(c0.b, Vec2d{-1, -2}));
 
     // Every box face reports the same shape of answer.
     const auto all = b::query_all_faces(*body);
@@ -868,10 +868,10 @@ TEST_CASE("G1-U2 query: the cylinder and sphere — families and kinds per face"
         // on the left.
         const auto& fwd = q.loops[0].coedges[0];
         const auto& rev = q.loops[0].coedges[1];
-        CHECK(close2(fwd.a, Vec2f{kTwoPi, 0.0f}));
-        CHECK(close2(fwd.b, Vec2f{kTwoPi, kPi}));
-        CHECK(close2(rev.a, Vec2f{0.0f, kPi}));
-        CHECK(close2(rev.b, Vec2f{0.0f, 0.0f}));
+        CHECK(close2(fwd.a, Vec2d{kTwoPi, 0.0f}));
+        CHECK(close2(fwd.b, Vec2d{kTwoPi, kPi}));
+        CHECK(close2(rev.a, Vec2d{0.0f, kPi}));
+        CHECK(close2(rev.b, Vec2d{0.0f, 0.0f}));
     }
 }
 

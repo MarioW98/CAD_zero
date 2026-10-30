@@ -170,7 +170,7 @@ def test_the_report_presents_the_guide_body_fields(main_window):
     # (diagonal + products), the visible exact flag.
     assert "Mass properties (density 1, divergence theorem): " \
            "exact (all_exact = True)" in text
-    assert "Volume = 7.60730091" in text
+    assert "Volume = 7.60730092" in text
     assert "Centroid = (" in text
     assert "diagonal  Ixx =" in text
     assert "products  Ixy =" in text
