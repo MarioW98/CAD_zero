@@ -41,9 +41,18 @@ enum class SegmentIsectType { None, Point, Overlap };
 
 // For Point: t_lo == t_hi == the crossing parameter along (p1,p2).
 // For Overlap: [t_lo, t_hi] is the overlap range along (p1,p2).
+//
+// The tolerances arrive as the TYPED BUNDLE, never as bare doubles:
+// the seam reads each world through its accessor (eps_l_of/eps_p_of,
+// one per world — the same discipline as the operations above), so
+// every decision the classifier makes is traceable to a declared
+// field of the caller's bundle. The bundle's definition lives in
+// CAD_0/brep/boolean.hpp; a forward declaration is all this seam
+// needs.
+struct BooleanTolerance;
 SegmentIsectType segment_intersection_for_tests(
     math::Vec2d p1, math::Vec2d p2, math::Vec2d p3, math::Vec2d p4,
-    double eps_l, double eps_p,
+    const BooleanTolerance& tol,
     double& t_lo, double& t_hi);
 
 } // namespace CAD_0::brep

@@ -49,6 +49,20 @@ using namespace CAD_0::math;
 inline constexpr CAD_0::brep::BooleanTolerance kHouseTol =
     CAD_0::brep::kBooleanHouseTolerance;
 
+// The worlds-apart declaration (D2.2): ε_L and ε_P declared SEPARATELY,
+// each in its own typed unit — the house bundle DERIVES ε_P = ε_L for
+// the plane family (Jacobian 1, D2.2); the independence golden below
+// declares the two worlds apart on purpose, because apartness is what
+// it measures.
+inline CAD_0::brep::BooleanTolerance segment_tol(
+    double eps_l, double eps_p) {
+    return CAD_0::brep::BooleanTolerance{
+        CAD_0::math::Tolerance::linear(eps_l),
+        CAD_0::brep::ParamTolerance{eps_p},
+        kHouseTol.angular_prefilter,
+        kHouseTol.angular};
+}
+
 // ---------------------------------------------------------------------------
 // Seam wire factories — ADR-0023 §1
 // ---------------------------------------------------------------------------
@@ -1667,11 +1681,9 @@ using CAD_0::brep::SegmentIsectType;
 TEST_CASE("H2-u3: the ex-kEps regimes by name — the change of regime is visible, not silent") {
     // Every decision the retired kEps fed, re-homed per the ADR's map
     // (D2), each asserted on bytes a maintainer can re-derive by hand.
-    // ε_L = ε_P = 1e-6 (the house declaration: the plane family's
-    // Jacobian is 1, D2.2), so the derived band at L = 2 is
+    // The declaration is the HOUSE bundle (ε_L = ε_P = 1e-6, the plane
+    // family's Jacobian is 1, D2.2), so the derived band at L = 2 is
     // 4·ε_L·L = 8e-6 — four orders wider than the retired 1e-9.
-    const double eps_l = kHouseTol.linear.value;
-    const double eps_p = kHouseTol.parametric.value;
 
     // --- ex-|denom| > kEps (boolean.cpp@f691a98:317) → THE DERIVED
     //     PARALLELISM BAND |det| ≤ 4·ε_L·L (D2.3). Outside it family 1
@@ -1685,7 +1697,7 @@ TEST_CASE("H2-u3: the ex-kEps regimes by name — the change of regime is visibl
         const auto r = segment_intersection_for_tests(
             Vec2d{0, 0}, Vec2d{2, 0},
             Vec2d{1, 1}, Vec2d{1, -1},
-            eps_l, eps_p, t_lo, t_hi);
+            kHouseTol, t_lo, t_hi);
         CHECK(r == SegmentIsectType::Point);
         CHECK(t_lo == 0.5);   // exact: the crossing parameter, double
         CHECK(t_hi == t_lo);
@@ -1707,7 +1719,7 @@ TEST_CASE("H2-u3: the ex-kEps regimes by name — the change of regime is visibl
         const auto r = segment_intersection_for_tests(
             Vec2d{0, 0}, Vec2d{2, 0},
             Vec2d{2e-7, 1}, Vec2d{2e-7, -1},
-            eps_l, eps_p, t_lo, t_hi);
+            kHouseTol, t_lo, t_hi);
         CHECK(r == SegmentIsectType::None);  // t = 1e-7 ≤ ε_P: endpoint band
     }
 
@@ -1721,7 +1733,7 @@ TEST_CASE("H2-u3: the ex-kEps regimes by name — the change of regime is visibl
         const auto r = segment_intersection_for_tests(
             Vec2d{0, 0}, Vec2d{2, 0},
             Vec2d{0.6, 6e-6}, Vec2d{2.6, 6e-6 + 2e-9},
-            eps_l, eps_p, t_lo, t_hi);
+            kHouseTol, t_lo, t_hi);
         CHECK(r == SegmentIsectType::None);  // equivalent-parallel, not collinear
     }
 
@@ -1735,7 +1747,7 @@ TEST_CASE("H2-u3: the ex-kEps regimes by name — the change of regime is visibl
         const auto r = segment_intersection_for_tests(
             Vec2d{0, 0}, Vec2d{1e-7, 0},
             Vec2d{0.5, 1}, Vec2d{0.5, -1},
-            eps_l, eps_p, t_lo, t_hi);
+            kHouseTol, t_lo, t_hi);
         CHECK(r == SegmentIsectType::None);
     }
 
@@ -1753,8 +1765,7 @@ TEST_CASE("H2-u3: golden — the two worlds' discrimination on the segment class
     // band and the exact predicate. Three pinned inputs, each with both
     // regimes' answers asserted — the discrimination between the two
     // worlds IS the evidence.
-    const double eps_l = kHouseTol.linear.value;   // 1e-6 (house)
-    const double eps_p = kHouseTol.parametric.value; // 1e-6 (plane family, D2.2)
+    const double eps_p = kHouseTol.parametric.value;  // 1e-6 (house: plane family, D2.2)
 
     // ---- GOLDEN P2: the false crossing. Two segments crossing at
     // θ = 1e-6 rad, offset 1e-6: |det| = 4e-6 ∈ (kEps, 4·ε_L·L = 8e-6)
@@ -1774,7 +1785,7 @@ TEST_CASE("H2-u3: golden — the two worlds' discrimination on the segment class
 
         double t_n = -1.0, t2_n = -1.0;
         const auto n = segment_intersection_for_tests(
-            p1, p2, p3, p4, eps_l, eps_p, t_n, t2_n);
+            p1, p2, p3, p4, kHouseTol, t_n, t2_n);
         CHECK(n == SegmentIsectType::Overlap);
         // The endpoint exclusions are the parameter world's: the
         // full-segment overlap is clamped to [ε_P, 1−ε_P] (the
@@ -1801,7 +1812,7 @@ TEST_CASE("H2-u3: golden — the two worlds' discrimination on the segment class
 
         double t_n = -1.0, t2_n = -1.0;
         const auto n = segment_intersection_for_tests(
-            p1, p2, p3, p4, eps_l, eps_p, t_n, t2_n);
+            p1, p2, p3, p4, kHouseTol, t_n, t2_n);
         CHECK(n == SegmentIsectType::Overlap);
         CHECK(t_n == 0.5);
         CHECK(t2_n == 1.0);
@@ -1825,7 +1836,7 @@ TEST_CASE("H2-u3: golden — the two worlds' discrimination on the segment class
 
         double t_n = -1.0, t2_n = -1.0;
         const auto n = segment_intersection_for_tests(
-            p1, p2, p3, p4, eps_l, eps_p, t_n, t2_n);
+            p1, p2, p3, p4, kHouseTol, t_n, t2_n);
         CHECK(n == SegmentIsectType::None);
 
         CHECK(k != static_cast<KEpsIsectType>(n));
@@ -1850,7 +1861,7 @@ TEST_CASE("H2-u3: golden — the two worlds' discrimination on the segment class
         const auto k = kEps_regime(p1, p2, p3, p4, t_k, t2_k);
         double t_n = -1.0, t2_n = -1.0;
         const auto n = segment_intersection_for_tests(
-            p1, p2, p3, p4, eps_l, eps_p, t_n, t2_n);
+            p1, p2, p3, p4, kHouseTol, t_n, t2_n);
         CHECK(k == KEpsIsectType::Overlap);
         CHECK(n == SegmentIsectType::Overlap);
         CHECK(t_k == 0.25);
@@ -1870,36 +1881,39 @@ TEST_CASE("H2-u3: the parameter world is independent — ε_P answers the (t,u) 
     const Vec2d p3{2e-7, 1}, p4{2e-7, -1};  // crossing parameter t = 1e-7
 
     {
-        // ε_P = 1e-6 (house): the crossing hugs the endpoint → None.
+        // ε_P = 1e-6 (the house declaration — the plane family's
+        // derived pair): the crossing hugs the endpoint → None.
         double t_lo = -1.0, t_hi = -1.0;
         const auto r = segment_intersection_for_tests(
-            p1, p2, p3, p4, 1e-6, 1e-6, t_lo, t_hi);
+            p1, p2, p3, p4, kHouseTol, t_lo, t_hi);
         CHECK(r == SegmentIsectType::None);
     }
     {
-        // ε_P = 1e-8 (a metrology-grade parameter declaration): the same
-        // crossing is now interior → Point at t = 1e-7, exact.
+        // ε_P = 1e-8 (a metrology-grade parameter declaration — ε_L
+        // stays at the house 1e-6): the same crossing is now interior
+        // → Point at t = 1e-7, exact.
         double t_lo = -1.0, t_hi = -1.0;
         const auto r = segment_intersection_for_tests(
-            p1, p2, p3, p4, 1e-6, 1e-8, t_lo, t_hi);
+            p1, p2, p3, p4, segment_tol(1e-6, 1e-8), t_lo, t_hi);
         CHECK(r == SegmentIsectType::Point);
         CHECK(t_lo == 1e-7);
     }
     {
-        // ε_L = 1e-3 (a coarser LINEAR declaration — three orders wider):
-        // the (t,u) window answer does not move. The derived determinant
-        // band (4·ε_L·L = 8e-3) still sits far below |det| = 4, so the
-        // crossing stays real and the window stays ε_P's to answer.
+        // ε_L = 1e-3 (a coarser LINEAR declaration — three orders wider,
+        // ε_P back at the house 1e-6): the (t,u) window answer does not
+        // move. The derived determinant band (4·ε_L·L = 8e-3) still sits
+        // far below |det| = 4, so the crossing stays real and the window
+        // stays ε_P's to answer.
         double t_lo = -1.0, t_hi = -1.0;
         const auto r_loose = segment_intersection_for_tests(
-            p1, p2, p3, p4, 1e-3, 1e-6, t_lo, t_hi);
+            p1, p2, p3, p4, segment_tol(1e-3, 1e-6), t_lo, t_hi);
         CHECK(r_loose == SegmentIsectType::None);  // same answer as ε_L = 1e-6
 
         // And with BOTH worlds loosened the crossing flips only when
         // ε_P says so — never because ε_L moved:
         double t2_lo = -1.0, t2_hi = -1.0;
         const auto r_both = segment_intersection_for_tests(
-            p1, p2, p3, p4, 1e-3, 1e-8, t2_lo, t2_hi);
+            p1, p2, p3, p4, segment_tol(1e-3, 1e-8), t2_lo, t2_hi);
         CHECK(r_both == SegmentIsectType::Point);
         CHECK(t2_lo == 1e-7);
     }

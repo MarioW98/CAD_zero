@@ -2405,12 +2405,17 @@ std::vector<std::vector<math::Vec3d>> polygon_subtract_fragments_for_tests(
 // Test-only entry point — the segment classification under its
 // declared tolerances (H2-u3 morso 2): the regime goldens read the
 // three-family decision directly. The enums mirror the internal ones;
-// the tolerances are the caller's declaration.
+// the tolerances arrive as the caller's typed bundle and each world is
+// read through ITS accessor (eps_l_of/eps_p_of, one per world) — the
+// parameter world's single live consumer is this seam, and it never
+// touches a bare double.
 SegmentIsectType segment_intersection_for_tests(
     math::Vec2d p1, math::Vec2d p2, math::Vec2d p3, math::Vec2d p4,
-    double eps_l, double eps_p,
+    const BooleanTolerance& tol,
     double& t_lo, double& t_hi
 ) {
+    const double eps_l = eps_l_of(tol);
+    const double eps_p = eps_p_of(tol);
     const auto itype = segment_intersection(
         Vec2{p1.x, p1.y}, Vec2{p2.x, p2.y},
         Vec2{p3.x, p3.y}, Vec2{p4.x, p4.y},
