@@ -2,6 +2,16 @@
 
 ## Status
 Accepted (2025-10-07) — **CORRECTED** from the original proposal.
+**AMENDED (2026-10-31) by ADR-0036**, in its acceptance act (H2-u6):
+the `SubshapeRef` path gains the semantics it was promised with
+(indices into the operation types' declared role tables), the
+Phase-A consequence below is superseded by ADR-0036's D5 quartet,
+and the generation clause is ratified at the feature granularity
+the scene already practices. **The ABI is UNCHANGED** — no field
+moves, no type changes; the amendment fills the fields with the
+meaning they were shipped to carry. The redemption lands with
+ADR-0036's morsi: the path is populated for the first time in the
+repository's history.
 
 ## Context
 The original proposal suggested persistent naming based on
@@ -37,8 +47,22 @@ struct ShapeId {
   feature's root output down to the specific subshape (vertex / edge /
   face of a B-Rep, or leaf node of an SDF tree). Each index encodes
   "the i-th output of operation j at this depth".
+  [AMENDED 2026-10-31, by ADR-0036 D1: the indices are indices into
+  the operation types' DECLARED ROLE TABLES — the numbering tables
+  the tests already pin, made normative. The first component indexes
+  the creating operation's own role table (per entity kind); the
+  deeper components are the relational role's operand references,
+  the genealogy chain. The role tables for the factories are frozen
+  by the goldens; the name — the canonical render of this path — is
+  a pure function of the recipe, derived at materialization.]
 - **`Generation`** is the feature-tree rebuild counter. A reference
   is stale if `id.generation < current_generation`.
+  [AMENDED 2026-10-31, by ADR-0036 D1: ratified as written intent at
+  FEATURE granularity — the scene's `operand_missing` protocol is
+  the practice this clause described; subshape resolution
+  (ADR-0036 D3) supersedes the bare staleness check with the four
+  classes, because a stale reference alone does not say WHICH
+  failure it is.]
 
 ### Subshape tracing, not signature matching
 When a feature rebuilds, the new subshapes are matched to the old
@@ -61,7 +85,13 @@ error rather than silently picking a wrong face.
 - Phase A ships the `ShapeId` ABI.
 - Phase A includes a minimal test: rebuild a sphere → box union
   after editing the sphere's radius; the boolean op's output ID
-  is stable.
+  is stable. [SUPERSEDED 2026-10-31, by ADR-0036 D5: the
+  discriminating quartet — regeneration bit-identical, the
+  topological edit resolving in the named classes with the error
+  that names, the topology-preserving edit surviving class 1, and
+  the naive counterproof demonstrating the positional id failing
+  where the name holds — is the contract this consequence
+  aspired to, pinned before the implementation.]
 - Phase F (modeling parametrico) is where the real stress tests land.
 - No geometric signature is ever used for naming.
 

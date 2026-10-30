@@ -2,13 +2,46 @@
 
 ## Status
 
-**Proposed (2026-10-31) — delivered as morso 1 of H2-u6, docs-only.**
-The semantics are derived and pinned HERE; no code moves in this
-delivery. The implementation is morso 2+ of this unit, and **it
-starts only on the maintainer's review of this document** — the
-STOP the order pins, the ADR-0035 protocol verbatim. Until
-acceptance, every amendment this ADR declares (D6) stays a
-proposal: the mothers stand as written.
+**Accepted (2026-10-31) — the maintainer's review closed the same
+day the draft shipped** (the ADR-0033 precedent: the reserved
+decision taken and recorded in the act, the review's amendment
+riding the acceptance, the register surgery applied in the same
+commit). The semantics stand as derived; the implementation ladder
+(D6) starts with this act — morso 2, the roots, is green-lit as
+the companion feat commit of this acceptance.
+
+**The review's record, registered here:**
+
+1. **The derivation is the contract.** D1's address/name split, D2's
+   six relations with the closure property, D3's four resolution
+   classes with their dispositions, D5's pre-registered goldens —
+   accepted as written. The industrial-contract target the
+   maintainer set for the unit (the Parasolid discipline — typed
+   tags, derivable tracking, hard invariants — applied to this
+   house's foundations) is what the derivation delivers; nothing is
+   deferred to implementation discretion.
+2. **ONE amendment, from the review, applied to D4** (below): the
+   root-edit queue names the **MIDDLE-DELETION** beside the
+   middle-insert, and the **rule for shifted roots** is derived and
+   registered — the edit path that shifts referenced roots EMITS
+   the map or REFUSES with the remedy; `reference_resolved` /
+   `reference_ambiguous` / `reference_vanished` remain the only
+   resolution classes, and a silent positional match on shifted
+   roots is the defect the rule exists to make impossible. The
+   operational decision (where the map is emitted, what the refusal
+   carries) belongs to the resolver's morso (D6 rung 4); what this
+   act pins is the RULE and the BOUNDARY.
+3. **The register surgery D6 declares is applied in the same act**:
+   ADR-0005 is amended in place (the `SubshapeRef` semantics —
+   indices into the declared role tables; the Phase-A consequence
+   superseded by this ADR's D5 quartet; the generation clause
+   ratified at the feature granularity the scene already practices;
+   the ABI itself unmoved). ADR-0032 D2 stays untouched, for the
+   reason D6 derives (identity is not arithmetic honesty); ADR-0007/
+   0027 stay untouched (the v0.5.0 delta is the fillet unit's).
+
+No code moves in this commit (the ADR-0035 D6 protocol): the roots
+are the companion feat commit of this act.
 
 Daughter of **ADR-0005** (the persistent-naming promise this ADR
 redeems — the ABI shipped in Phase A and never once populated),
@@ -387,11 +420,32 @@ consumers:**
 
 **Out of v1, each by name (the queue):**
 
-- **Middle-insert root maps** — an insert before existing chain
-  entities shifts the roots; v1 resolves the affected
+- **Middle-insert and middle-deletion root maps** — AMENDED at
+  acceptance (the review's one amendment, 2026-10-31): the queue
+  names the middle-DELETION beside the middle-insert, because they
+  are the same family of shift — an insert before existing chain
+  entities renames every later root, and a deletion of an earlier
+  chain entity renames them the same way (the surviving roots'
+  positions all move down by one). v1 resolves the affected
   references per D3's honest classes (ambiguous/vanished with
-  the remedy) rather than guessing a list diff. The map arrives
+  the remedy) rather than guessing a list diff; the maps arrive
   with a real case.
+
+  **The rule for shifted roots, DERIVED and registered here (the
+  amendment's second clause): the edit path that shifts referenced
+  roots EMITS the root map or REFUSES with the remedy.**
+  `reference_resolved` / `reference_ambiguous` / `reference_vanished`
+  (with `reference_renamed` as the logged success when the map is
+  emitted) remain the ONLY resolution classes — a silent positional
+  match on shifted roots is precisely the mis-reference D5.4
+  demonstrates, and the rule makes it impossible rather than
+  unlikely. The boundary of this pin: the RULE and the CLASSES are
+  this act's; the operational decision — where the map is emitted
+  (the sketch edit path, the rebuild pass), what the refusal's
+  payload carries (the dead roots named, the edit class, the
+  remedy) — belongs to the resolver's morso (D6 rung 4), where its
+  real cost is visible. The roots' identity is authored data; an
+  edit that moves it OWES the map or the error, never silence.
 - **Vertex names** — no consumer today (the fillet references
   edges); the tavola already carries the vertices' rows, so the
   vocabulary is an extension, not a rework.
