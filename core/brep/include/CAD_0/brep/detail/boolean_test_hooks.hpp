@@ -9,6 +9,8 @@
 // deprecation cycle. Production code must include only
 // CAD_0/brep/boolean.hpp and must never call anything declared here.
 //
+// Every entry point takes its tolerances from the CALLER — no hidden
+// house value: the tests declare what they measure (H2-u3 morso 2).
 #pragma once
 
 #include "CAD_0/math/vec.hpp"
@@ -23,10 +25,25 @@ namespace CAD_0::brep {
 //
 // Both polygons are coplanar with `plane_normal` as surface normal.
 // Returns the outside fragments of subject \ clip, one point loop per
-// fragment.
+// fragment. `eps_l` is the caller's declared linear tolerance.
 std::vector<std::vector<math::Vec3d>> polygon_subtract_fragments_for_tests(
     const std::vector<math::Vec3d>& subject,
     const std::vector<math::Vec3d>& clip,
-    math::Vec3d plane_normal);
+    math::Vec3d plane_normal,
+    double eps_l);
+
+// Direct access to the internal segment classification — the
+// three-family decision of ADR-0035 (the derived parallelism band
+// 4·ε_L·L, the parameter world's ε_P windows, the predicate-certified
+// degeneracy) — so the regime goldens of H2-u3 morso 2 can read the
+// decision directly and pin the two worlds' discrimination.
+enum class SegmentIsectType { None, Point, Overlap };
+
+// For Point: t_lo == t_hi == the crossing parameter along (p1,p2).
+// For Overlap: [t_lo, t_hi] is the overlap range along (p1,p2).
+SegmentIsectType segment_intersection_for_tests(
+    math::Vec2d p1, math::Vec2d p2, math::Vec2d p3, math::Vec2d p4,
+    double eps_l, double eps_p,
+    double& t_lo, double& t_hi);
 
 } // namespace CAD_0::brep

@@ -52,6 +52,15 @@
 #include <type_traits>
 #include <vector>
 
+// H2-u3 morso 2: the tolerance declaration. Every bool_* call in this
+// suite passes the SAME named bundle — the operations take no default
+// (ADR-0004 §1) and the taxonomy's worlds are declared per operation
+// (ADR-0005 D2). The house bundle is the named constant from
+// boolean.hpp; a test that measures a different tolerance declares its
+// own.
+inline constexpr CAD_0::brep::BooleanTolerance kHouseTol =
+    CAD_0::brep::kBooleanHouseTolerance;
+
 namespace b = CAD_0::brep;
 namespace s = CAD_0::sdf;
 namespace br = CAD_0::bridge;
@@ -531,7 +540,7 @@ TEST_CASE("G1-U1 D3: backward compatibility — boolean outputs are disk-faced, 
         auto B = b::make_box(Vec3d{1, 1, 1});
         for (auto& v : B->vertices)
             v.set_position(v.position() + Vec3d{0.5f, 0, 0});
-        auto r = b::bool_intersect(*A, *B);
+        auto r = b::bool_intersect(*A, *B, kHouseTol);
         REQUIRE(r != nullptr);
         CHECK(r->vertex_count() == 8);
         CHECK(r->edge_count() == 12);
@@ -544,7 +553,7 @@ TEST_CASE("G1-U1 D3: backward compatibility — boolean outputs are disk-faced, 
         auto B = b::make_box(Vec3d{1, 1, 1});
         for (auto& v : B->vertices)
             v.set_position(v.position() + Vec3d{0, 0, 2.0f});
-        auto r = b::bool_union(*A, *B);
+        auto r = b::bool_union(*A, *B, kHouseTol);
         REQUIRE(r != nullptr);
         CHECK(r->vertex_count() == 12);
         CHECK(r->edge_count() == 20);
@@ -557,7 +566,7 @@ TEST_CASE("G1-U1 D3: backward compatibility — boolean outputs are disk-faced, 
         auto B = b::make_box(Vec3d{1, 1, 1});
         for (auto& v : B->vertices)
             v.set_position(v.position() + Vec3d{1.0f, 1.0f, 1.0f});
-        auto r = b::bool_subtract(*A, *B);
+        auto r = b::bool_subtract(*A, *B, kHouseTol);
         REQUIRE(r != nullptr);
         CHECK(r->vertex_count() == 17);
         CHECK(r->edge_count() == 27);
@@ -797,7 +806,7 @@ TEST_CASE("G1-U1 D8: booleans propagate the worst of their operands — approxim
         auto B = b::make_box(Vec3d{1, 1, 1});
         for (auto& v : B->vertices)
             v.set_position(v.position() + Vec3d{0.5f, 0, 0});
-        auto r = b::bool_intersect(*A, *B);
+        auto r = b::bool_intersect(*A, *B, kHouseTol);
         REQUIRE(r != nullptr);
         CHECK(r->vertex_count() == 8);
         CHECK(r->edge_count() == 12);
@@ -811,7 +820,7 @@ TEST_CASE("G1-U1 D8: booleans propagate the worst of their operands — approxim
     {
         auto A = b::make_box(Vec3d{1, 1, 1});
         auto B = marked_box(Vec3d{1, 1, 1}, Vec3d{0.5f, 0, 0}, 0.05);
-        auto r = b::bool_intersect(*A, *B);
+        auto r = b::bool_intersect(*A, *B, kHouseTol);
         REQUIRE(r != nullptr);
         CHECK(r->vertex_count() == 8);
         CHECK(b::euler_characteristic(*r) == 2);
@@ -823,7 +832,7 @@ TEST_CASE("G1-U1 D8: booleans propagate the worst of their operands — approxim
     {
         auto A = marked_box(Vec3d{1, 1, 1}, Vec3d{0, 0, 0}, 0.05);
         auto B = marked_box(Vec3d{1, 1, 1}, Vec3d{0.5f, 0, 0}, 0.02);
-        auto r = b::bool_intersect(*A, *B);
+        auto r = b::bool_intersect(*A, *B, kHouseTol);
         REQUIRE(r != nullptr);
         CHECK(all_entities_approximated_with(*r, 0.05));
         CHECK_FALSE(any_entity_claims_exact(*r));
@@ -833,7 +842,7 @@ TEST_CASE("G1-U1 D8: booleans propagate the worst of their operands — approxim
     {
         auto A = b::make_box(Vec3d{1, 1, 1});
         auto B = marked_box(Vec3d{1, 1, 1}, Vec3d{1, 1, 1}, 0.03125);
-        auto r = b::bool_subtract(*A, *B);
+        auto r = b::bool_subtract(*A, *B, kHouseTol);
         REQUIRE(r != nullptr);
         CHECK(r->vertex_count() == 17);
         CHECK(r->edge_count() == 27);
@@ -847,7 +856,7 @@ TEST_CASE("G1-U1 D8: booleans propagate the worst of their operands — approxim
     {
         auto A = marked_box(Vec3d{1, 1, 1}, Vec3d{0, 0, 0}, 0.05);
         auto B = marked_box(Vec3d{1, 1, 1}, Vec3d{0, 0, 0}, 0.05);
-        auto r = b::bool_union(*A, *B);
+        auto r = b::bool_union(*A, *B, kHouseTol);
         REQUIRE(r != nullptr);
         CHECK(b::euler_characteristic(*r) == 2);
         CHECK(all_entities_approximated_with(*r, 0.05));
@@ -916,7 +925,7 @@ TEST_CASE("G1-U1 (amended at U2): the factories write p-curves; the bridge and t
         for (auto& e : B->edges) e.set_provenance(approx);
         for (auto& v : B->vertices)
             v.set_position(v.position() + Vec3d{1.0f, 1.0f, 1.0f});
-        auto r = b::bool_subtract(*A, *B);
+        auto r = b::bool_subtract(*A, *B, kHouseTol);
         REQUIRE(r != nullptr);
         CHECK(body_has_no_p_curves(*r));
     }

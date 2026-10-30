@@ -21,6 +21,8 @@
 //
 #include <doctest/doctest.h>
 
+#include "CAD_0/math/predicate.hpp"
+
 #include "CAD_0/brep/topology.hpp"
 #include "CAD_0/brep/factory.hpp"
 #include "CAD_0/brep/boolean.hpp"
@@ -37,6 +39,15 @@
 
 using namespace CAD_0::brep;
 using namespace CAD_0::math;
+
+// H2-u3 morso 2: the tolerance declaration. Every bool_* call in this
+// suite passes the SAME named bundle — the operations take no default
+// (ADR-0004 §1) and the taxonomy's worlds are declared per operation
+// (ADR-0005 D2). The house bundle is the named constant from
+// boolean.hpp; a test that measures a different tolerance declares its
+// own.
+inline constexpr CAD_0::brep::BooleanTolerance kHouseTol =
+    CAD_0::brep::kBooleanHouseTolerance;
 
 // ---------------------------------------------------------------------------
 // Seam wire factories — ADR-0023 §1
@@ -130,7 +141,7 @@ TEST_CASE("ADR-0023: bool_intersect of two overlapping boxes produces a box") {
         v.set_position(v.position() + Vec3d{0.5f, 0, 0});
     }
 
-    auto result = bool_intersect(*A, *B);
+    auto result = bool_intersect(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 8);
     CHECK(result->edge_count()   == 12);
@@ -147,7 +158,7 @@ TEST_CASE("ADR-0023: bool_intersect of disjoint boxes is empty") {
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{10, 0, 0});
     }
-    auto result = bool_intersect(*A, *B);
+    auto result = bool_intersect(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->face_count() == 0);
     CHECK_FALSE(is_closed_manifold(*result));  // empty body, not a manifold
@@ -157,7 +168,7 @@ TEST_CASE("ADR-0023: bool_intersect of nested boxes returns the inner box") {
     // A = big box (half-extents 2), B = small box (half-extents 1) inside A.
     auto A = make_box(Vec3d{2, 2, 2});
     auto B = make_box(Vec3d{1, 1, 1});  // centered at origin, inside A
-    auto result = bool_intersect(*A, *B);
+    auto result = bool_intersect(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     // B is entirely inside A, so A ∩ B = B.
     CHECK(result->vertex_count() == 8);
@@ -171,7 +182,7 @@ TEST_CASE("ADR-0023: bool_intersect of nested boxes returns the inner box") {
 TEST_CASE("ADR-0023: bool_intersect of identical boxes returns the same box") {
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_box(Vec3d{1, 1, 1});
-    auto result = bool_intersect(*A, *B);
+    auto result = bool_intersect(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 8);
     CHECK(result->edge_count()   == 12);
@@ -189,7 +200,7 @@ TEST_CASE("ADR-0023: bool_intersect result is a closed manifold") {
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0.5f, 0.5f});
     }
-    auto result = bool_intersect(*A, *B);
+    auto result = bool_intersect(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 8);
     CHECK(result->edge_count()   == 12);
@@ -212,7 +223,7 @@ TEST_CASE("ADR-0023: bool_intersect every edge has opposite coedge orientations"
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0, 0});
     }
-    auto result = bool_intersect(*A, *B);
+    auto result = bool_intersect(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 8);
     CHECK(result->edge_count()   == 12);
@@ -235,7 +246,7 @@ TEST_CASE("ADR-0023: bool_intersect every edge has opposite coedge orientations"
 TEST_CASE("ADR-0023: bool_intersect with sphere throws invalid_argument") {
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_sphere(2.0f);  // curved surface, not planar
-    CHECK_THROWS_AS(bool_intersect(*A, *B), std::invalid_argument);
+    CHECK_THROWS_AS(bool_intersect(*A, *B, kHouseTol), std::invalid_argument);
 }
 
 // ---------------------------------------------------------------------------
@@ -263,7 +274,7 @@ TEST_CASE("ADR-0025: bool_intersect of boxes touching at a face returns the dege
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{2.0f, 0, 0});
     }
-    auto result = bool_intersect(*A, *B);
+    auto result = bool_intersect(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 4);
     CHECK(result->edge_count()   == 4);
@@ -284,7 +295,7 @@ TEST_CASE("ADR-0025: bool_intersect of stacked boxes (coplanar contact faces) re
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0, 0, 2.0f});
     }
-    auto result = bool_intersect(*A, *B);
+    auto result = bool_intersect(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 4);
     CHECK(result->edge_count()   == 4);
@@ -310,7 +321,7 @@ TEST_CASE("ADR-0025: bool_union of boxes touching at a face — strict closed-ma
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0, 0, 2.0f});
     }
-    auto result = bool_union(*A, *B);
+    auto result = bool_union(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 12);
     CHECK(result->edge_count()   == 20);
@@ -343,7 +354,7 @@ TEST_CASE("ADR-0025 v5: bool_subtract of box minus a corner — exact counts, cl
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{1.0f, 1.0f, 1.0f});
     }
-    auto result = bool_subtract(*A, *B);
+    auto result = bool_subtract(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 17);
     CHECK(result->edge_count()   == 27);
@@ -362,7 +373,7 @@ TEST_CASE("ADR-0025: bool_subtract of disjoint boxes returns A unchanged") {
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{10, 0, 0});
     }
-    auto result = bool_subtract(*A, *B);
+    auto result = bool_subtract(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 8);
     CHECK(result->edge_count()   == 12);
@@ -378,7 +389,7 @@ TEST_CASE("ADR-0025: bool_subtract where B contains A returns empty") {
     // emitted. Result: empty body.
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_box(Vec3d{3, 3, 3});  // A is entirely inside B
-    auto result = bool_subtract(*A, *B);
+    auto result = bool_subtract(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->face_count() == 0);
     CHECK_FALSE(is_closed_manifold(*result));  // empty body
@@ -388,7 +399,7 @@ TEST_CASE("ADR-0025: bool_subtract of identical boxes returns empty") {
     // A == B → bodies_identical shortcut triggers → empty body.
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_box(Vec3d{1, 1, 1});
-    auto result = bool_subtract(*A, *B);
+    auto result = bool_subtract(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->face_count() == 0);
     CHECK_FALSE(is_closed_manifold(*result));  // empty body
@@ -405,7 +416,7 @@ TEST_CASE("ADR-0025 v5: bool_subtract of overlapping boxes — exact counts, clo
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0, 0});
     }
-    auto result = bool_subtract(*A, *B);
+    auto result = bool_subtract(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 8);
     CHECK(result->edge_count()   == 12);
@@ -425,7 +436,7 @@ TEST_CASE("ADR-0025: bool_subtract partial-overlap with grid-straddle (regressio
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.3f, 0, 0});
     }
-    auto result = bool_subtract(*A, *B);
+    auto result = bool_subtract(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 8);
     CHECK(result->edge_count()   == 12);
@@ -447,7 +458,7 @@ TEST_CASE("ADR-0025: bool_subtract slab decomposition (subject shares edge with 
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0, 0});
     }
-    auto result = bool_subtract(*A, *B);
+    auto result = bool_subtract(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 8);
     CHECK(result->edge_count()   == 12);
@@ -473,7 +484,7 @@ TEST_CASE("ADR-0025 v5 FASE 2: minimal slab decomposition — exactly 1 outside 
         Vec3d{ 1.0f, 1.0f, -1.0f}, Vec3d{-0.7f, 1.0f, -1.0f},
         Vec3d{-0.7f, 1.0f,  1.0f}, Vec3d{ 1.0f, 1.0f,  1.0f}};
     const auto frags = polygon_subtract_fragments_for_tests(
-        subject, clip, Vec3d{0.0f, 1.0f, 0.0f});
+        subject, clip, Vec3d{0.0f, 1.0f, 0.0f}, kHouseTol.linear.value);
     REQUIRE(frags.size() == 1);
     REQUIRE(frags[0].size() == 4);
     // The single fragment is the outside rectangle: every vertex lies in
@@ -492,7 +503,7 @@ TEST_CASE("ADR-0025: bool_intersect of nested boxes (B inside A) returns B") {
     // Box B: half-extents (1,1,1) → [-1,1]³ (inside A)
     auto A = make_box(Vec3d{3, 3, 3});
     auto B = make_box(Vec3d{1, 1, 1});
-    auto result = bool_intersect(*A, *B);
+    auto result = bool_intersect(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     // B is entirely inside A, so A ∩ B = B.
     CHECK(result->vertex_count() == 8);
@@ -507,7 +518,7 @@ TEST_CASE("ADR-0025: bool_union of identical boxes returns one box (regression)"
     // ADR-0025 identical-body shortcut must trigger.
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_box(Vec3d{1, 1, 1});
-    auto result = bool_union(*A, *B);
+    auto result = bool_union(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 8);
     CHECK(result->edge_count()   == 12);
@@ -520,7 +531,7 @@ TEST_CASE("ADR-0025: bool_union of identical boxes returns one box (regression)"
 TEST_CASE("ADR-0025: bool_subtract of identical boxes returns empty (regression)") {
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_box(Vec3d{1, 1, 1});
-    auto result = bool_subtract(*A, *B);
+    auto result = bool_subtract(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->face_count() == 0);
     CHECK_FALSE(is_closed_manifold(*result));  // empty body
@@ -529,7 +540,7 @@ TEST_CASE("ADR-0025: bool_subtract of identical boxes returns empty (regression)
 TEST_CASE("ADR-0025: bool_intersect of identical boxes returns one box (regression)") {
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_box(Vec3d{1, 1, 1});
-    auto result = bool_intersect(*A, *B);
+    auto result = bool_intersect(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     // A ∩ A = A: Sutherland-Hodgman keeps all 6 faces of the first
     // pass and the canonicalize weld drops the duplicate second pass.
@@ -546,7 +557,7 @@ TEST_CASE("ADR-0025: bool_intersect of identical boxes returns one box (regressi
 // H2 unit 2 — THE OUTPUT GATE: the open-shell refusal.
 // ---------------------------------------------------------------------------
 //
-// bool_union(A, B) = (A's faces outside B) ∪ (B's faces outside A).
+// bool_union(A, B, kHouseTol) = (A's faces outside B) ∪ (B's faces outside A).
 // When the two boxes share full lateral faces (partial coplanar
 // overlap), each side's lateral faces are clipped against the other
 // solid, leaving a gap over the overlap region: the assembly is an
@@ -575,7 +586,7 @@ TEST_CASE("H2-u2: bool_union with partial coplanar overlap — the open shell is
     }
     bool threw = false;
     try {
-        auto result = bool_union(*A, *B);
+        auto result = bool_union(*A, *B, kHouseTol);
         (void)result;
     } catch (const std::runtime_error& e) {
         threw = true;
@@ -601,7 +612,7 @@ TEST_CASE("H2-u2: the open-shell refusal names the rim census (the golden messag
         v.set_position(v.position() + Vec3d{0.5f, 0, 0});
     }
     try {
-        auto result = bool_union(*A, *B);
+        auto result = bool_union(*A, *B, kHouseTol);
         (void)result;
         FAIL("the open shell must be refused, not returned");
     } catch (const std::runtime_error& e) {
@@ -625,7 +636,7 @@ TEST_CASE("H2-u2: the union of disjoint bodies is a valid multi-shell answer (ch
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{10, 0, 0});
     }
-    auto result = bool_union(*A, *B);
+    auto result = bool_union(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 16);
     CHECK(result->edge_count()   == 24);
@@ -641,7 +652,7 @@ TEST_CASE("ADR-0024: bool_union of identical boxes returns A (identical-body sho
     // a copy of A. The result is 8V/12E/6F with χ = 2 and is_closed_manifold.
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_box(Vec3d{1, 1, 1});  // same position
-    auto result = bool_union(*A, *B);
+    auto result = bool_union(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 8);
     CHECK(result->edge_count()   == 12);
@@ -662,14 +673,14 @@ TEST_CASE("H2-u2: the refusal replaces the old open-shell coedge census") {
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0, 0});
     }
-    CHECK_THROWS_AS(bool_union(*A, *B), std::runtime_error);
+    CHECK_THROWS_AS(bool_union(*A, *B, kHouseTol), std::runtime_error);
 }
 
 // ---------------------------------------------------------------------------
 // ADR-0024 — bool_subtract
 // ---------------------------------------------------------------------------
 //
-// bool_subtract(A, B) = (A's faces outside B) ∪ (B's faces inside A,
+// bool_subtract(A, B, kHouseTol) = (A's faces outside B) ∪ (B's faces inside A,
 // with inverted normals). For a box minus an overlapping box, the
 // result is a box with a corner notch removed.
 //
@@ -691,7 +702,7 @@ TEST_CASE("ADR-0024: bool_subtract of overlapping boxes — corner notch, exact 
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0.5f, 0.5f});
     }
-    auto result = bool_subtract(*A, *B);
+    auto result = bool_subtract(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 17);
     CHECK(result->edge_count()   == 27);
@@ -710,7 +721,7 @@ TEST_CASE("ADR-0024: bool_subtract of disjoint boxes returns A unchanged") {
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{10, 0, 0});
     }
-    auto result = bool_subtract(*A, *B);
+    auto result = bool_subtract(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 8);
     CHECK(result->edge_count()   == 12);
@@ -723,7 +734,7 @@ TEST_CASE("ADR-0024: bool_subtract of disjoint boxes returns A unchanged") {
 TEST_CASE("ADR-0024: bool_subtract where B contains A returns empty") {
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_box(Vec3d{3, 3, 3});  // A is entirely inside B
-    auto result = bool_subtract(*A, *B);
+    auto result = bool_subtract(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->face_count() == 0);
     CHECK_FALSE(is_closed_manifold(*result));  // empty body
@@ -738,7 +749,7 @@ TEST_CASE("ADR-0024: bool_subtract of overlapping boxes — every edge has exact
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0.5f, 0.5f});
     }
-    auto result = bool_subtract(*A, *B);
+    auto result = bool_subtract(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     REQUIRE(result->edge_count() == 27);
     for (const auto& edge : result->edges) {
@@ -754,7 +765,7 @@ TEST_CASE("ADR-0024: bool_subtract of overlapping boxes — χ = 2 on the corner
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0.5f, 0.5f});
     }
-    auto result = bool_subtract(*A, *B);
+    auto result = bool_subtract(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
     CHECK(result->vertex_count() == 17);
     CHECK(result->edge_count()   == 27);
@@ -779,8 +790,8 @@ TEST_CASE("ADR-0024: bool_union and bool_intersect of overlapping boxes — exac
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0, 0});
     }
-    CHECK_THROWS_AS(bool_union(*A, *B), std::runtime_error);
-    auto i = bool_intersect(*A, *B);
+    CHECK_THROWS_AS(bool_union(*A, *B, kHouseTol), std::runtime_error);
+    auto i = bool_intersect(*A, *B, kHouseTol);
     REQUIRE(i != nullptr);
     CHECK(i->vertex_count() == 8);
     CHECK(i->edge_count()   == 12);
@@ -818,35 +829,35 @@ TEST_CASE("ADR-0027: wrapper equivalence on the genus-0 boolean fixtures") {
 
     // bool_intersect of overlapping boxes: the overlap box, 8V/12E/6F.
     {
-        auto i = bool_intersect(*make_box(Vec3d{1, 1, 1}), *box_at({0.5f, 0, 0}));
+        auto i = bool_intersect(*make_box(Vec3d{1, 1, 1}), *box_at({0.5f, 0, 0}), kHouseTol);
         REQUIRE(i != nullptr);
         CHECK(euler_characteristic(*i) == 2);
         check(*i);
     }
     // bool_union of boxes touching at a face: 12V/20E/10F, χ = 2.
     {
-        auto u = bool_union(*make_box(Vec3d{1, 1, 1}), *box_at({0, 0, 2.0f}));
+        auto u = bool_union(*make_box(Vec3d{1, 1, 1}), *box_at({0, 0, 2.0f}), kHouseTol);
         REQUIRE(u != nullptr);
         CHECK(euler_characteristic(*u) == 2);
         check(*u);
     }
     // The corner notch (the ADR-0025 v5 flagship): 17V/27E/12F, χ = 2.
     {
-        auto d = bool_subtract(*make_box(Vec3d{1, 1, 1}), *box_at({1.0f, 1.0f, 1.0f}));
+        auto d = bool_subtract(*make_box(Vec3d{1, 1, 1}), *box_at({1.0f, 1.0f, 1.0f}), kHouseTol);
         REQUIRE(d != nullptr);
         CHECK(euler_characteristic(*d) == 2);
         check(*d);
     }
     // The slab (clean snap): 8V/12E/6F, χ = 2.
     {
-        auto d = bool_subtract(*make_box(Vec3d{1, 1, 1}), *box_at({0.5f, 0, 0}));
+        auto d = bool_subtract(*make_box(Vec3d{1, 1, 1}), *box_at({0.5f, 0, 0}), kHouseTol);
         REQUIRE(d != nullptr);
         CHECK(euler_characteristic(*d) == 2);
         check(*d);
     }
     // Disjoint subtract: A unchanged, 8V/12E/6F, χ = 2.
     {
-        auto d = bool_subtract(*make_box(Vec3d{1, 1, 1}), *box_at({10, 0, 0}));
+        auto d = bool_subtract(*make_box(Vec3d{1, 1, 1}), *box_at({10, 0, 0}), kHouseTol);
         REQUIRE(d != nullptr);
         CHECK(euler_characteristic(*d) == 2);
         check(*d);
@@ -855,7 +866,7 @@ TEST_CASE("ADR-0027: wrapper equivalence on the genus-0 boolean fixtures") {
     // pinned ADR-0025 class): χ = 1, structurally open — the wrapper
     // is false through BOTH halves, and the equivalence holds.
     {
-        auto d = bool_intersect(*make_box(Vec3d{1, 1, 1}), *box_at({2.0f, 0, 0}));
+        auto d = bool_intersect(*make_box(Vec3d{1, 1, 1}), *box_at({2.0f, 0, 0}), kHouseTol);
         REQUIRE(d != nullptr);
         CHECK(euler_characteristic(*d) == 1);
         CHECK_FALSE(is_closed_orientable(*d));
@@ -866,7 +877,7 @@ TEST_CASE("ADR-0027: wrapper equivalence on the genus-0 boolean fixtures") {
     // classification): χ = 4, structure sound — the wrapper is false
     // through the χ half ONLY, and the equivalence still holds.
     {
-        auto u = bool_union(*make_box(Vec3d{1, 1, 1}), *box_at({10, 0, 0}));
+        auto u = bool_union(*make_box(Vec3d{1, 1, 1}), *box_at({10, 0, 0}), kHouseTol);
         REQUIRE(u != nullptr);
         CHECK(euler_characteristic(*u) == 4);
         CHECK(is_closed_orientable(*u));
@@ -877,7 +888,7 @@ TEST_CASE("ADR-0027: wrapper equivalence on the genus-0 boolean fixtures") {
     // the open shell is not a fixture anymore, it is an error.
     {
         CHECK_THROWS_AS(bool_union(*make_box(Vec3d{1, 1, 1}),
-                                   *box_at({0.5f, 0, 0})),
+                                   *box_at({0.5f, 0, 0}), kHouseTol),
                         std::runtime_error);
     }
 }
@@ -980,9 +991,10 @@ std::unique_ptr<BRepBody> make_box_at(Vec3d e, Vec3d c) {
 TEST_CASE("property: bool_intersect of random axis-aligned boxes matches the analytic box oracle") {
     const std::uint32_t seed = 0xA11CED01u;
     prop::Prng prng(seed);
-    // kWeldGrid, mirrored from core/brep/src/boolean.cpp:44 (private
-    // there; same value, same meaning — the kernel's welding grid).
-    constexpr float kOracleWeldGrid = 1e-6f;
+    // The oracle's weld distance: the house declaration's ε_L (the
+    // kernel's canonical-key quantizer, ADR-0035 D3) — same value the
+    // kernel consumes through BooleanTolerance::linear.
+    constexpr float kOracleWeldGrid = static_cast<float>(kHouseTol.linear.value);
 
     for (int iter = 0; iter < 25; ++iter) {
         const Vec3d eA{prng.frange(0.5f, 1.5f),
@@ -1026,7 +1038,7 @@ TEST_CASE("property: bool_intersect of random axis-aligned boxes matches the ana
 
         auto A = make_box_at(eA, Vec3d{0, 0, 0});
         auto B = make_box_at(eB, shift);
-        auto result = bool_intersect(*A, *B);
+        auto result = bool_intersect(*A, *B, kHouseTol);
 
         INFO("seed=", seed, " iter=", iter,
              " eA=(", eA.x, ",", eA.y, ",", eA.z, ")",
@@ -1109,7 +1121,7 @@ TEST_CASE("property-family factory sanity: make_box_at is a coherent closed box"
     // Identical boxes through the property factory: intersection = the
     // box itself (mirrors the pinned "identical boxes" case).
     auto same = bool_intersect(*make_box_at(e, Vec3d{0, 0, 0}),
-                               *make_box_at(e, Vec3d{0, 0, 0}));
+                               *make_box_at(e, Vec3d{0, 0, 0}), kHouseTol);
     REQUIRE(same != nullptr);
     CHECK(same->vertex_count() == 8);
     CHECK(same->edge_count() == 12);
@@ -1120,7 +1132,7 @@ TEST_CASE("property-family factory sanity: make_box_at is a coherent closed box"
     // The pinned overlapping case through the property factory: A at
     // the origin, B shifted by (0.5, 0, 0) — expected [-0.5, 1]^3.
     auto ov = bool_intersect(*make_box_at(Vec3d{1, 1, 1}, Vec3d{0, 0, 0}),
-                             *make_box_at(Vec3d{1, 1, 1}, Vec3d{0.5f, 0, 0}));
+                             *make_box_at(Vec3d{1, 1, 1}, Vec3d{0.5f, 0, 0}), kHouseTol);
     REQUIRE(ov != nullptr);
     CHECK(ov->vertex_count() == 8);
     CHECK(ov->edge_count() == 12);
@@ -1147,7 +1159,7 @@ TEST_CASE("pinned regression: weld grid-boundary straddle on a box-pair intersec
 
     auto A = make_box_at(eA, Vec3d{0, 0, 0});
     auto B = make_box_at(eB, shift);
-    auto result = bool_intersect(*A, *B);
+    auto result = bool_intersect(*A, *B, kHouseTol);
     REQUIRE(result != nullptr);
 
     // Analytic oracle: [max(-eA, shift-eB), min(eA, shift+eB)] per axis.
@@ -1318,11 +1330,11 @@ void expect_input_rejected(Fn&& op, const char* cls) {
 TEST_CASE("H2-u1: the gate refuses the empty body by name") {
     auto A = make_box(Vec3d{1, 1, 1});
     BRepBody empty;
-    expect_input_rejected([&] { bool_union(empty, *A); },
+    expect_input_rejected([&] { bool_union(empty, *A, kHouseTol); },
                           "input_empty_body");
-    expect_input_rejected([&] { bool_subtract(*A, empty); },
+    expect_input_rejected([&] { bool_subtract(*A, empty, kHouseTol); },
                           "input_empty_body");
-    expect_input_rejected([&] { bool_intersect(empty, empty); },
+    expect_input_rejected([&] { bool_intersect(empty, empty, kHouseTol); },
                           "input_empty_body");
 }
 
@@ -1331,19 +1343,19 @@ TEST_CASE("H2-u1: the gate refuses torn topology references by name") {
     auto B = make_box(Vec3d{1, 1, 1});
     // An edge endpoint pointing past the vertex table.
     B->edges[0].set_vertex(0, 999);
-    expect_input_rejected([&] { bool_intersect(*A, *B); },
+    expect_input_rejected([&] { bool_intersect(*A, *B, kHouseTol); },
                           "input_topology_reference");
 }
 
 TEST_CASE("H2-u1: the gate refuses non-plane surfaces by name") {
     auto A = make_box(Vec3d{1, 1, 1});
     auto S = make_sphere(1.0);
-    expect_input_rejected([&] { bool_intersect(*A, *S); },
+    expect_input_rejected([&] { bool_intersect(*A, *S, kHouseTol); },
                           "input_surface_not_plane");
     // A face with NO surface is the same class (the family is 'none').
     auto B = make_box(Vec3d{1, 1, 1});
     B->solid.shell_mut().faces_mut()[0].set_surface(nullptr);
-    expect_input_rejected([&] { bool_union(*A, *B); },
+    expect_input_rejected([&] { bool_union(*A, *B, kHouseTol); },
                           "input_surface_not_plane");
 }
 
@@ -1365,7 +1377,7 @@ TEST_CASE("H2-u1: the gate refuses holed faces (inner loops) by name") {
     };
     auto holed = build_h2_body(pts, specs);
     auto A = make_box(Vec3d{1, 1, 1});
-    expect_input_rejected([&] { bool_subtract(*A, *holed); },
+    expect_input_rejected([&] { bool_subtract(*A, *holed, kHouseTol); },
                           "input_face_inner_loops");
 }
 
@@ -1402,7 +1414,7 @@ TEST_CASE("H2-u1: the gate refuses open loops by name") {
     broken->solid.shell_mut().faces_mut()[0] = std::move(face);
     link_radial_edges(*broken);
     auto A = make_box(Vec3d{1, 1, 1});
-    expect_input_rejected([&] { bool_union(*A, *broken); },
+    expect_input_rejected([&] { bool_union(*A, *broken, kHouseTol); },
                           "input_loop_open");
 }
 
@@ -1421,7 +1433,7 @@ TEST_CASE("H2-u1: the gate refuses open shells (1-coedge edges) by name") {
     };
     auto open = build_h2_body(pts, specs);
     auto A = make_box(Vec3d{1, 1, 1});
-    expect_input_rejected([&] { bool_intersect(*A, *open); },
+    expect_input_rejected([&] { bool_intersect(*A, *open, kHouseTol); },
                           "input_edge_not_manifold");
 }
 
@@ -1436,7 +1448,7 @@ TEST_CASE("H2-u1: the gate refuses the orientability XOR violation by name") {
     };
     auto folded = build_h2_body(pts, specs);
     auto A = make_box(Vec3d{1, 1, 1});
-    expect_input_rejected([&] { bool_subtract(*A, *folded); },
+    expect_input_rejected([&] { bool_subtract(*A, *folded, kHouseTol); },
                           "input_coedge_orientation");
 }
 
@@ -1446,7 +1458,7 @@ TEST_CASE("H2-u1: the gate refuses off-plane loop vertices by name") {
     // Drag one vertex out of three of its faces' planes.
     B->vertices[0].set_position(B->vertices[0].position()
                                 + Vec3d{0.1, 0.1, 0.1});
-    expect_input_rejected([&] { bool_intersect(*A, *B); },
+    expect_input_rejected([&] { bool_intersect(*A, *B, kHouseTol); },
                           "input_loop_off_plane");
 }
 
@@ -1467,7 +1479,7 @@ TEST_CASE("H2-u1: the gate refuses inward face normals by name") {
     };
     auto inside_out = build_h2_body(pts, specs);
     auto A = make_box(Vec3d{1, 1, 1});
-    expect_input_rejected([&] { bool_union(*A, *inside_out); },
+    expect_input_rejected([&] { bool_union(*A, *inside_out, kHouseTol); },
                           "input_face_orientation");
 }
 
@@ -1481,7 +1493,7 @@ TEST_CASE("H2-u1: the gate refuses zero-volume (flat) operands by name") {
     };
     auto flat = build_h2_body(pts, specs);
     auto A = make_box(Vec3d{1, 1, 1});
-    expect_input_rejected([&] { bool_subtract(*A, *flat); },
+    expect_input_rejected([&] { bool_subtract(*A, *flat, kHouseTol); },
                           "input_zero_volume");
 }
 
@@ -1504,7 +1516,7 @@ TEST_CASE("H2-u1: the gate refuses CW loop winding by name") {
     };
     auto flipped = build_h2_body(pts, specs);
     auto A = make_box(Vec3d{1, 1, 1});
-    expect_input_rejected([&] { bool_intersect(*A, *flipped); },
+    expect_input_rejected([&] { bool_intersect(*A, *flipped, kHouseTol); },
                           "input_loop_winding");
 }
 
@@ -1516,7 +1528,7 @@ TEST_CASE("H2-u1: the gate refuses non-convex FACES by name") {
     };
     auto lprism = build_h2_prism(L, 0.0, 1.0);
     auto A = make_box(Vec3d{1, 1, 1});
-    expect_input_rejected([&] { bool_union(*A, *lprism); },
+    expect_input_rejected([&] { bool_union(*A, *lprism, kHouseTol); },
                           "input_face_not_convex");
 }
 
@@ -1549,7 +1561,7 @@ TEST_CASE("H2-u1: the gate refuses the non-convex POLYHEDRON by name") {
     };
     auto notchy = build_h2_body(pts, specs);
     auto A = make_box(Vec3d{1, 1, 1});
-    expect_input_rejected([&] { bool_subtract(*A, *notchy); },
+    expect_input_rejected([&] { bool_subtract(*A, *notchy, kHouseTol); },
                           "input_not_convex");
 }
 
@@ -1561,16 +1573,334 @@ TEST_CASE("H2-u1: the reverse proof — the gate accepts exactly the declared cl
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0, 0});
     }
-    CHECK(bool_subtract(*A, *B) != nullptr);       // closed solid answer
+    CHECK(bool_subtract(*A, *B, kHouseTol) != nullptr);       // closed solid answer
     auto C = make_box(Vec3d{1, 1, 1});
     for (auto& v : C->vertices) {
         v.set_position(v.position() + Vec3d{1.0f, 1.0f, 1.0f});
     }
-    auto cut = bool_subtract(*A, *C);
+    auto cut = bool_subtract(*A, *C, kHouseTol);
     REQUIRE(cut != nullptr);
     CHECK(cut->vertex_count() == 17);
     // The tetrahedron (triangles, not quads) is in the class too.
     auto T = make_tetrahedron();
     auto cube = make_box(Vec3d{1, 1, 1});
-    CHECK(bool_intersect(*T, *cube) != nullptr);
+    CHECK(bool_intersect(*T, *cube, kHouseTol) != nullptr);
+}
+
+// ===========================================================================
+// H2 unit 3 morso 2 — THE REGIME GOLDENS: the ex-kEps decisions, by
+// name; the two worlds' discrimination; the parameter world's
+// independence. (ADR-0035 D2's re-homing map, made visible — the change
+// of regime is never silent.)
+// ===========================================================================
+//
+// The historical kEps regime is reproduced below as a RECORD (verbatim
+// arithmetic from boolean.cpp@f691a98's segment_intersection, before
+// this unit retired it): one constant, 1e-9, answering three
+// dimensional worlds at once — a determinant bound (length²), a
+// parameter-domain window (dimensionless), a bare length (mm). The
+// goldens assert the two regimes DISAGREE on the same stored bytes,
+// with the taxonomy's answer on the honest side of the derived band
+// (D2.3: with ε_L = 1e-6 and L = 2, the derived band is 4·ε_L·L = 8e-6
+// — the crossover puts every |det| in (1e-9, 8e-6) inside the honest
+// parallelism band, which the fixed 1e-9 read as a crossing).
+namespace {
+
+// The retired regime's classification kinds (mirrors of the internal
+// ones, in the record's own terms).
+enum class KEpsIsectType { None, Point, Overlap };
+
+// The HISTORICAL regime, a record of boolean.cpp@f691a98:305-367 —
+// every kEps decision exactly as it stood, three worlds on one
+// constant. Not production code: the taxonomy retired it (ADR-0035);
+// it lives here only as the goldens' counterpart oracle.
+KEpsIsectType kEps_regime(Vec2d p1, Vec2d p2,
+                          Vec2d p3, Vec2d p4,
+                          double& t_lo, double& t_hi) {
+    const double kEps = 1e-9;  // the retired constant, named here as history
+    const double dx1 = p2.x - p1.x;
+    const double dy1 = p2.y - p1.y;
+    const double dx2 = p4.x - p3.x;
+    const double dy2 = p4.y - p3.y;
+    const double denom = dx1 * dy2 - dy1 * dx2;
+    const double dx3 = p3.x - p1.x;
+    const double dy3 = p3.y - p1.y;
+    if (std::abs(denom) > kEps) {
+        const double t = (dx3 * dy2 - dy3 * dx2) / denom;
+        const double u = (dx3 * dy1 - dy3 * dx1) / denom;
+        if (t > kEps && t < 1.0 - kEps && u > kEps && u < 1.0 - kEps) {
+            t_lo = t;
+            t_hi = t;
+            return KEpsIsectType::Point;
+        }
+        return KEpsIsectType::None;
+    }
+    const double cross = dx3 * dy1 - dy3 * dx1;
+    if (std::abs(cross) > kEps) {
+        return KEpsIsectType::None;
+    }
+    const double len1_sq = dx1 * dx1 + dy1 * dy1;
+    if (len1_sq < kEps * kEps) return KEpsIsectType::None;
+    const double t3 = (dx3 * dx1 + dy3 * dy1) / len1_sq;
+    const double t4 = ((p4.x - p1.x) * dx1 + (p4.y - p1.y) * dy1) / len1_sq;
+    t_lo = std::max(0.0, std::min(t3, t4));
+    t_hi = std::min(1.0, std::max(t3, t4));
+    if (t_hi - t_lo < kEps) {
+        if (t_lo > kEps && t_lo < 1.0 - kEps) {
+            t_hi = t_lo;
+            return KEpsIsectType::Point;
+        }
+        return KEpsIsectType::None;
+    }
+    if (t_lo < kEps && t_hi > 1.0 - kEps) {
+        t_lo = kEps;
+        t_hi = 1.0 - kEps;
+    }
+    return KEpsIsectType::Overlap;
+}
+
+// The taxonomy's classification kinds (the hooks mirror).
+using CAD_0::brep::SegmentIsectType;
+
+} // namespace
+
+TEST_CASE("H2-u3: the ex-kEps regimes by name — the change of regime is visible, not silent") {
+    // Every decision the retired kEps fed, re-homed per the ADR's map
+    // (D2), each asserted on bytes a maintainer can re-derive by hand.
+    // ε_L = ε_P = 1e-6 (the house declaration: the plane family's
+    // Jacobian is 1, D2.2), so the derived band at L = 2 is
+    // 4·ε_L·L = 8e-6 — four orders wider than the retired 1e-9.
+    const double eps_l = kHouseTol.linear.value;
+    const double eps_p = kHouseTol.parametric.value;
+
+    // --- ex-|denom| > kEps (boolean.cpp@f691a98:317) → THE DERIVED
+    //     PARALLELISM BAND |det| ≤ 4·ε_L·L (D2.3). Outside it family 1
+    //     governs: the crossing is real, its point computed in double.
+    {
+        // A clear crossing at mid-span: |det| = 4 ≫ 8e-6 — a Point, as
+        // before, but now admitted by the derivation, not by a bare
+        // 1e-9; both regimes agree on it (the loosening neither
+        // relaxed nor tightened anything already green).
+        double t_lo = -1.0, t_hi = -1.0;
+        const auto r = segment_intersection_for_tests(
+            Vec2d{0, 0}, Vec2d{2, 0},
+            Vec2d{1, 1}, Vec2d{1, -1},
+            eps_l, eps_p, t_lo, t_hi);
+        CHECK(r == SegmentIsectType::Point);
+        CHECK(t_lo == 0.5);   // exact: the crossing parameter, double
+        CHECK(t_hi == t_lo);
+        double t_k = -1.0, t2_k = -1.0;
+        CHECK(kEps_regime(Vec2d{0, 0}, Vec2d{2, 0},
+                          Vec2d{1, 1}, Vec2d{1, -1}, t_k, t2_k)
+              == KEpsIsectType::Point);
+        CHECK(t_k == 0.5);
+    }
+
+    // --- ex-t,u vs kEps (:321) and ex-t_hi−t_lo/t_lo vs kEps
+    //     (:349, :352, :359-364) → THE PARAMETER WORLD ε_P (D2.2): its
+    //     own typed tolerance, never the linear constant. The crossing
+    //     t = 1e-7 sits INSIDE kEps's (1e-9, 1−1e-9) window and
+    //     OUTSIDE ε_P's (1e-6, 1−1e-6): the regimes disagree — the
+    //     golden below pins the discrimination.
+    {
+        double t_lo = -1.0, t_hi = -1.0;
+        const auto r = segment_intersection_for_tests(
+            Vec2d{0, 0}, Vec2d{2, 0},
+            Vec2d{2e-7, 1}, Vec2d{2e-7, -1},
+            eps_l, eps_p, t_lo, t_hi);
+        CHECK(r == SegmentIsectType::None);  // t = 1e-7 ≤ ε_P: endpoint band
+    }
+
+    // --- ex-|cross| > kEps (:332) → THE SAME-DERIVED BAND for the
+    //     collinearity class (D2.3: the same bilinear form on the same
+    //     points). A clearly non-collinear near-parallel pair (cross
+    //     outside the band) stays out of the collinear class.
+    {
+        // cross = (p3−p1)×d1 = −2·(6e-6) = −1.2e-5 > 8e-6: outside.
+        double t_lo = -1.0, t_hi = -1.0;
+        const auto r = segment_intersection_for_tests(
+            Vec2d{0, 0}, Vec2d{2, 0},
+            Vec2d{0.6, 6e-6}, Vec2d{2.6, 6e-6 + 2e-9},
+            eps_l, eps_p, t_lo, t_hi);
+        CHECK(r == SegmentIsectType::None);  // equivalent-parallel, not collinear
+    }
+
+    // --- ex-len_sq < kEps² (:339, :377) and ex-len < kEps (:937,
+    //     :1223) → THE LINEAR DEGENERATE-LENGTH GUARD ε_L² / ε_L
+    //     (D2 row 1): a segment shorter than ε_L carries no direction.
+    {
+        // len(d1) = 1e-7 < ε_L = 1e-6: degenerate, refused before the
+        // projection — as before, but now by the linear world's rule.
+        double t_lo = -1.0, t_hi = -1.0;
+        const auto r = segment_intersection_for_tests(
+            Vec2d{0, 0}, Vec2d{1e-7, 0},
+            Vec2d{0.5, 1}, Vec2d{0.5, -1},
+            eps_l, eps_p, t_lo, t_hi);
+        CHECK(r == SegmentIsectType::None);
+    }
+
+    // --- the ANGULAR world (D2 row 4) and the LINEAR band (row 1) are
+    //     consumed by the corpus above: the whole pinned suite passing
+    //     with UNCHANGED counts (including the H2-u1/u2 refusal goldens,
+    //     whose messages carry the measured evidence) is the regime
+    //     change's reverse proof — rifiutare troppo è difetto quanto
+    //     accettare troppo.
+}
+
+TEST_CASE("H2-u3: golden — the two worlds' discrimination on the segment classification") {
+    // THE PROOF the order asks for: one case that with kEps fell inside
+    // its bare band and with the new regime is decided by the derived
+    // band and the exact predicate. Three pinned inputs, each with both
+    // regimes' answers asserted — the discrimination between the two
+    // worlds IS the evidence.
+    const double eps_l = kHouseTol.linear.value;   // 1e-6 (house)
+    const double eps_p = kHouseTol.parametric.value; // 1e-6 (plane family, D2.2)
+
+    // ---- GOLDEN P2: the false crossing. Two segments crossing at
+    // θ = 1e-6 rad, offset 1e-6: |det| = 4e-6 ∈ (kEps, 4·ε_L·L = 8e-6)
+    // — inside the derived band, outside kEps. The kEps regime computes
+    // the crossing (a topology decision the bytes cannot support: move
+    // one endpoint 1e-6 and the crossing point traverses the whole
+    // domain); the taxonomy reads the pair as equivalent-collinear and
+    // answers with the projected overlap [0, 1].
+    {
+        const Vec2d p1{0, 0}, p2{2, 0};
+        const Vec2d p3{0, 1e-6}, p4{2, -1e-6};
+
+        double t_k = -1.0, t2_k = -1.0;
+        const auto k = kEps_regime(p1, p2, p3, p4, t_k, t2_k);
+        CHECK(k == KEpsIsectType::Point);
+        CHECK(t_k == 0.5);   // exact double arithmetic: (−2e-6)/(−4e-6)
+
+        double t_n = -1.0, t2_n = -1.0;
+        const auto n = segment_intersection_for_tests(
+            p1, p2, p3, p4, eps_l, eps_p, t_n, t2_n);
+        CHECK(n == SegmentIsectType::Overlap);
+        // The endpoint exclusions are the parameter world's: the
+        // full-segment overlap is clamped to [ε_P, 1−ε_P] (the
+        // historical clamp at kEps, re-homed to ε_P).
+        CHECK(t_n == eps_p);
+        CHECK(t2_n == 1.0 - eps_p);
+
+        // The regimes disagree — the discrimination is the proof.
+        CHECK(k != static_cast<KEpsIsectType>(n));
+    }
+
+    // ---- GOLDEN P1: the murdered collinearity. Two nearly-collinear
+    // segments (cross = 2e-9 ∈ (kEps, band)): the kEps regime splits
+    // hairs the bytes cannot support (parallel, NOT collinear → None);
+    // the taxonomy projects (equivalent-collinear) and answers with the
+    // overlap [0.5, 1].
+    {
+        const Vec2d p1{0, 0}, p2{2, 0};
+        const Vec2d p3{1, 1e-9}, p4{2, 2e-9};
+
+        double t_k = -1.0, t2_k = -1.0;
+        const auto k = kEps_regime(p1, p2, p3, p4, t_k, t2_k);
+        CHECK(k == KEpsIsectType::None);
+
+        double t_n = -1.0, t2_n = -1.0;
+        const auto n = segment_intersection_for_tests(
+            p1, p2, p3, p4, eps_l, eps_p, t_n, t2_n);
+        CHECK(n == SegmentIsectType::Overlap);
+        CHECK(t_n == 0.5);
+        CHECK(t2_n == 1.0);
+
+        CHECK(k != static_cast<KEpsIsectType>(n));
+    }
+
+    // ---- GOLDEN P3: the endpoint window. A clear crossing (|det| = 4,
+    // far outside every band) whose parameter t = 1e-7 hugs the
+    // endpoint: the kEps regime admits it (1e-7 > 1e-9); the parameter
+    // world refuses it (1e-7 ≤ ε_P = 1e-6) — the (t,u) window is
+    // ε_P's to answer, never the determinant's, never the linear's.
+    {
+        const Vec2d p1{0, 0}, p2{2, 0};
+        const Vec2d p3{2e-7, 1}, p4{2e-7, -1};
+
+        double t_k = -1.0, t2_k = -1.0;
+        const auto k = kEps_regime(p1, p2, p3, p4, t_k, t2_k);
+        CHECK(k == KEpsIsectType::Point);
+        CHECK(t_k == 1e-7);
+
+        double t_n = -1.0, t2_n = -1.0;
+        const auto n = segment_intersection_for_tests(
+            p1, p2, p3, p4, eps_l, eps_p, t_n, t2_n);
+        CHECK(n == SegmentIsectType::None);
+
+        CHECK(k != static_cast<KEpsIsectType>(n));
+    }
+
+    // ---- GOLDEN P4: the true degeneracy — the regimes AGREE. On bytes
+    // that are EXACTLY collinear (coordinates built from powers of two)
+    // the predicate's zero is a fact, both regimes project, and the
+    // answers coincide: the disagreement lives only where the retired
+    // constant decided on arithmetic the data could not support.
+    {
+        const Vec2d p1{0, 0}, p2{2, 0};
+        const Vec2d p3{0.5, 0}, p4{1.5, 0};
+
+        // Family 1 (D1) at work: the adaptive predicate's answer for
+        // this cross IS the exact zero of the stored bytes.
+        const double cross_exact = CAD_0::math::predicate::orient2d(
+            p1, p3, p2);
+        CHECK(cross_exact == 0.0);
+
+        double t_k = -1.0, t2_k = -1.0;
+        const auto k = kEps_regime(p1, p2, p3, p4, t_k, t2_k);
+        double t_n = -1.0, t2_n = -1.0;
+        const auto n = segment_intersection_for_tests(
+            p1, p2, p3, p4, eps_l, eps_p, t_n, t2_n);
+        CHECK(k == KEpsIsectType::Overlap);
+        CHECK(n == SegmentIsectType::Overlap);
+        CHECK(t_k == 0.25);
+        CHECK(t_k == t_n);
+        CHECK(t2_k == 0.75);
+        CHECK(t2_k == t2_n);
+    }
+}
+
+TEST_CASE("H2-u3: the parameter world is independent — ε_P answers the (t,u) windows, never ε_L") {
+    // The same stored bytes, three different ε_P declarations: the
+    // endpoint-window answer follows the PARAMETER declaration alone.
+    // The linear tolerance moves by three orders of magnitude and the
+    // (t,u) window does not move: the two worlds never share a
+    // constant (D2.2's ban, made executable).
+    const Vec2d p1{0, 0}, p2{2, 0};
+    const Vec2d p3{2e-7, 1}, p4{2e-7, -1};  // crossing parameter t = 1e-7
+
+    {
+        // ε_P = 1e-6 (house): the crossing hugs the endpoint → None.
+        double t_lo = -1.0, t_hi = -1.0;
+        const auto r = segment_intersection_for_tests(
+            p1, p2, p3, p4, 1e-6, 1e-6, t_lo, t_hi);
+        CHECK(r == SegmentIsectType::None);
+    }
+    {
+        // ε_P = 1e-8 (a metrology-grade parameter declaration): the same
+        // crossing is now interior → Point at t = 1e-7, exact.
+        double t_lo = -1.0, t_hi = -1.0;
+        const auto r = segment_intersection_for_tests(
+            p1, p2, p3, p4, 1e-6, 1e-8, t_lo, t_hi);
+        CHECK(r == SegmentIsectType::Point);
+        CHECK(t_lo == 1e-7);
+    }
+    {
+        // ε_L = 1e-3 (a coarser LINEAR declaration — three orders wider):
+        // the (t,u) window answer does not move. The derived determinant
+        // band (4·ε_L·L = 8e-3) still sits far below |det| = 4, so the
+        // crossing stays real and the window stays ε_P's to answer.
+        double t_lo = -1.0, t_hi = -1.0;
+        const auto r_loose = segment_intersection_for_tests(
+            p1, p2, p3, p4, 1e-3, 1e-6, t_lo, t_hi);
+        CHECK(r_loose == SegmentIsectType::None);  // same answer as ε_L = 1e-6
+
+        // And with BOTH worlds loosened the crossing flips only when
+        // ε_P says so — never because ε_L moved:
+        double t2_lo = -1.0, t2_hi = -1.0;
+        const auto r_both = segment_intersection_for_tests(
+            p1, p2, p3, p4, 1e-3, 1e-8, t2_lo, t2_hi);
+        CHECK(r_both == SegmentIsectType::Point);
+        CHECK(t2_lo == 1e-7);
+    }
 }

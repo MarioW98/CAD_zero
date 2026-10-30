@@ -52,6 +52,15 @@
 #include <stdexcept>
 #include <vector>
 
+// H2-u3 morso 2: the tolerance declaration. Every bool_* call in this
+// suite passes the SAME named bundle — the operations take no default
+// (ADR-0004 §1) and the taxonomy's worlds are declared per operation
+// (ADR-0005 D2). The house bundle is the named constant from
+// boolean.hpp; a test that measures a different tolerance declares its
+// own.
+inline constexpr CAD_0::brep::BooleanTolerance kHouseTol =
+    CAD_0::brep::kBooleanHouseTolerance;
+
 namespace {
 
 namespace b = CAD_0::brep;
@@ -285,7 +294,7 @@ TEST_CASE("G1-U6 query_body: the MULTI-SHELL body - genus n/d, the D6 rule") {
     auto far = b::make_box({0.5f, 0.5f, 0.5f});
     for (auto& v : far->vertices)
         v.set_position(v.position() + Vec3d{3.0f, 0, 0});
-    auto uni = b::bool_union(*a, *far);
+    auto uni = b::bool_union(*a, *far, kHouseTol);
     REQUIRE(uni != nullptr);
 
     const b::BodySummary q = b::query_body(*uni);

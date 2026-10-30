@@ -25,9 +25,35 @@
 // are deterministic under -ffp-contract=off. Vertex welding uses
 // grid-snapped integer keys, order-independent.
 //
+// H2 unit 3 (ADR-0035, morso 2): the numerical taxonomy. The three
+// bare constants are RETIRED — kWeldGrid, kPlaneTol, kEps are dead;
+// every decision they fed is re-homed to the taxonomy's three
+// families (the ADR's D2 map, site by site):
+//   * the LINEAR world (ε_L, declared per operation through
+//     BooleanTolerance::linear): welding, plane bands, degenerate-
+//     length guards — and the canonical key's quantizer (D3: one
+//     declared value, two consumers, zero drift);
+//   * the PARAMETER world (ε_P, BooleanTolerance::parametric): the
+//     (t,u) windows, endpoint exclusions, overlap widths — its own
+//     typed tolerance, never the linear constant (D2.2);
+//   * the DERIVED determinant band (D2.3): the parallelism admission
+//     is |det| ≤ 4·ε_L·L — the bound scales with the square of the
+//     geometric scale because det is bilinear in the direction
+//     vectors. Inside the band the pair is equivalent-to-parallel
+//     (D3 band machinery); outside it the crossing is real, its
+//     point is computed in double, and its windows are ε_P.
+//   * the ANGULAR world (D2 row 4): the two normal-parallelity
+//     decisions, typed Angular, declared (loose pre-filter loose,
+//     strict threshold strict).
+// The classifications of the stored bytes run on the adaptive
+// predicates (D1): orient2d through the core/math wrapper — the
+// exact sign, zero thresholds inside the call.
+//
 #include "CAD_0/brep/boolean.hpp"
 #include "CAD_0/brep/analytic.hpp"
 #include "CAD_0/brep/detail/boolean_test_hooks.hpp"
+
+#include "CAD_0/math/predicate.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -44,9 +70,6 @@ namespace {
 
 using Polygon = std::vector<math::Vec3d>;
 
-constexpr double kWeldGrid = 1e-6;
-constexpr double kPlaneTol = 1e-6;  // Plane classification tolerance (ADR-0025 FASE 3)
-constexpr double kEps       = 1e-9;
 // H2 unit 1 (the input gate): the class gates that are RELATIVE to the
 // body's own scale. A solid of volume under kVolumeRelTol * scale^3 or a
 // face of area under kAreaRelTol * scale^2 (scale = the largest vertex
@@ -54,21 +77,28 @@ constexpr double kEps       = 1e-9;
 // operations are defined on full-dimensional solids, and a near-flat
 // body would classify every point "on boundary" without answering a
 // geometric question. Relative, so the gate means the same thing at
-// every model scale.
+// every model scale. They stand as they are (ADR-0035 D7: the H2-u1
+// gates are green and relative — already this taxonomy's spirit).
 constexpr double kVolumeRelTol = 1e-9;
 constexpr double kAreaRelTol   = 1e-9;
 // Degenerate-denominator guard for the edge/plane crossing
 // interpolation in IntersectionTable: below this |d0 − d1| the crossing
 // point is not computed and the edge start vertex is reused. Purely a
-// numeric division guard — NOT a geometric tolerance.
+// numeric division guard — NOT a geometric tolerance (ADR-0035 D2 row 5
+// ratified the rule: it stays out of the tolerance model, declared as
+// the engineering guard it is).
 constexpr double kIsectDenomEps = 1e-12;
-// Loose normal-parallelity pre-filter (polygons_coplanar): |n1·n2| − 1 |
-// above this means the normals are not parallel (≈ 2.6°). Deliberately
-// loose — a cheap rejection before the distance test.
-constexpr double kNormalParallelTol = 1e-3;
-// Strict parallelity threshold (classify_parallel_plane): |n1·n2| below
-// this (after normalization) means NotParallel. 1 − 1e-6 ≈ cos(0.081°).
-constexpr double kParallelDotMin = 1.0 - 1e-6;
+
+// The per-operation linear epsilon accessor: ε_L, declared at the
+// signature (ADR-0004), consumed by the linear world's decisions and
+// by the derived determinant band (4·ε_L·L, D2.3). One accessor per
+// world keeps the call sites honest about which tolerance they read.
+inline double eps_l_of(const BooleanTolerance& tol) noexcept {
+    return tol.linear.value;
+}
+inline double eps_p_of(const BooleanTolerance& tol) noexcept {
+    return tol.parametric.value;
+}
 
 struct SnappedKey {
     std::int64_t x, y, z;
@@ -84,17 +114,21 @@ struct SnappedKey {
 
 using SnappedKeySet = std::set<SnappedKey>;
 
-SnappedKey snap(const math::Vec3d& p) noexcept {
+// The canonical key (D3): the SAME declared ε_L quantizes the weld
+// grid and decides the equivalence — one declared value, two
+// consumers, zero drift. Order-independent int64 keys (ADR-0016/0025
+// pattern, unchanged in form).
+SnappedKey snap(const math::Vec3d& p, double eps_l) noexcept {
     return {
-        static_cast<std::int64_t>(std::llround(p.x / kWeldGrid)),
-        static_cast<std::int64_t>(std::llround(p.y / kWeldGrid)),
-        static_cast<std::int64_t>(std::llround(p.z / kWeldGrid)),
+        static_cast<std::int64_t>(std::llround(p.x / eps_l)),
+        static_cast<std::int64_t>(std::llround(p.y / eps_l)),
+        static_cast<std::int64_t>(std::llround(p.z / eps_l)),
     };
 }
 
-SnappedKeySet snap_polygon(const Polygon& poly) {
+SnappedKeySet snap_polygon(const Polygon& poly, double eps_l) {
     SnappedKeySet s;
-    for (const auto& p : poly) s.insert(snap(p));
+    for (const auto& p : poly) s.insert(snap(p, eps_l));
     return s;
 }
 
@@ -190,7 +224,12 @@ Polygon extract_face_polygon(
 
 // Build a local 2D frame (u_axis, v_axis) perpendicular to `normal`.
 // Returns origin (any point on the plane — we use the first vertex).
-// Currently unused — kept for the future Greiner-Hormann implementation.
+// The slab decomposition (polygon_subtract_3d, ADR-0025 FASE 2) is the
+// consumer: it projects both polygons into this frame, clips in 2D,
+// and unprojects the fragments. Written for a direct Greiner-Hormann
+// path that never shipped; the slab decomposition took it over —
+// corrected here (the old note said "currently unused", which stopped
+// matching the tree when FASE 2 landed).
 struct LocalFrame {
     math::Vec3d origin;
     math::Vec3d u_axis;
@@ -198,7 +237,7 @@ struct LocalFrame {
     math::Vec3d normal;
 };
 
-[[maybe_unused]] LocalFrame build_local_frame(math::Vec3d normal, math::Vec3d origin) {
+LocalFrame build_local_frame(math::Vec3d normal, math::Vec3d origin) {
     LocalFrame f;
     f.origin = origin;
     f.normal = normal;
@@ -214,25 +253,25 @@ struct LocalFrame {
 
 struct Vec2 { double x, y; };
 
-[[maybe_unused]] Vec2 project(const LocalFrame& f, math::Vec3d p) {
+Vec2 project(const LocalFrame& f, math::Vec3d p) {
     const math::Vec3d d = p - f.origin;
     return {d.dot(f.u_axis), d.dot(f.v_axis)};
 }
 
-[[maybe_unused]] math::Vec3d unproject(const LocalFrame& f, Vec2 q) {
+math::Vec3d unproject(const LocalFrame& f, Vec2 q) {
     return f.origin + f.u_axis * q.x + f.v_axis * q.y;
 }
 
 using Polygon2D = std::vector<Vec2>;
 
-[[maybe_unused]] Polygon2D project_polygon(const LocalFrame& f, const Polygon& poly) {
+Polygon2D project_polygon(const LocalFrame& f, const Polygon& poly) {
     Polygon2D result;
     result.reserve(poly.size());
     for (const auto& p : poly) result.push_back(project(f, p));
     return result;
 }
 
-[[maybe_unused]] Polygon unproject_polygon(const LocalFrame& f, const Polygon2D& poly) {
+Polygon unproject_polygon(const LocalFrame& f, const Polygon2D& poly) {
     Polygon result;
     result.reserve(poly.size());
     for (const auto& q : poly) result.push_back(unproject(f, q));
@@ -298,27 +337,60 @@ GHList build_vertex_list(const Polygon2D& poly) {
 //   Overlap  — segments are collinear and share a sub-segment
 enum class IntersectionType { None, Point, Overlap };
 
-// Segment-segment intersection in 2D. For Point intersections, returns
-// the parameter t along (p1,p2). For Overlap intersections, returns
-// the parameter range [t_lo, t_hi] along (p1,p2) where the overlap
-// occurs.
+// Segment-segment intersection in 2D — the three-family classification
+// (ADR-0035). For Point intersections, returns the parameter t along
+// (p1,p2). For Overlap intersections, returns the parameter range
+// [t_lo, t_hi] along (p1,p2) where the overlap occurs.
+//
+// THE REGIME (every decision named, H2-u3 morso 2):
+//   * det = d1×d2 is bilinear in the direction vectors (dimension
+//     length²). Its parallelism admission is the DERIVED band
+//     |det| ≤ 4·ε_L·L (D2.3: |Δdet| ≤ 4·ε_L·L with L the pair's
+//     characteristic length — the maximal segment length). Outside
+//     the band the crossing is real: family 1 governs, the crossing
+//     point is computed in double, and the (t,u) windows are the
+//     parameter world's ε_P (D2.2) — never the linear constant.
+//   * Inside the det band the pair is equivalent-to-parallel (D3 band
+//     machinery: the bytes do not support a crossing the arithmetic
+//     suggests); cross = (p3−p1)×d1, the same bilinear form, gets the
+//     same-derived band: outside it the pair stays out of the
+//     collinear class (parallel, not equivalent-collinear); inside
+//     both bands the projection decides, with the overlap windows in
+//     ε_P.
+//   * The degenerate-length guard (a segment shorter than ε_L) is a
+//     LINEAR decision (D2 row 1): len_sq < ε_L².
+//   * The classifications of the stored bytes run on the adaptive
+//     predicate orient2d (D1): the exact sign of cross — the crossing
+//     side of the collinearity — never a rounded subtraction. Zero is
+//     a fact of the bytes.
 IntersectionType segment_intersection(
     Vec2 p1, Vec2 p2, Vec2 p3, Vec2 p4,
+    double eps_l, double eps_p,
     double& t_lo, double& t_hi
 ) {
+    math::predicate::initialize();  // idempotent; the predicates' one-time setup
     const double dx1 = p2.x - p1.x;
     const double dy1 = p2.y - p1.y;
     const double dx2 = p4.x - p3.x;
     const double dy2 = p4.y - p3.y;
-    const double denom = dx1 * dy2 - dy1 * dx2;
+    const double det = dx1 * dy2 - dy1 * dx2;
     const double dx3 = p3.x - p1.x;
     const double dy3 = p3.y - p1.y;
 
-    if (std::abs(denom) > kEps) {
-        // Not parallel — classic single-point intersection.
-        const double t = (dx3 * dy2 - dy3 * dx2) / denom;
-        const double u = (dx3 * dy1 - dy3 * dx1) / denom;
-        if (t > kEps && t < 1.0 - kEps && u > kEps && u < 1.0 - kEps) {
+    // The derived band (D2.3): 4·ε_L·L, L = the pair's characteristic
+    // length (the maximal segment length — the domain extension of
+    // THIS operand pair).
+    const double L = std::max(std::sqrt(dx1 * dx1 + dy1 * dy1),
+                              std::sqrt(dx2 * dx2 + dy2 * dy2));
+    const double det_band = 4.0 * eps_l * L;
+
+    if (std::abs(det) > det_band) {
+        // Outside the band: the crossing is real (D2.3). The crossing
+        // point is computed in double; the (t,u) windows are the
+        // parameter world's ε_P (D2.2).
+        const double t = (dx3 * dy2 - dy3 * dx2) / det;
+        const double u = (dx3 * dy1 - dy3 * dx1) / det;
+        if (t > eps_p && t < 1.0 - eps_p && u > eps_p && u < 1.0 - eps_p) {
             t_lo = t;
             t_hi = t;
             return IntersectionType::Point;
@@ -326,18 +398,29 @@ IntersectionType segment_intersection(
         return IntersectionType::None;
     }
 
-    // Parallel — check if collinear (cross product of (p3-p1) with d1
-    // is zero).
+    // Inside the det band: equivalent-to-parallel (D3). Whether the
+    // pair is ALSO equivalent-collinear is decided by cross's band;
+    // the adaptive predicate certifies the true degeneracy of the
+    // bytes first (D1: exact zero is a fact — a pair whose bytes are
+    // EXACTLY collinear enters the projection path even where a
+    // rounded |cross| could misread the sign).
     const double cross = dx3 * dy1 - dy3 * dx1;
-    if (std::abs(cross) > kEps) {
-        return IntersectionType::None;  // parallel but not collinear
+    const double cross_exact_sign = math::predicate::orient2d(
+        math::Vec2d{p1.x, p1.y}, math::Vec2d{p3.x, p3.y},
+        math::Vec2d{p2.x, p2.y});
+    const bool equivalent_collinear =
+        (cross_exact_sign == 0.0) || (std::abs(cross) <= det_band);
+    if (!equivalent_collinear) {
+        return IntersectionType::None;  // equivalent-parallel, not equivalent-collinear
     }
 
-    // Collinear. Project both segments onto the d1 axis (use whichever
-    // component has larger magnitude for numerical stability).
+    // Equivalent-collinear (inside both bands). The degenerate-length
+    // guard is a LINEAR decision (D2 row 1): a segment shorter than
+    // ε_L carries no direction the projection could trust.
     const double len1_sq = dx1 * dx1 + dy1 * dy1;
-    if (len1_sq < kEps * kEps) return IntersectionType::None;
-    // Parameter of p3 along (p1,p2).
+    if (len1_sq < eps_l * eps_l) return IntersectionType::None;
+    // Project both segments onto the d1 axis (use whichever
+    // component has larger magnitude for numerical stability).
     const double t3 = (dx3 * dx1 + dy3 * dy1) / len1_sq;
     // Parameter of p4 along (p1,p2).
     const double t4 = ((p4.x - p1.x) * dx1 + (p4.y - p1.y) * dy1) / len1_sq;
@@ -346,22 +429,24 @@ IntersectionType segment_intersection(
     // Overlap range on (p1,p2) is [max(0,ta), min(1,tb)].
     t_lo = std::max(0.0, ta);
     t_hi = std::min(1.0, tb);
-    if (t_hi - t_lo < kEps) {
-        // Touch at a single point (e.g. shared endpoint).
-        // Treat as a Point intersection at t_lo.
-        if (t_lo > kEps && t_lo < 1.0 - kEps) {
+    if (t_hi - t_lo < eps_p) {
+        // Touch at a single point (e.g. shared endpoint): the overlap
+        // width is a PARAMETER decision (D2.2). Treat as a Point
+        // intersection at t_lo when it is interior.
+        if (t_lo > eps_p && t_lo < 1.0 - eps_p) {
             t_hi = t_lo;
             return IntersectionType::Point;
         }
         return IntersectionType::None;
     }
-    // Make sure the overlap is strictly interior.
-    if (t_lo < kEps && t_hi > 1.0 - kEps) {
+    // Make sure the overlap is strictly interior (the endpoint
+    // exclusions are the parameter world's, D2.2).
+    if (t_lo < eps_p && t_hi > 1.0 - eps_p) {
         // (p1,p2) entirely inside (p3,p4). Treat as overlap covering
         // the full segment — but for GH we still want to insert
         // intersection vertices at t_lo and t_hi.
-        t_lo = kEps;
-        t_hi = 1.0 - kEps;
+        t_lo = eps_p;
+        t_hi = 1.0 - eps_p;
     }
     return IntersectionType::Overlap;
 }
@@ -370,11 +455,13 @@ IntersectionType segment_intersection(
 enum class PointClass { Inside, Outside, OnBoundary };
 
 // Distance from point `p` to segment (a, b) — for on-boundary test.
-double point_segment_distance_sq(Vec2 p, Vec2 a, Vec2 b) {
+// The degenerate-segment guard is a LINEAR decision (D2 row 1):
+// a segment shorter than ε_L has no interior to be on.
+double point_segment_distance_sq(Vec2 p, Vec2 a, Vec2 b, double eps_l) {
     const double dx = b.x - a.x;
     const double dy = b.y - a.y;
     const double len_sq = dx * dx + dy * dy;
-    if (len_sq < kEps * kEps) {
+    if (len_sq < eps_l * eps_l) {
         const double ex = p.x - a.x;
         const double ey = p.y - a.y;
         return ex * ex + ey * ey;
@@ -388,23 +475,40 @@ double point_segment_distance_sq(Vec2 p, Vec2 a, Vec2 b) {
     return ex * ex + ey * ey;
 }
 
-PointClass classify_point(Vec2 p, const Polygon2D& poly) {
+// Three-state point classification: Inside / Outside / OnBoundary.
+//
+// The OnBoundary band is the LINEAR world's (D2 row 1: the half-grid
+// is the historical form, now ε_L-typed). The even-odd ray casting
+// runs on the adaptive predicate (D1): the crossing side of the
+// stored bytes is the EXACT orient2d sign — never a rounded division
+// (the crossing counts when the sign agrees with the edge's own
+// vertical direction, which is the orientation relation the old
+// divided-x test approximated).
+PointClass classify_point(Vec2 p, const Polygon2D& poly, double eps_l) {
     // First check if p is on any edge.
-    const double tol_sq = (kWeldGrid * 0.5) * (kWeldGrid * 0.5);
+    const double tol_sq = (eps_l * 0.5) * (eps_l * 0.5);
     const std::size_t n = poly.size();
     for (std::size_t i = 0, j = n - 1; i < n; j = i++) {
-        if (point_segment_distance_sq(p, poly[j], poly[i]) <= tol_sq) {
+        if (point_segment_distance_sq(p, poly[j], poly[i], eps_l) <= tol_sq) {
             return PointClass::OnBoundary;
         }
     }
-    // Even-odd ray casting for inside/outside.
+    // Even-odd ray casting for inside/outside — on the exact predicate
+    // sign (D1). An edge crosses the horizontal ray at p iff the
+    // endpoints straddle p.y AND p lies on the crossing side: the
+    // orient2d sign of (a, b, p) agrees with the sign of (b.y − a.y).
     bool inside = false;
     for (std::size_t i = 0, j = n - 1; i < n; j = i++) {
         const Vec2& a = poly[j];
         const Vec2& b = poly[i];
-        if (((a.y > p.y) != (b.y > p.y)) &&
-            (p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x)) {
-            inside = !inside;
+        if ((a.y > p.y) != (b.y > p.y)) {
+            const double side = math::predicate::orient2d(
+                math::Vec2d{a.x, a.y}, math::Vec2d{b.x, b.y},
+                math::Vec2d{p.x, p.y});
+            const double dir = b.y - a.y;
+            if ((side > 0.0 && dir > 0.0) || (side < 0.0 && dir < 0.0)) {
+                inside = !inside;
+            }
         }
     }
     return inside ? PointClass::Inside : PointClass::Outside;
@@ -413,8 +517,8 @@ PointClass classify_point(Vec2 p, const Polygon2D& poly) {
 // Backward-compatible wrapper for code that just needs inside/outside.
 // OnBoundary points are treated as Inside (for GH entry/exit
 // classification this is the right default).
-bool point_in_polygon(Vec2 p, const Polygon2D& poly) {
-    PointClass c = classify_point(p, poly);
+bool point_in_polygon(Vec2 p, const Polygon2D& poly, double eps_l) {
+    PointClass c = classify_point(p, poly, eps_l);
     return c == PointClass::Inside || c == PointClass::OnBoundary;
 }
 
@@ -448,7 +552,8 @@ GHVertex* insert_intersection(
 // intersections (two vertices inserted at the overlap range endpoints).
 void compute_intersections(
     GHList& subject,
-    GHList& clip
+    GHList& clip,
+    double eps_l, double eps_p
 ) {
     // Collect original subject iterators (before any insertion).
     std::vector<GHList::iterator> subject_iters;
@@ -469,7 +574,8 @@ void compute_intersections(
             if (!c_next) continue;
             double t_lo, t_hi;
             const auto itype = segment_intersection(
-                s->pos, s_next->pos, c->pos, c_next->pos, t_lo, t_hi);
+                s->pos, s_next->pos, c->pos, c_next->pos,
+                eps_l, eps_p, t_lo, t_hi);
             if (itype == IntersectionType::None) continue;
             if (itype == IntersectionType::Point) {
                 Vec2 ip{
@@ -533,7 +639,8 @@ void compute_intersections(
 // going from inside to outside.
 void classify_intersections(
     GHList& subject,
-    const Polygon2D& clip_poly
+    const Polygon2D& clip_poly,
+    double eps_l
 ) {
     // Find the first non-intersection vertex and determine if it's
     // inside or outside the clip polygon.
@@ -541,7 +648,7 @@ void classify_intersections(
     GHVertex* start = nullptr;
     for (auto& v : subject) {
         if (!v.is_intersection) {
-            inside = point_in_polygon(v.pos, clip_poly);
+            inside = point_in_polygon(v.pos, clip_poly, eps_l);
             start = &v;
             break;
         }
@@ -630,11 +737,15 @@ struct GHResult {
 // which computes each interface point ONCE and reuses it across all
 // paths. This eliminates the dual-computation that caused the straddle.
 //
-// kWeldGrid stays at 1e-6. ADR-0014 untouched.
+// H2 unit 3 (ADR-0035 D2.1/D3): the pool's quantizer is the operation's
+// declared ε_L — the canonical key's quantizer IS the linear tolerance
+// (one declared value, two consumers, zero drift). ADR-0014 untouched.
 class SharedVertexPool {
 public:
+    explicit SharedVertexPool(double eps_l) noexcept : eps_l_(eps_l) {}
+
     const math::Vec3d& canonicalize(const math::Vec3d& pos) {
-        SnappedKey key = snap(pos);
+        SnappedKey key = snap(pos, eps_l_);
         auto it = pool_.find(key);
         if (it != pool_.end()) {
             return it->second;
@@ -649,7 +760,10 @@ public:
         }
     }
 
+    double eps_l() const noexcept { return eps_l_; }
+
 private:
+    double eps_l_;
     std::map<SnappedKey, math::Vec3d> pool_;
 };
 
@@ -660,8 +774,12 @@ private:
 // clip_inside_3d calls (Part 1: A's faces against B, Part 2: B's faces
 // against A) consume the SAME Vec3 from the table, eliminating the
 // dual-computation that caused grid-straddle welding failures.
+// The table's quantizer is the operation's declared ε_L (D3).
 class IntersectionTable {
 public:
+    explicit IntersectionTable(double eps_l)
+        : pool_(eps_l) {}
+
     const math::Vec3d& get_or_compute(
         const math::Vec3d& v0, const math::Vec3d& v1,
         math::Vec3d plane_origin, math::Vec3d plane_normal
@@ -686,11 +804,13 @@ private:
 };
 
 // Sutherland-Hodgman clip primitive.
-// keep_inside=true  → keep vertices where dot(p - origin, normal) <= tol
-// keep_inside=false → keep vertices where dot(p - origin, normal) >= -tol
+// keep_inside=true  → keep vertices where dot(p - origin, normal) <= ε_L
+// keep_inside=false → keep vertices where dot(p - origin, normal) >= -ε_L
 // (complementary half-space, with symmetric tolerance band so points
 // exactly on the plane are kept by both sides — needed for slab
-// decomposition where adjacent slabs share boundary points).
+// decomposition where adjacent slabs share boundary points). The band
+// is the LINEAR world's (D2 row 1: the historical kPlaneTol decision,
+// now ε_L, typed and declared per operation).
 //
 // If `table` is non-null, intersection points are computed via the
 // table (single-source-of-truth) so both Part 1 and Part 2 of
@@ -700,7 +820,8 @@ Polygon clip_polygon_sh(
     math::Vec3d plane_origin,
     math::Vec3d plane_normal,
     bool keep_inside,
-    IntersectionTable* table
+    IntersectionTable* table,
+    double eps_l
 ) {
     if (poly.empty()) return {};
     Polygon result;
@@ -711,16 +832,16 @@ Polygon clip_polygon_sh(
         const auto& next = poly[(i + 1) % n];
         const double d_curr = (curr - plane_origin).dot(plane_normal);
         const double d_next = (next - plane_origin).dot(plane_normal);
-        const bool curr_keep = keep_inside ? (d_curr <= kPlaneTol)
-                                           : (d_curr >= -kPlaneTol);
-        const bool next_keep = keep_inside ? (d_next <= kPlaneTol)
-                                           : (d_next >= -kPlaneTol);
+        const bool curr_keep = keep_inside ? (d_curr <= eps_l)
+                                           : (d_curr >= -eps_l);
+        const bool next_keep = keep_inside ? (d_next <= eps_l)
+                                           : (d_next >= -eps_l);
         if (curr_keep) {
             result.push_back(curr);
         }
         if (curr_keep != next_keep) {
             const double denom = d_curr - d_next;
-            if (std::abs(denom) > kPlaneTol) {
+            if (std::abs(denom) > eps_l) {
                 if (table) {
                     result.push_back(table->get_or_compute(
                         curr, next, plane_origin, plane_normal));
@@ -739,9 +860,10 @@ Polygon clip_polygon_inside(
     const Polygon& poly,
     math::Vec3d plane_origin,
     math::Vec3d plane_normal,
-    IntersectionTable* table
+    IntersectionTable* table,
+    double eps_l
 ) {
-    return clip_polygon_sh(poly, plane_origin, plane_normal, true, table);
+    return clip_polygon_sh(poly, plane_origin, plane_normal, true, table, eps_l);
 }
 
 // Clip a 3D polygon against every face plane of `clipper`, keeping the
@@ -749,20 +871,22 @@ Polygon clip_polygon_inside(
 // used by bool_intersect, bool_union, and bool_subtract.
 //
 // If `table` is non-null, interface points are computed via the table
-// (single-source-of-truth) instead of locally.
+// (single-source-of-truth) instead of locally. The dedup bands are the
+// LINEAR world's (ε_L, D2 row 1).
 Polygon clip_inside_3d(
     const BRepBody& clipper,
     const Polygon& in_poly,
-    IntersectionTable* table
+    IntersectionTable* table,
+    double eps_l
 ) {
     Polygon poly = in_poly;
     for (const auto& clip_face : clipper.solid.shell().faces()) {
         math::Vec3d origin, normal;
         if (!get_face_plane(clip_face, clipper.edges, clipper.vertices, origin, normal)) continue;
-        poly = clip_polygon_inside(poly, origin, normal, table);
+        poly = clip_polygon_inside(poly, origin, normal, table, eps_l);
         if (poly.size() < 3) return {};
     }
-    // Deduplicate consecutive vertices that are equal within kWeldGrid.
+    // Deduplicate consecutive vertices that are equal within ε_L.
     // Sutherland-Hodgman can produce duplicates when a vertex lies
     // exactly on the clip plane (it gets added both as "current inside"
     // and as "intersection point" with t≈0). Duplicates break
@@ -777,7 +901,7 @@ Polygon clip_inside_3d(
             const double dx = p.x - last.x;
             const double dy = p.y - last.y;
             const double dz = p.z - last.z;
-            if (dx*dx + dy*dy + dz*dz > kWeldGrid * kWeldGrid) {
+            if (dx*dx + dy*dy + dz*dz > eps_l * eps_l) {
                 deduped.push_back(p);
             }
         }
@@ -790,7 +914,7 @@ Polygon clip_inside_3d(
         const double dx = first.x - last.x;
         const double dy = first.y - last.y;
         const double dz = first.z - last.z;
-        if (dx*dx + dy*dy + dz*dz <= kWeldGrid * kWeldGrid) {
+        if (dx*dx + dy*dy + dz*dz <= eps_l * eps_l) {
             deduped.pop_back();
         }
     }
@@ -798,18 +922,20 @@ Polygon clip_inside_3d(
 }
 
 // Classify a point as inside/outside a convex polyhedron.
-// A point is INSIDE iff dot(p - origin_i, normal_i) <= tol for every
+// A point is INSIDE iff dot(p - origin_i, normal_i) <= ε_L for every
 // face i (all half-space tests pass). For convex polyhedra this is the
-// complete inside test (ADR-0024 §2).
+// complete inside test (ADR-0024 §2). The band is the LINEAR world's
+// (D2 row 1).
 [[maybe_unused]] bool point_inside_convex(
     const BRepBody& body,
-    const math::Vec3d& p
+    const math::Vec3d& p,
+    double eps_l
 ) {
     for (const auto& face : body.solid.shell().faces()) {
         math::Vec3d origin, normal;
         if (!get_face_plane(face, body.edges, body.vertices, origin, normal)) continue;
         const double d = (p - origin).dot(normal);
-        if (d > kWeldGrid) return false;  // outside this half-space
+        if (d > eps_l) return false;  // outside this half-space
     }
     return true;
 }
@@ -817,23 +943,34 @@ Polygon clip_inside_3d(
 // Check if two polygons are coplanar (same plane normal, within
 // tolerance). Used to skip Greiner-Hormann for coplanar face pairs,
 // which the algorithm does not handle correctly (edge collinearity).
+//
+// The normal-parallelity decision is the ANGULAR world's (D2 row 4:
+// the loose pre-filter stays loose, typed and declared — the declared
+// angle's cosine reproduces the historical |n1·n2| threshold
+// bit-exactly); the plane-distance decision is the LINEAR world's.
 bool polygons_coplanar(
     const Polygon& poly_A,
     const Polygon& poly_B,
     math::Vec3d normal_A,
-    math::Vec3d normal_B
+    math::Vec3d normal_B,
+    const BooleanTolerance& tol
 ) {
     const double dot = normal_A.dot(normal_B);
-    if (std::abs(std::abs(dot) - 1.0) > kNormalParallelTol) return false;
+    // Loose pre-filter (D2 row 4): |n1·n2| below cos(θ_prefilter)
+    // means the normals are not parallel (≈ 2.6°, deliberately loose —
+    // a cheap rejection before the distance test).
+    if (std::abs(dot) < std::cos(tol.angular_prefilter.value)) return false;
     if (poly_A.empty() || poly_B.empty()) return false;
     const math::Vec3d origin_A = poly_A[0];
     const double d = (poly_B[0] - origin_A).dot(normal_A);
-    return std::abs(d) < kWeldGrid;
+    return std::abs(d) < tol.linear.value;
 }
 
 GHResult greiner_hormann_2d(
     const Polygon2D& subject_poly,
-    const Polygon2D& clip_poly
+    const Polygon2D& clip_poly,
+    double eps_l,
+    double eps_p
 ) {
     GHResult result;
     if (subject_poly.size() < 3 || clip_poly.size() < 3) return result;
@@ -849,7 +986,8 @@ GHResult greiner_hormann_2d(
             const Vec2& b1 = clip_poly[j];
             const Vec2& b2 = clip_poly[(j + 1) % clip_poly.size()];
             double t_lo, t_hi;
-            const auto itype = segment_intersection(a1, a2, b1, b2, t_lo, t_hi);
+            const auto itype = segment_intersection(a1, a2, b1, b2,
+                                                    eps_l, eps_p, t_lo, t_hi);
             if (itype != IntersectionType::None) {
                 any_intersect = true;
                 break;
@@ -860,7 +998,7 @@ GHResult greiner_hormann_2d(
 
     if (!any_intersect) {
         // Check if subject's first vertex is inside clip.
-        if (point_in_polygon(subject_poly[0], clip_poly)) {
+        if (point_in_polygon(subject_poly[0], clip_poly, eps_l)) {
             result.inside.push_back(subject_poly);
         } else {
             result.outside.push_back(subject_poly);
@@ -872,9 +1010,9 @@ GHResult greiner_hormann_2d(
     // classify, walk.
     GHList subject = build_vertex_list(subject_poly);
     GHList clip = build_vertex_list(clip_poly);
-    compute_intersections(subject, clip);
-    classify_intersections(subject, clip_poly);
-    classify_intersections(clip, subject_poly);
+    compute_intersections(subject, clip, eps_l, eps_p);
+    classify_intersections(subject, clip_poly, eps_l);
+    classify_intersections(clip, subject_poly, eps_l);
     result.inside = walk_results(subject, true);
     result.outside = walk_results(subject, false);
     return result;
@@ -892,12 +1030,13 @@ GHResult greiner_hormann_2d(
 //   3. If piece has ≥ 3 vertices, it's a valid outside fragment.
 //
 // Uses the existing SH primitive (clip_polygon_sh) with the same
-// kPlaneTol constant — no magic numbers, no GH in the production path.
-// Interface points go through the IntersectionTable when non-null.
+// ε_L band (D2 row 1) — no magic numbers, no GH in the production
+// path. Interface points go through the IntersectionTable when non-null.
 std::vector<Polygon> polygon_subtract_3d(
     const Polygon& subject_poly,
     const Polygon& clip_poly,
-    math::Vec3d plane_normal
+    math::Vec3d plane_normal,
+    double eps_l
 ) {
     std::vector<Polygon> result;
     if (subject_poly.size() < 3 || clip_poly.size() < 3) return result;
@@ -933,8 +1072,10 @@ std::vector<Polygon> polygon_subtract_3d(
         const double dx = b.x - a.x;
         const double dy = b.y - a.y;
         // Outward normal (for CCW polygon): (dy, -dx) normalized.
+        // The degenerate-edge guard is a LINEAR decision (D2 row 1):
+        // an edge shorter than ε_L carries no direction to normalize.
         const double len = std::sqrt(dx * dx + dy * dy);
-        if (len < kEps) continue;
+        if (len < eps_l) continue;
         Vec2 outward{dy / len, -dx / len};
         clip_planes.push_back({a, outward});
     }
@@ -944,7 +1085,7 @@ std::vector<Polygon> polygon_subtract_3d(
     // Slab decomposition: for each clipper half-space i, compute:
     //   piece = subject ∩ comp(Hᵢ) ∩ H₀ ∩ … ∩ H_{i-1}
     // using SH clipping in 2D.
-    auto sh_clip_2d = [](
+    auto sh_clip_2d = [eps_l](
         const Polygon2D& poly,
         Vec2 origin, Vec2 outward_normal,
         bool keep_inside
@@ -960,16 +1101,16 @@ std::vector<Polygon> polygon_subtract_3d(
                                + (curr.y - origin.y) * outward_normal.y;
             const double d_next = (next.x - origin.x) * outward_normal.x
                                + (next.y - origin.y) * outward_normal.y;
-            // keep_inside=true: keep d <= tol (inside the half-space)
-            // keep_inside=false: keep d >= -tol (outside/complement)
-            const bool curr_keep = keep_inside ? (d_curr <= kPlaneTol)
-                                               : (d_curr >= -kPlaneTol);
-            const bool next_keep = keep_inside ? (d_next <= kPlaneTol)
-                                               : (d_next >= -kPlaneTol);
+            // keep_inside=true: keep d <= ε_L (inside the half-space)
+            // keep_inside=false: keep d >= -ε_L (outside/complement)
+            const bool curr_keep = keep_inside ? (d_curr <= eps_l)
+                                               : (d_curr >= -eps_l);
+            const bool next_keep = keep_inside ? (d_next <= eps_l)
+                                               : (d_next >= -eps_l);
             if (curr_keep) res.push_back(curr);
             if (curr_keep != next_keep) {
                 const double denom = d_curr - d_next;
-                if (std::abs(denom) > kPlaneTol) {
+                if (std::abs(denom) > eps_l) {
                     const double t = d_curr / denom;
                     res.push_back({curr.x + t * (next.x - curr.x),
                                    curr.y + t * (next.y - curr.y)});
@@ -1000,7 +1141,7 @@ std::vector<Polygon> polygon_subtract_3d(
                 const auto& last = deduped.back();
                 const double dx = p.x - last.x;
                 const double dy = p.y - last.y;
-                if (dx * dx + dy * dy > kPlaneTol * kPlaneTol) {
+                if (dx * dx + dy * dy > eps_l * eps_l) {
                     deduped.push_back(p);
                 }
             }
@@ -1011,7 +1152,7 @@ std::vector<Polygon> polygon_subtract_3d(
             const auto& last = deduped.back();
             const double dx = first.x - last.x;
             const double dy = first.y - last.y;
-            if (dx * dx + dy * dy <= kPlaneTol * kPlaneTol) {
+            if (dx * dx + dy * dy <= eps_l * eps_l) {
                 deduped.pop_back();
             }
         }
@@ -1022,12 +1163,13 @@ std::vector<Polygon> polygon_subtract_3d(
     return result;
 }
 
-// Check if two polygons have the same vertex set (within kWeldGrid).
-// Used to detect "inside == F_A" (face entirely inside the other solid).
-bool polygons_coincident(const Polygon& a, const Polygon& b) {
+// Check if two polygons have the same vertex set (within ε_L — the
+// canonical key, D3). Used to detect "inside == F_A" (face entirely
+// inside the other solid).
+bool polygons_coincident(const Polygon& a, const Polygon& b, double eps_l) {
     if (a.size() != b.size()) return false;
-    SnappedKeySet a_keys = snap_polygon(a);
-    SnappedKeySet b_keys = snap_polygon(b);
+    SnappedKeySet a_keys = snap_polygon(a, eps_l);
+    SnappedKeySet b_keys = snap_polygon(b, eps_l);
     return a_keys == b_keys;
 }
 
@@ -1039,44 +1181,55 @@ bool polygons_coincident(const Polygon& a, const Polygon& b) {
 // subject, so a single three-way classification decides the plane's
 // effect — no per-vertex clipping needed.
 //
-// Why the rule exists: the SH clip keeps {d <= kPlaneTol} and its
-// complement keeps {d >= -kPlaneTol}. With kPlaneTol > 0 these two
-// sets OVERLAP on the boundary band |d| <= kPlaneTol, so a subject
+// Why the rule exists: the SH clip keeps {d <= ε_L} and its
+// complement keeps {d >= -ε_L}. With ε_L > 0 these two
+// sets OVERLAP on the boundary band |d| <= ε_L, so a subject
 // lying exactly on the plane is kept by BOTH sides — the tolerance
 // makes comp(H) ∩ H ≠ ∅ on the boundary band. In exact geometry
-// (kPlaneTol = 0) the open complement does not intersect a subject
+// (ε_L = 0) the open complement does not intersect a subject
 // with d == 0. The three cases close that hole deterministically
 // (n is the OUTWARD normal of the clip solid, so d < 0 = inside):
 //
-//   1. d > +kPlaneTol — subject strictly on the complement side: it
+//   1. d > +ε_L — subject strictly on the complement side: it
 //      misses the half-space entirely, so it survives whole (for a
 //      cap generator: it can never be inside the other solid).
-//   2. d < -kPlaneTol — subject strictly inside the half-space: the
+//   2. d < -ε_L — subject strictly inside the half-space: the
 //      plane does not restrict it — identity.
-//   3. |d| <= kPlaneTol — coplanar band: the subject lies ON the
+//   3. |d| <= ε_L — coplanar band: the subject lies ON the
 //      boundary, never strictly inside, so it can never contribute
 //      an interior boundary piece. Skip it as a piece generator: in
 //      exact geometry comp(H) ∩ subject = ∅.
+//
+// The bands are the LINEAR world's (D2 row 1); the strict
+// normal-parallelity threshold is the ANGULAR world's (D2 row 4:
+// |n1·n2| below cos(θ_strict) — the declared angle's cosine
+// reproduces the historical 1 − 1e-6 threshold bit-exactly).
 // ---------------------------------------------------------------------------
 enum class ParallelPlaneClass {
     NotParallel,     // plane cuts through the subject's plane: per-vertex clipping
-    StrictlyInside,  // case 2: d < -kPlaneTol everywhere
-    StrictlyOutside, // case 1: d > +kPlaneTol everywhere
-    CoplanarBand,    // case 3: |d| <= kPlaneTol everywhere
+    StrictlyInside,  // case 2: d < -ε_L everywhere
+    StrictlyOutside, // case 1: d > +ε_L everywhere
+    CoplanarBand,    // case 3: |d| <= ε_L everywhere
 };
 
 ParallelPlaneClass classify_parallel_plane(
     const Polygon& subject,
     math::Vec3d subject_normal,
     math::Vec3d plane_origin,
-    math::Vec3d plane_normal
+    math::Vec3d plane_normal,
+    const BooleanTolerance& tol
 ) {
+    const double eps_l = tol.linear.value;
+    // Degenerate-normal guards: LINEAR decisions (D2 row 1) — a
+    // normal shorter than ε_L carries no direction to normalize.
     const double plen = plane_normal.length();
     const double slen = subject_normal.length();
-    if (plen < kEps || slen < kEps) return ParallelPlaneClass::NotParallel;
+    if (plen < eps_l || slen < eps_l) return ParallelPlaneClass::NotParallel;
     const math::Vec3d pn = plane_normal * (1.0 / plen);
     const math::Vec3d sn = subject_normal * (1.0 / slen);
-    if (std::abs(pn.dot(sn)) < kParallelDotMin) {
+    // The strict threshold (D2 row 4): |n1·n2| below cos(θ_strict)
+    // (≈ 0.081°) means NotParallel.
+    if (std::abs(pn.dot(sn)) < std::cos(tol.angular.value)) {
         return ParallelPlaneClass::NotParallel;
     }
     // Parallel: d is constant over the planar subject. Classify from
@@ -1096,9 +1249,9 @@ ParallelPlaneClass classify_parallel_plane(
             d_max = std::max(d_max, d);
         }
     }
-    if (d_max < -kPlaneTol) return ParallelPlaneClass::StrictlyInside;
-    if (d_min > kPlaneTol) return ParallelPlaneClass::StrictlyOutside;
-    if (d_min >= -kPlaneTol && d_max <= kPlaneTol) return ParallelPlaneClass::CoplanarBand;
+    if (d_max < -eps_l) return ParallelPlaneClass::StrictlyInside;
+    if (d_min > eps_l) return ParallelPlaneClass::StrictlyOutside;
+    if (d_min >= -eps_l && d_max <= eps_l) return ParallelPlaneClass::CoplanarBand;
     return ParallelPlaneClass::NotParallel;  // straddles the band: clip per-vertex
 }
 
@@ -1126,39 +1279,40 @@ struct ClippedFace {
 // ONE worst-of definition — the no-drift rule at the entity level).
 
 void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces,
-                   bool canonicalize, const ProvenanceInfo& provenance) {
+                   bool canonicalize, const ProvenanceInfo& provenance,
+                   double eps_l) {
     auto& shell = result.solid.shell_mut();
 
     if (canonicalize) {
-        SharedVertexPool pool;
+        SharedVertexPool pool(eps_l);
         for (auto& cf : clipped_faces) {
             pool.canonicalize_polygon(cf.polygon);
         }
     }
     std::map<SnappedKey, VertexId> weld_map;
     auto weld_vertex = [&](const math::Vec3d& pos) -> VertexId {
-        SnappedKey key = snap(pos);
+        SnappedKey key = snap(pos, eps_l);
         auto it = weld_map.find(key);
         if (it != weld_map.end()) return it->second;
         // Grid-boundary straddle repair. Two arithmetic paths can
         // produce the SAME geometric interface point 1-2 ulp apart,
-        // and llround(p / kWeldGrid) can then land on opposite sides
+        // and llround(p / ε_L) can then land on opposite sides
         // of a cell boundary (the x.5 line), yielding two "distinct"
         // vertices ~1e-10 apart, dangling coedges and a non-manifold
         // result. Found by the property-based analytic-box-oracle
         // family (seed 0xA11CED01: V=10/E=16/chi=0 on an in-class
         // box-pair intersection; the near-duplicates differed by one
-        // ulp on a single coordinate). Repair: honor the kWeldGrid
-        // CONTRACT — distance <= kWeldGrid means the same vertex,
+        // ulp on a single coordinate). Repair: honor the ε_L
+        // CONTRACT — distance <= ε_L means the same vertex,
         // exactly the semantics clip_inside_3d's dedup and the
         // T-junction pass already apply — with a proximity pass over
         // the already-welded vertices. The lowest-id vertex within
-        // kWeldGrid wins (deterministic), and the snapped key is also
+        // ε_L wins (deterministic), and the snapped key is also
         // bound to it so later lookups through either key hit the
         // same id.
         for (VertexId k = 0; k < static_cast<VertexId>(result.vertices.size()); ++k) {
             const math::Vec3d d = result.vertices[k].position() - pos;
-            if (d.x * d.x + d.y * d.y + d.z * d.z <= kWeldGrid * kWeldGrid) {
+            if (d.x * d.x + d.y * d.y + d.z * d.z <= eps_l * eps_l) {
                 weld_map.emplace(key, k);
                 return k;
             }
@@ -1210,8 +1364,8 @@ void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces,
     // edge and the short edges do not match -> coedges dangle on
     // distinct overlapping edges -> non-manifold, chi != 2. Fix: split
     // every face edge at each already-welded vertex that lies ON the
-    // open segment (within kWeldGrid of the supporting line, at least
-    // kWeldGrid away from both endpoints along the edge). After the
+    // open segment (within ε_L of the supporting line, at least
+    // ε_L away from both endpoints along the edge). After the
     // split, both sides traverse matching sub-segments and every edge
     // ends up with exactly two co-edges.
     auto t_points_on_edge = [&](VertexId v0, VertexId v1) -> std::vector<VertexId> {
@@ -1220,7 +1374,8 @@ void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces,
         const math::Vec3d p1 = result.vertices[v1].position();
         const math::Vec3d d = p1 - p0;
         const double len2 = d.dot(d);
-        if (len2 <= kEps * kEps) return out;
+        // Degenerate-edge guard: a LINEAR decision (D2 row 1).
+        if (len2 <= eps_l * eps_l) return out;
         const double len = std::sqrt(len2);
         for (VertexId k = 0; k < static_cast<VertexId>(result.vertices.size()); ++k) {
             if (k == v0 || k == v1) continue;
@@ -1228,14 +1383,14 @@ void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces,
             const double md = m.dot(d);
             const double t = md / len2;
             if (t <= 0.0 || t >= 1.0) continue;
-            // At least kWeldGrid away from both endpoints ALONG the
+            // At least ε_L away from both endpoints ALONG the
             // edge (closer than that is the endpoint's own weld zone).
-            if (t * len <= kWeldGrid || (1.0 - t) * len <= kWeldGrid) continue;
-            // Within kWeldGrid of the supporting line (Pythagoras,
+            if (t * len <= eps_l || (1.0 - t) * len <= eps_l) continue;
+            // Within ε_L of the supporting line (Pythagoras,
             // clamped against FP cancellation).
             double dist2 = m.dot(m) - md * md / len2;
             if (dist2 < 0.0) dist2 = 0.0;
-            if (dist2 <= kWeldGrid * kWeldGrid) out.push_back(k);
+            if (dist2 <= eps_l * eps_l) out.push_back(k);
         }
         // Deterministic order: by position along the edge, ties by id.
         std::sort(out.begin(), out.end(), [&](VertexId a, VertexId b) {
@@ -1432,13 +1587,13 @@ void assert_boolean_result_honest(BRepBody& result, const char* op) {
     shell.set_closed(true);
 }
 
-// Check if two bodies have identical vertex sets (within kWeldGrid).
-// Used for the A == B shortcut in bool_union.
-bool bodies_identical(const BRepBody& A, const BRepBody& B) {
+// Check if two bodies have identical vertex sets (within ε_L — the
+// canonical key, D3). Used for the A == B shortcut in bool_union.
+bool bodies_identical(const BRepBody& A, const BRepBody& B, double eps_l) {
     if (A.vertex_count() != B.vertex_count()) return false;
     SnappedKeySet a_keys, b_keys;
-    for (const auto& v : A.vertices) a_keys.insert(snap(v.position()));
-    for (const auto& v : B.vertices) b_keys.insert(snap(v.position()));
+    for (const auto& v : A.vertices) a_keys.insert(snap(v.position(), eps_l));
+    for (const auto& v : B.vertices) b_keys.insert(snap(v.position(), eps_l));
     return a_keys == b_keys;
 }
 
@@ -1515,8 +1670,15 @@ bool bodies_identical(const BRepBody& A, const BRepBody& B) {
 // Throws std::invalid_argument (an INPUT defect — the operation was
 // never obliged to run; the RESULT-side refusals of H2 unit 2 throw
 // std::runtime_error, the exact_subtract precedent).
+//
+// The gate's own comparisons are the LINEAR world's (D2 row 1: the
+// historical kPlaneTol sites, now ε_L, typed and declared per
+// operation); the relative volume/area class gates stand as they are
+// (D7).
 void validate_boolean_input(const BRepBody& body, const char* op,
-                            const char* input_name) {
+                            const char* input_name,
+                            const BooleanTolerance& tol) {
+    const double eps_l = tol.linear.value;
     const std::string where = std::string(op) + ": input " + input_name +
                               " rejected — ";
     const std::string note =
@@ -1691,7 +1853,7 @@ void validate_boolean_input(const BRepBody& body, const char* op,
             const math::Vec3d p = body.vertices[vid].position();
             const double d =
                 (p - anchor).dot(plane->normal_vec());
-            if (std::abs(d) > kPlaneTol) {
+            if (std::abs(d) > eps_l) {
                 fail("input_loop_off_plane",
                      "face " + std::to_string(f.id()) + ": vertex " +
                          std::to_string(vid) +
@@ -1819,7 +1981,7 @@ void validate_boolean_input(const BRepBody& body, const char* op,
                     .cross(poly[(i + 2) % m] - poly[(i + 1) % m]);
             // Collinear runs (cross ≈ 0) are allowed; a negative cross
             // is a reflex vertex.
-            if (cr.dot(n) < -kPlaneTol) {
+            if (cr.dot(n) < -eps_l) {
                 fail("input_face_not_convex",
                      "face " + std::to_string(faces[fi].id()) +
                          " has a reflex vertex at its loop position " +
@@ -1843,12 +2005,12 @@ void validate_boolean_input(const BRepBody& body, const char* op,
         for (VertexId vid = 0; vid < body.vertices.size(); ++vid) {
             const double d =
                 (body.vertices[vid].position() - poly[0]).dot(n);
-            if (d > kPlaneTol && (!violated || d > worst)) {
+            if (d > eps_l && (!violated || d > worst)) {
                 violated = true;
                 worst = d;
                 offender = vid;
             }
-            if (d < -kPlaneTol) saw_inside = true;
+            if (d < -eps_l) saw_inside = true;
         }
         if (!violated) continue;
         if (!saw_inside) {
@@ -1884,11 +2046,14 @@ void validate_boolean_input(const BRepBody& body, const char* op,
 // ---------------------------------------------------------------------------
 // bool_intersect — A ∩ B via Greiner-Hormann
 // ---------------------------------------------------------------------------
-std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
+std::unique_ptr<BRepBody> bool_intersect(
+    const BRepBody& A, const BRepBody& B,
+    const BooleanTolerance& tol) {
+    const double eps_l = eps_l_of(tol);
     // H2 unit 1: THE INPUT GATE — the one validator, both operands,
     // as the FIRST thing (nothing clips before the contract holds).
-    validate_boolean_input(A, "bool_intersect", "A");
-    validate_boolean_input(B, "bool_intersect", "B");
+    validate_boolean_input(A, "bool_intersect", "A", tol);
+    validate_boolean_input(B, "bool_intersect", "B", tol);
 
     auto result = std::make_unique<BRepBody>();
     auto& shell = result->solid.shell_mut();
@@ -1910,7 +2075,7 @@ std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
         // Use Sutherland-Hodgman sequential clipping (works correctly
         // for convex polyhedra, ADR-0023 primitive). This is equivalent
         // to Greiner-Hormann for the convex case but simpler and proven.
-        Polygon inside = clip_inside_3d(B, poly_A, nullptr);
+        Polygon inside = clip_inside_3d(B, poly_A, nullptr, eps_l);
         if (inside.size() >= 3) {
             clipped_faces.push_back(
                 {std::make_shared<PlaneSurface>(inside[0], n_A), inside});
@@ -1923,13 +2088,13 @@ std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
         if (poly_B.size() < 3) continue;
         math::Vec3d o_B, n_B;
         if (!get_face_plane(face_B, B.edges, B.vertices, o_B, n_B)) continue;
-        Polygon inside = clip_inside_3d(A, poly_B, nullptr);
+        Polygon inside = clip_inside_3d(A, poly_B, nullptr, eps_l);
         if (inside.size() >= 3) {
-            SnappedKeySet inside_keys = snap_polygon(inside);
+            SnappedKeySet inside_keys = snap_polygon(inside, eps_l);
             bool is_dup = false;
             for (const auto& existing : clipped_faces) {
                 if (existing.polygon.size() != inside.size()) continue;
-                SnappedKeySet existing_keys = snap_polygon(existing.polygon);
+                SnappedKeySet existing_keys = snap_polygon(existing.polygon, eps_l);
                 if (existing_keys == inside_keys) { is_dup = true; break; }
             }
             if (!is_dup) {
@@ -1955,7 +2120,7 @@ std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
     }
 
     assemble_body(*result, clipped_faces, /*canonicalize=*/false,
-                  combined_provenance(A, B));
+                  combined_provenance(A, B), eps_l);
     assert_boolean_result_honest(*result, "bool_intersect");
     return result;
 }
@@ -1980,11 +2145,14 @@ std::unique_ptr<BRepBody> bool_intersect(const BRepBody& A, const BRepBody& B) {
 // touching at a face): both A's top and B's bottom survive as fragments
 // with the same vertex set, and deduplication keeps only one.
 //
-std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
+std::unique_ptr<BRepBody> bool_union(
+    const BRepBody& A, const BRepBody& B,
+    const BooleanTolerance& tol) {
+    const double eps_l = eps_l_of(tol);
     // H2 unit 1: THE INPUT GATE — the one validator, both operands,
     // as the FIRST thing (nothing clips before the contract holds).
-    validate_boolean_input(A, "bool_union", "A");
-    validate_boolean_input(B, "bool_union", "B");
+    validate_boolean_input(A, "bool_union", "A", tol);
+    validate_boolean_input(B, "bool_union", "B", tol);
 
     auto result = std::make_unique<BRepBody>();
     auto& shell = result->solid.shell_mut();
@@ -1993,7 +2161,7 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
     std::vector<ClippedFace> clipped_faces;
 
     // Edge case: A == B → return a copy of A.
-    if (bodies_identical(A, B)) {
+    if (bodies_identical(A, B, eps_l)) {
         for (const auto& face_A : A.solid.shell().faces()) {
             Polygon poly_A = extract_face_polygon(face_A, A.edges, A.vertices);
             if (poly_A.size() < 3) continue;
@@ -2003,15 +2171,15 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
                 {std::make_shared<PlaneSurface>(poly_A[0], n_A), poly_A});
         }
         assemble_body(*result, clipped_faces, /*canonicalize=*/true,
-                      combined_provenance(A, B));
+                      combined_provenance(A, B), eps_l);
         assert_boolean_result_honest(*result, "bool_union");
         return result;
     }
 
     // FASE B: IntersectionTable — single source of truth for interface
     // ring points. Pre-computed once, consumed by both Part 1 (A's faces
-    // against B) and Part 2 (B's faces against A).
-    IntersectionTable table;
+    // against B) and Part 2 (B's faces against A). Quantized by ε_L (D3).
+    IntersectionTable table(eps_l);
 
     auto process_faces = [&](
         const BRepBody& self,
@@ -2025,15 +2193,15 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
 
             // Compute the part of `poly` that is inside `other`.
             // Pass the IntersectionTable so interface points are shared.
-            Polygon inside = clip_inside_3d(other, poly, &table);
+            Polygon inside = clip_inside_3d(other, poly, &table, eps_l);
 
             if (inside.size() < 3) {
                 clipped_faces.push_back(
                     {std::make_shared<PlaneSurface>(poly[0], n), poly});
-            } else if (polygons_coincident(poly, inside)) {
+            } else if (polygons_coincident(poly, inside, eps_l)) {
                 continue;
             } else {
-                auto outside_fragments = polygon_subtract_3d(poly, inside, n);
+                auto outside_fragments = polygon_subtract_3d(poly, inside, n, eps_l);
                 for (const auto& frag : outside_fragments) {
                     if (frag.size() >= 3) {
                         clipped_faces.push_back(
@@ -2052,7 +2220,7 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
     }
 
     assemble_body(*result, clipped_faces, /*canonicalize=*/true,
-                  combined_provenance(A, B));
+                  combined_provenance(A, B), eps_l);
     assert_boolean_result_honest(*result, "bool_union");
     return result;
 }
@@ -2086,11 +2254,14 @@ std::unique_ptr<BRepBody> bool_union(const BRepBody& A, const BRepBody& B) {
 //        results, polygon_subtract would be needed, but A is convex
 //        so inside is convex and single-piece.)
 //
-std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
+std::unique_ptr<BRepBody> bool_subtract(
+    const BRepBody& A, const BRepBody& B,
+    const BooleanTolerance& tol) {
+    const double eps_l = eps_l_of(tol);
     // H2 unit 1: THE INPUT GATE — the one validator, both operands,
     // as the FIRST thing (nothing clips before the contract holds).
-    validate_boolean_input(A, "bool_subtract", "A");
-    validate_boolean_input(B, "bool_subtract", "B");
+    validate_boolean_input(A, "bool_subtract", "A", tol);
+    validate_boolean_input(B, "bool_subtract", "B", tol);
 
     auto result = std::make_unique<BRepBody>();
     auto& shell = result->solid.shell_mut();
@@ -2099,14 +2270,14 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
     std::vector<ClippedFace> clipped_faces;
 
     // Edge case: A == B → A \ A = empty body.
-    if (bodies_identical(A, B)) {
+    if (bodies_identical(A, B, eps_l)) {
         return result;
     }
 
     // FASE B: IntersectionTable — single source of truth for interface
     // ring points. Shared between Part 1 (A's faces against B) and
-    // Part 2 (B's faces against A).
-    IntersectionTable table;
+    // Part 2 (B's faces against A). Quantized by ε_L (D3).
+    IntersectionTable table(eps_l);
 
     // Part 1: A's faces outside B (kept with A's outward normal).
     for (const auto& face_A : A.solid.shell().faces()) {
@@ -2115,17 +2286,17 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
         math::Vec3d o_A, n_A;
         if (!get_face_plane(face_A, A.edges, A.vertices, o_A, n_A)) continue;
 
-        Polygon inside = clip_inside_3d(B, poly_A, &table);
+        Polygon inside = clip_inside_3d(B, poly_A, &table, eps_l);
 
         if (inside.size() < 3) {
             // inside is empty or degenerate (area-zero). The removed
             // portion has zero area, so poly_A survives intact.
             clipped_faces.push_back(
                 {std::make_shared<PlaneSurface>(poly_A[0], n_A), poly_A});
-        } else if (polygons_coincident(poly_A, inside)) {
+        } else if (polygons_coincident(poly_A, inside, eps_l)) {
             continue;
         } else {
-            auto outside_fragments = polygon_subtract_3d(poly_A, inside, n_A);
+            auto outside_fragments = polygon_subtract_3d(poly_A, inside, n_A, eps_l);
             for (const auto& frag : outside_fragments) {
                 if (frag.size() >= 3) {
                     clipped_faces.push_back(
@@ -2142,7 +2313,7 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
     // grid-straddle case the four faces of B that are COPLANAR with
     // faces of A (B's ±Y and ±Z, at y,z = ±1) each emitted a spurious
     // cap equal to the coplanar overlap rectangle — the tolerance band
-    // {d <= kPlaneTol} kept them "inside" although they lie ON ∂A,
+    // {d <= ε_L} kept them "inside" although they lie ON ∂A,
     // never in A's interior. The parallel-plane rule (3 cases) skips
     // them before clipping.
     for (const auto& face_B : B.solid.shell().faces()) {
@@ -2158,7 +2329,7 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
         for (const auto& face_A : A.solid.shell().faces()) {
             math::Vec3d o_A, n_A;
             if (!get_face_plane(face_A, A.edges, A.vertices, o_A, n_A)) continue;
-            const auto cls = classify_parallel_plane(poly_B, n_B, o_A, n_A);
+            const auto cls = classify_parallel_plane(poly_B, n_B, o_A, n_A, tol);
             if (cls == ParallelPlaneClass::CoplanarBand) {
                 // Case 3: the face lies ON a face plane of A — it is on
                 // ∂A, never in A's interior. In exact geometry
@@ -2182,7 +2353,7 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
         }
         if (skip_cap) continue;
 
-        Polygon inside = clip_inside_3d(A, poly_B, &table);
+        Polygon inside = clip_inside_3d(A, poly_B, &table, eps_l);
         if (inside.size() < 3) {
             continue;
         }
@@ -2206,7 +2377,7 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
     }
 
     assemble_body(*result, clipped_faces, /*canonicalize=*/true,
-                  combined_provenance(A, B));
+                  combined_provenance(A, B), eps_l);
     assert_boolean_result_honest(*result, "bool_subtract");
     return result;
 }
@@ -2214,19 +2385,42 @@ std::unique_ptr<BRepBody> bool_subtract(const BRepBody& A, const BRepBody& B) {
 // Test-only entry point — declaration and contract live in the
 // test-only seam header CAD_0/brep/detail/boolean_test_hooks.hpp
 // (ADR-0025 v5 FASE 2). Exposes the internal polygon_subtract_3d slab
-// decomposition to the unit-test suite.
+// decomposition to the unit-test suite. The ε_L is the caller's
+// declaration (no hidden house value).
 std::vector<std::vector<math::Vec3d>> polygon_subtract_fragments_for_tests(
     const std::vector<math::Vec3d>& subject,
     const std::vector<math::Vec3d>& clip,
-    math::Vec3d plane_normal
+    math::Vec3d plane_normal,
+    double eps_l
 ) {
-    const std::vector<Polygon> fragments = polygon_subtract_3d(subject, clip, plane_normal);
+    const std::vector<Polygon> fragments = polygon_subtract_3d(subject, clip, plane_normal, eps_l);
     std::vector<std::vector<math::Vec3d>> out;
     out.reserve(fragments.size());
     for (const auto& f : fragments) {
         out.emplace_back(f.begin(), f.end());
     }
     return out;
+}
+
+// Test-only entry point — the segment classification under its
+// declared tolerances (H2-u3 morso 2): the regime goldens read the
+// three-family decision directly. The enums mirror the internal ones;
+// the tolerances are the caller's declaration.
+SegmentIsectType segment_intersection_for_tests(
+    math::Vec2d p1, math::Vec2d p2, math::Vec2d p3, math::Vec2d p4,
+    double eps_l, double eps_p,
+    double& t_lo, double& t_hi
+) {
+    const auto itype = segment_intersection(
+        Vec2{p1.x, p1.y}, Vec2{p2.x, p2.y},
+        Vec2{p3.x, p3.y}, Vec2{p4.x, p4.y},
+        eps_l, eps_p, t_lo, t_hi);
+    switch (itype) {
+        case IntersectionType::Point:   return SegmentIsectType::Point;
+        case IntersectionType::Overlap: return SegmentIsectType::Overlap;
+        case IntersectionType::None:    break;
+    }
+    return SegmentIsectType::None;
 }
 
 } // namespace CAD_0::brep
