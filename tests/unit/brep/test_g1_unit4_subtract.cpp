@@ -85,9 +85,8 @@ namespace s = CAD_0::sdf;
 
 constexpr double kPi = 3.14159265358979;
 constexpr double kTwoPi = 6.28318530717958647692;
-// The SKETCH-side constants (the tool chains author float entities).
+// The SKETCH-side constant (the tool chains author float entities).
 constexpr float kPi_f = 3.14159265358979f;
-constexpr float kTwoPi_f = 6.28318530717958647692f;
 
 bool close(double a, double b, double tol = 1e-5) { return std::abs(a - b) <= tol; }
 bool close2(Vec2d a, Vec2d b, double tol = 1e-5) {
