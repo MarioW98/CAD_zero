@@ -214,6 +214,20 @@ struct OperationNaming;
 struct OperandBinding {
     geometry::FeatureId feature{};
     const OperationNaming* naming{};
+
+    // THE INSTANCE'S GROUP DECLARATION (the morse-3 register's item
+    // 4, landed here — H2-u6 morso 4, the subtract's own tables): a
+    // relational role's OPERAND view renders the FEATURE form today;
+    // when the named body materialized from MORE THAN ONE CHAIN the
+    // operand view must render the GROUP form for its chain-owned
+    // roles ('ext#F:c0:lat(0)' inside `isect[...]`), the path's own
+    // first component the group — the binding carries the verdict,
+    // the path carries the index, as in every body's own stamps. The
+    // subtract's own class never produces a multi-chain operand (the
+    // class checks refuse the caps' inner loops), so the flag rides
+    // FALSE on every in-class render; the machinery is the landing,
+    // pinned at the naming layer by morse 4's tests.
+    bool multi_chain{false};
 };
 
 // The registry ONE render consults: the creating operation's kind,
@@ -411,6 +425,68 @@ inline constexpr std::uint32_t kExtLatRole = 0;    // faces: lat(i)
 inline constexpr std::uint32_t kExtCapLoRole = 1;  // faces: cap(lo)
 inline constexpr std::uint32_t kExtCapHiRole = 2;  // faces: cap(hi)
 inline constexpr std::uint32_t kExtSeamRole = 0;   // edges: seam
+
+// ---------------------------------------------------------------------------
+// THE NORMATIVE SUBTRACT ROLE TABLES — ADR-0036 D1 (morso 4, the
+// relational roles' first real consumer) + the morse-3 register's
+// landing
+// ---------------------------------------------------------------------------
+//
+// NORMATIVE — ADR-0036 D1; the born-edge layout is frozen by the
+// exact path's numbering tables (subtract.hpp's NUMBERING block, the
+// unit-4 pins) read through the ADR's own grammar:
+//
+//   the SSI curves   'sub#F:isect[<A-face-name> × <B-entity-name>]@lo|hi'
+//                     — the operands PER NAME, in the DECLARED table
+//                     order, never reordered (the grammar's own rule);
+//                     a LEVELLED relation is its own table row (the
+//                     SSI entries' discipline: the entry names the
+//                     pair AND the level; the path spends no
+//                     component on it).
+//   the seam          'sub#F:seam[<B-role>]' — the wall's periodic
+//                     identification (ADR-0023's own e_seam
+//                     convention), the operand the B entity whose
+//                     wall carries it.
+//
+// THE FACE TABLE IS EMPTY, honestly (D1's own derivation): the exact
+// subtract births no faces — the wall is the tool's own lateral
+// ABSORBED (re-framed to the window; it keeps its birth name, the
+// inheritance the stamping copies), the pierced faces are the
+// target's own. An empty span is the honest table; there is no dummy
+// row to invent (the same discipline as the extrude's single-seam
+// edge table).
+//
+// THE SLOTS' operand order is the SSI table's own: the TARGET's
+// pierced face first (bare — the box's six or the prism target's
+// cap(hi), D5.4's own name), the TOOL's wall second (indexed —
+// lat(i), the chain entity's own lateral).
+inline constexpr OperandSlot kSubIsectSlots[2] = {
+    {0, false, RoleForm::Bare},      // the target's pierced face (bare)
+    {1, false, RoleForm::ArgIndex},  // the tool's wall (indexed: lat(i))
+};
+inline constexpr OperandSlot kSubSeamSlots[1] = {
+    {1, false, RoleForm::ArgIndex},  // the wall whose seam this is
+};
+inline constexpr RoleEntry kSubEdgeRoles[3] = {
+    {"isect", RoleForm::Relational, nullptr, "lo", kSubIsectSlots},
+    {"isect", RoleForm::Relational, nullptr, "hi", kSubIsectSlots},
+    {"seam",  RoleForm::Relational, nullptr, nullptr, kSubSeamSlots},
+};
+
+// The subtract's TYPE-level declaration: the operand bindings are
+// INSTANCE data (the operands' feature ids flow from their own
+// stamped ShapeIds; their tables are the caller's naming context —
+// subtract.hpp's SubtractNaming), so the static declaration binds
+// NONE; the stamping site builds the pair in the pass that builds.
+inline constexpr OperationNaming kSubNaming{
+    FeatureKind::Subtract, {}, kSubEdgeRoles, {}};
+
+// The subtract's own role-table indices, named for the stamping
+// sites (the levelled entries' own rows: the rim at @lo, the rim at
+// @hi, the seam).
+inline constexpr std::uint32_t kSubIsectLoRole = 0;  // edges: isect@lo
+inline constexpr std::uint32_t kSubIsectHiRole = 1;  // edges: isect@hi
+inline constexpr std::uint32_t kSubSeamRole = 2;     // edges: seam
 
 // ---------------------------------------------------------------------------
 // THE ROOT REFERENCE — the authored roots the tavola's FROM names

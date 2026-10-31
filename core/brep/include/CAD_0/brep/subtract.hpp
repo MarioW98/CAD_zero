@@ -142,6 +142,7 @@
 #include "CAD_0/brep/analytic.hpp"
 #include "CAD_0/brep/factory.hpp"
 #include "CAD_0/brep/extrude.hpp"
+#include "CAD_0/brep/naming.hpp"
 #include "CAD_0/sdf/sketch_entities.hpp"
 
 #include <algorithm>
@@ -256,9 +257,45 @@ void translate_body(BRepBody& body, math::Vec3d delta);
 // value (0 for the through-hole; A's own χ for the miss) — a
 // violation throws std::runtime_error (an assembly defect, never a
 // returned broken body).
+//
+// THE NAMING CONTEXT (ADR-0036 D1, H2-u6 morso 4): the names are
+// stamped in the pass that builds, beside the walk indices the
+// construction already holds — the address plane untouched, every
+// existing golden and query keeps working unchanged (D1's split is
+// additive by construction, D5's declaration). The context carries
+// the two facts the bodies alone do not:
+//
+//   * `feature` — the subtract's OWN DAG id: the born names' creator
+//     part (`sub#4`). Defaulted like the factories' own parameter
+//     (make_box's, make_prism's): the standalone callers and the
+//     scene's hybrid materialization read sub#0 — the token is the
+//     pin there, the id is the caller's to supply (the DAG identity
+//     flows with the resolver's morso, D6 rung 4).
+//   * `target` / `tool` — the OPERANDS' naming declarations: the
+//     creating operations' role tables, the one thing the bodies'
+//     own stamps do not record. The operands' FEATURE IDS and ROLE
+//     PATHS flow from their OWN stamped ShapeIds — the wall's, the
+//     pierced faces' — read at the stamping sites, so the relational
+//     names embed the operands' own structure verbatim and nothing
+//     can drift between the two (the same discipline the morsi 2-3
+//     stamps practice).
+//
+// The DEFAULT is the UNNAMED MODE: a null table (or an operand whose
+// own stamps are unpopulated) leaves the born edges honestly EMPTY
+// (the D4 queue's discipline, never a guess) — the wall's
+// inheritance and the kept/pierced names flow regardless: they are
+// stamp COPIES of the operands' own, no table involved.
+struct SubtractNaming {
+    geometry::FeatureId feature{};
+    const naming::OperationNaming* target{};
+    const naming::OperationNaming* tool{};
+};
+
 std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A, const BRepBody& B,
                                          math::Vec3d tool_offset,
-                                         double tol);
+                                         double tol,
+                                         const SubtractNaming& naming =
+                                             SubtractNaming{});
 
 // ===========================================================================
 // Implementation
@@ -500,6 +537,12 @@ struct ToolWalk {
     math::Vec2d circle_center{};
     double circle_radius{0.0};
     double z_lo{0.0}, z_hi{0.0};
+
+    // (morso 4) the +Z cap the walk was read from — the walk's own
+    // source face, kept so the stamping sites can read the cap's
+    // coedges in the WALK'S OWN ORDER without a second read (one
+    // opinion, one pass: the same face read_tool_walk found).
+    const Face* cap{nullptr};
 };
 
 // The +Z cap's surface, verified planar with a +Z normal.
@@ -636,6 +679,8 @@ inline ToolWalk read_tool_walk(const BRepBody& B) {
             "malformed prism. Remedy: report the tool's construction.");
     }
 
+    w.cap = cap_face;  // (morso 4) the walk's own source face
+
     // The circle detection: two arcs of one circle totalling 2π.
     w.is_circle = false;
     if (w.entities.size() == 2 &&
@@ -653,6 +698,36 @@ inline ToolWalk read_tool_walk(const BRepBody& B) {
         }
     }
     return w;
+}
+
+// tool_lateral_of (morso 4, ADR-0036 D1): the tool's LATERAL face for
+// a walk entity — the non-cap face whose loops reference the cap's
+// coedge's edge. THE GENEALOGICAL CORRESPONDENCE, an edge reference,
+// never a geometric signature (ADR-0005's own correction, upheld):
+// the absorbed wall of the result descends from the operand's own
+// lateral face, and the tavola and the stamping both find it here.
+// The caps are skipped by their own placement signature (|n·ẑ| ≈ 1,
+// cap_surface_of's own rule); a cylinder is always a lateral. The
+// first match in the shell's own order wins — the deterministic walk
+// every derivation practices. Returns null for a walk edge no
+// non-cap face references (a malformed tool the class checks missed:
+// the callers treat it as unstamped, honestly).
+inline const Face* tool_lateral_of(const BRepBody& body, EdgeId edge) {
+    for (const auto& f : body.solid.shell().faces()) {
+        const auto* surf = f.surface();
+        if (surf == nullptr) continue;
+        if (surf->family() == SurfaceFamily::Plane) {
+            TranslateReader r;
+            surf->accept(r);
+            if (r.plane != nullptr &&
+                std::abs(r.plane->normal_vec().z) > 0.9)
+                continue;  // a ±Z cap, never a lateral
+        }
+        for (const auto& loop : f.loops())
+            for (const auto& ce : loop.coedges())
+                if (ce.edge() == edge) return &f;
+    }
+    return nullptr;
 }
 
 // The target as the pipeline consumes it (the class check's product).
@@ -716,7 +791,8 @@ inline bool point_in_profile(const ToolWalk& w, math::Vec2d pt, double tol) {
 inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
                                                 const BRepBody& B,
                                                 math::Vec3d tool_offset,
-                                                double tol) {
+                                                double tol,
+                                                const SubtractNaming& naming) {
     // ==== THE CLASS CHECK (D7.1/D7.3) — pinned BEFORE the algorithm =
     //
     // A: convex, planar-faced, every face ⊥ or ∥ to the axis.
@@ -1186,6 +1262,107 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
         R->edges.push_back(ev);
     }
 
+    // ---- THE NAMES (ADR-0036 D1, H2-u6 morso 4) ----------------------
+    // Stamped in the pass that builds, beside the walk indices the
+    // construction already holds — zero extra passes, no state, the
+    // morsi 2-3 lesson replicated at the first relational consumer.
+    // The address plane is untouched by construction (B3's own bill:
+    // the numbering above is exactly what it was; the names ride
+    // BESIDE the ids).
+    //
+    //   * the ABSORBED WALL inherits the tool's own lateral's stamp
+    //     (name + ShapeId, the copy of the operand's own): an entity
+    //     that SURVIVES keeps its birth name — the wall is the
+    //     extrude's face, not the subtract's (D1: identity is where a
+    //     thing was born). No table, no render — nothing can drift.
+    //     The kept and the pierced entities need no stamping here:
+    //     the VERBATIM copy above carries their stamps (D1's rule for
+    //     free, the m2 pin).
+    //   * the BORN EDGES of the SEAM-WIRED case (the guide case's own
+    //     class, the ADR D1 table's own class) carry the relational
+    //     names: the rim circles — ONE logical name each, the
+    //     seam-wired arc pair its MATERIALIZED form (ADR-0023: both
+    //     halves answer to it), the bottom pair at @lo, the top pair
+    //     at @hi — and the seam vertical. The legs flow from the
+    //     OPERANDS' OWN STAMPS: the pierced faces' and the wall's
+    //     feature ids and role paths, read here; the TABLES are the
+    //     naming context's. The unnamed context, or an operand whose
+    //     own stamps are unpopulated, leaves the born edges honestly
+    //     EMPTY (the D4 queue's discipline, never a guess); the
+    //     general chain's born edges read honestly empty too — the
+    //     REGISTERED boundary (the morse-4 register in the ADR: the
+    //     joints' verticals have no vocabulary row yet, and the
+    //     segment walls' curves are Phase D's SSI entry; the extension
+    //     is a table row away when a consumer arrives).
+    const auto lateral_of = [&](std::size_t i) -> const Face* {
+        if (w.cap == nullptr) return nullptr;
+        return subtract_detail::tool_lateral_of(
+            *bp, w.cap->loops()[0].coedges()[i].edge());
+    };
+    if (is_circle) {
+        const Face* const wall_operand = lateral_of(0);
+        const Face* const top_operand =
+            &A.solid.shell().faces()[t.top_face];
+        const Face* const bot_operand =
+            &A.solid.shell().faces()[t.bottom_face];
+        const bool stampable =
+            naming.target != nullptr && naming.tool != nullptr &&
+            wall_operand != nullptr &&
+            wall_operand->shape_id().subshape.depth > 0 &&
+            top_operand->shape_id().subshape.depth > 0 &&
+            bot_operand->shape_id().subshape.depth > 0;
+        if (stampable) {
+            // The instance's operand bindings (the m2 test's own
+            // shapes, now the OFFICIAL tables): the feature ids flow
+            // from the operands' stamps, the tables from the context.
+            const naming::OperandBinding sub_operands[2] = {
+                {top_operand->shape_id().feature, naming.target},
+                {wall_operand->shape_id().feature, naming.tool},
+            };
+            const naming::OperationNaming sub_naming{
+                naming::FeatureKind::Subtract, {}, naming::kSubEdgeRoles,
+                sub_operands};
+            // The relational paths: [the entry] + the A leg + the B
+            // leg — the operands' OWN subshape refs concatenated, the
+            // composite the m2 goldens already pinned ([isect@hi,
+            // box's top, ext's lat, 0] — depth 4, kMaxDepth = 8 with
+            // room; ONLY integers in the path, the render the only
+            // place the strings exist).
+            const auto operand_leg =
+                [](geometry::SubshapeRef ref, const Face& operand) {
+                    for (std::uint8_t k = 0;
+                         k < operand.shape_id().subshape.depth; ++k)
+                        ref = ref.push(operand.shape_id().subshape.path[k]);
+                    return ref;
+                };
+            const geometry::SubshapeRef rim_lo = operand_leg(
+                operand_leg(geometry::SubshapeRef{}
+                                .push(naming::kSubIsectLoRole),
+                            *bot_operand),
+                *wall_operand);
+            const geometry::SubshapeRef rim_hi = operand_leg(
+                operand_leg(geometry::SubshapeRef{}
+                                .push(naming::kSubIsectHiRole),
+                            *top_operand),
+                *wall_operand);
+            const geometry::SubshapeRef seam = operand_leg(
+                geometry::SubshapeRef{}.push(naming::kSubSeamRole),
+                *wall_operand);
+            const auto stamp = [&](std::size_t index,
+                                   const geometry::SubshapeRef& ref) {
+                R->edges[index].set_shape_id(
+                    {naming.feature, ref, {}});
+                R->edges[index].set_name(naming::render_name(
+                    naming.feature, ref, sub_naming.edges()));
+            };
+            stamp(e_base + 0, rim_lo);  // the bottom rim's -Y half
+            stamp(e_base + 1, rim_lo);  // the bottom rim's +Y half
+            stamp(e_base + 2, rim_hi);  // the top rim's -Y half
+            stamp(e_base + 3, rim_hi);  // the top rim's +Y half
+            stamp(e_base + 4, seam);    // the seam vertical at J_0
+        }
+    }
+
     // A local Line2 authoring helper (region-on-right throughout —
     // the convention this unit pins for the surviving walls).
     const auto line_rr = [](math::Vec2d a, math::Vec2d b) {
@@ -1193,12 +1370,19 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
     };
 
     // ---- the walls ---------------------------------------------------
+    // The ABSORBED wall inherits the tool's lateral's stamp (the
+    // naming block above derives the correspondence once; the
+    // inheritance is the stamp copy of the operand's own).
     const auto add_wall_face = [&](std::shared_ptr<SurfaceGeometry> surf,
-                                   Loop loop) {
+                                   Loop loop, const Face* lateral) {
         Face face(std::move(surf));
         face.add_loop(std::move(loop));
         face.set_id(static_cast<FaceId>(shell.faces().size()));
         face.set_provenance(prov);
+        if (lateral != nullptr) {
+            face.set_shape_id(lateral->shape_id());
+            face.set_name(lateral->name());
+        }
         shell.add_face(std::move(face));
     };
 
@@ -1238,7 +1422,8 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
                 loop.add_coedge(up);
                 loop.add_coedge(top);
                 loop.add_coedge(down);
-                add_wall_face(std::move(surf), std::move(loop));
+                add_wall_face(std::move(surf), std::move(loop),
+                              lateral_of(i));
             } else {
                 // The arc patch: CylinderZSurface on the CAVITY side
                 // (u_sign = -1 — the frame rule), the window
@@ -1263,7 +1448,8 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
                 loop.add_coedge(up);
                 loop.add_coedge(top);
                 loop.add_coedge(down);
-                add_wall_face(std::move(surf), std::move(loop));
+                add_wall_face(std::move(surf), std::move(loop),
+                              lateral_of(i));
             }
         }
     } else {
@@ -1309,7 +1495,7 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
         loop.add_coedge(s_up);
         loop.add_coedge(top0);
         loop.add_coedge(top1);
-        add_wall_face(std::move(surf), std::move(loop));
+        add_wall_face(std::move(surf), std::move(loop), lateral_of(0));
     }
 
     // ---- the pierced faces' INNER LOOPS ------------------------------

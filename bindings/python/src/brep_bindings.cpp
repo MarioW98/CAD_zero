@@ -95,8 +95,10 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/unique_ptr.h>
 #include <nanobind/stl/vector.h>
+#include <nanobind/stl/optional.h>
 
 #include "CAD_0/brep/topology.hpp"
+#include "CAD_0/brep/naming.hpp"
 #include "CAD_0/brep/query.hpp"
 #include "CAD_0/brep/mass_properties.hpp"
 #include "CAD_0/brep/ssi.hpp"
@@ -382,6 +384,35 @@ nb::dict ssi_dict(const SsiResult& r) {
     return out;
 }
 
+// The subtract's naming context, from the binding's side (H2-u6
+// morso 4, ADR-0036 D1): the operand tables are selected by the
+// operand's OWN creating feature kind — the caller built the box
+// with make_box and the tool with make_prism, so the kind is
+// knowledge the caller already holds. The four classes with tables
+// today map to the static normative tables; Sketch and Subtract
+// have no operand body (the roots are authored data, the subtract
+// is the consumer) — a loud refusal, never a guess.
+const CAD_0::brep::naming::OperationNaming* naming_table_of(
+    CAD_0::brep::naming::FeatureKind kind) {
+    namespace n = CAD_0::brep::naming;
+    switch (kind) {
+    case n::FeatureKind::Box:      return &n::kBoxNaming;
+    case n::FeatureKind::Sphere:   return &n::kSphereNaming;
+    case n::FeatureKind::Cylinder: return &n::kCylinderNaming;
+    case n::FeatureKind::Extrude:  return &n::kExtNaming;
+    case n::FeatureKind::Sketch:
+    case n::FeatureKind::Subtract:
+        throw std::invalid_argument(
+            "exact_subtract: the operand kind has no naming table - the "
+            "sketch's roots are authored data (named by the root "
+            "reference, never a role table) and the subtract is the "
+            "consumer, not an operand; remedy: pass the CREATING "
+            "operation's kind (Box, Sphere, Cylinder or Extrude) - the "
+            "one that built the operand body.");
+    }
+    return nullptr;  // unreachable — all enum cases handled above
+}
+
 } // namespace
 
 void bind_brep(nb::module_& m) {
@@ -471,6 +502,100 @@ void bind_brep(nb::module_& m) {
         "read honestly unnamed. Raises ValueError for every refusal\n"
         "the C++ kernel makes (the certificate's, the exact-class\n"
         "boundary's — diagnosis + remedy verbatim).");
+
+    // THE EXACT SUBTRACT (H2-u6 morso 4, ADR-0032 D7 + ADR-0036 D1):
+    // the naming context's three facts — the subtract's own DAG id
+    // (the born names' creator part, 'sub#4') and the two operands'
+    // creating kinds (their role tables, the one thing the bodies'
+    // own stamps do not record). With the context the born edges
+    // carry the relational names ('sub#4:isect[box#1:top ×
+    // ext#3:lat(0)]@hi' the upper rim — the fillet's string); without
+    // it (the default, the unnamed mode) they read honestly empty —
+    // the wall's inheritance flows in both modes (a stamp copy, no
+    // table involved). The context is complete or absent: one table
+    // without the other refuses loudly.
+    brep_mod.def(
+        "exact_subtract",
+        [](const BRepBody& a, const BRepBody& b,
+           const CAD_0::math::Vec3f& offset, double tol,
+           std::uint64_t feature,
+           std::optional<CAD_0::brep::naming::FeatureKind> target,
+           std::optional<CAD_0::brep::naming::FeatureKind> tool) {
+            CAD_0::brep::SubtractNaming naming{};
+            if (target.has_value() != tool.has_value())
+                throw std::invalid_argument(
+                    "exact_subtract: the naming context is complete or "
+                    "absent - pass BOTH operand kinds (target=..., "
+                    "tool=...) or neither (the unnamed mode); a half "
+                    "context would name one operand's side and leave the "
+                    "other silent.");
+            if (target.has_value() && tool.has_value()) {
+                naming = CAD_0::brep::SubtractNaming{
+                    CAD_0::geometry::FeatureId{feature},
+                    naming_table_of(*target),
+                    naming_table_of(*tool)};
+            }
+            // THE BINDING BOUNDARY (H1, ADR-0034): Vec3f in, the
+            // lossless promotion to the exact world's double here.
+            return CAD_0::brep::exact_subtract(
+                a, b,
+                CAD_0::math::Vec3d{offset.x, offset.y, offset.z},
+                tol, naming);
+        },
+        nb::arg("a"), nb::arg("b"), nb::arg("offset"),
+        nb::arg("tol") = 1e-6, nb::arg("feature") = 0,
+        nb::arg("target") = std::nullopt,
+        nb::arg("tool") = std::nullopt,
+        "The exact subtract (ADR-0032 D7): the tool B', translated by\n"
+        "the world offset, removes its through-hole class from A.\n"
+        "With the naming context (feature + target/tool kinds) the\n"
+        "born edges carry the RELATIONAL names (ADR-0036 D1, morso\n"
+        "4): 'sub#F:isect[<A-face-name> × <B-entity-name>]@lo|hi' the\n"
+        "rim circles (ONE logical name each, both materialized halves\n"
+        "answering to it - the seam-wired pair, ADR-0023) and\n"
+        "'sub#F:seam[<B-role>]' the seam vertical; the operands are\n"
+        "named BY THEIR NAMES, in the SSI table's declared order.\n"
+        "Without the context (the default) the born edges read\n"
+        "honestly empty; the wall's inheritance (the birth name kept)\n"
+        "flows in both modes. Raises ValueError for every refusal the\n"
+        "C++ kernel makes (the class checks' — diagnosis + remedy\n"
+        "verbatim).");
+
+    // THE FACTORY BOX (H2-u6 morso 4): the binding the guide case's\n"
+    // chain needs — the same `feature` parameter the other factories\n"
+    // expose (make_prism's own precedent), Vec3f promoted at the\n"
+    // boundary.
+    brep_mod.def(
+        "make_box",
+        [](const CAD_0::math::Vec3f& half, std::uint64_t feature) {
+            return CAD_0::brep::make_box(
+                CAD_0::math::Vec3d{half.x, half.y, half.z},
+                CAD_0::geometry::FeatureId{feature});
+        },
+        nb::arg("half"), nb::arg("feature") = 0,
+        "The box factory (ADR-0032 D1): the six planar faces, the 12\n"
+        "edges, the 8 corners — every entity stamped with its\n"
+        "construction name (ADR-0036 D1, morse 2): 'box#F:bottom',\n"
+        "':top', ':front', ':back', ':left', ':right' and the edge\n"
+        "ring names. The `feature` is the DAG node's FeatureId\n"
+        "(defaulted to 0: the standalone caller reads box#0 - the id\n"
+        "is the caller's to supply).");
+
+    // The feature kinds the naming grammar speaks (ADR-0036 D1) —\n"
+    // the operand-table selector of exact_subtract's naming context.\n"
+    nb::enum_<CAD_0::brep::naming::FeatureKind>(brep_mod, "FeatureKind")
+        .value("Box", CAD_0::brep::naming::FeatureKind::Box,
+               "the box factory's kind")
+        .value("Sphere", CAD_0::brep::naming::FeatureKind::Sphere,
+               "the seam-wired sphere factory's kind (ADR-0023)")
+        .value("Cylinder", CAD_0::brep::naming::FeatureKind::Cylinder,
+               "the seam-wired cylinder factory's kind (ADR-0023)")
+        .value("Sketch", CAD_0::brep::naming::FeatureKind::Sketch,
+               "the sketch document's kind (the authored roots)")
+        .value("Extrude", CAD_0::brep::naming::FeatureKind::Extrude,
+               "the extrude operation's kind")
+        .value("Subtract", CAD_0::brep::naming::FeatureKind::Subtract,
+               "the exact subtract operation's kind");
 
     // The mass properties (G1 unit 5, ADR-0032 D4): the divergence
     // theorem over the exact faces — the numbers as plain values, the

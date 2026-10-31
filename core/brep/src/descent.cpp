@@ -11,14 +11,24 @@
 // RE-DERIVED from the recipe with the same one-opinion functions the
 // materialization consulted, and the names the derivation renders are
 // verified against the body's own — the drift-guard, always on.
+//
+// H2-u6 morso 4: the exact subtract's tavola joins — subtract_descent
+// (the six relations at work, the two-sided closure's first table)
+// and old_generation_closed (the old side's check). The names are
+// READ from the bodies' own stamps (the factory precedent — the same
+// pass that built wrote them; nothing to re-derive, nothing to
+// drift); the genealogy rides the correspondence the stamping itself
+// consulted (tool_lateral_of — one opinion, one lookup).
 #include "CAD_0/brep/descent.hpp"
 
 #include "CAD_0/brep/extrude.hpp"
+#include "CAD_0/brep/subtract.hpp"
 
 #include <cmath>
 #include <map>
 #include <sstream>
 #include <stdexcept>
+#include <tuple>
 #include <utility>
 
 namespace CAD_0::brep {
@@ -68,10 +78,16 @@ const char* entity_token(EntityKind kind) noexcept {
 
 bool descent_closed(const BRepBody& body, const DescentTable& table,
                     std::string* why) {
-    // The booking: (kind, address) -> how many rows carry it.
+    // The booking: (kind, address) -> how many rows carry it. The
+    // VANISHED rows are SKIPPED (morso 4): they book the OLD
+    // generation — their subject is a dead operand entity, addressed
+    // in its own body — and old_generation_closed books them there;
+    // booking them here would double-book the result's addresses (a
+    // vanished row's address is not a result address at all).
     std::map<std::pair<std::uint8_t, std::uint64_t>, std::size_t>
         booked;
     for (const auto& row : table.rows) {
+        if (row.relation == Descent::Vanished) continue;
         ++booked[{static_cast<std::uint8_t>(row.entity), row.address}];
     }
 
@@ -132,6 +148,172 @@ bool descent_closed(const BRepBody& body, const DescentTable& table,
                 *why = os.str();
             }
             return false;
+        }
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// The old generation's closure (H2-u6 morso 4) — the two-sided
+// property's second side, the first tavola with operands
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// Which operand a ref names, in words — the diagnosis' own.
+const char* operand_token(std::uint8_t operand) noexcept {
+    return operand == 0 ? "the target's" : "the tool's";
+}
+
+// The existence verdict for one ref: does the named operand body
+// REALLY have this entity? A dangling ref is the suspended reference
+// the closure exists to forbid (the FROM-exists-upstream side).
+bool ref_is_live(const BRepBody& A, const BRepBody& B,
+                 const OperandRef& ref) {
+    const BRepBody& body = ref.operand == 0 ? A : B;
+    return ref.address < entity_count(body, ref.kind);
+}
+
+} // namespace
+
+bool old_generation_closed(const BRepBody& A, const BRepBody& B,
+                            const DescentTable& table,
+                            std::string* why) {
+    // The booking: (operand, kind, address) -> how many rows' refs
+    // carry it — every entity of the OLD generation in EXACTLY ONE
+    // row (D2's closure, the old side).
+    std::map<std::tuple<std::uint8_t, std::uint8_t, std::uint64_t>,
+             std::size_t>
+        booked;
+    for (const auto& row : table.rows) {
+        // The relation's own shape, verified where it is declared: a
+        // born row books NONE (its genealogy rides its name, D1);
+        // kept / absorbed / vanished book EXACTLY ONE (the parent,
+        // or the dead entity); split / merged carry the parents (k
+        // of them, k >= 2 — the shape is the parents' own).
+        if (row.relation == Descent::Born) {
+            if (!row.operands.empty()) {
+                if (why != nullptr) {
+                    std::ostringstream os;
+                    os << "a BORN row books " << row.operands.size()
+                       << " operand ref(s) — a born row's genealogy "
+                          "rides its NAME (D1: the relation is part of "
+                          "the role; D2's closure books the old "
+                          "generation by the surviving rows only); "
+                          "remedy: the pass that emitted the row owed "
+                          "no operands — find it and strip the refs.";
+                    *why = os.str();
+                }
+                return false;
+            }
+            continue;
+        }
+        const bool parents =
+            row.relation == Descent::Split || row.relation == Descent::Merged;
+        if (!parents && row.operands.size() != 1) {
+            if (why != nullptr) {
+                std::ostringstream os;
+                os << "a " << descent_token(row.relation) << " row books "
+                   << row.operands.size()
+                   << " operand ref(s) — a kept/absorbed/vanished row "
+                      "books EXACTLY ONE (the parent, or the dead "
+                      "entity); remedy: the pass that emitted the row "
+                      "knows the one — find it and correct the refs.";
+                *why = os.str();
+            }
+            return false;
+        }
+        for (const auto& ref : row.operands) {
+            // The existence side: a dangling ref is the suspended
+            // reference, never a silent gap.
+            if (!ref_is_live(A, B, ref)) {
+                if (why != nullptr) {
+                    std::ostringstream os;
+                    os << "the tavola's FROM DANGLES: "
+                       << operand_token(ref.operand) << " "
+                       << entity_token(ref.kind) << " " << ref.address
+                       << " does not exist in that operand body — a "
+                          "suspended reference, exactly the defect the "
+                          "closure exists to forbid (ADR-0036 D2); "
+                          "remedy: the refs are written by the "
+                          "derivation that walked the operands — a "
+                          "dangling one is a derivation defect or a "
+                          "caller's mismatched operand.";
+                    *why = os.str();
+                }
+                return false;
+            }
+            // A vanished row's own subject agrees with its dead ref
+            // (the row that disagrees with itself is a bookkeeping
+            // defect, loud).
+            if (row.relation == Descent::Vanished &&
+                (row.entity != ref.kind || row.address != ref.address)) {
+                if (why != nullptr) {
+                    std::ostringstream os;
+                    os << "a VANISHED row books "
+                       << operand_token(ref.operand) << " "
+                       << entity_token(ref.kind) << " " << ref.address
+                       << " but carries its own subject as "
+                       << entity_token(row.entity) << " " << row.address
+                       << " — the row disagrees with itself; remedy: a "
+                          "vanished row's address IS the dead entity's "
+                          "own, in its own body — find the pass that "
+                          "emitted the row.";
+                    *why = os.str();
+                }
+                return false;
+            }
+            ++booked[{ref.operand,
+                      static_cast<std::uint8_t>(ref.kind),
+                      ref.address}];
+        }
+    }
+
+    // The coverage: every entity of A and of B, exactly once.
+    for (const std::uint8_t operand : {std::uint8_t{0}, std::uint8_t{1}}) {
+        const BRepBody& body = operand == 0 ? A : B;
+        const EntityKind kinds[3] = {EntityKind::Vertex, EntityKind::Edge,
+                                     EntityKind::Face};
+        for (const auto kind : kinds) {
+            const std::uint64_t n = entity_count(body, kind);
+            for (std::uint64_t i = 0; i < n; ++i) {
+                const auto it = booked.find(
+                    {operand, static_cast<std::uint8_t>(kind), i});
+                const std::size_t c =
+                    (it == booked.end()) ? 0 : it->second;
+                if (c == 0) {
+                    if (why != nullptr) {
+                        std::ostringstream os;
+                        os << "the tavola LOST "
+                           << operand_token(operand) << " "
+                           << entity_token(kind) << " " << i
+                           << " of the old generation — no row books it "
+                              "(the closure property demands exactly "
+                              "one); remedy: the site that knows the "
+                              "descent owes the row — a tavola that "
+                              "loses an entity is a defect, never a "
+                              "gap.";
+                        *why = os.str();
+                    }
+                    return false;
+                }
+                if (c > 1) {
+                    if (why != nullptr) {
+                        std::ostringstream os;
+                        os << "the tavola DOUBLE-BOOKS "
+                           << operand_token(operand) << " "
+                           << entity_token(kind) << " " << i
+                           << " of the old generation — " << c
+                           << " rows carry it (the closure property "
+                              "demands exactly one); remedy: every "
+                              "entity of the old generation appears in "
+                              "EXACTLY ONE row — find the pass that "
+                              "emitted the extra row.";
+                        *why = os.str();
+                    }
+                    return false;
+                }
+            }
         }
     }
     return true;
@@ -599,6 +781,254 @@ bool extrude_froms_resolve(const DescentTable& table,
         }
     }
     return true;
+}
+
+
+// ---------------------------------------------------------------------------
+// The exact subtract's tavola (H2-u6 morso 4) — the six relations at
+// work, the guide case's 47-row table the golden
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// The causes, pinned once (the golden's own words — ADR-0036 D2's
+// own table): the caps CUT AWAY outside the target (the flush
+// variant the same cause covers, the coplanar dedup — subtract.hpp's
+// assembly-head comment :1200, "nothing is emitted for them, which
+// IS the dedup"); the rims, the seam and the split vertices
+// RE-AUTHORED with the window; the miss removing nothing.
+constexpr const char* kCutAwayCause =
+    "cut away outside the target";
+constexpr const char* kReAuthoredCause =
+    "re-authored with the window";
+constexpr const char* kMissCause =
+    "the miss: nothing removed (the exact copy stands)";
+
+// B's +Z cap, the walk's own source face (the same rule
+// read_tool_walk and cap_surface_of practice — the first +Z-ish
+// plane face in shell order). The coedge order of its outer loop IS
+// the walk's entity order; the derivation reads it on the
+// UNTRANSLATED tool (the order is translation-invariant).
+inline const Face* plus_z_cap(const BRepBody& body) {
+    for (const auto& f : body.solid.shell().faces()) {
+        if (subtract_detail::cap_surface_of(f) != nullptr) return &f;
+    }
+    return nullptr;
+}
+
+// Is this face one of the tool's caps? (a plane with |n.z| ~ 1 — the
+// same placement signature every cap check reads; a cylinder is
+// always a lateral.)
+inline bool is_cap_face(const Face& f) {
+    const auto* surf = f.surface();
+    if (surf == nullptr || surf->family() != SurfaceFamily::Plane)
+        return false;
+    subtract_detail::TranslateReader r;
+    surf->accept(r);
+    return r.plane != nullptr && std::abs(r.plane->normal_vec().z) > 0.9;
+}
+
+// The tool's lateral for result-wall j: the walk entity j's own
+// lateral face — the genealogical correspondence (an edge reference,
+// never a geometric signature), the same lookup the stamping
+// consulted (subtract_detail::tool_lateral_of).
+inline const Face* wall_operand_of(const BRepBody& B,
+                                   const Face* cap,
+                                   std::size_t j) {
+    if (cap == nullptr) return nullptr;
+    if (j >= cap->loops()[0].coedges().size()) return nullptr;
+    return subtract_detail::tool_lateral_of(
+        B, cap->loops()[0].coedges()[j].edge());
+}
+
+} // namespace
+
+DescentTable subtract_descent(const BRepBody& result, const BRepBody& A,
+                              const BRepBody& B) {
+    const std::size_t V_A = A.vertices.size();
+    const std::size_t E_A = A.edges.size();
+    const std::size_t F_A = A.face_count();
+
+    // The outcome classification, read from the result's own counts
+    // (the tavola describes what the result IS — no new geometry, no
+    // new decisions): the through-hole appends at least one wall face
+    // (the seam-wired circle's ONE, a chain's n); the miss is the
+    // exact copy.
+    const bool through = result.face_count() > F_A;
+
+    DescentTable table;
+    table.rows.reserve(result.vertices.size() + result.edges.size() +
+                       result.face_count() + B.vertices.size() +
+                       B.edges.size() + B.face_count());
+
+    // ---- the RESULT side (kept / absorbed / born), the body's own
+    // deterministic order: vertices, then edges, then faces.
+    for (std::size_t i = 0; i < result.vertices.size(); ++i) {
+        // A's vertices are all kept in the through AND the miss (the
+        // copy carries them; none dies); the new split vertices are
+        // born. v1 has no vertex names (D4's queue) — honestly empty.
+        if (i < V_A) {
+            table.rows.push_back(
+                {Descent::Kept, EntityKind::Vertex,
+                 static_cast<std::uint64_t>(i),
+                 {{0, EntityKind::Vertex,
+                   static_cast<std::uint64_t>(i)}},
+                 "", {}, ""});
+        } else {
+            table.rows.push_back(
+                {Descent::Born, EntityKind::Vertex,
+                 static_cast<std::uint64_t>(i), {}, "", {}, ""});
+        }
+    }
+    for (std::size_t i = 0; i < result.edges.size(); ++i) {
+        if (i < E_A) {
+            table.rows.push_back(
+                {Descent::Kept, EntityKind::Edge,
+                 static_cast<std::uint64_t>(i),
+                 {{0, EntityKind::Edge,
+                   static_cast<std::uint64_t>(i)}},
+                 result.edges[i].name(), {}, ""});
+        } else {
+            // The born edges: the rim circles' materialized halves
+            // and the seam (the through), unnamed where the stamping
+            // found no vocabulary (the registered boundary) — the
+            // names read from the body's own stamps (the factory
+            // precedent: the same pass that built wrote them).
+            table.rows.push_back(
+                {Descent::Born, EntityKind::Edge,
+                 static_cast<std::uint64_t>(i), {},
+                 result.edges[i].name(), {}, ""});
+        }
+    }
+    {
+        // The walls' genealogical correspondence, derived once: the
+        // walk's coedge order (the +Z cap's outer loop) read on the
+        // untranslated tool — the result's wall j descends from the
+        // walk entity j's own lateral.
+        const Face* cap = through ? plus_z_cap(B) : nullptr;
+        for (const auto& face : result.solid.shell().faces()) {
+            const std::size_t i = face.id();
+            if (i < F_A) {
+                // A's own faces: the pierced pair absorbed (their
+                // inner loops born of the rim), the rest kept — read
+                // from the result's own loops (the copy plus the inner
+                // loops the assembly added).
+                const bool pierced = face.loops().size() > 1;
+                table.rows.push_back(
+                    {pierced ? Descent::Absorbed : Descent::Kept,
+                     EntityKind::Face, static_cast<std::uint64_t>(i),
+                     {{0, EntityKind::Face,
+                       static_cast<std::uint64_t>(i)}},
+                     face.name(), {}, ""});
+            } else {
+                // The ABSORBED WALL: the tool's own lateral,
+                // re-framed to the window — the row's operand the
+                // lateral face in the tool's own body. (In the miss
+                // there are no walls; this branch is through-only.)
+                const std::size_t j = i - F_A;
+                const Face* lateral = wall_operand_of(B, cap, j);
+                if (lateral != nullptr) {
+                    table.rows.push_back(
+                        {Descent::Absorbed, EntityKind::Face,
+                         static_cast<std::uint64_t>(i),
+                         {{1, EntityKind::Face,
+                           static_cast<std::uint64_t>(lateral->id())}},
+                         face.name(), {}, ""});
+                } else {
+                    // No lateral found (a malformed tool the class
+                    // checks missed): the row is still owed — emitted
+                    // with no booked operand, so the old-generation
+                    // closure below REFUSES LOUDLY (an absorbed row
+                    // books exactly one parent; a correspondence that
+                    // cannot find it is a defect the check names,
+                    // never a silent gap).
+                    table.rows.push_back(
+                        {Descent::Absorbed, EntityKind::Face,
+                         static_cast<std::uint64_t>(i), {},
+                         face.name(), {}, ""});
+                }
+            }
+        }
+    }
+
+    // ---- the VANISHED tail, the dying operand's own order
+    // (vertices, edges, faces) -----------------------------------------
+    if (!through) {
+        // THE MISS: nothing of B survives — the laterals die with the
+        // caps (the tool never met the target; the exact copy stands).
+        for (std::size_t i = 0; i < B.vertices.size(); ++i)
+            table.rows.push_back(
+                {Descent::Vanished, EntityKind::Vertex,
+                 static_cast<std::uint64_t>(i),
+                 {{1, EntityKind::Vertex,
+                   static_cast<std::uint64_t>(i)}},
+                 "", {}, kMissCause});
+        for (std::size_t i = 0; i < B.edges.size(); ++i)
+            table.rows.push_back(
+                {Descent::Vanished, EntityKind::Edge,
+                 static_cast<std::uint64_t>(i),
+                 {{1, EntityKind::Edge,
+                   static_cast<std::uint64_t>(i)}},
+                 B.edges[i].name(), {}, kMissCause});
+        for (const auto& face : B.solid.shell().faces())
+            table.rows.push_back(
+                {Descent::Vanished, EntityKind::Face,
+                 static_cast<std::uint64_t>(face.id()),
+                 {{1, EntityKind::Face,
+                   static_cast<std::uint64_t>(face.id())}},
+                 face.name(), {}, kMissCause});
+    } else {
+        // THE THROUGH: the caps cut away outside the target; the
+        // rims, the seam and the split vertices re-authored with the
+        // window (the wall's window re-timed to [z_bot, z_top] — its
+        // own boundary curves and corners rebuilt at the target's
+        // levels).
+        for (std::size_t i = 0; i < B.vertices.size(); ++i)
+            table.rows.push_back(
+                {Descent::Vanished, EntityKind::Vertex,
+                 static_cast<std::uint64_t>(i),
+                 {{1, EntityKind::Vertex,
+                   static_cast<std::uint64_t>(i)}},
+                 "", {}, kReAuthoredCause});
+        for (std::size_t i = 0; i < B.edges.size(); ++i)
+            table.rows.push_back(
+                {Descent::Vanished, EntityKind::Edge,
+                 static_cast<std::uint64_t>(i),
+                 {{1, EntityKind::Edge,
+                   static_cast<std::uint64_t>(i)}},
+                 B.edges[i].name(), {}, kReAuthoredCause});
+        for (const auto& face : B.solid.shell().faces()) {
+            // The laterals ABSORBED (the walls above); the caps die.
+            if (!is_cap_face(face)) continue;
+            table.rows.push_back(
+                {Descent::Vanished, EntityKind::Face,
+                 static_cast<std::uint64_t>(face.id()),
+                 {{1, EntityKind::Face,
+                   static_cast<std::uint64_t>(face.id())}},
+                 face.name(), {}, kCutAwayCause});
+        }
+    }
+
+#ifndef NDEBUG
+    // The debug-build activation (the factory precedent): BOTH sides
+    // of the closure, inside — a tavola that loses or double-books an
+    // entity, on either generation, cannot pass silent.
+    {
+        std::string why;
+        if (!descent_closed(result, table, &why)) {
+            throw std::logic_error(
+                "subtract_descent: the tavola broke its own closure "
+                "(the result side) — " + why);
+        }
+        if (!old_generation_closed(A, B, table, &why)) {
+            throw std::logic_error(
+                "subtract_descent: the tavola broke its own closure "
+                "(the old generation) — " + why);
+        }
+    }
+#endif
+
+    return table;
 }
 
 } // namespace CAD_0::brep

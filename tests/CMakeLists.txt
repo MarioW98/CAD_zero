@@ -46,6 +46,7 @@ set(CAD_0_TEST_SOURCES
     unit/brep/test_h2_u3_pcurve_double.cpp
     unit/brep/test_h2_u6_m2_factory_names.cpp
     unit/brep/test_h2_u6_m3_extrude_names.cpp
+    unit/brep/test_h2_u6_m4_subtract_names.cpp
     unit/bridge/test_bridge.cpp
     main.cpp
 )

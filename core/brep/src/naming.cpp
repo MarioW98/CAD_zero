@@ -164,12 +164,20 @@ void render_role(std::string& out,
                        "and its feature id) before rendering.");
             }
             // The operand's own registry: the slot picks the table,
-            // the binding carries the declaration.
+            // the binding carries the declaration — and, since the
+            // morse-3 register's item 4 landed (morso 4), the
+            // INSTANCE's group declaration: a multi-chain operand
+            // renders the GROUP form for its chain-owned roles, the
+            // path's own first component the group, exactly as the
+            // body's own stamps practice (the two views stay disjoint
+            // by construction — the caps still refuse under the group
+            // view, the loudest place a view bug can land).
             const RoleRegistry operand_view{
                 binding.naming->kind,
                 slot.edges ? binding.naming->edge_roles
                            : binding.naming->face_roles,
-                binding.naming->operands};
+                binding.naming->operands,
+                binding.multi_chain};
             out += kind_token(operand_view.kind);
             out += '#';
             out += std::to_string(binding.feature.value);

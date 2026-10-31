@@ -373,6 +373,79 @@ numbers, now with their history beside them). At MVP scale this
 is noise; the honest asymptotic bound is linear in body size,
 per operation, with no geometric computation anywhere in it.
 
+**The morse-4 register (2026-10-31, the subtract's landing — the
+gestures the implementation derived and D1/D2 did not yet pin,
+recorded per D6's protocol in the same act as the code; each cites
+the clause it derives from, and none is a silent extension):**
+
+1. **The empty face table** (from D1's "the trimmed faces (absorbed,
+   not born): a face that gains an inner loop KEEPS ITS NAME"): the
+   subtract's declared face table is an EMPTY span, honestly — the
+   operation births no faces; the wall is the tool's own lateral
+   ABSORBED, whose stamp is INHERITED (a copy of the operand's, at
+   the assembly site), and the pierced faces are the target's own,
+   carried by the verbatim copy. No dummy row to invent, the same
+   discipline as the extrude's single-seam edge table.
+2. **The naming context, and the unnamed mode** (from D1's "the
+   `SubshapeRef` path's components are indices into the role
+   tables"): the operands' tables and the subtract's own FeatureId
+   are INSTANCE data the bodies alone do not record —
+   `SubtractNaming{feature, target, tool}` rides the call, and its
+   DEFAULT is the unnamed mode: the born edges read honestly empty,
+   while the kept/absorbed inheritances flow regardless (a stamp
+   copy needs no table). The scene's hybrid materialization reads
+   `sub#0` until the resolver's morso wires the DAG ids through it
+   (D6 rung 4, where the ids' real cost is visible).
+3. **The genealogical correspondence is an edge reference** (from
+   D1's "the operands PER NAME" and ADR-0005's own correction): the
+   wall's operand is the tool's lateral whose loops reference the
+   +Z cap's coedge's edge — `tool_lateral_of`, a structural lookup
+   in the shell's own order, never a geometric signature; the tavola
+   and the stamping both consult the same one function.
+4. **The levelled entry's round-trip leg** (from D1's "a LEVELLED
+   relation is its own table entry"): `isect@lo` and `isect@hi`
+   share the token — the frozen bijection's first hit resolves the
+   pair to the FIRST row, and leg 2 of the round-trip carries the
+   LEVELLED row as the construction's own knowledge (the level
+   distinguishes; the path spends no component on it). Stated where
+   it bites, never papered over.
+5. **The morse-3 register's item 4 LANDS here** (the register's own
+   "priced by its consumer"): the operand view inside a relational
+   render now carries the INSTANCE's group declaration
+   (`OperandBinding.multi_chain`) — a multi-chain tool would render
+   `c0:lat(0)` inside the brackets. The subtract's class checks
+   refuse the ring tools (non-convex), so no in-class body produces
+   one; the machinery is landed, pinned at the naming layer by the
+   probe, ready for its first real case.
+6. **The tavola's row order and the vanished address** (from D2's
+   closure property): the rows ride the result's own walk (vertices,
+   edges, faces), then the VANISHED TAIL in the dying operand's own
+   order; a vanished row's `address` is the DEAD entity's, in its
+   own body's numbering — so the result-side check SKIPS the
+   vanished rows (booking them there would double-book the result's
+   addresses), and the old-generation check books them where they
+   live. The `operands` field carries STRUCTURED refs — {which
+   operand (0 = the target, 1 = the tool), kind, address in that
+   body} — the ambiguity a flat address cannot carry (the guide
+   case books A's face 2 and B's face 2 as different entities, which
+   they are).
+7. **The causes' pinned words** (from D2's table, the golden's own
+   vocabulary): "cut away outside the target" (the caps — the flush
+   variant the same cause covers, the coplanar dedup: nothing is
+   emitted for them, which IS the dedup, the assembly's own
+   comment); "re-authored with the window" (the tool's rims, its
+   seam, its split vertices); "the miss: nothing removed (the exact
+   copy stands)". And MERGED's zero is a VERIFIED fact on the very
+   case that could have produced it — the flush is a 1:1 + 1:0, and
+   the tavola says so.
+8. **The Layer-2 bill's two absorbed marks** (from D2's "the
+   combined record where the operation creates, the loop changes
+   where it trims"): the WALL carries the operation's record
+   (combined at the creation site); the PIERCED faces carry the
+   operand's own with the LOOP change (+1 inner each) — the trim
+   never launders the record. The bill is asserted field by field,
+   never promised.
+
 ### D3. The resolution through mutation — four classes, each with a disposition
 
 A downstream feature references an entity BY NAME. An edit

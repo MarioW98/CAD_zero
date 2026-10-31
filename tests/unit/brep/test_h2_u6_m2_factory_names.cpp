@@ -51,9 +51,11 @@
 // THE VERBATIM-COPY SURVIVAL (D1's rule, for free): the exact
 // subtract copies A's entities verbatim — the guide case's kept
 // faces keep the BOX's names through the operation, and the born
-// entities read empty until morso 4 names them. The storage design
-// (the fields ON the entities) is what makes the copy carry them;
-// this family pins that property where it lands.
+// entities read empty until morso 4 names them (the wall's
+// inheritance landed with morso 4: an absorbed entity keeps its
+// birth name — the stamp copy, no table involved). The storage
+// design (the fields ON the entities) is what makes the copy carry
+// them; this family pins that property where it lands.
 #include <doctest/doctest.h>
 
 #include "CAD_0/brep/factory.hpp"
@@ -764,8 +766,8 @@ TEST_CASE("H2-U6-M2 the closure check's naive counterproof: a broken "
 // ===========================================================================
 
 TEST_CASE("H2-U6-M2 the guide case: A's kept faces keep the BOX's "
-          "names through the subtract; the born entities read empty "
-          "until morso 4") {
+          "names through the subtract; the wall inherits the tool's "
+          "own (morso 4's landing of the pre-registered boundary)") {
     const auto target = b::make_box({1.0, 1.0, 1.0}, FeatureId{1});
     const auto tool = b::make_prism(circle_chains(), 3.0f, +1);
     const auto result = b::exact_subtract(
@@ -786,10 +788,22 @@ TEST_CASE("H2-U6-M2 the guide case: A's kept faces keep the BOX's "
     CHECK(b::query_face(*result, 1).name == "box#1:top");
     CHECK(b::query_face(*result, 0).name == "box#1:bottom");
 
-    // The born wall (face 6, the tool's lateral re-framed to the
-    // window) and the born edges (12..16) read honestly EMPTY —
-    // morso 4's territory, pre-registered here.
-    CHECK(b::query_face(*result, 6).name.empty());
+    // THE BORN WALL (face 6, the tool's lateral re-framed to the
+    // window): the pre-registered boundary moved at morso 4, as the
+    // pin said it would — the wall is ABSORBED, not born, and an
+    // absorbed entity keeps its BIRTH name (D1): the stamp copy of
+    // the operand's own, exactly like A's verbatim copy above. No
+    // table, no render — nothing can drift; the inheritance flows
+    // even in the unnamed mode (this call passes no naming context).
+    CHECK(b::query_face(*result, 6).name ==
+          b::query_face(*tool, 0).name);
+    CHECK(b::query_face(*result, 6).name == "ext#0:lat(0)");
+
+    // The BORN EDGES (12..16: the rim circles' halves and the seam)
+    // still read honestly EMPTY here: their vocabulary is the NAMING
+    // CONTEXT's (the unnamed mode carries none), and this call passes
+    // no context — morso 4's own probe pins the named mode's
+    // 'sub#4:isect[...]' strings where they land.
     for (b::EdgeId i = 12; i < 17; ++i)
         CHECK(b::query_edge(*result, i).name.empty());
     // A's edges keep their names (the twelve box edges).
@@ -801,7 +815,8 @@ TEST_CASE("H2-U6-M2 the guide case: A's kept faces keep the BOX's "
 
     // The tavola side of the same honesty: the derived all-born
     // table of the RESULT would lie (the result is not a factory
-    // product) — the factories' derivation is for factory bodies,
-    // and the subtract's own tavola is morso 4's. Not called here;
-    // the boundary is the pin.
+    // product) — the factories' derivation is for factory bodies;
+    // the subtract's own tavola landed with morso 4 (the 47-row
+    // golden, its own probe's). Not called here; the boundary is
+    // the pin.
 }

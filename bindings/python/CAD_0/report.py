@@ -104,13 +104,20 @@ def face_table_text(brep_body: Any) -> str:
     """The per-face table with the NAME column (ADR-0036 D4, morso 2).
 
     One row per face, in address order: the address, the name (the
-    canonical render — "- " when honestly unnamed: the v1 named
-    classes are the three factories — morse 2 — and the extrude's
-    faces and seam edges — morse 3), the surface family, the loop
-    counts, and the Layer-2 provenance. Every value is
-    ``CAD_0.brep.face_query``'s own answer, verbatim — pure string
+    canonical render — "- " when honestly unnamed), the surface
+    family, the loop counts, and the Layer-2 provenance. Every value
+    is ``CAD_0.brep.face_query``'s own answer, verbatim — pure string
     building beside ``body_report_text``, which does not move (the
     existing report's goldens are untouched; this is a NEW surface).
+
+    The v1 named classes (the column D6.2 of the previous morsi,
+    extended by morso 4's chain): the three factories (morse 2), the
+    extrude's faces and seam edges (morse 3), and the subtract's
+    whole chain (morso 4) — the kept and the pierced faces carry the
+    OPERANDS' own names (``box#1:top`` the hole's face, absorbed,
+    not renamed), the wall its birth name (``ext#3:lat(0)``), and
+    the born edges answer through the EDGE leg (``edge_table_text``
+    below).
 
     Deterministic (ADR-0014): the names carry no floating-point
     content, so the table is bit-identical across calls, processes
@@ -128,6 +135,43 @@ def face_table_text(brep_body: Any) -> str:
             q["linear_tolerance"])
         lines.append("  {} | {} | {} | {} | {}".format(
             i, name, q["family"], loops, prov))
+    return "\n".join(lines)
+
+
+def edge_table_text(brep_body: Any) -> str:
+    """The per-edge table with the NAME column (ADR-0036 D6.3, morso 4).
+
+    The D7.5-style table's EDGE leg — the face table's own shape,
+    one entity kind over: one row per edge, in address order, the
+    address, the name ("- " when honestly unnamed — the extrude's
+    walk edges and the general chain's born joints read empty there,
+    never a guess), the endpoints, the manifoldness and the Layer-2
+    provenance. Every value is ``CAD_0.brep.edge_query``'s own
+    answer, verbatim — pure string building beside the face table,
+    which does not move (a NEW surface, morso 4's own).
+
+    This is the surface where the FILLET's strings live (the
+    maintainer's click-test): on the guide case the rim circles
+    answer ``sub#4:isect[box#1:top × ext#3:lat(0)]@hi`` — both
+    materialized halves under the ONE logical name, the seam-wired
+    pair its materialized form (ADR-0023) — and the seam vertical
+    ``sub#4:seam[ext#3:lat(0)]``.
+
+    Deterministic (ADR-0014): the names carry no floating-point
+    content, so the table is bit-identical across calls, processes
+    and platforms.
+    """
+    brep = _brep_module()
+    n = brep.edge_count(brep_body)
+    lines: list = ["Edges (address | name | endpoints | manifold | provenance):"]
+    for i in range(n):
+        q = brep.edge_query(brep_body, i)
+        name = q["name"] if q["name"] else "-"
+        ends = "{} - {}".format(q["v0"], q["v1"])
+        prov = "exact" if q["exact"] else "approx({:g})".format(
+            q["linear_tolerance"])
+        lines.append("  {} | {} | {} | {} | {}".format(
+            i, name, ends, "yes" if q["manifold"] else "NO", prov))
     return "\n".join(lines)
 
 
