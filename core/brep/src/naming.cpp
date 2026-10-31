@@ -35,7 +35,7 @@ namespace {
     throw std::invalid_argument("render_name: " + what);
 }
 
-// Render the role whose first component sits at path[pos], under
+// Render the role whose leading component sits at path[pos], under
 // the registry's table; pos advances past everything the role
 // consumes. The feature part (kind#id) is the CALLER's: at the top
 // level it is the name's own creator; inside a relational role it
@@ -54,6 +54,32 @@ void render_role(std::string& out,
                "hand-built path must carry a component per role it "
                "crosses (see ADR-0036 D1's depth derivation).");
     }
+
+    // THE GROUP COMPONENT (the morse-3 register, ADR-0036 D1's
+    // multi-chain clause): under a GROUPED registry — the
+    // multi-chain body's own view — the path's first component is
+    // the chain group, rendered 'c<group>:' before the token. Only
+    // the CHAIN-OWNED roles carry it; a feature-owned role under
+    // the group view is a caller's view bug and refuses loudly
+    // below (the caps belong to the extruded region, never to a
+    // chain).
+    if (registry.multi_chain) {
+        const std::uint32_t group = ref.path[pos];
+        ++pos;
+        out += 'c';
+        out += std::to_string(group);
+        out += ':';
+        if (pos >= ref.depth) {
+            refuse("the path ends inside a group-prefixed role — the "
+                   "group component was consumed and the role index "
+                   "is missing; remedy: a chain-owned role's path "
+                   "under the group view is [group, role index, "
+                   "the role's own components] — the feature-owned "
+                   "roles (the caps) carry no group and render under "
+                   "the plain view (faces()/edges()).");
+        }
+    }
+
     const std::uint32_t idx = ref.path[pos];
     if (idx >= registry.roles.size()) {
         refuse("role index " + std::to_string(idx) +
@@ -62,9 +88,20 @@ void render_role(std::string& out,
                " roles); remedy: the first path component indexes the "
                "creating operation's role table for the entity kind "
                "being named — check the registry passed (faces() vs "
-               "edges()) and the table's own normative rows.");
+               "edges(), the plain vs the grouped view) and the "
+               "table's own normative rows.");
     }
     const RoleEntry& entry = registry.roles[idx];
+    if (registry.multi_chain && entry.owner != RoleOwner::Chain) {
+        refuse("the role '" + std::string(entry.token) +
+               "' is FEATURE-OWNED — the extrude's caps belong to the "
+               "extruded region, not to any chain, and never carry "
+               "the multi-chain group; remedy: render the "
+               "feature-owned roles under the operation's plain view "
+               "(faces()), and the group view (grouped_faces() / "
+               "grouped_edges()) only for the chain-owned roles "
+               "(lat, the seam).");
+    }
     out += entry.token;
     ++pos;
 
@@ -205,6 +242,38 @@ std::uint32_t role_index_of(std::span<const RoleEntry> roles,
           "the creating operation's declared table, and never a "
           "foreign token.";
     throw std::invalid_argument(os.str());
+}
+
+std::string render_root(const RootRef& root, bool sketch_multi_chain) {
+    // The root reference's canonical render (the grammar block in
+    // naming.hpp's header, the morse-3 register): the sketch's
+    // feature, then the root's own form. PURE — a function of the
+    // two arguments, strings and integers only, never parsed back.
+    std::string out;
+    out.reserve(16);
+    out += kind_token(FeatureKind::Sketch);
+    out += '#';
+    out += std::to_string(root.feature.value);
+    out += ':';
+    switch (root.kind) {
+    case RootKind::Face:
+        // The sketch's FACE — the extruded region, the caps' parent.
+        out += "face";
+        return out;
+    case RootKind::Entity:
+        // The authored root: the entity's position in its chain,
+        // the chain component prefixed only when the sketch itself
+        // is multi-chain (the same only-multi-chain elision as the
+        // roles' group — D4: the chain position IS the root name).
+        if (sketch_multi_chain) {
+            out += 'c';
+            out += std::to_string(root.chain);
+            out += ':';
+        }
+        out += std::to_string(root.entity);
+        return out;
+    }
+    return out;  // unreachable — all enum cases handled above
 }
 
 } // namespace CAD_0::brep::naming

@@ -93,15 +93,35 @@
 //   The -Z cap is added before the +Z cap; on each cap the outer
 //   loop is the first loop, the holes follow in sketch order.
 //
+// THE NAMING (ADR-0036 D1, H2-u6 morso 3 — the walk roles made
+// NORMATIVE): the tables above are the role tables' own walk, and
+// the vocabulary is naming.hpp's kExtFaceRoles/kExtEdgeRoles —
+// lat(i) for chain entity i's lateral, cap(lo)/cap(hi) for the
+// region's two lids, the seam for the seam-wired vertical
+// (ADR-0023's own e_seam). Multi-chain bodies prefix the chain
+// group on the CHAIN-OWNED roles ('c0:lat(i)', 'c1:seam' — the
+// group is the numbering table's own multi-chain layout: the outer
+// first — group 0 — then each hole in sketch order); the caps are
+// the extruded region's own and NEVER carry the group. The names
+// are stamped IN the pass that builds, beside the walk indices the
+// construction already holds (zero extra passes); the walk's other
+// edges — the bottom/top curves, the verticals, the rims — are
+// outside D1's v1 extrude vocabulary and read honestly EMPTY. The
+// tavola (the born-of genealogy) derives in descent.hpp's
+// extrude_descent, from these same tables.
+//
 // Layer-2 (ADR-0032 D2.4): the extrude writes exact/0 on every
 // subshape — the factories' discipline (the ProvenanceInfo default;
 // a constructed point is the mathematical ideal, the burden sits on
-// the path that would sample).
+// the path that would sample). The NAME sits BESIDE the Layer-2
+// record (ADR-0036 D6: identity is not arithmetic honesty — no
+// mother touched).
 #pragma once
 
 #include "CAD_0/brep/topology.hpp"
 #include "CAD_0/brep/analytic.hpp"
 #include "CAD_0/brep/factory.hpp"
+#include "CAD_0/brep/naming.hpp"
 #include "CAD_0/sdf/sketch_entities.hpp"
 #include "CAD_0/sdf/sketch_profile.hpp"
 #include "CAD_0/sdf/sketch_extrude.hpp"
@@ -276,9 +296,17 @@ inline CoEdge cap_coedge(const PlaneSurface& cap,
 //     arcs — a notch/bite arc's cap trimming is not expressible in
 //     the typed 2D vocabulary (CCW sweeps only); the refusal names
 //     the entity and the remedy.
+//
+// The optional `feature` (ADR-0036 D1, H2-u6 morso 3 — the
+// factories' own parameter, the same discipline): the DAG node's
+// FeatureId, stamped into every entity's ShapeId beside the walk
+// role. Defaulted: the standalone callers and the scene's hybrid
+// materialization read ext#0 — the token is the pin there, the id
+// is the caller's to supply (the DAG identity flows with the
+// resolver's morso, D6 rung 4).
 inline std::unique_ptr<BRepBody> make_prism(
     const std::vector<sdf::SketchChain>& chains, double distance,
-    int direction) {
+    int direction, geometry::FeatureId feature = {}) {
     // ---- the slab contract (SlabZ's own checks, verbatim in
     // substance) -----------------------------------------------
     if (!std::isfinite(distance) || distance <= 0.0)
@@ -304,6 +332,50 @@ inline std::unique_ptr<BRepBody> make_prism(
     // certificate validated.)
     const sdf::ProfileSDF profile_certificate{chains};
     (void)profile_certificate;
+
+    // ---- the naming (ADR-0036 D1, H2-u6 morso 3): the walk roles --
+    // The views: single-chain bodies render the feature form;
+    // multi-chain bodies render the group form for the CHAIN-OWNED
+    // roles (the numbering table's own multi-chain layout — the
+    // outer first, then the holes in sketch order), while the caps
+    // stay on the feature view in every body (the region's own,
+    // never a chain's). The chain-group counter walks the
+    // construction's own sequence: the outer takes 0, each hole the
+    // next — read at CALL time by the stamping sites below.
+    const bool multi_chain = chains.size() > 1;
+    const naming::RoleRegistry lateral_view =
+        multi_chain ? naming::kExtNaming.grouped_faces()
+                    : naming::kExtNaming.faces();
+    const naming::RoleRegistry seam_view =
+        multi_chain ? naming::kExtNaming.grouped_edges()
+                    : naming::kExtNaming.edges();
+    std::uint32_t chain_group = 0;
+
+    // The stamping, in the pass that builds (the morse-2 lesson
+    // replicated: the walk role is already in hand — the group, the
+    // chain entity's index, the cap's level — zero extra passes, no
+    // state, the name a pure function of what the construction
+    // holds). The path encoding is the register's own: [<group>?,
+    // role index, the role's components] — the group, when present,
+    // the path's FIRST component.
+    const auto stamp_lateral = [&](Face& face, std::size_t i) {
+        geometry::SubshapeRef ref{};
+        if (multi_chain)
+            ref = ref.push(chain_group);
+        ref = ref.push(naming::kExtLatRole)
+                  .push(static_cast<std::uint32_t>(i));
+        face.set_shape_id({feature, ref, {}});
+        face.set_name(
+            naming::render_name(feature, ref, lateral_view));
+    };
+    const auto stamp_seam = [&](Edge& seam_edge) {
+        geometry::SubshapeRef ref{};
+        if (multi_chain)
+            ref = ref.push(chain_group);
+        ref = ref.push(naming::kExtSeamRole);
+        seam_edge.set_shape_id({feature, ref, {}});
+        seam_edge.set_name(naming::render_name(feature, ref, seam_view));
+    };
 
     auto body = std::make_unique<BRepBody>();
     auto& shell = body->solid.shell_mut();
@@ -533,6 +605,10 @@ inline std::unique_ptr<BRepBody> make_prism(
                 face.add_loop(std::move(loop));
                 face.set_id(static_cast<FaceId>(
                     shell.faces().size()));
+                // The NAME in the same pass: entity i's lateral —
+                // kExtFaceRoles' lat(i), the group prefix on
+                // multi-chain bodies (the outer chain's own group).
+                stamp_lateral(face, i);
                 shell.add_face(std::move(face));
             } else {
                 // The cylindrical patch: the window [α, α+Δ] × [0,h]
@@ -580,6 +656,10 @@ inline std::unique_ptr<BRepBody> make_prism(
                 face.add_loop(std::move(loop));
                 face.set_id(static_cast<FaceId>(
                     shell.faces().size()));
+                // The NAME in the same pass: entity i's lateral —
+                // the cylindrical patch's own lat(i), the group
+                // prefix on multi-chain bodies.
+                stamp_lateral(face, i);
                 shell.add_face(std::move(face));
             }
         }
@@ -655,6 +735,13 @@ inline std::unique_ptr<BRepBody> make_prism(
         rim_top_b.set_id(eid(e_base + 3));
         Edge seam{vid(v_base), vid(v_base + 2)};
         seam.set_id(eid(e_base + 4));
+        // The SEAM's NAME in the same pass (ADR-0036 D1 + morse-3:
+        // the ADR-0023 convention's own e_seam, kExtEdgeRoles' bare
+        // 'seam', born of the chain's entity 0 — the tavola's FROM
+        // carries the genealogy, the wire's pair is the name's ONE
+        // materialized form). The rim halves are outside v1's
+        // vocabulary: honestly unnamed.
+        stamp_seam(seam);
         body->edges.push_back(rim_bot_a);
         body->edges.push_back(rim_bot_b);
         body->edges.push_back(rim_top_a);
@@ -701,6 +788,10 @@ inline std::unique_ptr<BRepBody> make_prism(
             loop.add_coedge(bot_b_fwd);
             face.add_loop(std::move(loop));
             face.set_id(static_cast<FaceId>(shell.faces().size()));
+            // The NAME in the same pass: the circle case's SINGLE
+            // wall — D1's own "the circle special case's single
+            // lat(0) wall", born of the chain's one entity.
+            stamp_lateral(face, 0);
             shell.add_face(std::move(face));
         }
 
@@ -784,6 +875,11 @@ inline std::unique_ptr<BRepBody> make_prism(
         rim_top.set_id(eid(e_base + 1));
         Edge seam{vid(v_base), vid(v_base + 1)};
         seam.set_id(eid(e_base + 2));
+        // The SEAM's NAME in the same pass: the hole's own seam —
+        // 'c<group>:seam' on multi-chain bodies (this chain's
+        // group, the counter's current value), the closed rims
+        // honestly unnamed (outside v1's vocabulary).
+        stamp_seam(seam);
         body->edges.push_back(rim_bot);
         body->edges.push_back(rim_top);
         body->edges.push_back(seam);
@@ -819,6 +915,10 @@ inline std::unique_ptr<BRepBody> make_prism(
             loop.add_coedge(bot);
             face.add_loop(std::move(loop));
             face.set_id(static_cast<FaceId>(shell.faces().size()));
+            // The NAME in the same pass: the hole's wall — the
+            // disc-complement entity's own lat(0), the group prefix
+            // riding the chain's own group.
+            stamp_lateral(face, 0);
             shell.add_face(std::move(face));
         }
 
@@ -862,6 +962,10 @@ inline std::unique_ptr<BRepBody> make_prism(
             add_solid_circle(outer);
         else
             add_contour(outer);
+        // The outer chain was group 0; the holes (in sketch order)
+        // take the next groups — the numbering table's own
+        // multi-chain layout, read at call time by the stamps.
+        ++chain_group;
     }
     for (std::size_t c = 0; c < chains.size(); ++c) {
         if (c == outer) continue;
@@ -879,14 +983,19 @@ inline std::unique_ptr<BRepBody> make_prism(
                 "hole as a hole-side circle chain, or as part of the "
                 "outer contour's shape.");
         add_hole_circle(c);
+        ++chain_group;
     }
 
     // ---- the caps: two plane faces, the loops in walk order ------
     // The FIRST loop of each cap is the outer one (the outer chain
     // was walked first); every subsequent loop is a hole — the
     // positional H term, ADR-0021: "subsequent loops are holes".
+    // The caps' NAMES (the region's own two lids — feature-owned,
+    // no group in any body): kExtFaceRoles' cap(lo)/cap(hi), the
+    // role index the level's own table row.
     const auto add_cap_face = [&](const PlaneSurface& surf_proto,
-                                  std::vector<std::vector<CoEdge>>& loops) {
+                                  std::vector<std::vector<CoEdge>>& loops,
+                                  std::uint32_t role_index) {
         Face face(std::make_shared<PlaneSurface>(surf_proto));
         for (std::size_t li = 0; li < loops.size(); ++li) {
             Loop l;
@@ -895,10 +1004,15 @@ inline std::unique_ptr<BRepBody> make_prism(
             face.add_loop(std::move(l));
         }
         face.set_id(static_cast<FaceId>(shell.faces().size()));
+        const geometry::SubshapeRef ref =
+            geometry::SubshapeRef{}.push(role_index);
+        face.set_shape_id({feature, ref, {}});
+        face.set_name(naming::render_name(
+            feature, ref, naming::kExtNaming.faces()));
         shell.add_face(std::move(face));
     };
-    add_cap_face(cap_lo, cap_lo_loops);
-    add_cap_face(cap_hi, cap_hi_loops);
+    add_cap_face(cap_lo, cap_lo_loops, naming::kExtCapLoRole);
+    add_cap_face(cap_hi, cap_hi_loops, naming::kExtCapHiRole);
 
     link_radial_edges(*body);
     return body;

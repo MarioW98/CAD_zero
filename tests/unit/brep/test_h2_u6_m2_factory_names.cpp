@@ -460,11 +460,24 @@ TEST_CASE("H2-U6-M2 the honest empty: the classes outside v1 read "
         CHECK(q.name.empty());
     }
 
-    // The extrude's products: morso 3's territory — the prism's
-    // entities read honestly unnamed today.
+    // The extrude's products: morso 3 LANDED — the boundary this
+    // test pinned as "honestly unnamed today" advanced exactly as
+    // its own comment pre-registered. The prism's FACES are named
+    // now (the walk roles: lat(0), cap(lo), cap(hi) — the default
+    // feature 0 on this path) and the seam edge with them; the
+    // walk's OTHER edges and the vertices read honestly empty (the
+    // D4 queue's discipline). The goldens live in morse 3's own
+    // file (test_h2_u6_m3_extrude_names.cpp); this spot-check pins
+    // that the advance is additive — no address moved, the names
+    // arrived beside them.
     const auto prism = b::make_prism(circle_chains(), 3.0f, +1);
-    for (b::FaceId i = 0; i < prism->face_count(); ++i)
-        CHECK(b::query_face(*prism, i).name.empty());
+    REQUIRE(prism->face_count() == 3);
+    CHECK(b::query_face(*prism, 0).name == "ext#0:lat(0)");
+    CHECK(b::query_face(*prism, 1).name == "ext#0:cap(lo)");
+    CHECK(b::query_face(*prism, 2).name == "ext#0:cap(hi)");
+    CHECK(b::query_edge(*prism, 4).name == "ext#0:seam");
+    for (b::EdgeId i = 0; i < 4; ++i)
+        CHECK(b::query_edge(*prism, i).name.empty());
 }
 
 // ===========================================================================
@@ -734,10 +747,12 @@ TEST_CASE("H2-U6-M2 the closure check's naive counterproof: a broken "
     CHECK(why.find("DOUBLE-BOOKS") != std::string::npos);
 
     // A GHOST row: an entity the body does not have — the same
-    // defect read from the other side.
+    // defect read from the other side. (The initializer grew one
+    // field with morse 3's `from` — the additive channel, empty
+    // here: the hand-broken row has no genealogy to lie about.)
     b::DescentTable ghost = good;
     ghost.rows.push_back({b::Descent::Born, b::EntityKind::Face, 99,
-                          {}, "box#1:ghost", ""});
+                          {}, "box#1:ghost", {}, ""});
     CHECK_FALSE(b::descent_closed(*box, ghost, &why));
     CHECK(why.find("ghost") != std::string::npos);
 }

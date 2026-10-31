@@ -24,14 +24,22 @@
 //     reverse direction is the role tables' own frozen bijection
 //     (index -> token), consulted as vocabulary, never as a parser.
 //   * THE GRAMMAR v1, pinned formal (ADR-0036 D1's vocabulary, one
-//     grammar for the SSI table and the boolean):
+//     grammar for the SSI table and the boolean; the group production
+//     is the morse-3 register's first gesture, derived from D1's
+//     multi-chain clause and recorded in the ADR's D1 register):
 //
 //       name      := feature ':' role
 //       feature   := kind '#' <FeatureId decimale>
 //       kind      := 'box' | 'sph' | 'cyl' | 'sk' | 'ext' | 'sub'
-//       role      := token
-//                  | token '(' <arg> ')'            /* indexed  */
-//                  | token '[' operands ']' ('@' level)?
+//       role      := group? token
+//                  | group? token '(' <arg> ')'       /* indexed  */
+//                  | group? token '[' operands ']' ('@' level)?
+//       group     := 'c' <chain group> ':'   /* ONLY multi-chain, and
+//                  only the CHAIN-OWNED roles: D1 — "the chain index
+//                  prefixes the role", the numbering table's own
+//                  multi-chain layout (the outer first — group 0 —
+//                  then each hole in sketch order). The caps are the
+//                  extruded region's, never a chain's: no group. */
 //       operands  := name (' × ' name)*   /* space-×-space, operands
 //                                            in the DECLARED table
 //                                            order, never reordered */
@@ -44,6 +52,30 @@
 //     LETTER: D1's names are the rendering goldens, character for
 //     character — `sub#4:isect[box#1:top × ext#3:lat(0)]@hi` and
 //     its siblings are pinned by the morse's tests, byte for byte.
+//
+//   * THE ROOT REFERENCE (ADR-0036 D4 + the morse-3 register): the
+//     tavola's FROM names the AUTHORED ROOTS — the sketch's chain
+//     entities, addressed by the sketch's own layout (the chain's
+//     authored position, the entity's position in the chain: "the
+//     chain position IS the root name", the buck stops at authored
+//     data). Its render, ONE direction as everywhere:
+//
+//       root      := 'sk' '#' <FeatureId> ':' rootrole
+//       rootrole  := <root position>                     /* the entity:
+//                        its position in its chain, a bare number —
+//                        there is no vocabulary to consult */
+//                  | 'c' <chain> ':' <root position>     /* ONLY when
+//                        the sketch itself is multi-chain — the same
+//                        only-multi-chain elision as the roles; the
+//                        chain is the SKETCH's own position, not the
+//                        extrude's construction group */
+//                  | 'face'                              /* the sketch's
+//                        FACE — the extruded region, the caps' own
+//                        parent: the region is the sketch's single
+//                        output, the caps' genealogy names IT */
+//
+//     render_root is the same pure discipline as render_name: a
+//     function of its arguments, loud on nothing, NEVER parsed.
 //
 //   * THE ROLE TABLES are the factories' construction tables made
 //     NORMATIVE (below): the indices are those the goldens pin —
@@ -64,6 +96,12 @@
 // subtract's tables arrive with their morsi (D6 rungs 2-3) — the
 // renderer and the grammar are general from day one, pinned by the
 // rendering goldens, so those morsi pin tables, not syntax.
+//
+// H2-u6 morso 3 scope (D6.2 — the extrude): the extrude's walk
+// tables are normative HERE (kExtFaceRoles/kExtEdgeRoles), the
+// group production and the root reference are pinned (the register
+// above), and the subtract's tables remain morse 4's — the grammar
+// now covers them all, the tables are what the morsi add.
 #pragma once
 
 #include "CAD_0/geometry/shape_id.hpp"
@@ -104,11 +142,27 @@ const char* kind_token(FeatureKind k) noexcept;
 //   Relational  token[name × name](@level)?    — 1 + the operands'
 //                 declared sub-paths (the genealogy, depth-bounded
 //                 by SubshapeRef::kMaxDepth = 8)
+//
+// The GROUP component (the morse-3 register) rides in FRONT of the
+// form's own consumption, and only under a grouped registry: +1
+// component, rendered 'c<group>:' before the token.
 enum class RoleForm : std::uint8_t {
     Bare,
     ArgIndex,
     ArgWord,
     Relational
+};
+
+// The role's ownership class (the morse-3 register's group rule,
+// ADR-0036 D1's multi-chain clause): a CHAIN-OWNED role's name
+// carries the chain group's prefix when the named body materialized
+// from more than one chain ('c1:lat(0)', 'c1:seam') and spends the
+// path's FIRST component on the group index; a FEATURE-OWNED role
+// never does — the extrude's caps belong to the extruded REGION,
+// not to any one chain, and their paths go straight to the role.
+enum class RoleOwner : std::uint8_t {
+    Feature,  // the operation's own output — no group, ever
+    Chain     // a chain group's product — the group only multi-chain
 };
 
 // One operand slot of a relational role: which operand binding the
@@ -144,6 +198,11 @@ struct RoleEntry {
     // The relational form's operand slots, in DECLARED order — the
     // renderer never reorders (the grammar's own rule).
     std::span<const OperandSlot> slots{};
+
+    // The ownership class (the morse-3 register): chain-owned roles
+    // consume the group component under a grouped registry; the
+    // factories' roles are all feature-owned (the default).
+    RoleOwner owner{RoleOwner::Feature};
 };
 
 // The operand binding: the operand feature's id and its own naming
@@ -159,11 +218,18 @@ struct OperandBinding {
 
 // The registry ONE render consults: the creating operation's kind,
 // the role table for the entity kind being named (faces or edges),
-// and the operand bindings the relational roles read.
+// the operand bindings the relational roles read — and, since the
+// morse-3 register, the INSTANCE's group declaration: true when the
+// named body materialized from more than one chain (the numbering
+// table's own multi-chain layout), in which case every CHAIN-OWNED
+// role's path carries the chain group as its FIRST component and
+// renders 'c<group>:' before its token. Single-chain bodies render
+// the feature form — the prefix exists ONLY multi-chain.
 struct RoleRegistry {
     FeatureKind kind{FeatureKind::Box};
     std::span<const RoleEntry> roles{};
     std::span<const OperandBinding> operands{};
+    bool multi_chain{false};
 };
 
 // The full naming declaration of one operation type: both role
@@ -176,11 +242,31 @@ struct OperationNaming {
     std::span<const RoleEntry> edge_roles{};
     std::span<const OperandBinding> operands{};
 
+    // The FEATURE view (the default since morso 2): the path's first
+    // component is the role index — the single-chain form, and the
+    // feature-owned roles' form in every body.
     constexpr RoleRegistry faces() const noexcept {
         return RoleRegistry{kind, face_roles, operands};
     }
     constexpr RoleRegistry edges() const noexcept {
         return RoleRegistry{kind, edge_roles, operands};
+    }
+
+    // The GROUP views (the morse-3 register): the multi-chain
+    // instance's own — the chain-owned roles' paths carry the chain
+    // group as their FIRST component ('c0:lat(3)', 'c1:seam'). A
+    // feature-owned role under a group view refuses LOUDLY (the
+    // caps belong to the region: render them under faces()); a
+    // chain-owned path under the feature view leaves its group
+    // component unconsumed and refuses the same way — the two views
+    // are disjoint by construction, and the misuses are loud.
+    constexpr RoleRegistry grouped_faces() const noexcept {
+        return RoleRegistry{kind, face_roles, operands,
+                            /*multi_chain=*/true};
+    }
+    constexpr RoleRegistry grouped_edges() const noexcept {
+        return RoleRegistry{kind, edge_roles, operands,
+                            /*multi_chain=*/true};
     }
 };
 
@@ -269,6 +355,108 @@ inline constexpr OperationNaming kSphereNaming{
     FeatureKind::Sphere, kSphereFaceRoles, kSphereEdgeRoles, {}};
 inline constexpr OperationNaming kCylinderNaming{
     FeatureKind::Cylinder, kCylinderFaceRoles, kCylinderEdgeRoles, {}};
+
+// ---------------------------------------------------------------------------
+// THE NORMATIVE EXTRUDE ROLE TABLES — ADR-0036 D1 (morso 3, the walk
+// roles) + the morse-3 register
+// ---------------------------------------------------------------------------
+//
+// NORMATIVE — ADR-0036 D1; the walk orders are frozen by the goldens
+// (extrude.hpp:73-93's numbering tables, the unit-3 pins). These
+// tables ARE those walk tables with the vocabulary added: the index
+// is the ROW of the role table the path consults, the token the
+// ADR's own word for the walk's product. THE VALUES DO NOT MOVE:
+// the walk indices the goldens pin are untouched — the names ride
+// BESIDE them, stamped in the pass that builds.
+
+// make_prism — FACES (D1: "lat(i) for chain entity i's lateral,
+// cap(lo)/cap(hi), the circle special case's single lat(0) wall"):
+// the laterals are the CHAIN ENTITIES' own walls (chain-owned: the
+// multi-chain group prefixes them, 'c0:lat(i)'); the caps are the
+// extruded REGION's two planar lids (feature-owned: no group, in
+// any body — the caps' FROM is the sketch's face, not a chain).
+inline constexpr RoleEntry kExtFaceRoles[3] = {
+    {"lat", RoleForm::ArgIndex, nullptr, nullptr, {},
+     RoleOwner::Chain},
+    {"cap", RoleForm::ArgWord, "lo", nullptr, {}, RoleOwner::Feature},
+    {"cap", RoleForm::ArgWord, "hi", nullptr, {}, RoleOwner::Feature},
+};
+
+// make_prism — EDGES: the seam-wired vertical, ADR-0023 §1's own
+// e_seam convention (the solid circle's wall and every hole's wall
+// are seam-wired — "the pair seam-wired is the materialized form,
+// the name is one"): born of the chain's entity, chain-owned with
+// the rest ('c1:seam' multi-chain). The walk's OTHER edges — the
+// contour's bottom/top curves and verticals, the solid circle's rim
+// halves, the holes' closed rims — are OUTSIDE D1's v1 extrude
+// vocabulary: they read honestly EMPTY, never a guess (the same
+// queue discipline as the vertex names, D4; the extension is a
+// table row away when a consumer arrives).
+inline constexpr RoleEntry kExtEdgeRoles[1] = {
+    {"seam", RoleForm::Bare, nullptr, nullptr, {}, RoleOwner::Chain},
+};
+
+// The extrude's naming declaration — the sketch operand's roots are
+// named by the ROOT REFERENCE below (the tavola's FROM), not by an
+// operand binding: the roots are authored data, and D4's buck stops
+// there; the subtract's relational roles (the operand-binding
+// machinery's first consumer) arrive with their own morso.
+inline constexpr OperationNaming kExtNaming{
+    FeatureKind::Extrude, kExtFaceRoles, kExtEdgeRoles, {}};
+
+// The extrude's own role-table indices, named for the construction
+// sites (D1: the path's components ARE these indices — the sites
+// push them beside the walk indices they already hold).
+inline constexpr std::uint32_t kExtLatRole = 0;    // faces: lat(i)
+inline constexpr std::uint32_t kExtCapLoRole = 1;  // faces: cap(lo)
+inline constexpr std::uint32_t kExtCapHiRole = 2;  // faces: cap(hi)
+inline constexpr std::uint32_t kExtSeamRole = 0;   // edges: seam
+
+// ---------------------------------------------------------------------------
+// THE ROOT REFERENCE — the authored roots the tavola's FROM names
+// (ADR-0036 D4 + the morse-3 register)
+// ---------------------------------------------------------------------------
+
+// What a FROM points at (D4: the buck stops at authored data):
+// a sketch CHAIN ENTITY — the root — or the sketch's FACE, the
+// extruded region (the caps' own parent; the region is the sketch's
+// single output, and the caps' genealogy names it, not the chains
+// that bound it).
+enum class RootKind : std::uint8_t {
+    Entity,  // a sketch chain entity (the authored root)
+    Face     // the sketch's face — the extruded region
+};
+
+// One authored-root reference: the sketch's own feature, the kind,
+// and — for the entity roots — the SKETCH's own address (the
+// chain's authored position, the entity's position in the chain:
+// "the chain position IS the root name", and an add-at-end edit
+// shifts NOTHING). The extrude's construction GROUP (the outer
+// first) is a different index that happens to coincide when the
+// outer is the sketch's chain 0 — the root always speaks the
+// sketch's own layout, the authored data's own order.
+struct RootRef {
+    geometry::FeatureId feature{};
+    RootKind kind{RootKind::Entity};
+    std::uint32_t chain{0};
+    std::uint32_t entity{0};
+
+    // Structural equality (the house pattern, defaulted): two
+    // references are the same root iff they point at the same
+    // authored thing — never the render's string.
+    constexpr bool operator==(const RootRef&) const noexcept = default;
+};
+
+// render_root — the root reference's canonical render, ONE direction
+// (the grammar block above): 'sk#2:0' (the single-chain sketch's
+// entity 0), 'sk#2:c1:0' (the multi-chain sketch's chain 1, entity
+// 0 — the chain component ONLY when the sketch itself is
+// multi-chain), 'sk#2:face' (the region). `sketch_multi_chain` is
+// the SKETCH's own chain count's verdict (chains.size() > 1) — the
+// caller holds the sketch; the reference itself is pure structure,
+// never state. Strings and integers only (ADR-0014 trivially
+// honored); never parsed, never compared as a string.
+std::string render_root(const RootRef& root, bool sketch_multi_chain);
 
 // ---------------------------------------------------------------------------
 // THE CANONICAL RENDER — structure -> string, ONE direction

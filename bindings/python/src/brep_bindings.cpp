@@ -45,6 +45,16 @@
 //     beside the address (the fillet's references are edge-granular
 //     — D4's first consumer). The same loud-miss culture as the
 //     face's.
+//   * CAD_0.brep.make_prism(chains, distance, direction, feature=0)
+//     — the exact extrude (H2-u6 morso 3): the sketch chains become
+//     the prism body, carrying the WALK-ROLE NAMES from the same
+//     pass that builds (ADR-0036 D1: lat(i)/cap(lo)/cap(hi)/seam,
+//     the multi-chain group prefix 'c<g>:' on the chain-owned
+//     roles). The chains are CAD_0.scene's own SketchChain values
+//     (sketch_circle/sketch_segment/sketch_arc + SketchChain) — the
+//     recipe doctrine's typed payloads, untranslated; the refusals
+//     (the certificate's, the exact-class boundary's) cross as
+//     ValueError carrying the C++ diagnosis + remedy verbatim.
 //
 // BRepBody arrives as the OPAQUE handle the bridge submodule already
 // registers (one registration per module — the factories' bodies and
@@ -69,10 +79,12 @@
 // radius, hole}, arc {center, radius, hole, start_angle, sweep} —
 // the same numbers the sketcher would read, untranslated (D2.1).
 // The name/shape_id pair (ADR-0036 D1): the string is the CANONICAL
-// RENDER of the structure ("box#1:top") — empty when honestly
-// unnamed (the v1 named classes are the three factories: box, sph,
-// cyl); the shape_id dict is the STRUCTURE the kernel compares
-// (never the string — the kernel does not parse names).
+// RENDER of the structure ("box#1:top", "ext#3:lat(0)") — empty
+// when honestly unnamed (the v1 named classes: the three factories
+// — box, sph, cyl — since morse 2, and the extrude's faces and
+// seam edges since morse 3); the shape_id dict is the STRUCTURE the
+// kernel compares (never the string — the kernel does not parse
+// names).
 //
 // Errors: a face id that does not exist crosses as a ValueError
 // carrying the C++ message's diagnosis + remedy verbatim (the
@@ -81,12 +93,16 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/make_iterator.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/unique_ptr.h>
+#include <nanobind/stl/vector.h>
 
 #include "CAD_0/brep/topology.hpp"
 #include "CAD_0/brep/query.hpp"
 #include "CAD_0/brep/mass_properties.hpp"
 #include "CAD_0/brep/ssi.hpp"
 #include "CAD_0/brep/subtract.hpp"
+#include "CAD_0/brep/extrude.hpp"
+#include "CAD_0/sdf/sketch_profile.hpp"
 
 namespace nb = nanobind;
 using CAD_0::brep::BRepBody;
@@ -419,6 +435,42 @@ void bind_brep(nb::module_& m) {
         "unnamed (the fillet references edges: D4's first consumer\n"
         "is edge-granular). Raises ValueError for an edge id the\n"
         "body does not carry (diagnosis + remedy verbatim).");
+
+    // THE EXACT EXTRUDE (H2-u6 morso 3, ADR-0032 D6 + ADR-0036 D1):
+    // the sketch chains become the prism body, and the names are
+    // stamped in the pass that builds — the walk roles lat(i) /
+    // cap(lo) / cap(hi) / seam, the multi-chain group prefix 'c<g>:'
+    // on the chain-owned roles (the numbering table's own layout:
+    // the outer first — group 0 — then each hole in sketch order).
+    // The `feature` argument is the DAG node's FeatureId (the
+    // factories' own parameter, defaulted to 0: the standalone
+    // caller reads ext#0 — the token is the pin, the id is the
+    // caller's to supply).
+    brep_mod.def(
+        "make_prism",
+        [](const std::vector<CAD_0::sdf::SketchChain>& chains,
+           double distance,
+           int direction, std::uint64_t feature) {
+            return CAD_0::brep::make_prism(
+                chains, distance, direction,
+                CAD_0::geometry::FeatureId{feature});
+        },
+        nb::arg("chains"), nb::arg("distance"), nb::arg("direction"),
+        nb::arg("feature") = 0,
+        "The exact extrude (ADR-0032 D6): the sketch profile chain\n"
+        "becomes the prism BREP with true faces — the lateral faces\n"
+        "from the entities, the caps' outer loops the chains\n"
+        "themselves, the seam-wired circle walls per ADR-0023. Every\n"
+        "face and the seam edge carry the WALK-ROLE NAME beside the\n"
+        "address (ADR-0036 D1, morse 3): 'ext#F:lat(i)' for chain\n"
+        "entity i's lateral, 'ext#F:cap(lo)' / 'ext#F:cap(hi)' for\n"
+        "the region's two lids, 'ext#F:seam' for the seam-wired\n"
+        "vertical — the multi-chain bodies prefix the chain group on\n"
+        "the chain-owned roles ('ext#F:c0:lat(i)', 'ext#F:c1:seam'),\n"
+        "the caps never (the region's own). The walk's other edges\n"
+        "read honestly unnamed. Raises ValueError for every refusal\n"
+        "the C++ kernel makes (the certificate's, the exact-class\n"
+        "boundary's — diagnosis + remedy verbatim).");
 
     // The mass properties (G1 unit 5, ADR-0032 D4): the divergence
     // theorem over the exact faces — the numbers as plain values, the

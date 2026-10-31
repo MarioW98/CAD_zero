@@ -118,9 +118,10 @@ struct FaceInfo {
     // The NAME (ADR-0036 D1, H2-u6 morso 2): the entity's identity
     // beside its address — the ShapeId (structure) and the canonical
     // render. The default id and the EMPTY name are the honest
-    // "unnamed" answer (the v1 named classes are the three
-    // factories; the faceted world, the booleans' born entities and
-    // the classes outside v1's tables read empty, never a guess).
+    // "unnamed" answer (the v1 named classes: the three factories
+    // — morse 2 — and the extrude's faces and seam edges — morse 3;
+    // the faceted world, the booleans' born entities and the
+    // classes outside v1's tables read empty, never a guess).
     geometry::ShapeId id{};
     std::string name{};
 };
@@ -146,7 +147,9 @@ std::vector<FaceInfo> query_all_faces(const BRepBody& body);
 // One edge's answer, in full: the endpoints (the Edge's own pair),
 // the manifoldness (exactly two co-edges, the radial contract), the
 // Layer-2 record — and the NAME, with the same honest-empty rule as
-// FaceInfo's (unnamed is unnamed, never a guess).
+// FaceInfo's (unnamed is unnamed, never a guess; the extrude's seam
+// edges are named since morse 3 — the walk's other edges still
+// read empty, the vocabulary's own boundary).
 struct EdgeInfo {
     VertexId v0{0};
     VertexId v1{0};

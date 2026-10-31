@@ -105,7 +105,8 @@ def face_table_text(brep_body: Any) -> str:
 
     One row per face, in address order: the address, the name (the
     canonical render — "- " when honestly unnamed: the v1 named
-    classes are the three factories), the surface family, the loop
+    classes are the three factories — morse 2 — and the extrude's
+    faces and seam edges — morse 3), the surface family, the loop
     counts, and the Layer-2 provenance. Every value is
     ``CAD_0.brep.face_query``'s own answer, verbatim — pure string
     building beside ``body_report_text``, which does not move (the

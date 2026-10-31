@@ -249,6 +249,57 @@ user deserves the which. **No ABI change; the promise is redeemed
 by giving the existing fields the semantics they were promised
 with.**
 
+**The morse-3 register (2026-10-31, the extrude's landing — the
+gestures the implementation derived and D1 did not yet pin,
+recorded per D6's protocol in the same act as the code; each
+cites the clause it derives from, and none is a silent
+extension):**
+
+1. **The group production** (from D1's multi-chain clause, "the
+   chain index prefixes the role"): the grammar's role gains the
+   optional group prefix — `role := group? token...`,
+   `group := 'c' <chain group> ':'` — and the group renders ONLY
+   multi-chain (a single-chain body goes straight to the role,
+   the same elision the clause's own example practices: the
+   prefix exists exactly when the numbering table's multi-chain
+   layout applies). The chain group IS the numbering table's own
+   multi-chain layout (extrude.hpp: the outer chain first —
+   group 0 — then each hole chain in sketch order): the layout's
+   own index, not a new invention.
+2. **The parametric path encoding** (from D1's "the path's
+   components are indices into the role tables"): the extrude's
+   `lat(i)` — the repository's first PARAMETRIC entity — encodes
+   as `[<group>?, lat's table index, i]`, the group, when
+   present, the path's FIRST component. The caps encode
+   `[cap's table index]` — feature-owned, no group: the caps are
+   the extruded region's, never a chain's (the tavola's own FROM
+   derivation, D2). The seam encodes `[<group>?, seam's table
+   index]`. **The maximum depth v1 of the extrusion case is 3**
+   (the multi-chain lateral) — `kMaxDepth = 8` covers it, and the
+   guide case's subtract-names (depth 4) remain v1's deepest.
+3. **The root reference's render** (from D4: "the chain position
+   IS the root name" — the buck stops at authored data): the
+   tavola's FROM renders an authored root as `sk#F:<i>`, the
+   entity's position in its chain, with the chain component
+   `c<c>:` prefixed only when the sketch itself is multi-chain
+   (the same only-multi-chain elision; the chain is the SKETCH's
+   own authored position, distinct from the extrude's
+   construction group whenever the outer chain is not the
+   sketch's chain 0). The sketch's FACE — the extruded region,
+   the caps' parent — renders `sk#F:face`: the region is the
+   sketch's own single output, and the caps' genealogy names IT,
+   not the chains that bound it.
+4. **The queue item the landing surfaces, registered for rung 3**
+   (the subtract's morso): a relational role's OPERAND view
+   renders the feature form today — the operand binding carries
+   the operation TYPE's tables, not the instance's group flag —
+   so a multi-chain tool inside a subtract's relational name
+   (`isect[... × ext#F:c0:lat(0)]`) needs the operand binding to
+   carry the instance's multi-chain declaration. The guide case's
+   tool is single-chain and needs none of it; the first real case
+   arrives with the subtract's own tables, and the extension
+   lands there, priced by its consumer.
+
 ### D2. The record of descent — the tavola, its relations, its cost
 
 **Every operation, beside the body, emits the descent table:**
