@@ -2,13 +2,15 @@
 
 ## Status
 
-**Accepted (2026-10-31) — the maintainer's review closed the same
-day the draft shipped** (the ADR-0033 precedent: the reserved
+**Implemented (H2-u6 complete, 2026-11-01).** Accepted 2026-10-31 —
+the maintainer's review closed the same
+day the draft shipped (the ADR-0033 precedent: the reserved
 decision taken and recorded in the act, the review's amendment
 riding the acceptance, the register surgery applied in the same
 commit). The semantics stand as derived; the implementation ladder
-(D6) starts with this act — morso 2, the roots, is green-lit as
-the companion feat commit of this acceptance.
+(D6) started with that act — morso 2, the roots, was green-lit as
+the companion feat commit of the acceptance — and CLOSED with
+morso 6, this act.
 
 **The review's record, registered here:**
 
@@ -29,8 +31,8 @@ the companion feat commit of this acceptance.
    resolution classes, and a silent positional match on shifted
    roots is the defect the rule exists to make impossible. The
    operational decision (where the map is emitted, what the refusal
-   carries) belongs to the resolver's morso (D6 rung 4); what this
-   act pins is the RULE and the BOUNDARY.
+   carries) landed with the resolver's morso (D6 rung 4); what the
+   acceptance act pinned was the RULE and the BOUNDARY.
 3. **The register surgery D6 declares is applied in the same act**:
    ADR-0005 is amended in place (the `SubshapeRef` semantics —
    indices into the declared role tables; the Phase-A consequence
@@ -40,8 +42,53 @@ the companion feat commit of this acceptance.
    reason D6 derives (identity is not arithmetic honesty); ADR-0007/
    0027 stay untouched (the v0.5.0 delta is the fillet unit's).
 
-No code moves in this commit (the ADR-0035 D6 protocol): the roots
-are the companion feat commit of this act.
+THE CLOSING NOTE (2026-11-01, morso 6 — the register of the exit):
+
+**The ladder D6 is complete, every rung standalone with the full
+suite green.** Morso 2 (the roots — the factories' tables normative,
+the names beside the addresses); morso 3 (the extrude — the walk
+roles, the born-of genealogy, the digest on the extruded bodies);
+morso 4 (the subtract — the full 47-row tavola, the isect names, the
+report column); morso 5 (the resolver — the four classes through
+mutation, the two query surfaces); morso 6 (the D5 quartet — this
+act, the morse-6 register in D5 riding its companion feat commit).
+The runs, cited as they happened: at every landing the full local
+suite on BOTH compilers (gcc and clang, `-Werror`, ASan/UBSan on the
+debug column, all the golden round-trips) and the CI green on every
+push; the quartet's own landing adds 5 C++ cases and 2 Python ones
+(772 doctest over the 767 baseline, 205 pytest over the 203), ZERO
+existing golden moved — the m4 pins re-asserted verbatim in the
+quartet's own file, the address plan untouched, every count, table
+and byte where it was.
+
+**The quartet, its four verdicts.** (1) THE REGENERATION — the
+whole chain's name digest pinned, the CO-EDGE leg landed (D5.1's
+own words), N=10 rebuilds byte-identical, the pinned FNV constants
+the cross-compiler proof. (2) THE TWO TOPOLOGICAL EDITS — class 3
+(`lat(0)` E `lat(1)` nominated, the remedy with them, never a coin
+flip) and class 4 (the dead rim named, the cause and the remedy —
+never a mute "not found"), both new tavole COHERENT (both closure
+sides green, before and after the edit). (3) THE
+TOPOLOGY-PRESERVING EDIT — class 1 SILENT, the silence itself
+asserted, and THE PAIR WITH THE OUT-OF-CLASS RUN IS THE GOLDEN: the
+same reference, the same feature, two edits, two verdicts. (4) THE
+NAIVE COUNTERPROOF — RED ON THE ADDRESS demonstrated (the rim's
+materialized arcs moved 14/15 → 17/18, and the entity that today
+answers to the id 14 is the pentagon's LAST VERTICAL edge, unnamed:
+the silent mis-reference CAPTURED, asserted, never narrated), GREEN
+ON THE NAME demonstrated (class 1, the feature re-runs on the new
+geometry without reselection) — the pair visible in the same test,
+from Python, through the scene, dal vivo.
+
+**The exit criterion (D6.5) is SATISFIED, and this register says
+so**: the naive demonstrated failing exactly where the name holds —
+the discrimination the unit was built to prove, the proof that the
+naming is new, not repainted. **The fillet's promise is redeemed**:
+the contract this ADR derived while there was no consumer yet to
+bend it ("Why before the fillet") now stands proven at its own exit
+— and the G2 fillet unit inherits its reference contract read-made:
+the rim's name is pinned, its grammar is the SSI table's own, and
+its failure modes are already in the error taxonomy.
 
 Daughter of **ADR-0005** (the persistent-naming promise this ADR
 redeems — the ABI shipped in Phase A and never once populated),
@@ -739,6 +786,46 @@ the test that fails on the naive version, agreed before the code.
 - **Determinism from the first landing**: the name digest is
   bit-identical from its first pin — there is no migration, no
   re-pin, because there is no prior name state to move.
+
+**The morse-6 register (2026-11-01, the quartet's landing — the
+gestures the implementation derived and D5/D6 did not yet pin,
+recorded per D6's protocol in the same act as the code; each cites
+the clause it derives from, and none is a silent extension):**
+
+1. **The pentagon edit's honest shape** (from D5.4's "the square
+   sketch becomes a PENTAGON (one chain entity appended — an
+   add-at-end root edit)"): a CLOSED chain cannot gain an entity by
+   a BARE append — the last segment already returns to the start,
+   and the certificate refuses the degenerate closer. The canvas's
+   real add-at-end flow is the closing segment REDIRECTED to the new
+   vertex (a parameter edit on the LAST pre-existing root) plus ONE
+   segment appended (the new root born): no root moved (0..3 keep
+   their positions), root 4 born — D4's covered family exactly as
+   pinned, the no-shift declaration the edit path emits; the
+   scenario's own construction derives the shape D5.4 sketched.
+2. **The co-edge leg of D5.1's digest** (from D5.1's "each
+   co-edge's record gains its edge's name"): the morsi 3-4 carried
+   the face and the edge legs; the CO-EDGE leg lands with the
+   quartet — every co-edge's record carrying its edge's name, the
+   wall's single loop carrying the seam TWICE in it (the periodic
+   identification's own signature, ADR-0023), and the pierced
+   faces' inner loops carrying the born rim's ONE name on BOTH
+   halves. A NEW oracle, bit-identical from its first pinning (the
+   golden declaration's own discipline: no prior state to move).
+3. **The counterproof's sharpest edge** (from D5.4's "the entity
+   that today answers to id 14 is the pentagon's last vertical
+   edge"): that entity is not merely WRONG — it is UNNAMED, an
+   honest empty (the prism's verticals are outside D1's v1 extrude
+   vocabulary), a depth-zero identity where the reference's own
+   path is depth 4. The mis-reference is captured three ways at
+   once: structurally (a different ShapeId), by name (empty where
+   the rim carries the fillet's own string), and geometrically (the
+   vertical at the closing joint, its endpoints pinned) — while the
+   NAME answers to the living rim at its new addresses (17/18, was
+   14/15). The premise D5.4 rides on is verified with it: the prism
+   target is the box's own class (the same 12/17/7/2 — the subtract
+   treats it identically), the premise the whole counterproof
+   stands on.
 
 ### D6. The consequences — format, register, and the order of the morsi
 
