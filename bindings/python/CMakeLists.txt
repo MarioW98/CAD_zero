@@ -89,8 +89,21 @@ target_include_directories(_CAD_0 PRIVATE
     ${Python3_INCLUDE_DIRS}
 )
 
-# Install the compiled extension next to the CAD_0/ Python package.
-install(TARGETS _CAD_0 LIBRARY DESTINATION CAD_0)
+# The wheel's content: what CMake installs (scikit-build-core maps the
+# install tree onto the wheel). The staged package in
+# ${CMAKE_BINARY_DIR}/python/CAD_0 is the single source of truth for
+# what the CAD_0 package IS — the bindings' Python surface (io, sdf,
+# report, viewer, cli), the app UI, the assembled __init__.py and the
+# compiled extension (the copy target above depends on _CAD_0, so the
+# .so is in place before install runs).
+#
+# Consegna B m2 (2026-11-01): until here the wheel content was
+# declared a second time in pyproject (wheel.packages, two source
+# dirs for one package) — a merge the current scikit-build-core
+# (1.x) no longer performs, which shipped a wheel without the
+# Python surface (no io/sdf/report/viewer/cli). One truth, assembled
+# once: this install rule IS the wheel manifest.
+install(DIRECTORY ${CMAKE_BINARY_DIR}/python/CAD_0 DESTINATION .)
 
 # Copy the Python package source into the build tree for editable installs.
 # 1. Copy the bindings/python/CAD_0/ package (kernel API: sdf, io, viewer, etc.)
