@@ -116,6 +116,64 @@ target_compile_definitions(CAD_0_tests PRIVATE
 # requires the doctest CMake module which isn't always available via CPM.
 add_test(NAME CAD_0_tests COMMAND CAD_0_tests)
 
+# The Python bindings suite as a ctest member (Consegna B m1, 2026-11-01).
+#
+# The bindings — nanobind, the memory bridges — are the most exposed
+# surface of the library and were the least protected: the H1
+# correction report had declared the gap (the binding tests ran
+# WITHOUT AddressSanitizer while the same C++ paths were instrumented
+# through the suite above). This target closes it: the suite that ran
+# as a bare workflow step now runs inside ctest, in EVERY job of the
+# CI matrix, and in the instrumented build (linux-gcc-debug,
+# CAD_0_SANITIZE=ON) the launcher preloads the matching libasan so
+# the module imports UNDER the sanitizer — the same instrumented
+# build the C++ suite consumes, consumed by the Python layer too.
+#
+# The launcher (scripts/run_python_bindings_suite.py) owns the whole
+# environment (PYTHONPATH, the ASan preload, detect_leaks=0) and
+# verifies the instrumentation against the module itself — a config
+# that promises ASan and a module that lacks it fails the run.
+#
+# Linux-only registration: the workflow's columns are Linux; the
+# Windows column is a registered unit, not a testimony (see
+# docs/audits/2026-11-01-ci-runner-asan-and-attestations.md).
+if(CAD_0_BUILD_PYTHON AND UNIX AND NOT CMAKE_CROSSCOMPILING)
+    # Configure-time half of the ASan contract: when this build is
+    # instrumented with GNU (GCC links libasan dynamically), resolve
+    # the runtime now and hand it to the launcher. A configure that
+    # cannot produce the preload path fails HERE, not as a flaky
+    # runtime surprise.
+    set(CAD_0_BINDINGS_ASAN_RUNTIME "")
+    if(CAD_0_SANITIZE AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        execute_process(
+            COMMAND ${CMAKE_CXX_COMPILER} -print-file-name=libasan.so
+            OUTPUT_VARIABLE CAD_0_BINDINGS_LIBASAN
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+        if(NOT IS_ABSOLUTE "${CAD_0_BINDINGS_LIBASAN}")
+            message(FATAL_ERROR
+                "CAD_0_SANITIZE=ON with GNU but "
+                "'${CMAKE_CXX_COMPILER} -print-file-name=libasan.so' "
+                "returned '${CAD_0_BINDINGS_LIBASAN}' — the ASan runtime "
+                "is not resolvable, and the bindings suite runs under the "
+                "sanitizer or the configuration fails (install the GCC "
+                "ASan runtime, e.g. libasan8; the gap is not closed by "
+                "skipping the target).")
+        endif()
+        set(CAD_0_BINDINGS_ASAN_RUNTIME "${CAD_0_BINDINGS_LIBASAN}")
+    endif()
+    add_test(
+        NAME CAD_0_python_bindings
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_SOURCE_DIR}/scripts/run_python_bindings_suite.py
+            --python-dir ${CMAKE_BINARY_DIR}/python
+            --tests-dir ${CMAKE_SOURCE_DIR}/bindings/python/tests
+            --asan-runtime "${CAD_0_BINDINGS_ASAN_RUNTIME}"
+            --asan-compiler ${CMAKE_CXX_COMPILER}
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    )
+endif()
+
 # FASE C: the kernel test suite compiles every kernel header, so it gets
 # -Werror exactly like the kernel targets themselves (see
 # core/CMakeLists.txt for the full scope rationale). GNU/Clang only.

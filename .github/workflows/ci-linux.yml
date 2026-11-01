@@ -11,7 +11,7 @@ jobs:
   # pushato / del PR: la storia pre-lint non si tocca. Skip dei merge
   # (subject generato da git/GitHub, non scelto dall'autore).
   subject-lint:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,15 +35,44 @@ jobs:
           fi
           python3 scripts/check_commit_subject.py "$RANGE"
 
+  # Python 3.10 syntax floor (Consegna B m1). The 22.04 runner's system
+  # Python WAS this gate: every test module was imported by a real 3.10
+  # interpreter before it ever ran. The 24.04 image ships Python 3.12,
+  # so the floor gets its own job instead of riding the runner's
+  # default — a gate that silently disappears is a lie of omission.
+  # Byte-compilation parses EVERY .py under the 3.10 grammar: this is
+  # the same protection the old runner gave (syntax-level), kept
+  # explicit. The runtime-level 3.10 gate (tests executing on 3.10)
+  # retired with 22.04 and is registered in
+  # docs/audits/2026-11-01-ci-runner-asan-and-attestations.md.
+  python-3-10-floor:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Byte-compile the tree under the 3.10 grammar
+        run: |
+          python --version
+          python -m compileall -q app bindings examples scripts tests
+
   build-and-test:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       # fail-fast: false — one red job must NOT cancel the others:
       # the matrix IS the diagnosis tool (a preset-only failure points
       # at that compiler immediately). See the Toolchain contract in
-      # docs/audits/2026-10-13-warning-audit.md.
+      # docs/audits/2026-10-13-warning-audit.md (2026-11-01 update:
+      # ubuntu-24.04, gcc 14 + clang 19 columns).
       fail-fast: false
       matrix:
+        # The two toolchain columns, pinned by the presets themselves
+        # (CMakePresets.json): gcc 14 (debug+ASan/UBSan, release) and
+        # clang 19 — the same series as the local rite. The CI is
+        # never OLDER than the rite, only ever the other way around.
         preset: [linux-gcc-debug, linux-gcc-release, linux-clang]
 
     steps:
@@ -54,18 +83,34 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build cmake g++ clang python3 python3-pip python3-venv \
+          # The toolchain columns, explicit: the 24.04 image ships
+          # g++-14 but its default clang is 18 — clang 19 comes from
+          # noble-updates (the image does not preinstall it). The
+          # presets pin g++-14 / clang++-19, so both must be present.
+          sudo apt-get install -y ninja-build cmake g++-14 clang-19 \
+            python3 python3-pip python3-venv \
             xvfb libegl1 libgl1-mesa-dri libglx-mesa0
 
-      # Toolchain contract (docs/audits/2026-10-13-warning-audit.md):
-      # print the ACTUAL compilers of this runner in every job — the
-      # warning audit and every -Werror change must be reproduced with
-      # these (ubuntu-22.04 default: g++ 11.4 / clang 14) BEFORE push,
-      # locally via the linux-gcc11-ci preset.
+      # Python test deps BEFORE ctest: the Python bindings suite is a
+      # ctest member (CAD_0_python_bindings) in every job of this
+      # matrix — the pip layer must exist when ctest runs. The old
+      # bare "Python bindings tests" step is gone: its two commands
+      # live inside the ctest target now, under the same preset that
+      # builds the module, and in the ASan build they run WITH the
+      # sanitizer preloaded (the gap the H1 report had declared).
+      - name: Python test dependencies
+        run: |
+          python3 -m pip install --user numpy pytest PySide6 PyOpenGL
+
+      # Toolchain contract (docs/audits/2026-10-13-warning-audit.md,
+      # 2026-11-01 update): print the ACTUAL column compilers in every
+      # job — ubuntu-24.04: g++-14 14.2 / clang++-19 19.1. Every
+      # -Werror change and every warning hunt must be reproduced with
+      # these before push, locally via the same pinned presets.
       - name: Compiler versions
         run: |
-          g++ --version
-          clang++ --version
+          g++-14 --version
+          clang++-19 --version
 
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
@@ -73,25 +118,11 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
 
+      # CAD_0_tests (C++ doctest suite, -Werror) + CAD_0_python_bindings
+      # (the bindings suite — plain in release/clang, UNDER ASan in the
+      # debug column via the preloaded libasan).
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
-
-      # Bug 3 regression guard + native-format round-trip tests.
-      # Needs only numpy + pytest — UI-import checks skip gracefully
-      # without PySide6.
-      # linux-gcc-debug links ASan into the extension module
-      # (CAD_0_SANITIZE=ON): a plain `python3` cannot import it
-      # ("ASan runtime does not come first in initial library list")
-      # and preloading libasan is fragile. ASan coverage for the same
-      # C++ code paths is provided by the ctest doctest suite above.
-      - name: Python bindings tests
-        if: matrix.preset != 'linux-gcc-debug'
-        run: |
-          python3 -m pip install --user numpy pytest PySide6 PyOpenGL
-          PYTHONPATH=build/${{ matrix.preset }}/python \
-            python3 bindings/python/tests/test_bug_fixes.py
-          PYTHONPATH=build/${{ matrix.preset }}/python \
-            python3 -m pytest bindings/python/tests -q
 
       # UI smoke tests (BUG 1 invisible menubar + BUG 2 dead viewport
       # navigation + maximized startup): the camera-steering assertions
@@ -100,9 +131,9 @@ jobs:
       # run happens under Xvfb exactly like the Codespaces app (see
       # CODESPACES.md). The startup test shows a real window (in its own
       # subprocess, exiting via os._exit before Qt/GL teardown).
-      # Fresh pytest process on purpose: the combined run above reuses a
-      # QApplication created on the "minimal" platform, which has no GL
-      # and would make these tests skip.
+      # Fresh pytest process on purpose. These two GL-bound files are
+      # the ones the ctest bindings target ignores (a display is their
+      # prerequisite, not a sanitizer).
       - name: UI smoke tests (GL)
         if: matrix.preset != 'linux-gcc-debug'
         run: |

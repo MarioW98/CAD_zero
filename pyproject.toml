@@ -16,8 +16,11 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Intended Audience :: Manufacturing",
     "License :: OSI Approved :: Apache Software License",
+    # Linux only: the CI matrix (ci-linux.yml) testifies Linux; Windows
+    # is a registered unit, not a tested platform — no classifier may
+    # claim what the CI does not testify (see
+    # docs/audits/2026-11-01-ci-runner-asan-and-attestations.md).
     "Operating System :: POSIX :: Linux",
-    "Operating System :: Microsoft :: Windows",
     "Programming Language :: C++",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",

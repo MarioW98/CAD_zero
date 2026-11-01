@@ -17,6 +17,14 @@ sudo apt install build-essential cmake ninja-build python3 python3-dev python3-p
 
 ### Windows
 
+> **Stato (2026-11-01): registrato, non CI-testato.** Le istruzioni
+> che seguono non sono mai state verificate da nessuna colonna CI — la
+> CI giudica su Linux (gcc 14 e clang 19). Il port Windows è un'unità
+> registrata col suo prezzo visto:
+> [docs/audits/2026-11-01-ci-runner-asan-and-attestations.md](docs/audits/2026-11-01-ci-runner-asan-and-attestations.md)
+> — la si apre quando un caso reale lo chiede. Il preset `windows-msvc`
+> in CMakePresets.json ne è il punto d'ingresso.
+
 - **Visual Studio 2022** (con workload "Desktop development with C++")
 - **Python 3.10+** da https://python.org (spunta "Add to PATH")
 - **CMake** da https://cmake.org/download/ o `pip install cmake`
@@ -76,13 +84,18 @@ Nessuna dipendenza dinamica da librerie CAD_0 o di terze parti.
 ### Test
 
 ```bash
-./build/bin/CAD_0_tests           # 165 test, devono passare tutti
+./build/bin/CAD_0_tests           # tutta la suite deve passare (772 casi
+                                   # doctest + i test Python nel target
+                                   # ctest CAD_0_python_bindings)
 ./build/bin/example_sphere_to_stl # Genera STL/OBJ/3MF
 ```
 
 ---
 
 ## 3. Build C++ headless (Windows)
+
+> **Stato: registrato, non CI-testato** — v. la nota nella sezione 1.
+> Questa sezione è il materiale di partenza dell'unità registrata.
 
 ### Con Visual Studio (MSVC)
 
@@ -176,6 +189,8 @@ print('OK')
 ---
 
 ## 5. Build con Python bindings (Windows)
+
+> **Stato: registrato, non CI-testato** — v. la nota nella sezione 1.
 
 ```powershell
 cd CAD_0
@@ -432,8 +447,14 @@ Oppure static-link il runtime (vedi sezione 3, "Note Windows").
 
 ## 10. CI/CD (GitHub Actions)
 
-Il progetto include un workflow CI in `.github/workflows/ci-linux.yml`.
-Per build su Windows, aggiungi un file `.github/workflows/ci-windows.yml`:
+Il progetto include un workflow CI in `.github/workflows/ci-linux.yml`
+(runner ubuntu-24.04, colonne gcc 14 e clang 19 pinne nei preset, il
+target ctest dei binding Python sotto ASan nella colonna debug — la
+derivazione in
+[docs/audits/2026-11-01-ci-runner-asan-and-attestations.md](docs/audits/2026-11-01-ci-runner-asan-and-attestations.md)).
+
+Per build su Windows, la FORMA del workflow dell'unità registrata
+(stato: registrata, non CI-testata — v. la sezione 1) sarebbe:
 
 ```yaml
 name: ci-windows

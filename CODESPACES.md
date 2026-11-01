@@ -135,27 +135,26 @@ test shows one only inside a subprocess that exits through
 
 ## Toolchain note (CI parity)
 
-The Codespace's default `g++` on ubuntu-22.04 is **11.4 — the same
-compiler the CI matrix uses**. To reproduce a CI-side GCC build
-locally (e.g. before pushing a `-Werror`-sensitive change), build the
-`linux-gcc11-ci` preset (a `linux-gcc-release` clone with
-`g++-11`/`gcc-11` pinned):
+The CI matrix (Consegna B m1, 2026-11-01) runs on ubuntu-24.04 with
+**gcc 14 and clang 19** — pinned in the presets themselves, so a preset
+build IS the CI toolchain:
 
 ```bash
-sudo apt-get install -y g++-11
-cmake --preset linux-gcc11-ci && cmake --build --preset linux-gcc11-ci -- -j2
-ctest --preset linux-gcc11-ci
+sudo apt-get install -y g++-14 clang-19
+cmake --preset linux-gcc-release && cmake --build --preset linux-gcc-release -- -j2
+ctest --preset linux-gcc-release
 ```
 
 Rule (the "Toolchain contract" in
-`docs/audits/2026-10-13-warning-audit.md`): every warning-audit /
-`-Werror` change must be verified with the CI compilers — gcc 11.4 and
-clang 14 — before push. Also note: kernel code built with gcc-11 plus
-`import numpy` in the same process needs the libstdc++ global-scope
-promotion that `CAD_0/__init__.py` performs automatically
-(`_promote_libstdcpp_global`) — without it, formatted kernel file
-writes silently fail (loader-level GNU_UNIQUE facet-id issue, see the
-audit for the full diagnosis).
+`docs/audits/2026-10-13-warning-audit.md`, 2026-11-01 update): every
+warning-audit / `-Werror` change must be verified with the CI compilers
+— gcc 14 and clang 19 — before push. If your Codespace image still
+carries ubuntu-22.04 (default `g++` 11.4), install `g++-14` first:
+kernel code built with gcc-11 plus `import numpy` in the same process
+needs the libstdc++ global-scope promotion that `CAD_0/__init__.py`
+performs automatically (`_promote_libstdcpp_global`) — without it,
+formatted kernel file writes silently fail (loader-level GNU_UNIQUE
+facet-id issue, see the audit for the full diagnosis).
 
 ## Troubleshooting
 

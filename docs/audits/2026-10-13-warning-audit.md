@@ -313,3 +313,35 @@ Strumento pratico conforme: `git archive` dell'albero verificato
 (solo contenuti, posizioni finali) come pacchetto, istruzioni nel
 rapporto in chat. La storia non si riscrive per sanare un pacco non
 conforme: si corregge la consegna successiva.
+
+---
+
+# Contratto di toolchain — aggiornamento 2026-11-01 (Consegna B m1)
+
+**La regola rinnova i compilatori, non lo spirito.** Il runner
+ubuntu-22.04 va in pensione (GitHub): la CI passa a **ubuntu-24.04** e
+le colonne diventano **gcc 14 e clang 19** — le versioni attuali della
+toolchain, le stesse serie del rito locale (la CI mai più vecchia del
+rito, mai il contrario). Il punto 1 qui sopra si legge quindi oggi
+come: *ogni bonifica/fix va verificata con gcc 14 e clang 19 prima del
+push* — e i compilatori sono PINNATI nei preset stessi
+(CMakePresets.json: `g++-14` per linux-gcc-debug/release e linux-python,
+`clang++-19` per linux-clang), quindi il preset È la toolchain, la
+stessa in locale e in CI.
+
+Variazioni di dettaglio (la derivazione integrale in
+docs/audits/2026-11-01-ci-runner-asan-and-attestations.md):
+
+- il preset **`linux-gcc11-ci` è ritirato** (la colonna gcc 11 del
+  22.04 non esiste più: la sua ragione d'essere con lui);
+- il runner 24.04 porta g++-14 ma NON clang 19 (immagine: 16/17/18) —
+  il workflow installa `clang-19` esplicitamente;
+- il gate **Python 3.10** non cavalca più il python di sistema del
+  runner (il 24.04 porta 3.12): ha un suo job CI
+  (`python-3-10-floor`, compileall su interprete 3.10) — il gate
+  runtime su 3.10 si ritira col runner, registrato nel documento
+  sopra col prezzo di ripristino;
+- le colonne nuove sono state misurate: **zero warning first-party**
+  su gcc 14 e clang 19 (le righe restanti sono tutte nanobind-static,
+  terze parti) — il radar della regola originale non ha niente di
+  nuovo da cacciare, questa volta.

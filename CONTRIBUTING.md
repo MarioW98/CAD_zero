@@ -5,9 +5,17 @@ describes how to set up your environment and the conventions we follow.
 
 ## Build prerequisites
 
-- C++20 compiler: GCC ≥ 11, Clang ≥ 14, or MSVC ≥ 17.10
+- C++20 compiler — the CI-tested columns are **GCC 14** and **Clang 19**
+  (the `linux-*` presets pin the versioned binaries `g++-14` /
+  `clang++-19`, so a preset build IS the toolchain the CI judges).
+  Older compilers (GCC ≥ 11, Clang ≥ 14) still build through a plain
+  `cmake -B build` invocation, but are not CI-tested anymore.
+- Windows / MSVC: **registered, not CI-tested** — see
+  [docs/audits/2026-11-01-ci-runner-asan-and-attestations.md](docs/audits/2026-11-01-ci-runner-asan-and-attestations.md)
+  (the registered unit and its price list).
 - CMake ≥ 3.22
-- Python ≥ 3.10 (for bindings and tests)
+- Python ≥ 3.10 (for bindings and tests; the CI byte-compiles the tree
+  under a real 3.10 interpreter — the syntax floor is a gate, not a hope)
 - Ninja (recommended, not required on Windows)
 
 ## Quick setup
@@ -47,8 +55,38 @@ Format: `NNNN-short-slug.md` (4-digit zero-padded, kebab-case).
 - Unit tests live under `tests/unit/` and use `doctest`.
 - Regression tests (golden files) live under `tests/regression/`.
 - Fuzz tests live under `tests/fuzz/` — we use libFuzzer.
+- The Python bindings suite is a ctest member (`CAD_0_python_bindings`,
+  via `scripts/run_python_bindings_suite.py`): in the sanitizer build
+  it runs with the ASan runtime preloaded — the most exposed surface
+  under the strongest instrumentation.
 
-A PR is not mergeable until `ctest` passes on Linux and Windows CI.
+A PR is not mergeable until `ctest` passes on the Linux CI matrix (the
+GCC and Clang columns of `.github/workflows/ci-linux.yml`). Windows is
+not CI-tested: the port is registered as its own unit — see
+[docs/audits/2026-11-01-ci-runner-asan-and-attestations.md](docs/audits/2026-11-01-ci-runner-asan-and-attestations.md).
+No sentence in this repo may claim a platform the CI does not testify.
+
+## The two version axes
+
+This project carries **two independent version numbers**, and every
+source that mentions a version speaks exactly one of them:
+
+| axis | today | spoken by |
+|---|---|---|
+| **Software** (the code shipping as a unit) | 0.1.0 | `project(VERSION ...)` in `CMakeLists.txt`, `version` in `pyproject.toml`, `CAD_0.__version__`, **git tags** (`v0.1.0-alpha`), the release notes (`scripts/release_notes_*.md`) |
+| **Format** (the `.CAD_0` document format) | v0.4.0 | `kNativeVersion` in `core/io/include/CAD_0/io/native.hpp`, the [ADR-0007](docs/adr/0007-native-format-versioning.md) series, the migrator chain, the `native_v0_x_0.CAD_0` goldens |
+
+The rules:
+
+- **Git tags speak the software; `v0.x` bumps speak the format.** The
+  coincidence of both starting at 0.1.0 is historical, not a coupling.
+- The two axes move independently, each with its own changelog: the
+  software's is the release notes + the git history; the format's is
+  the ADR-0007 series (every bump has its ADR and its migrator).
+- No source may present one axis's number as the other's.
+
+No bump of either axis happens casually: the format's v0.5.0 is already
+reserved for the fillet unit (ADR-0036 D6).
 
 ## Commit messages
 
@@ -113,20 +151,30 @@ CI is the last line of defense, not the first. Every delivery — code,
 docs, workflow, goldens, no exception for "it's only a comment" — passes
 the complete local verification *before* pushing:
 
-1. **The full suite.** C++ and Python tests on the surface CI judges:
-   the sanitizer build (`linux-gcc-debug` carries ASan/UBSan and the
-   `-Werror` contract of the kernel targets), the release build, the
-   Python bindings suite (CI runs them on Python 3.10), and the golden
-   files untouched:
+1. **The full suite.** C++ and Python tests on the surface CI judges,
+   with the compilers the CI judges (the pinned presets: gcc 14 and
+   clang 19): the sanitizer build (`linux-gcc-debug` carries
+   ASan/UBSan, the `-Werror` contract of the kernel targets AND the
+   Python bindings suite under the preloaded sanitizer — the
+   `CAD_0_python_bindings` ctest member), the release build, the clang
+   build, and the golden files untouched:
 
    ```bash
    cmake --preset linux-gcc-debug && cmake --build --preset linux-gcc-debug \
      && ctest --preset linux-gcc-debug
    cmake --preset linux-gcc-release && cmake --build --preset linux-gcc-release \
      && ctest --preset linux-gcc-release
-   python3 -m pytest bindings/python/tests -q
+   cmake --preset linux-clang && cmake --build --preset linux-clang \
+     && ctest --preset linux-clang
    git status --porcelain tests/golden/   # empty output = goldens intact
    ```
+
+   The bindings suite runs inside each `ctest` above (its launcher
+   preloads the ASan runtime in the instrumented build); the GL-bound
+   UI pair runs under Xvfb as the workflow does. The Python syntax
+   floor (3.10) is checked by `python3 scripts/check_fstring_backslashes.py`
+   locally and by the CI's `python-3-10-floor` job (byte-compilation
+   under a real 3.10 interpreter).
 
 2. **The subject checker, on the exact subject of the commit you are
    about to deliver** — not a draft of it, not the branch name, the
