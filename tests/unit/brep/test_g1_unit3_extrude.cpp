@@ -977,10 +977,23 @@ TEST_CASE("G1-U3 golden: the sector (segments + arc) — the arc's cylindrical p
                                fi == 0 ? n0 : n2);
     }
     // The arc wall: the window region, the outward +radial at mid.
-    check_face_conventions(*body, faces[1],
-                           {{RegionSpec{.window = true,
-                                        .umin = a0, .umax = a1,
-                                        .vmin = 0.0f, .vmax = 2.0f}}},
+    //
+    // The region spec rides a NAMED local instead of the nested
+    // double braces: a designated-initialized aggregate inside
+    // {{...}} passed to a const std::vector<RegionSpec>& parameter
+    // is an ICE on the pinned CI toolchain — g++-14 14.2.0-4ubuntu2
+    // (the ubuntu-24.04 runner's column) dies with "internal compiler
+    // error: in gimplify_var_or_parm_decl, at gimplify.cc:3308",
+    // while the local rite's 14.2.0-19 and clang 19 accept it: same
+    // 14.2, different distro patch level. Reproduced standalone with
+    // 24 lines (v. docs/audits/2026-11-01-run-131-the-landing-reds.md);
+    // the named-local shape is semantically identical and compiles
+    // everywhere. The same treatment is applied at the two periodic
+    // window sites below (the circle's rim, the ring's hole wall).
+    const RegionSpec arc_wall{.window = true,
+                              .umin = a0, .umax = a1,
+                              .vmin = 0.0f, .vmax = 2.0f};
+    check_face_conventions(*body, faces[1], {arc_wall},
                            {{am, 1.0f}},
                            {std::cos(am), std::sin(am), 0.0f});
     // The caps (the sector's mid-radius point, mapped through each
@@ -1053,10 +1066,13 @@ TEST_CASE("G1-U3 golden: the circle — the seam-wired pattern VERBATIM on Z") {
         // where the outward radial is +Y-ish; the seam copies at
         // positions 0 and 3 skip the away-side check — the periodic
         // identification makes it the neighbour's material).
-        check_face_conventions(*body, faces[0],
-                               {{RegionSpec{.window = true, .periodic_u = true,
-                                            .umin = 0.0f, .umax = kTwoPi,
-                                            .vmin = 0.0f, .vmax = 3.0f}}},
+        // The same ICE-free shape as the arc wall's (v. the comment
+        // there): the designated window spec as a named local, never
+        // nested inside {{...}}.
+        const RegionSpec rim_window{.window = true, .periodic_u = true,
+                                    .umin = 0.0f, .umax = kTwoPi,
+                                    .vmin = 0.0f, .vmax = 3.0f};
+        check_face_conventions(*body, faces[0], {rim_window},
                                {{0.5f * kPi, 1.5f}},
                                {0.0f, 1.0f, 0.0f},
                                /*seam_flags=*/{true, false, false, true,
@@ -1140,10 +1156,12 @@ TEST_CASE("G1-U3 golden: the ring — the caps carry the hole as an inner Circle
         CHECK(pairs == 1);  // the seam, used twice in this one loop
         for (const auto& ce : ces)
             CHECK(ce.p_curve()->segment.interior_left == true);
-        check_face_conventions(*body, faces[4],
-                               {{RegionSpec{.window = true, .periodic_u = true,
-                                            .umin = -kTwoPi, .umax = 0.0f,
-                                            .vmin = 0.0f, .vmax = 1.5f}}},
+        // The same ICE-free shape as the arc wall's (v. the comment
+        // there): named local, not the nested brace-nest.
+        const RegionSpec hole_window{.window = true, .periodic_u = true,
+                                     .umin = -kTwoPi, .umax = 0.0f,
+                                     .vmin = 0.0f, .vmax = 1.5f};
+        check_face_conventions(*body, faces[4], {hole_window},
                                {{-0.5f * kPi, 0.75f}},
                                {0.0f, -1.0f, 0.0f},
                                /*seam_flags=*/{true, false, true, false});
