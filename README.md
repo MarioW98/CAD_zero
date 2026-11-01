@@ -221,7 +221,7 @@ See [docs/architecture/overview.md](docs/architecture/overview.md) for the full 
 | C | Viewport architecture, PySide6 desktop app | ✅ done |
 | C+ | Native format + migrators, STL/OBJ import, picking, CI matrix, toolchain contract | ✅ done |
 | D | Radial-edge B-Rep topology, query operators, seam wires, convex booleans | ✅ done ([ADR-0021](docs/adr/0021-brep-topology-data-structure.md)–[0025](docs/adr/0025-proper-greiner-hormann.md)) |
-| E | SDF → B-Rep extraction under hard contracts; inverse bridge a documented stub | ✅ done ([ADR-0026](docs/adr/0026-sdf-brep-bridge.md)) |
+| E | SDF → B-Rep extraction under hard contracts; the inverse bridge's sign is the true generalized winding number, watertight-only (open meshes refused by name) | ✅ done ([ADR-0026](docs/adr/0026-sdf-brep-bridge.md), the sign: [ADR-0035 D2.4](docs/adr/0035-h2-numerical-taxonomy.md)) |
 | F | Modeling: boolean feature slice, sketcher MVP | ▶️ in progress — both named slices are in ([ADR-0027](docs/adr/0027-phase-f-boolean-feature-slice.md), [ADR-0030](docs/adr/0030-sketcher-mvp.md)); the constraint solver deferred with its entry criterion |
 | G | The exact B-Rep kernel — road (a), all in house | ▶️ in progress — G1 complete and closed ([ADR-0032](docs/adr/0032-g1-topology-and-exact-primitives.md)); persistent naming landed ([ADR-0036](docs/adr/0036-persistent-naming-and-shape-history.md)); G2 unit 1 of 6 landed ([ADR-0033](docs/adr/0033-g2-exact-booleans-and-first-fillet.md)) |
 | H | STEP AP203 MVP (ADR-0010) | planned |
@@ -260,7 +260,7 @@ The full record — the roadmap with its history and the cronaca of every rung �
 | [0023](docs/adr/0023-analytic-seam-wires-and-boolean-intersect.md) | Analytic seam wires + bool_intersect on convex polyhedra (Phase D (c)) |
 | [0024](docs/adr/0024-boolean-union-and-subtract.md) | bool_union / bool_subtract, centroid classification + identical-body shortcut (Phase D (c+)) |
 | [0025](docs/adr/0025-proper-greiner-hormann.md) | Greiner-Hormann clipping infrastructure, kept for future use (Phase D (c+) fix) |
-| [0026](docs/adr/0026-sdf-brep-bridge.md) | SDF → B-Rep bridge under hard topology contracts; the inverse a documented stub |
+| [0026](docs/adr/0026-sdf-brep-bridge.md) | SDF → B-Rep bridge under hard topology contracts; the inverse's sign: the generalized winding number, watertight-only (H2-u4) |
 | [0027](docs/adr/0027-phase-f-boolean-feature-slice.md) | Phase F boolean feature slice: operation nodes, FeatureId operands, id-stable undo, v0.3 recipes |
 | [0028](docs/adr/0028-sdf-bounds-smooth-blend-dilation.md) | SmoothMinSDF bounds() dilates by k/8 per blend level |
 | [0029](docs/adr/0029-twist-warp-contract.md) | The twist warp contract (implemented): bounds, σ(k, r) Lipschitz, chain-rule gradient, validation |

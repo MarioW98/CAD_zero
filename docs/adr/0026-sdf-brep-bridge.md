@@ -4,6 +4,10 @@
 
 **Implemented (2026-10-16) — MVP, app consumer and smooth-union
 follow-up landed; the § Consequences min |f| left-over is resolved.**
+Amended 2026-11-02 (H2-u4 m1): the inverse direction's deferred
+winding-number sign is now IN — see the amended `MeshSDF` sign-fix
+row under Non-goals below; this ADR's own extraction contract is
+untouched by that change.
 
 Accepted 2026-10-16 with two corrections applied on acceptance (see
 § Corrections below). Implementation, in order: the MVP (faceted
@@ -441,9 +445,19 @@ passing):
 - **`.CAD_0` serialization of B-Rep bodies** (own ADR; D3 notes the
   writer implications).
 - **Python bindings changes** for the bridge.
-- **`MeshSDF` sign fix** (majority-vote heuristic remains a documented
-  stub limitation; winding-number sign belongs to the B-Rep → SDF
-  ADR).
+- **`MeshSDF` sign fix** — **RESOLVED (2026-11-02, H2-u4 m1)**: the
+  sign is now the true GENERALIZED WINDING NUMBER (van
+  Oosterom–Strackee solid angles, all double, the classification
+  band derived and declared in ADR-0035 D2.4), and the bridge is
+  WATERTIGHT ONLY — open meshes refused by name (free edges, rim
+  triangles, remedy) at load, O(E). The tessellation fallback
+  (`brep_to_sdf` on non-primitive bodies) now refuses its own
+  tessellator's non-watertight output by name instead of answering
+  with the vote's wrong sign; a watertight tessellator is the
+  registered follow-up. The B3.5 counterproof (the old vote,
+  verbatim, red where the winding number is green) lives in
+  `tests/unit/bridge/test_bridge.cpp`. The `describe()` string and
+  the primitive-fit are untouched.
 - **Primitive-fit rework**: the `describe()` string parsing stays as
   is (working, tested); replacing it with a proper `SDFNode` visitor
   is a later hygiene item, deliberately not part of the MVP.

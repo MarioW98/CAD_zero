@@ -200,6 +200,335 @@ TEST_CASE("Bridge: round-trip box SDF → B-Rep → SDF") {
     CHECK(roundtrip->value(CAD_0::math::Vec3f{5, 0, 0}) == 4.0f);
 }
 
+// ---------------------------------------------------------------------------
+// H2-u4 — THE SIGN OF THE BRIDGE (morso 1): the generalized winding
+// number, the watertight refusal, the discrimination.
+//
+// The old sign (a MAJORITY-OF-NORMALS VOTE, brep_to_sdf.cpp:45-51 as
+// it stood) is gone; these tests pin the new one the way the order
+// demands: every claim its own test, the naive counterproof RED
+// where the truth is GREEN.
+// ---------------------------------------------------------------------------
+
+// The closed cube [0,2]^3, hand-built, 8 vertices / 12 triangles,
+// every face outward-oriented (the orientation verified per-face by
+// the cross products in the comment beside each triangle below).
+// Vertex map: v0=(0,0,0) v1=(2,0,0) v2=(2,2,0) v3=(0,2,0)
+//             v4=(0,0,2) v5=(2,0,2) v6=(2,2,2) v7=(0,2,2)
+static CAD_0::sdf::TriangleMesh closed_cube_mesh() {
+    CAD_0::sdf::TriangleMesh m;
+    const float c = 2.0f;
+    m.positions = {
+        {0, 0, 0}, {c, 0, 0}, {c, c, 0}, {0, c, 0},
+        {0, 0, c}, {c, 0, c}, {c, c, c}, {0, c, c}};
+    // bottom z=0 (normal -z), top z=2 (+z), front y=0 (-y), back
+    // y=2 (+y), left x=0 (-x), right x=2 (+x) — each pair's cross
+    // product checked by hand to point outward.
+    m.indices = {
+        3, 2, 1,  3, 1, 0,   // bottom
+        4, 5, 6,  4, 6, 7,   // top
+        0, 1, 5,  0, 5, 4,   // front
+        2, 3, 7,  2, 7, 6,   // back
+        3, 0, 4,  3, 4, 7,   // left
+        1, 2, 6,  1, 6, 5};  // right
+    return m;
+}
+
+// B3.1 — IL SEMPLICE: a deep-inside and an outside point on a plain
+// closed mesh, classified right, with the exact distances.
+TEST_CASE("H2-u4 B3.1: the simple classification - deep inside, outside, on-surface") {
+    auto body = mesh_to_sdf(closed_cube_mesh());
+    REQUIRE(body != nullptr);
+
+    // Deep inside (the center): distance 1 to every face, sign -.
+    CHECK(body->value(CAD_0::math::Vec3f{1, 1, 1}) == -1.0f);
+    // Outside, 1 past the right face: sign +, magnitude 1.
+    CHECK(body->value(CAD_0::math::Vec3f{3, 1, 1}) == 1.0f);
+    // Near-miss outside (half a unit past the right face).
+    CHECK(body->value(CAD_0::math::Vec3f{2.5f, 1, 1}) == 0.5f);
+    // EXACTLY on the top face: |value| == 0 — the winding number is
+    // genuinely fractional there (the on-surface 1/2), the
+    // deterministic tie-break answers, and the honest magnitude is 0.
+    CHECK(body->value(CAD_0::math::Vec3f{1, 1, 2}) == 0.0f);
+
+    // The gradient is the OUTWARD normal of the nearest face on BOTH
+    // sides (the field's own convention — the primitives answer p̂
+    // inside and out): near the bottom face, (0,0,-1) inside.
+    const auto s_in = body->root()->sample(CAD_0::math::Vec3f{1, 1, 0.25f});
+    CHECK(s_in.gradient == CAD_0::math::Vec3f{0, 0, -1});
+    CHECK(s_in.value == -0.25f);
+    const auto s_out = body->root()->sample(CAD_0::math::Vec3f{1, 1, -0.25f});
+    CHECK(s_out.gradient == CAD_0::math::Vec3f{0, 0, -1});
+    CHECK(s_out.value == 0.25f);
+}
+
+// B3.2 — LO STRESS LONTANO DALL'ORIGINE: the mesh at ~1e6, the query
+// near the surface — where the float heuristics die of precision and
+// the double winding number holds (the H1 + H2-u7 lesson paying).
+//
+// The mesh: the corner tetrahedron translated to 1e6 (all vertices
+// are integers, exact in float32 — the INPUT is honest; what dies in
+// the old code is its own ARITHMETIC). Faces: the three axis walls
+// plus the slanted wall x+y+z = 3e6+2 (local: x+y+z = 2).
+TEST_CASE("H2-u4 B3.2: the far-from-origin stress - 1e6 translate, near-surface queries") {
+    const float T = 1000000.0f; // exact in float32
+    CAD_0::sdf::TriangleMesh m;
+    m.positions = {
+        {T, T, T}, {T + 2, T, T}, {T, T + 2, T}, {T, T, T + 2}};
+    // Outward-oriented: each cross product checked by hand (see the
+    // H2-u4 test plan): (v0,v3,v2) -> -x, (v0,v1,v3) -> -y,
+    // (v0,v2,v1) -> -z, (v1,v2,v3) -> (1,1,1) outward.
+    m.indices = {0, 3, 2, 0, 1, 3, 0, 2, 1, 1, 2, 3};
+    auto body = mesh_to_sdf(m);
+    REQUIRE(body != nullptr);
+
+    // Just OUTSIDE the slanted face, on the float32 grid (0.25 and
+    // 1.625 = 26*0.0625 — representable at 1e6): the plane distance
+    // is 0.125/sqrt(3) ~ 0.0721688, the projection lands inside the
+    // slanted face (barycentric 0.104/0.104/0.792 — no edges). This
+    // is also the B3.5 counterproof's query: chosen so the naive
+    // float distance dies maximally there (measured: 22% relative
+    // error — see B3.5).
+    const double kTrueOut = 0.125 / std::sqrt(3.0);
+    const auto q_out = CAD_0::math::Vec3f{T + 0.25f, T + 0.25f, T + 1.625f};
+    CHECK(body->value(q_out) == doctest::Approx(static_cast<float>(kTrueOut)).epsilon(1e-5f));
+
+    // Just INSIDE the slanted face (sum = 3e6+1.875 < 3e6+2):
+    // distance 0.125/sqrt(3) ~ 0.0721688, sign -.
+    const double kTrueIn = 0.125 / std::sqrt(3.0);
+    const auto q_in = CAD_0::math::Vec3f{T + 0.625f, T + 0.625f, T + 0.625f};
+    CHECK(body->value(q_in) == doctest::Approx(static_cast<float>(-kTrueIn)).epsilon(1e-5f));
+
+    // Deep inside: 0.25 from the nearest axis wall.
+    CHECK(body->value(CAD_0::math::Vec3f{T + 0.25f, T + 0.25f, T + 0.25f}) == -0.25f);
+
+    // Far outside along the diagonal: 7/sqrt(3) ~ 4.04145.
+    const double kTrueFar = 7.0 / std::sqrt(3.0);
+    CHECK(body->value(CAD_0::math::Vec3f{T + 3, T + 3, T + 3}) ==
+          doctest::Approx(static_cast<float>(kTrueFar)).epsilon(1e-5f));
+}
+
+// The closed L-shaped prism: cross-section (0,0),(3,0),(3,1),(1,1),
+// (1,3),(0,3) (CCW), extruded z in [0,3]. 12 vertices / 20 triangles:
+// 4+4 cap fan triangles (the section is star-shaped w.r.t. v0) and
+// 6 side quads = 12 triangles, all outward (verified on the pattern
+// cases: side quad edge 0 -> -y, edge 4 -> +y; the CCW rule carries
+// the rest).
+static CAD_0::sdf::TriangleMesh closed_l_mesh() {
+    CAD_0::sdf::TriangleMesh m;
+    const float X = 3.0f, Y1 = 1.0f, Y2 = 3.0f, X1 = 1.0f, H = 3.0f;
+    // Bottom ring z=0 (v0..v5, CCW), top ring z=H (v6..v11).
+    m.positions = {
+        {0, 0, 0}, {X, 0, 0}, {X, Y1, 0}, {X1, Y1, 0}, {X1, Y2, 0}, {0, Y2, 0},
+        {0, 0, H}, {X, 0, H}, {X, Y1, H}, {X1, Y1, H}, {X1, Y2, H}, {0, Y2, H}};
+    m.indices = {
+        // bottom cap (normal -z): the CCW fan reversed
+        0, 2, 1,  0, 3, 2,  0, 4, 3,  0, 5, 4,
+        // top cap (normal +z): the CCW fan
+        6, 7, 8,  6, 8, 9,  6, 9, 10,  6, 10, 11,
+        // side quads, edge i = (vi, vi+1): (vi, vi+1, vi+1+6) + (vi, vi+1+6, vi+6)
+        0, 1, 7,   0, 7, 6,    // edge (0,0)->(3,0), wall y=0
+        1, 2, 8,   1, 8, 7,    // wall x=3
+        2, 3, 9,   2, 9, 8,    // wall y=1 (the notch)
+        3, 4, 10,  3, 10, 9,   // wall x=1 (the notch)
+        4, 5, 11,  4, 11, 10,  // wall y=3
+        5, 0, 6,   5, 6, 11};  // wall x=0
+    return m;
+}
+
+// B3.3 — IL NON CONVESSO: the point in the L's CONCAVITY — outside
+// the solid, inside its bounding box, exactly where the parity and
+// the normal vote are classically wrong. The winding number holds.
+TEST_CASE("H2-u4 B3.3: the non-convex L - the concavity classified outside") {
+    auto body = mesh_to_sdf(closed_l_mesh());
+    REQUIRE(body != nullptr);
+
+    // The notch: (2,2,1.5) is outside the L (the solid owns
+    // y<=1 for x>1 and x<=1 for y>1), 1.0 from both notch walls.
+    CHECK(body->value(CAD_0::math::Vec3f{2, 2, 1.5f}) == 1.0f);
+    // Deeper in the notch corner: 0.5 from both walls, still outside.
+    CHECK(body->value(CAD_0::math::Vec3f{1.5f, 1.5f, 1.5f}) == 0.5f);
+    // Inside the horizontal arm: 0.5 from the nearest walls.
+    CHECK(body->value(CAD_0::math::Vec3f{0.5f, 0.5f, 1.5f}) == -0.5f);
+    // Inside the vertical arm: 0.5 from the nearest walls.
+    CHECK(body->value(CAD_0::math::Vec3f{0.5f, 2.5f, 1.5f}) == -0.5f);
+}
+
+// B3.4 — L'APERTA RIFIUTATA PER NOME: the same cube with ONE triangle
+// removed. The refusal names the KIND, the free-edge count, the rim
+// triangles and the remedy — pinned payload, not just the failure.
+TEST_CASE("H2-u4 B3.4: the open mesh refused by name - KIND and payload pinned") {
+    auto m = closed_cube_mesh();
+    // Remove triangle 11 = (v1, v6, v5) (the right face's second).
+    // Its three edges were each balanced with exactly one neighbour;
+    // removing it frees all three: (v1,v5) — touched by triangle 4
+    // (front, edge v1->v5), (v1,v6) — touched by triangle 10 (right,
+    // edge v6->v1), (v5,v6) — touched by triangle 2 (top, edge
+    // v5->v6).
+    m.indices.resize(m.indices.size() - 3);
+    REQUIRE(m.indices.size() == 33);
+
+    bool threw = false;
+    std::string what;
+    try {
+        (void)mesh_to_sdf(m);
+    } catch (const std::invalid_argument& e) {
+        threw = true;
+        what = e.what();
+    } catch (...) {
+        FAIL("the refusal's KIND is wrong: not a std::invalid_argument");
+    }
+    REQUIRE(threw);
+    // The payload, pinned piece by piece (the derivation in the
+    // comment above: exactly 3 free edges, the named rim triangles).
+    CHECK(what.find("NOT WATERTIGHT") != std::string::npos);
+    CHECK(what.find("3 free edge(s)") != std::string::npos);
+    CHECK(what.find("free edge (v1, v5), rim triangle 4") != std::string::npos);
+    CHECK(what.find("free edge (v1, v6), rim triangle 10") != std::string::npos);
+    CHECK(what.find("free edge (v5, v6), rim triangle 2") != std::string::npos);
+    // The remedy is named — never a mute "invalid mesh".
+    CHECK(what.find("Remedy") != std::string::npos);
+    CHECK(what.find("weld") != std::string::npos);
+    // The message names the mesh's own scale (11 triangles left).
+    CHECK(what.find("11 triangles") != std::string::npos);
+}
+
+// B3.5 — LA CONTROPROVA NAIVE: the OLD sign, verbatim class, run on
+// the B3.2 and B3.3 cases as a NEGATIVE block — the naive FAILS where
+// the winding number holds. The discrimination is the proof that the
+// sign is new, not repainted.
+namespace naive_old {
+
+struct Tri {
+    CAD_0::math::Vec3f v0, v1, v2, normal;
+};
+
+// The old constructor's normal (float, normalized).
+std::vector<Tri> build(const CAD_0::sdf::TriangleMesh& mesh) {
+    std::vector<Tri> tris;
+    const std::size_t n = mesh.indices.size() / 3;
+    tris.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        Tri t;
+        t.v0 = mesh.positions[mesh.indices[3 * i + 0]];
+        t.v1 = mesh.positions[mesh.indices[3 * i + 1]];
+        t.v2 = mesh.positions[mesh.indices[3 * i + 2]];
+        t.normal = (t.v1 - t.v0).cross(t.v2 - t.v0).normalized();
+        tris.push_back(t);
+    }
+    return tris;
+}
+
+// The old sign, verbatim class (brep_to_sdf.cpp:47-51 as it stood):
+// count the triangles whose plane puts the query on the inner side;
+// majority decides.
+bool majority_vote_inside(const std::vector<Tri>& tris,
+                          const CAD_0::math::Vec3f& p) {
+    std::size_t inside_count = 0;
+    for (const auto& tri : tris)
+        if (tri.normal.dot(p - tri.v0) < 0) inside_count++;
+    return inside_count > tris.size() / 2;
+}
+
+// The old distance, verbatim class (brep_to_sdf.cpp:82-125 as it
+// stood): Ericson's point-triangle distance in FLOAT — the float
+// `v0 + ab*v` re-quantizes the closest point onto the float32 grid,
+// which is the death the 1e6 stress pins.
+float point_triangle_distance(const CAD_0::math::Vec3f& p, const Tri& tri) {
+    const CAD_0::math::Vec3f ab = tri.v1 - tri.v0;
+    const CAD_0::math::Vec3f ac = tri.v2 - tri.v0;
+    const CAD_0::math::Vec3f ap = p - tri.v0;
+
+    float d1 = ab.dot(ap);
+    float d2 = ac.dot(ap);
+    if (d1 <= 0 && d2 <= 0) return ap.length();
+
+    const CAD_0::math::Vec3f bp = p - tri.v1;
+    float d3 = ab.dot(bp);
+    float d4 = ac.dot(bp);
+    if (d3 >= 0 && d4 <= d3) return bp.length();
+
+    float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+        float v = d1 / (d1 - d3);
+        return (tri.v0 + ab * v - p).length();
+    }
+
+    const CAD_0::math::Vec3f cp = p - tri.v2;
+    float d5 = ab.dot(cp);
+    float d6 = ac.dot(cp);
+    if (d6 >= 0 && d5 <= d6) return cp.length();
+
+    float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+        float w = d2 / (d2 - d6);
+        return (tri.v0 + ac * w - p).length();
+    }
+
+    float va = d3 * d6 - d5 * d4;
+    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) {
+        float w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return (tri.v1 + (tri.v2 - tri.v1) * w - p).length();
+    }
+
+    float denom = 1.0f / (va + vb + vc);
+    float v = vb * denom;
+    float w = vc * denom;
+    CAD_0::math::Vec3f closest = tri.v0 + ab * v + ac * w;
+    return (closest - p).length();
+}
+
+float min_distance(const std::vector<Tri>& tris,
+                   const CAD_0::math::Vec3f& p) {
+    float best = 1e30f;
+    for (const auto& tri : tris) {
+        const float d = point_triangle_distance(p, tri);
+        if (d < best) best = d;
+    }
+    return best;
+}
+
+} // namespace naive_old
+
+TEST_CASE("H2-u4 B3.5: the naive counterproof - red where the winding number is green") {
+    // --- Case B3.2: the 1e6 tetrahedron, query just outside the
+    // slanted face (TRUE: outside, distance 0.125/sqrt(3) ~ 0.0722).
+    const float T = 1000000.0f;
+    CAD_0::sdf::TriangleMesh tet;
+    tet.positions = {
+        {T, T, T}, {T + 2, T, T}, {T, T + 2, T}, {T, T, T + 2}};
+    tet.indices = {0, 3, 2, 0, 1, 3, 0, 2, 1, 1, 2, 3};
+    const auto naive_tris = naive_old::build(tet);
+    const auto q_out = CAD_0::math::Vec3f{T + 0.25f, T + 0.25f, T + 1.625f};
+    const double kTrue = 0.125 / std::sqrt(3.0);
+
+    // The naive SIGN dies: 3 of the 4 face planes still contain the
+    // outside point (only the slanted wall's plane rejects it), the
+    // majority vote says INSIDE — wrong.
+    CHECK(naive_old::majority_vote_inside(naive_tris, q_out) == true);
+    // ... while the winding number says outside (pinned in B3.2:
+    // value +0.0722, the positive sign).
+
+    // The naive DISTANCE dies: the float `v0 + ab*v` lands the
+    // closest point off the float32 grid at 1e6 (the true closest
+    // (1e6+0.2083, 1e6+0.2083, 1e6+0.5833) is NOT representable, and
+    // the re-quantized components err the same way — measured: the
+    // naive answers 0.0883883 against the truth 0.0721688, a 22%
+    // relative error).
+    const float naive_d = naive_old::min_distance(naive_tris, q_out);
+    CHECK(std::abs(static_cast<double>(naive_d) - kTrue) > 0.01);
+
+    // --- Case B3.3: the L's concavity (TRUE: outside, in the notch).
+    const auto l_tris = naive_old::build(closed_l_mesh());
+    const auto q_notch = CAD_0::math::Vec3f{2, 2, 1.5f};
+    // The naive vote dies in the concavity: the notch's own walls
+    // plus the far walls outvote the truth — 16 of 20 triangles put
+    // the notch point on their inner side, the vote says INSIDE.
+    CHECK(naive_old::majority_vote_inside(l_tris, q_notch) == true);
+    // ... while the winding number says outside (pinned in B3.3:
+    // value +1.0).
+}
+
 TEST_CASE("Bridge: faceted B-Rep → SDF mesh") {
     auto a = s::make_sphere(1.0f);
     auto sdf_b = s::sdf_translate(s::make_sphere(1.0f), {2, 0, 0});
@@ -217,41 +546,35 @@ TEST_CASE("Bridge: faceted B-Rep → SDF mesh") {
     CHECK(body->edge_count() == 1044);
     CHECK(body->face_count() == 696);
 
-    auto sdf_body = brep_to_sdf(*body);
-    REQUIRE(sdf_body != nullptr);
-
-    // No primitive matches a faceted body, so brep_to_sdf falls back
-    // to tessellate_body + MeshSDF. WHY NOT EXACT PINS HERE (documented
-    // per the sweep's rule): the fallback tessellates EVERY planar face
-    // over a default UV domain, which INFLATES the mesh far beyond the
-    // body (measured: 356,352 triangles, bounds ~ ±10-15 on a body of
-    // extent ~4) and makes the majority-vote sign unreliable at
-    // moderate outside distances (e.g. (5,0,0) reads as inside). That
-    // is pre-existing behavior of the documented-stub inverse bridge —
-    // not something this sweep changes. The strongest HONEST assertions
-    // are therefore the ones below: deep-inside and waist signs (the
-    // majority vote is solidly correct there) and the waist depth.
-    //
-    // Waist (1,0,0): the analytic smin dip at the tangent point is
-    // k/16 = 0.03125 (see the SmoothMin regression tests); the faceted
-    // res-8 surface + tessellation perturb it, so a 50% band around
-    // k/16 is the honest coherence check (measured: -0.0348413).
-    const float k = 0.5f;
-    const float waist = sdf_body->value(CAD_0::math::Vec3f{1, 0, 0});
-    CHECK(waist < 0.0f);
-    CHECK(waist == doctest::Approx(-k / 16.0f).epsilon(0.5f));
-    // Deep inside (center of sphere A): solidly negative.
-    CHECK(sdf_body->value(CAD_0::math::Vec3f{0, 0, 0}) < 0.0f);
-    // The mesh must cover the source body ([-1, 3] x [-1, 1] x [-1, 1]
-    // for the two unit spheres at distance 2).
-    auto bnds = sdf_body->bounds();
-    CHECK(!bnds.empty());
-    CHECK(bnds.min.x <= -1.0f);
-    CHECK(bnds.max.x >= 3.0f);
-    CHECK(bnds.min.y <= -1.0f);
-    CHECK(bnds.max.y >= 1.0f);
-    CHECK(bnds.min.z <= -1.0f);
-    CHECK(bnds.max.z >= 1.0f);
+    // H2-u4 — THE FALLBACK NOW REFUSES, BY NAME. The mesh bridge is
+    // WATERTIGHT ONLY: the winding number is defined on closed
+    // meshes, and tessellate_body's per-face grids are not welded
+    // into one (each of the 696 planar faces tessellates
+    // independently over its own parametric domain, so every face
+    // grid's boundary edges are free). The derivation of the pinned
+    // count: a 16x16 face grid has 4*16 = 64 boundary edges, 696
+    // faces -> 696*64 = 44544 free edges. The OLD behavior this test
+    // replaced: the fallback answered with a majority-vote sign that
+    // misread moderate outside distances as inside (the comment here
+    // documented (5,0,0) reading as inside) — the honest refusal
+    // replaces the quiet wrong answer, and the tessellator follow-up
+    // is registered on the other side of the contract.
+    bool threw = false;
+    std::string what;
+    try {
+        auto sdf_body = brep_to_sdf(*body);
+        (void)sdf_body;
+    } catch (const std::invalid_argument& e) {
+        threw = true;
+        what = e.what();
+    } catch (...) {
+        FAIL("the refusal's KIND is wrong: not a std::invalid_argument");
+    }
+    REQUIRE(threw);
+    CHECK(what.find("NOT WATERTIGHT") != std::string::npos);
+    CHECK(what.find("44544 free edge(s)") != std::string::npos);
+    CHECK(what.find("rim triangle") != std::string::npos);
+    CHECK(what.find("Remedy") != std::string::npos);
 }
 
 // ---------------------------------------------------------------------------

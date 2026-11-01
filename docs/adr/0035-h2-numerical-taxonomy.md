@@ -100,6 +100,7 @@ declared tolerance. The worlds, typed once:
 | the segment determinant: parallel / collinear admission | length² | **the derived band, D2.3** | first principles, D2.3 |
 | parallelity of normals (kParallelDotMin, kNormalParallelTol) | **Angular** (dimensionless by construction) | typed Angular tolerances, declared | declared (the loose pre-filter stays loose, the strict threshold stays strict — both typed) |
 | the division guard (kIsectDenomEps) | none — NOT a tolerance | stays a numeric guard, declared as such | engineering (the comment at boolean.cpp:57-60 already says it; ratified as a rule) |
+| **the bridge's sign classification: \|w − round(w)\|, w the generalized winding number of the mesh at the query** (added 2026-11-02, H2-u4 m1; see D2.4) | **Winding** (dimensionless — w counts how many times the surface winds around the query) | **the derived sign band ε_w(F) = 2·F·γ₄₀/(4π) + 16u, D2.4** | first principles, D2.4 |
 
 **D2.1 The Linear world** is ADR-0004's own, unchanged in kind:
 one ε_L per operation, explicit at the signature, no global
@@ -192,6 +193,44 @@ derivation.** The re-homing map for morsi 2-3, use by use
 | kPlaneTol (all sites) | 1e-6 bare | Linear, typed, declared |
 | kParallelDotMin, kNormalParallelTol | bare doubles | Angular, typed, declared |
 | kIsectDenomEps | 1e-12 | stays a numeric guard — never a geometric decision |
+
+**D2.4 The winding band — the bridge sign's own derived band**
+(added 2026-11-02, H2-u4 m1 — the mesh→SDF bridge's sign landed
+with its threshold derived here, beside the determinant band; the
+derivation lives in `core/bridge/src/brep_to_sdf.cpp` beside its
+use, mirrored here for the vocabulary's completeness).
+
+The classification: the mesh→SDF bridge answers inside/outside by
+the GENERALIZED WINDING NUMBER w(x) = (1/4π)·Σᵢ Ωᵢ(x) — the signed
+solid angles (van Oosterom–Strackee's atan form, per-triangle
+numerically stable) the triangles subtend at the query, all in
+double. For a closed, consistently oriented mesh w is EXACTLY
+integer off the surface (1 inside one outward shell, 0 outside, k
+nested, −1 inverted): a step function — the transition does not
+widen with distance or curvature; only arithmetic noise moves the
+computed value off its integer. The classification is inside iff
+round(w) ≠ 0, confident when |w − round(w)| ≤ ε_w.
+
+The derivation (the D2.3 method, first principles): each solid
+angle is 2·atan2(N, D) over ~40 counted double flops of the
+relative vertex vectors → N, D each carry relative error ≤ γ₄₀
+(u = 2⁻⁵³); atan2's angle error is bounded by the argument error
+independent of the angle (|δθ| ≤ γ₄₀ by AM–GM: 2|N||D| ≤ N²+D²) —
+no shape, size or distance term survives; the Kahan-compensated
+sum holds the summation at O(u) more. So:
+
+    ε_w(F) = 2·F·γ₄₀/(4π) + 16u  ≈  F·7.1·10⁻¹⁶
+
+F = 10⁶ triangles → ε_w ≈ 7·10⁻¹⁰; the band would need F > 7·10¹⁴
+to reach the classification boundary at 0.5 — the classification
+is total, no query falls between the band and the integer
+undecided. THE TIE-BREAK (Family 3's rule, deterministic): |w −
+round(w)| > ε_w is not noise but geometry — the query sits ON the
+surface within the mesh's own float32 storage honesty; the global
+evidence is exhausted exactly there and the LOCAL evidence
+decides: the side of the nearest triangle, in double, from the
+same stored bytes — same bytes in, same answer out (ADR-0014),
+never a coin flip.
 
 ### D3. Family 3 — the bands: deterministic tie-break on the canonical key, golden-pinned
 
