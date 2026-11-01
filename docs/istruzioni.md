@@ -21,7 +21,7 @@ sudo apt install build-essential cmake ninja-build python3 python3-dev python3-p
 > che seguono non sono mai state verificate da nessuna colonna CI — la
 > CI giudica su Linux (gcc 14 e clang 19). Il port Windows è un'unità
 > registrata col suo prezzo visto:
-> [docs/audits/2026-11-01-ci-runner-asan-and-attestations.md](docs/audits/2026-11-01-ci-runner-asan-and-attestations.md)
+> [docs/audits/2026-11-01-ci-runner-asan-and-attestations.md](audits/2026-11-01-ci-runner-asan-and-attestations.md)
 > — la si apre quando un caso reale lo chiede. Il preset `windows-msvc`
 > in CMakePresets.json ne è il punto d'ingresso.
 
@@ -410,16 +410,16 @@ sudo apt install python3-dev
 
 ### TBB build fallisce con GCC 12+ (-Werror)
 
-TBB è disabilitato di default (`CAD_0_USE_TBB=OFF`). Il progetto funziona
-perfettamente senza TBB (fallback single-threaded). Abilita TBB solo se
-hai oneTBB installato system-wide:
+TBB è disabilitato di default (`CAD_0_USE_TBB=OFF`) e tutte le
+superfici spedite — le colonne CI e la build wheel — lo tengono
+spento: il kernel gira col fallback single-threaded (vettoriale su
+xsimd, seriale; l'emendamento ADR-0009 del 2026-11-01). Attivarlo è
+un opt-in esplicito: CPM scarica oneTBB al tag pinnato v2022.0.0
+(il registro dei pin: `docs/dependencies.md`), col limite noto dei
+path di include documentato su `CMakeLists.txt`.
 
 ```bash
-# Linux
-sudo apt install libtbb-dev
-
-# Build con TBB system-wide (non CPM)
-cmake -B build -DCAD_0_USE_TBB=ON -DCPM_USE_LATEST_VERSION=OFF
+cmake -B build -DCAD_0_USE_TBB=ON
 ```
 
 ### PyInstaller: "ModuleNotFoundError: No module named 'CAD_0._CAD_0'"
@@ -451,7 +451,7 @@ Il progetto include un workflow CI in `.github/workflows/ci-linux.yml`
 (runner ubuntu-24.04, colonne gcc 14 e clang 19 pinne nei preset, il
 target ctest dei binding Python sotto ASan nella colonna debug — la
 derivazione in
-[docs/audits/2026-11-01-ci-runner-asan-and-attestations.md](docs/audits/2026-11-01-ci-runner-asan-and-attestations.md)).
+[docs/audits/2026-11-01-ci-runner-asan-and-attestations.md](audits/2026-11-01-ci-runner-asan-and-attestations.md)).
 
 Per build su Windows, la FORMA del workflow dell'unità registrata
 (stato: registrata, non CI-testata — v. la sezione 1) sarebbe:

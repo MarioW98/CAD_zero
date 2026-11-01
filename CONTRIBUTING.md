@@ -21,8 +21,8 @@ describes how to set up your environment and the conventions we follow.
 ## Quick setup
 
 ```bash
-git clone https://github.com/your-org/CAD_0.git
-cd CAD_0
+git clone https://github.com/MarioW98/CAD_zero.git
+cd CAD_zero
 
 # Configure (Linux)
 cmake --preset linux-gcc-release
@@ -36,9 +36,13 @@ ctest --preset linux-gcc-release
 
 ## Coding standards
 
-- **C++**: C++20, no extensions. `.clang-format` and `.clang-tidy` are
-  authoritative; CI rejects PRs that don't pass `clang-format --verify`.
-- **Python**: ruff + black. Type-checked with mypy.
+- **C++**: C++20, no extensions. `.clang-format` is authoritative.
+  There is no format gate in CI — formatting is held by review, and
+  the gap is said, not hidden.
+- **Python**: ruff + black, configured in `pyproject.toml` (installed
+  by the `dev` extra). mypy ships in the `dev` extra too, but no lint
+  or type gate runs in CI yet — when one lands, this sentence changes
+  in the same commit.
 - **Headers**: every public header lives under
   `core/<module>/include/CAD_0/<module>/`. Internal headers (no
   public API) live under `core/<module>/src/`.
@@ -52,9 +56,13 @@ Format: `NNNN-short-slug.md` (4-digit zero-padded, kebab-case).
 
 ## Testing
 
-- Unit tests live under `tests/unit/` and use `doctest`.
-- Regression tests (golden files) live under `tests/regression/`.
-- Fuzz tests live under `tests/fuzz/` — we use libFuzzer.
+- Unit tests live under `tests/unit/` and use `doctest`, compiled
+  into the single `CAD_0_tests` executable.
+- Property-based families live under `tests/property/`: seeded
+  generators shared by the per-area test TUs.
+- Golden files (byte-identical `.CAD_0` documents, one per format
+  version) live under `tests/golden/` and are consumed by the
+  round-trip tests.
 - The Python bindings suite is a ctest member (`CAD_0_python_bindings`,
   via `scripts/run_python_bindings_suite.py`): in the sanitizer build
   it runs with the ASan runtime preloaded — the most exposed surface
@@ -73,7 +81,7 @@ source that mentions a version speaks exactly one of them:
 
 | axis | today | spoken by |
 |---|---|---|
-| **Software** (the code shipping as a unit) | 0.1.0 | `project(VERSION ...)` in `CMakeLists.txt`, `version` in `pyproject.toml`, `CAD_0.__version__`, **git tags** (`v0.1.0-alpha`), the release notes (`scripts/release_notes_*.md`) |
+| **Software** (the code shipping as a unit) | 0.1.0 | `project(VERSION ...)` in `CMakeLists.txt`, `version` in `pyproject.toml`, `CAD_0.__version__`, **git tags** (`v0.1.0-alpha`), [CHANGELOG.md](CHANGELOG.md) in the root |
 | **Format** (the `.CAD_0` document format) | v0.4.0 | `kNativeVersion` in `core/io/include/CAD_0/io/native.hpp`, the [ADR-0007](docs/adr/0007-native-format-versioning.md) series, the migrator chain, the `native_v0_x_0.CAD_0` goldens |
 
 The rules:
@@ -81,12 +89,48 @@ The rules:
 - **Git tags speak the software; `v0.x` bumps speak the format.** The
   coincidence of both starting at 0.1.0 is historical, not a coupling.
 - The two axes move independently, each with its own changelog: the
-  software's is the release notes + the git history; the format's is
-  the ADR-0007 series (every bump has its ADR and its migrator).
+  software's is [CHANGELOG.md](CHANGELOG.md) + the git history; the
+  format's is the ADR-0007 series (every bump has its ADR and its
+  migrator).
 - No source may present one axis's number as the other's.
 
 No bump of either axis happens casually: the format's v0.5.0 is already
 reserved for the fillet unit (ADR-0036 D6).
+
+## Where things live — the register criterion
+
+The repo is the authority on itself, so every artifact has exactly one
+house. The criterion: **the register lives in `docs/`, unless a
+universal convention pins it to the root**.
+
+- **`docs/` is the register**: `docs/adr/` (decisions),
+  `docs/audits/` (dated verification records), `docs/status/` (the
+  living status register and the cronaca), `docs/history/` (archived
+  chronicles), `docs/architecture/`, and the operational manuals
+  (`docs/istruzioni.md` — build and packaging; `docs/CODESPACES.md`).
+- **The root keeps only what a universal convention puts there**:
+  `README.md` (the vetrina), `LICENSE`, `NOTICE`, `CHANGELOG.md`, this
+  `CONTRIBUTING.md`, `pyproject.toml`, `CMakeLists.txt`,
+  `CMakePresets.json`, and the tool dotfiles (`.clang-format`,
+  `.editorconfig`, `.gitignore`). A root file needs a universal
+  convention to justify itself — nothing else grows there.
+- **`scripts/` is tooling, never the register**: checkers, launchers,
+  the build helper, the suite runner. The generator is tooling; the
+  artifact it generates is register — two houses, never confused
+  (`scripts/record_demo.py` vs `CHANGELOG.md`).
+- **`third_party/` is vendored source**: pinned in the tree with a
+  provenance header, never fetched at build time.
+- **Build-time dependencies are pinned and registered**: every pin
+  and the pin-vs-vendor decision lives in
+  [docs/dependencies.md](docs/dependencies.md); `CMakeLists.txt` is
+  the source of truth the manifest describes.
+
+Release notes were the case that decided the criterion: they lived in
+`scripts/` (the tooling house) until Consegna B m2 (2026-11-01) moved
+them to the root `CHANGELOG.md` — the one register convention that is
+universal enough (tools and users look for it there) to live at the
+root. `FIXES_BUG3_4_5.md` went the other way: root-born delivery
+cover note, archived in `docs/history/` with its content intact.
 
 ## Commit messages
 

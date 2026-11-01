@@ -60,3 +60,25 @@ topologically and parallelizes independent features.
 - When TBB is not available (`CAD_0_USE_TBB=OFF`), the system
   falls back to a single-threaded shim. This is for tests/CI only;
   production wheels will always ship with TBB.
+
+## Amendment (2026-11-01, Consegna B m2 — the register honest)
+
+Three clauses above no longer say what the tree does; the record is
+set straight here rather than by silently editing the decision:
+
+- **The pin.** "2021.13" is the drafted number; the pin in
+  `CMakeLists.txt` is oneTBB **v2022.0.0** — v2021.x fails the GCC 14
+  column's `-Werror` (`atomic_base.h`, the stringop-overflow family),
+  and the bump is commented at the option site. The full pin
+  register, with the pin-vs-vendor decision for every dependency:
+  `docs/dependencies.md`.
+- **"Production wheels will always ship with TBB" is retired as
+  never-true.** The wheel build (`pyproject.toml`) never sets
+  `CAD_0_USE_TBB`, and no CI column does either: everything shipped
+  and tested runs the single-threaded fallback (xsimd-vectorized,
+  serial). oneTBB is an explicit opt-in (`-DCAD_0_USE_TBB=ON` → CPM
+  fetches the pinned tag), with the known include-path caveat
+  recorded at the option site in `CMakeLists.txt`.
+- **TaskGraph is still the serial topological pass** — the "Phase B
+  will dispatch to tbb::flow::graph" note in `thread_pool.cpp`
+  stands unimplemented.

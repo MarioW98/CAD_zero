@@ -1,4 +1,20 @@
-# CAD_0 v0.1.0-alpha
+# Changelog
+
+All notable changes to the **software axis** of CAD_0 are documented
+here — one entry per tagged release, content frozen as published.
+The **format axis** (the `.CAD_0` document format, today v0.4.0) has
+its own changelog: the [ADR-0007](docs/adr/0007-native-format-versioning.md)
+series, where every bump has its ADR and its migrator. The two axes
+are independent — see *The two version axes* in
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
+Until Consegna B m2 (2026-11-01) the release notes lived under
+`scripts/` — the tooling house, not the register's. They moved to
+this file: the root `CHANGELOG.md` is the one register convention
+universal enough to live at the root. The criterion is pinned in
+CONTRIBUTING (*Where things live*).
+
+## [v0.1.0-alpha] — 2026-10-15
 
 First tagged release of CAD_0 — a dual-representation CAD kernel (native SDF + B-Rep) in C++20 and Python, with no third-party CAD kernel dependency.
 

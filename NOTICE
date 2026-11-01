@@ -25,12 +25,18 @@ Vendored in-tree
 * Shewchuk robust geometric predicates
   (third_party/robust_predicates/) — Public Domain, by declaration
   of the author (http://www.cs.cmu.edu/~quake/robust.html).
-  The in-tree file is a project-written, non-adaptive fallback
-  stub crediting the original technique; the full implementation,
-  if vendored for production use, is public domain as well.
+  The in-tree file is the **authentic `robust.c`** (revision of
+  May 18, 1996, retrieved via the ITK mirror when the canonical
+  URL 404'd) — adaptive precision, with the exhaustive list of
+  local modifications (ANSI prototypes, include guard) in its
+  provenance header and in third_party/robust_predicates/README.md;
+  the adaptivity tests (tests/unit/math/test_predicate_adaptive.cpp)
+  are the discrimination proof. Vendored by H1 (ADR-0034), which
+  also retired the non-adaptive stub this notice used to describe.
 * CPM.cmake (cmake/CPM.cmake) — MIT, (c) CPM.cmake contributors
-  (upstream 0.40.2). A build-time bootstrap that downloads CPM at
-  the first configure; not distributed in any artifact.
+  (upstream 0.40.2). A build-time bootstrap, vendored in-tree: it
+  fetches the pinned dependencies at configure time (see
+  docs/dependencies.md); not distributed in any artifact.
 
 C++ dependencies (fetched via CPM.cmake at configure time, pinned)
 -------------------------------------------------------------------

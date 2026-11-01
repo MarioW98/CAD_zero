@@ -27,12 +27,12 @@ This document is the entry point to the architecture. Deeper topics are covered 
 |  | sdf/                     |  |
 |  | field.hpp (SDFBody)      |  |
 |  | primitives/operators     |  |
-|  | evaluate (xsimd + TBB)   |  |
+|  | evaluate (xsimd)        |  |
 |  +--------------------------+  |
 |                                 |
 |  +--------------------------+  |
 |  | concurrency/             |  |
-|  | thread_pool (TBB)        |  |
+|  | thread_pool (TBB opt-in) |  |
 |  | gil_guard (RAII)         |  |
 |  | parallel_for, task_graph |  |
 |  +--------------------------+  |
@@ -79,15 +79,21 @@ The SDF kernel (`core/sdf/`) is **native** — not a converter from B-Rep.
 - `primitives.hpp` — sphere, box, cylinder, torus, cone, capsule, plane
 - `operators.hpp` — union, intersect, subtract, smooth_min (CSG)
 - `transforms.hpp` — translate, rotate, scale, twist
-- `evaluate.hpp` — `EvalBackend` abstraction + `CpuEvalBackend` (xsimd + TBB) + `GpuEvalBackend` (stub)
+- `evaluate.hpp` — `EvalBackend` abstraction + `CpuEvalBackend` (xsimd; oneTBB is an opt-in) + `GpuEvalBackend` (stub)
 
 Every primitive declares its `lipschitz()` constant, used by the ray marcher and the mesh extractor for adaptive step sizing.
 
 ## Concurrency model
 
-- **oneTBB** for the thread pool and the feature-tree task graph (see [ADR-0009](../adr/0009-threading-model.md)).
+- **oneTBB** is the concurrency library, OFF by default: no CI column
+  and no wheel build enables it — everything shipped and tested runs
+  the single-threaded fallback (xsimd-vectorized, serial; the
+  [ADR-0009](../adr/0009-threading-model.md) amendment, 2026-11-01).
 - **RAII GIL guard** (`gil_release`, `gil_acquire`) for safe Python ↔ C++ threading.
-- **parallel_for** with adaptive grain size (serial for < 1024 elements, parallel beyond).
+- **parallel_for**: serial below 1024 elements by grain-size choice;
+  with oneTBB enabled (`-DCAD_0_USE_TBB=ON`, the pinned v2022.0.0 via
+  CPM) it parallelizes beyond — without it, the loop runs serially
+  on every input.
 
 ## Persistent naming
 

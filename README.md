@@ -9,16 +9,11 @@ CAD_0 is a from-scratch CAD kernel where **SDF (signed distance fields) and B-Re
 
 The long-term goal is an **open-source CAD system built without any third-party CAD kernel** ([ADR-0003](docs/adr/0003-third-party-policy.md)), so every geometric decision lives in this repository and can be tested deterministically ([ADR-0014](docs/adr/0014-floating-point-determinism.md)).
 
-> **Status.** A dual-representation CAD kernel, no third-party CAD kernels involved. The **SDF side**: primitives, CSG booleans, smooth blends, MC33 extraction with vertex welding, and the **twist warp under an explicit contract** ([ADR-0029](docs/adr/0029-twist-warp-contract.md), implemented: cylinder-AABB bounds, the σ(k, r) Lipschitz closed form, the full chain-rule gradient, construction-time validation on every node, and a property closure with twisted bridge extractions). The **B-Rep side**: radial-edge topology with query operators, analytic seam wires, and **boolean operations on convex polyhedra** (`bool_union`/`bool_subtract`/`bool_intersect`) — every non-empty result validated against exact topological contracts (V/E/F counts, closed loops, and the amended χ contract: `is_closed_orientable` for the structural invariants, χ and genus **reported** — derived only for single closed-orientable shells — with `is_closed_manifold` kept as the exact χ=2 compatibility wrapper). The **SDF → B-Rep bridge** ([ADR-0026](docs/adr/0026-sdf-brep-bridge.md)) extracts native SDF bodies into B-Rep solids — exact analytic primitives (sphere, box, cylinder) or MC33 faceted — under the same hard contracts, pinned V/E/F per grid, genus-1 extractions included (the pierced box: χ=0, genus 1, bit-identical re-runs); the **inverse direction (B-Rep → SDF) is an approximate, documented stub** (primitive detection + mesh SDF), deferred to a future ADR. The PySide6 desktop app adds parametric shape creation, undo/redo, viewport picking with 3D highlight, STL/OBJ import, STL/OBJ/3MF export — and **boolean operations as tree features** ([ADR-0027](docs/adr/0027-phase-f-boolean-feature-slice.md)): Edit → Subtract builds an operation node whose operands stay referenced by FeatureId (auto-hidden, editable, world-anchored placement), undo/redo is id-stable, and a deleted operand leaves a visible dangling state — never a silent rebind — all persisted by the versioned native format (`.CAD_0` v0.4.0: recipes are the source of truth, bodies the cache; chained migrators from v0.1.0) with atomic save. The **sketcher MVP** ([ADR-0030](docs/adr/0030-sketcher-mvp.md), implemented) adds parametric 2D profiles: **Create → Sketch** opens a canvas where mouse gestures draw typed entities (segments, circles, arcs — sketch toolbar, shortcuts 1–4), **Feature → Extrude** turns the closed profile into a solid prism, and **Edit → Subtract** cuts it from a body — then edit any entity parameter and the whole chain (sketch → extrude → subtract) regenerates from the recipe, deterministically, one undo entry per modification. The Debug menu reports topology, mass and provenance for any selected body (the report grew with G1: χ with its inner-loop term, genus, the mass properties with the exact/approximated flag, and the per-kind provenance tallies — through `CAD_0.report`, the single consumer of the mass API and the body query). **Roadmap: Phase F (parametric modeling) in progress — the boolean feature slice and the sketcher MVP are in. The great fork is decided ([ADR-0031](docs/adr/0031-exact-brep-kernel.md) accepted: the exact B-Rep kernel will be built in house, forever; the license whitelist is pinned in ADR-0003), and its first rung is complete ([ADR-0032](docs/adr/0032-g1-topology-and-exact-primitives.md), implemented 2026-10-26: G1 units 1–6 landed and click-tested — **G1 complete and closed: the D7.5 table read in the report, the volume verified by hand, the radius edited live** — unit 1, the data model: the sketch kernel's 2D types reused as the p-curve vocabulary on co-edges, Layer-2 tolerance + provenance on every vertex/edge/face with the writers' honesty, and the extended χ = V−E+F−H with its backward compatibility proven on every golden; unit 2, the primitives with true trimming: box/sphere/cylinder/tetrahedron faces are now regions of domains — every co-edge carries its typed p-curve (the wall's rectangle walk in (θ,z), the caps' π-sweep arc pairs, the sphere's periodic seam), the cylinder's parametrization corrected to the surfaces' one right-handed rule, and the face query (family, loops, p-curves, provenance) exposed through the bindings as plain values; unit 3, the exact extrude: the sketch-born geometry becomes exact — the profile chain maps to the prism's true faces per the ADR's table, the caps' outer trimming loop is the validated chain itself (entity for entity, hole rims as Circle2 trim curves), and the extrude node materializes the exact B-Rep BESIDE its SDF as the HybridBody ADR-0002 always meant (bridge tolerance 0, the same solid twice — the SDF still feeds display, the exact B-Rep reads through the bindings' query, and out-of-class profiles keep their SDF with the refusal recorded); unit 4, the exact subtract: the exact chain crosses its first curved-surface intersection — the plane∩cylinder SSI entry in the three orientations (⊥ the circle with its Line2 on the cylinder domain, ∥ the line pair with the tangent and empty cases, oblique refused naming the angle), the pinned through-hole topology (pierced faces gaining inner loops split at the seam pair, the surviving wall the patch between the circles with its seam's two co-edges in the one loop, the guide case 12V/17E/7F/H=2 χ=0 genus 1 — same topology as the faceted report, better geometry — and V+2n/E+3n/F+n for every tool profile), the degenerates with their pinned dispositions (coplanar absorbed, tangential/crossing/blind refused with the remedies named, the miss the exact copy), and the subtract node owning both materializations — the v0.4 golden materializes the exact subtract on load while the v0.3 golden stays honestly faceted (its tool is the Y-axis primitive cylinder, not a Z-axis prism — the refusal recorded); unit 5, the exact mass properties: the B-Rep’s first quantitative interrogation — volume, centroid and the inertia tensor by the divergence theorem over the exact faces (V = (1/3)∮x·n and the moment kernels, the 1/5 ansatz constant derived), the planar families by Green’s theorem in the face’s own domain (the winding sign plus the positional outer-minus-inner — one geometric rule for every authored walk), the cylindrical patches by the (θ,z) rectangle integrals, the full sphere by its closed form; all_exact is the honesty flag (a faceted body answers the polyhedral value, never silently mixed), out-of-class faces refuse actionably, and the classical formulas ARE the tests — the guide case’s hand-checkable table abc − πr²h and I_zz = abc(a²+b²)/12 − πr⁴h/2, readable from Python through CAD_0.brep.mass_properties; unit 6, the report and the guide case end-to-end: the Debug report grows mass + provenance beside χ (label honest: V−E+F−H) and genus, the property panel shows the numbers read-only (Volume, Centroid, Inertia, the exact/approximated flag — QLabel rows structurally incapable of emitting parameter_changed, the UI-bug lesson made structural; a faceted body says approximated with its polyhedral numbers, never an exact in disguise), the body-level query `CAD_0.brep.body_query` answers counts/χ/genus/provenance as plain values, and the guide-case example prints the D7.5 table side by side — analytic vs reported, 12/17/7/2, χ=0, genus 1, abc − πr²h, I_zz = abc(a²+b²)/12 − πr⁴h/2, all exact — every row PASS or the difference named, the radius edit bit-identical through ONE undo entry, the example running in the CI as a suite member; the v0.4 golden pinned with the table’s numbers, the v0.3 golden honestly faceted.** The G1 fork follow-up is **accepted and G2 is under way** ([ADR-0033](docs/adr/0033-g2-exact-booleans-and-first-fillet.md), accepted 2026-10-26: the analytic SSI table, the exact booleans, the first fillet — **the reserved table-boundary decision is taken: option (i), the table is the wall** (out-of-table pairs refused actionably, the ceiling explicit and queryable; option (ii) — declared-tolerance subdivision — registered as a priced candidate with its entry criterion: a real case demanded by an author body, decided at the next internal checkpoint with table and fillet data on the table); one correction carried on the record — the drafted unequal-radii limit of the cylinder pair missed the typed transverse interior, corrected where it stood; **unit 1 of 6 LANDED in the companion commit: the table** — the four typed entries (plane×sphere's circle √(R²−d²) at the foot of the perpendicular, sphere×sphere's radical-plane circle, cylinder×sphere coaxial's two circles at ±√(R²−r²), cylinder×cylinder parallel equal-radii's mid-plane line pair), each a derivation whose golden IS the classical formula, the p-curves typed in BOTH domains, the re-frame rule landed (the framed SphereSurface beside the framed CircleCurve, the seam re-wired in the ADR-0023 pattern, the frame budget derived from the face's own record — one axis family per face, the incompatible family finding the wall), the degenerates pinned (tangencies, the empty classes, the co-radial coincident), and the whole table QUERYABLE from Python through `CAD_0.brep.ssi_query` BEFORE any boolean consumes it (curves, p-curves in both domains, provenance exact/0, the refusals as returned records naming the pair, the class and the remedies — the Viviani quartic, the Steinmetz sinusoids, the corrected unequal-radii gate, the landed pairs pointed to their owners, the cone's no-writer registration, the fillet's toroidal rows) — with `CAD_0.brep.translate_body` exposing the exact side's own placement so the author bodies can be positioned for the query; the ADR-0031 internal checkpoint is recorded: the estimates stand). The CI matrix (GCC 14 debug + release, Clang 19, on ubuntu-24.04 — the same series as the local rite, the presets pin the compilers) judges every push on `main`; the badge above is the live record.
-
-<!-- TODO(badge GIF): record a 15–25s noVNC demo (create box → sketch →
-     draw a circle → extrude → subtract → double-click the circle and edit
-     the radius live, geometry regenerating) and embed it here:
-     <p align="center"><img src="docs/media/demo.gif" width="640" alt="CAD_0 desktop app demo"></p> -->
+> **Status — the truth, in three lines.** What exists, and the CI testifies: the **exact primitives** with true trimming, the **booleans with gates** (input contracts validated, out-of-table pairs refused actionably, every result checked against exact topological contracts), and **persistent naming** — the derived name beside the address ([ADR-0036](docs/adr/0036-persistent-naming-and-shape-history.md)); beside them the full SDF kernel, the sketch → extrude → subtract chain, exact mass properties, the desktop app. What does **not** exist yet — said, not hidden: the **fillet** (G2 units 2–6), **patterns**, **STEP** (Phase H), G3 free surfaces, the sketcher's constraint solver. The full record, with the roadmap and the cronaca: [docs/status/](docs/status/README.md).
 
 ## Highlights
 
-- **Native SDF kernel** — primitives, CSG booleans, smooth blends, transforms, batched vectorized evaluation (xsimd, multi-threaded) — no mesh in sight until you ask for one.
+- **Native SDF kernel** — primitives, CSG booleans, smooth blends, transforms, batched vectorized evaluation (xsimd; the batch runs serially — oneTBB is an off-by-default opt-in, [ADR-0009](docs/adr/0009-threading-model.md)) — no mesh in sight until you ask for one.
 - **Marching Cubes mesh extraction** ([ADR-0015](docs/adr/0015-marching-cubes.md)) with **vertex welding** via canonical edge keys ([ADR-0016](docs/adr/0016-vertex-welding.md)).
 - **Versioned native format** (`.CAD_0`, [ADR-0007](docs/adr/0007-native-format-versioning.md)): JSON feature tree + binary blob container ([ADR-0007a](docs/adr/0007a-binary-blob-container.md)) for embedded meshes, atomic save, transactional load, explicit migration chain (v0.1.0 → v0.2.0 → v0.3.0 → v0.4.0). That v0.x is the **format** axis — independent of the software version; see *The two version axes* in [CONTRIBUTING](CONTRIBUTING.md).
 - **STL/OBJ import** (welded, first-class mesh scene nodes) and **STL/OBJ/3MF export**.
@@ -38,7 +33,7 @@ Open this repo in a Codespace and run:
 bash scripts/start_codespaces.sh
 ```
 
-This builds the kernel + Python package, starts an Xvfb + fluxbox desktop with a **noVNC preview** (:6080), and launches the app — the same software-GL stack the CI UI tests use. See [CODESPACES.md](CODESPACES.md) for details and troubleshooting.
+This builds the kernel + Python package, starts an Xvfb + fluxbox desktop with a **noVNC preview** (:6080), and launches the app — the same software-GL stack the CI UI tests use. See [docs/CODESPACES.md](docs/CODESPACES.md) for details and troubleshooting.
 
 ### Build locally
 
@@ -46,7 +41,7 @@ Prerequisites: C++20 compiler — the CI-tested columns are GCC 14 and Clang 19 
 
 ```bash
 git clone https://github.com/MarioW98/CAD_zero.git
-cd CAD_0
+cd CAD_zero
 
 # Kernel + tests, no Python bindings
 cmake -B build -G Ninja \
@@ -96,6 +91,22 @@ CMake found an interpreter but not its development headers.
 
 </details>
 
+### The command line — optional `[cli]` extra
+
+The `CAD_0` command evaluates SDF scripts, exports meshes and prints body metadata — headless, no Qt involved. It rides on `typer`/`rich`, which are **not** base dependencies: install the `[cli]` extra and it runs; install the base package only and the command answers with the hint that names the extra instead of a traceback. The package is not on PyPI — install from a clone:
+
+```bash
+pip install ".[cli]"
+
+CAD_0 info examples/sdf_sphere.py                    # metadata table
+CAD_0 primitives                                     # the primitive/operator list
+CAD_0 eval-sdf examples/sdf_sphere.py --output sphere.stl
+CAD_0 view examples/sdf_lattice_ball.py              # opens a viewer window
+CAD_0 slice examples/sdf_lattice_ball.py --plane z --at 0.0
+```
+
+`eval-sdf` writes STL/OBJ/3MF (format detected from the extension); `view`/`slice` open matplotlib windows and need a display.
+
 ## Use the kernel from Python
 
 ```python
@@ -113,7 +124,7 @@ carved = CAD_0.sdf.subtract(sph, cyl)
 b = CAD_0.sdf.translate(CAD_0.sdf.sphere(radius=1.0), (3.0, 0.0, 0.0))
 blended = CAD_0.sdf.smooth_union(sph, b, k=0.6)
 
-# Batched evaluation — vectorized, multi-threaded.
+# Batched evaluation — vectorized (serial: oneTBB is an opt-in).
 pts = np.random.uniform(-5, 5, (1024, 3)).astype(np.float32)
 result = CAD_0.sdf.evaluate(blended, pts)
 print(result.values[:8])
@@ -182,22 +193,22 @@ CAD_0/
 │   ├── math/            # vec, mat, quat, bbox, tolerance, robust predicates
 │   ├── geometry/        # Shape (std::variant), ShapeId, Transform, Visitor
 │   ├── sdf/             # Native SDF: primitives, operators, transforms, evaluate
-│   ├── brep/            # B-Rep kernel (tessellation now; topology = Phase D)
-│   ├── bridge/          # (Phase E) SDF ↔ B-Rep conversion
-│   ├── concurrency/     # TBB thread pool, GIL guard, task graph
+│   ├── brep/            # The exact B-Rep kernel: topology, primitives, booleans, naming
+│   ├── bridge/          # SDF ↔ B-Rep conversion (ADR-0026)
+│   ├── concurrency/     # Thread pool + parallel_for (oneTBB opt-in, serial fallback)
 │   ├── scene/           # Scene graph, SceneNode (Sdf|Mesh), builder registry
 │   ├── viewport/        # Headless-first renderers (ADR-0017)
 │   └── io/              # STL/OBJ/3MF, native .CAD_0 format
-├── bindings/python/     # nanobind bindings + Python package
+├── bindings/python/     # nanobind bindings + Python package (CLI included)
 ├── app/                 # PySide6 desktop app
-├── scripts/             # Codespaces launcher (Xvfb + fluxbox + noVNC)
-├── docs/                # architecture, ADRs, warning audits
-├── examples/            # Python usage examples
-├── tests/               # doctest unit + regression suites
-└── third_party/         # Vendored third-party code: the AUTHENTIC Shewchuk robust.c (public domain, adaptive — vendored by H1, ADR-0034)
+├── scripts/             # Tooling: subject checker, suite launcher, build helper, Codespaces launcher
+├── docs/                # The register: adr/, audits/, status/, history/, architecture/, manuals
+├── examples/            # Python usage examples (CLI-ready SDF scripts)
+├── tests/               # doctest unit + property suites, golden files
+└── third_party/         # Vendored: the authentic Shewchuk robust.c (public domain, ADR-0034)
 ```
 
-See [docs/architecture/overview.md](docs/architecture/overview.md) for the full layout and design rationale.
+See [docs/architecture/overview.md](docs/architecture/overview.md) for the full layout and design rationale. Where every artifact lives — and why — is pinned in *Where things live* in [CONTRIBUTING](CONTRIBUTING.md); the dependency pins and the pin-vs-vendor decisions live in [docs/dependencies.md](docs/dependencies.md).
 
 ## Roadmap
 
@@ -207,28 +218,30 @@ See [docs/architecture/overview.md](docs/architecture/overview.md) for the full 
 | B | SDF kernel, marching cubes, vertex welding | ✅ done |
 | C | Viewport architecture, PySide6 desktop app | ✅ done |
 | C+ | Native format + migrators, STL/OBJ import, picking, CI matrix, toolchain contract | ✅ done |
-| **D** | **Radial-edge B-Rep topology (ADR-0012), query operators, seam wires, convex booleans (union/subtract/intersect) with slab decomposition, T-junction subdivision** | ✅ done ([ADR-0021](docs/adr/0021-brep-topology-data-structure.md)–[0025](docs/adr/0025-proper-greiner-hormann.md)) |
-| E | SDF → B-Rep extraction under hard topology contracts ([ADR-0026](docs/adr/0026-sdf-brep-bridge.md)); inverse bridge: documented stub, future ADR | ✅ done |
-| **F** | **Modeling: boolean feature slice in the tree + `.CAD_0` v0.3 operation recipes ([ADR-0027](docs/adr/0027-phase-f-boolean-feature-slice.md)); sketcher MVP — typed 2D profiles, extrude as a feature, `.CAD_0` v0.4 ([ADR-0030](docs/adr/0030-sketcher-mvp.md))** | ▶️ in progress |
-| **G** | **The exact B-Rep kernel — road (a), all in house ([ADR-0031](docs/adr/0031-exact-brep-kernel.md), accepted; ADR-0003 amended: the license whitelist): G1 exact primitives + exact mass properties ([ADR-0032](docs/adr/0032-g1-topology-and-exact-primitives.md), implemented), G2 exact booleans + the first fillet ([ADR-0033](docs/adr/0033-g2-exact-booleans-and-first-fillet.md) **accepted 2026-10-26: D2 = option (i), the table is the wall — option (ii) registered priced with its entry criterion, decided at the next checkpoint**), G3 free surfaces** | ▶️ in progress — **G1 COMPLETE AND CLICK-TESTED (2026-10-26): ADR-0032 Implemented (the flip is the click-test's own act, the ADR-0030 precedent), the ADR-0031 internal checkpoint recorded (the estimates stand), ADR-0033 accepted with the table-boundary decision taken — D2 = option (i), the wall; the review carried one correction to the record (the cylinder pair's unequal-radii limit missed the typed transverse interior, corrected where it stood); G2 unit 1 of 6 LANDED — the table**: the four typed entries, one derivation each (the classical formulas ARE the goldens: √(R²−d²), the radical plane, ±√(R²−r²), the mid-plane lines at ±√(r²−d²/4)), the p-curves typed in BOTH domains (the framed SphereSurface/CircleCurve, the latitude Line2s, the full-period convention), the re-frame rule with its derived frame budget (one axis family per face — the incompatible family finds the wall, option (i) coherent to the end), the degenerates with pinned dispositions (the tangent point/circle/double line, the empty classes named, the co-radial coincident — the dedup rule's trigger), the wall as returned records (the Viviani quartic, the Steinmetz sinusoids in both domains, the corrected unequal-radii gate, plane×cylinder and plane×plane pointed to their landed owners, the cone registered with no writer, the toroidal rows registered for the fillet's unit, the provenance gate on approximated operands) — all of it QUERYABLE from Python (`CAD_0.brep.ssi_query`, with `translate_body` for positioning) before any boolean consumes it, bit-identical across re-runs (hex-digest pinned); no boolean moved, the format did not move, the display did not change — units 2–6 follow (the booleans extended, the fillet, the degenerates' corpus, the UI, the guide case end-to-end); G1 units 1–6 all landed — unit 1, the data model (p-curves on co-edges, Layer-2 provenance, χ = V−E+F−H); unit 2, the primitives with true trimming + the face query in the bindings; unit 3, the exact extrude (the HybridBody on the node); unit 4, the exact subtract (the plane∩cylinder SSI, the pinned through-hole topology, the honest refusals); unit 5, the exact mass properties (the divergence theorem over the exact faces, all_exact the honesty flag, the classical formulas as the tests); unit 6, the report and the guide case end-to-end — the Debug report grew mass + provenance beside χ (with the H term in the label) and genus through `CAD_0.report` (the single consumer of the mass API and the body query, no second opinion), the property panel shows the numbers READ-ONLY (QLabels that cannot emit parameter_changed — the UI-bug lesson made structural, the exact/approximated flag visible, a faceted body's polyhedral numbers never disguised as exact), and the guide-case example prints the D7.5 table side by side (12/17/7/2, χ=0, genus 1, abc − πr²h, I_zz = abc(a²+b²)/12 − πr⁴h/2 — every row PASS) with the radius edit bit-identical through ONE undo entry, running in the CI as a suite member; the v0.4 golden pinned with the table's numbers, the v0.3 golden honestly faceted |
+| D | Radial-edge B-Rep topology, query operators, seam wires, convex booleans | ✅ done ([ADR-0021](docs/adr/0021-brep-topology-data-structure.md)–[0025](docs/adr/0025-proper-greiner-hormann.md)) |
+| E | SDF → B-Rep extraction under hard contracts; inverse bridge a documented stub | ✅ done ([ADR-0026](docs/adr/0026-sdf-brep-bridge.md)) |
+| F | Modeling: boolean feature slice, sketcher MVP | ▶️ in progress — both named slices are in ([ADR-0027](docs/adr/0027-phase-f-boolean-feature-slice.md), [ADR-0030](docs/adr/0030-sketcher-mvp.md)); the constraint solver deferred with its entry criterion |
+| G | The exact B-Rep kernel — road (a), all in house | ▶️ in progress — G1 complete and closed ([ADR-0032](docs/adr/0032-g1-topology-and-exact-primitives.md)); persistent naming landed ([ADR-0036](docs/adr/0036-persistent-naming-and-shape-history.md)); G2 unit 1 of 6 landed ([ADR-0033](docs/adr/0033-g2-exact-booleans-and-first-fillet.md)) |
 | H | STEP AP203 MVP (ADR-0010) | planned |
 
 **Platform vision** — the kernel as the geometric core of a broader CAE platform: a preprocessor's exact geometry, parametric vehicle geometry (G3, declared), and vortex/panel analysis consuming coherent surface meshes — [docs/architecture/platform-vision.md](docs/architecture/platform-vision.md). Orientation, not scope: the horizon never widens a rung.
+
+The full record — the roadmap with its history and the cronaca of every rung — lives in [docs/status/](docs/status/README.md).
 
 ## Key architectural decisions
 
 | ADR | Topic |
 |-----|-------|
 | [0001](docs/adr/0001-use-cpp20.md) | C++20 (subset) for the core kernel |
-| [0002](docs/adr/0002-dual-kernel-native-sdf.md) | **SDF is a first-class native representation; `Shape` uses `std::variant`** |
-| [0003](docs/adr/0003-third-party-policy.md) | No third-party CAD kernels |
+| [0002](docs/adr/0002-dual-kernel-native-sdf.md) | SDF is a first-class native representation; `Shape` uses `std::variant` |
+| [0003](docs/adr/0003-third-party-policy.md) | No third-party CAD kernels; the license whitelist |
 | [0004](docs/adr/0004-tolerance-model.md) | Tolerance is a first-class citizen; no global epsilon |
-| [0005](docs/adr/0005-persistent-naming-early.md) | **Persistent naming by genealogy + subshape tracing (NOT geometric signature)** |
+| [0005](docs/adr/0005-persistent-naming-early.md) | Persistent naming by genealogy + subshape tracing (NOT geometric signature) |
 | [0006](docs/adr/0006-ui-primary-pyside6.md) | PySide6 (Python) is the primary UI; Qt6 C++ removed |
 | [0007](docs/adr/0007-native-format-versioning.md) | Native format with explicit versioning + migration chain |
 | [0007a](docs/adr/0007a-binary-blob-container.md) | Binary blob container for embedded meshes (v0.2.0, "raw" encoding; zstd deferred) |
 | [0008](docs/adr/0008-simd-abstraction.md) | xsimd as SIMD abstraction; GPU backend stubbed from Phase A |
-| [0009](docs/adr/0009-threading-model.md) | oneTBB + RAII GIL guard |
+| [0009](docs/adr/0009-threading-model.md) | oneTBB + RAII GIL guard — OFF by default, serial fallback shipped (2026-11-01 amendment) |
 | [0010](docs/adr/0010-step-scope-mvp.md) | STEP MVP scope: AP203 ed. 2, analytic-only |
 | [0011](docs/adr/0011-nanobind-vs-pybind11.md) | nanobind (not pybind11) for Python bindings |
 | [0012](docs/adr/0012-non-manifold-topology.md) | Radial-edge B-Rep topology (not half-edge) |
@@ -240,19 +253,22 @@ See [docs/architecture/overview.md](docs/architecture/overview.md) for the full 
 | [0018](docs/adr/0018-pyside6-ui-integration.md) | PySide6 UI integration (Phase C.6-C.8) |
 | [0019](docs/adr/0019-project-rename.md) | Project rename cadforge → CAD_0 |
 | [0020](docs/adr/0020-python-bindings-build.md) | Python bindings build configuration |
-| [0021](docs/adr/0021-brep-topology-data-structure.md) | B-Rep topology data structure — radial-edge entity set, ID scheme, ownership, Euler invariant (Phase D step (a)) |
-| [0022](docs/adr/0022-brep-topology-query-operators.md) | B-Rep topology query operators (faces_around_edge, edges_around_vertex, opposite_coedge, is_closed_manifold, wireframe_edges, vertex_valence) + make_tetrahedron (Phase D step (b)) |
-| [0023](docs/adr/0023-analytic-seam-wires-and-boolean-intersect.md) | Analytic seam wires (sphere: 2V/1E/1F, cylinder: 4V/5E/3F — both now closed manifolds) + bool_intersect on convex polyhedra via Sutherland-Hodgman (Phase D step (c)) |
-| [0024](docs/adr/0024-boolean-union-and-subtract.md) | bool_union and bool_subtract via centroid classification + identical-body shortcut (MVP; partial-overlap faces kept intact when their centroid is outside the other solid) (Phase D step (c+)) |
-| [0025](docs/adr/0025-proper-greiner-hormann.md) | Greiner-Hormann 2D polygon clipping infrastructure (kept for future use; current bool_union/subtract use the simpler centroid-classification approach with identical-body shortcut, ADR-0024 §3) (Phase D step (c+) fix) |
-| [0026](docs/adr/0026-sdf-brep-bridge.md) | SDF → B-Rep bridge under hard topology contracts (pinned V/E/F per grid, χ/genus reported and derived only where sound; the inverse direction is a documented stub) |
-| [0027](docs/adr/0027-phase-f-boolean-feature-slice.md) | Phase F boolean feature slice: operation nodes in the tree, FeatureId-referenced operands, id-stable undo/redo, `.CAD_0` v0.3 operation recipes |
-| [0028](docs/adr/0028-sdf-bounds-smooth-blend-dilation.md) | SmoothMinSDF bounds() dilates by k/8 per blend level (the k/16 field dip, conservatively converted); the stratified positivity property closes the thin-shell blind spot |
-| [0029](docs/adr/0029-twist-warp-contract.md) | **The twist warp contract (implemented)**: cylinder-AABB bounds (k-blind proof, √2 on-axis cost), the σ(k, r) Lipschitz closed form, the full chain-rule gradient with the y shear; construction-time validation across the 16-node table; property closure with anti-revolution liveness guards, the σ k-sweep, and twisted bridge extractions under the full contract set |
-| [0030](docs/adr/0030-sketcher-mvp.md) | **The sketcher MVP (implemented)**: typed 2D entities (segments, circles, arcs) as a third node kind, extrude as an operation node with the subtract's genealogy, the 2D field semantics derived to the ADR-0029 standard (max-composition: sign and zero-set exact, Lipschitz 1 proved, the conservative gap named), `.CAD_0` v0.4 — the constraint solver explicitly deferred with its entry criterion |
-| [0031](docs/adr/0031-exact-brep-kernel.md) | **The exact B-Rep kernel — the great fork (accepted: road (a), all in house, forever)**: build / OCCT / hybrid priced honestly side by side with failure modes named; the fork closed at acceptance — the G2 gate an internal checkpoint, not a fork; the license whitelist pinned into ADR-0003 in the same act; the data model, the three-layer tolerance discipline, and Euler-Poincaré as kernel invariant bind every future geometry ADR; the G1/G2/G3 ladder with the migration (SDF positioned, not killed; `.CAD_0` extends, never rewrites) — **the G1 internal checkpoint recorded 2026-10-26: G1 measured (six units, three sessions, one CI-caught defect closed same day, zero user-visible), the estimates stand** |
-| [0032](docs/adr/0032-g1-topology-and-exact-primitives.md) | **G1 — topology and exact primitives (implemented 2026-10-26 — six units in three sessions, closed by the user's click-test)**: the first rung — box/sphere/cylinder with true trimming (p-curves on co-edges, the sketch kernel's 2D types reused as the vocabulary — now WRITTEN by the factories, with the analytic frames' right-handed rule corrected on the cylinder), exact mass properties from the B-Rep via the divergence theorem (volume/centroid/inertia, closed forms per analytic face — LANDED: the kernels, the Green/rectangle/sphere families, the all_exact honesty flag, the classical formulas as the tests), the plane∩cylinder entry (⊥ and ∥ exact; the oblique case honestly out — the sinusoid p-curve needs G3's splines), the exact extrude and subtract (the subtract landed: the SSI entry, the pinned through-hole topology, the degenerates’ dispositions, the HybridBody on the subtract node), the Layer-1 invariant hard-fail with the derived inner-loop term **χ = V−E+F−H = 2(S−G)** (the guide case's pierced faces force it), the provenance contract ("is this edge exact?" always answerable — now a face query in the bindings), six delivery units, all landed; no promise on G2 |
-| [0033](docs/adr/0033-g2-exact-booleans-and-first-fillet.md) | **G2 — the analytic SSI table, exact booleans, and the first fillet (accepted 2026-10-26 — D2 decided at review: option (i), the table is the wall)**: the typable-pair table with one derivation per entry under the both-domain admission criterion (typed 3D curve AND typed p-curves in BOTH parameter domains — the G1 sinusoid lesson made a rule; ADR-0032 D5.3's unlanded Ellipse2 parenthetical corrected on the record), the deterministic re-frame rule for revolution surfaces (one axis family per face — the second incompatible cut is out-of-table), **the table boundary DECIDED: exact-where-the-table-reaches with actionable refusals (option i) — option (ii), declared-tolerance subdivision, registered as a priced candidate with its entry criterion (a real case demanded by an author body; decided at the next internal checkpoint, empirically — the user's motivation recorded verbatim: the wall is always honest; the hedge, once planted, must be watched forever; first the wall, the hedge when a real case asks for it)**; the degree > 2 pairs (the Viviani-class quartics, the spiric sections of Perseus) are not typable, no silent third way; one correction carried at acceptance — the drafted unequal-radii limit of the cylinder pair missed the typed transverse interior (two lines in the offset plane, admitted by the criterion), corrected where it stood; the rolling-ball fillet on the derived class (the box edge's cylindrical flank; the hole rim's toroidal flank — the G1 guide body's own rim, the counts 14/20/8/2 and the volume with the torus term derived hand-checkable), the degenerate dispositions (radius-too-large errors, the corner collision IS the vertex blend → refused with the remedy, tangencies tie-broken golden-pinned), the six-unit ladder and the no-promises list (vertex blends unscheduled, G3 untouched, no new dependencies, the format moves only with the fillet unit's v0.5 companion per ADR-0007) |
+| [0021](docs/adr/0021-brep-topology-data-structure.md) | B-Rep topology data structure — radial-edge entity set, ID scheme, ownership (Phase D (a)) |
+| [0022](docs/adr/0022-brep-topology-query-operators.md) | B-Rep topology query operators + make_tetrahedron (Phase D (b)) |
+| [0023](docs/adr/0023-analytic-seam-wires-and-boolean-intersect.md) | Analytic seam wires + bool_intersect on convex polyhedra (Phase D (c)) |
+| [0024](docs/adr/0024-boolean-union-and-subtract.md) | bool_union / bool_subtract, centroid classification + identical-body shortcut (Phase D (c+)) |
+| [0025](docs/adr/0025-proper-greiner-hormann.md) | Greiner-Hormann clipping infrastructure, kept for future use (Phase D (c+) fix) |
+| [0026](docs/adr/0026-sdf-brep-bridge.md) | SDF → B-Rep bridge under hard topology contracts; the inverse a documented stub |
+| [0027](docs/adr/0027-phase-f-boolean-feature-slice.md) | Phase F boolean feature slice: operation nodes, FeatureId operands, id-stable undo, v0.3 recipes |
+| [0028](docs/adr/0028-sdf-bounds-smooth-blend-dilation.md) | SmoothMinSDF bounds() dilates by k/8 per blend level |
+| [0029](docs/adr/0029-twist-warp-contract.md) | The twist warp contract (implemented): bounds, σ(k, r) Lipschitz, chain-rule gradient, validation |
+| [0030](docs/adr/0030-sketcher-mvp.md) | The sketcher MVP (implemented): typed entities, extrude as a feature, v0.4; solver deferred |
+| [0031](docs/adr/0031-exact-brep-kernel.md) | The exact B-Rep kernel — the great fork (accepted: road (a), all in house) |
+| [0032](docs/adr/0032-g1-topology-and-exact-primitives.md) | G1 (implemented): true trimming, exact extrude/subtract, exact mass properties, χ = V−E+F−H |
+| [0033](docs/adr/0033-g2-exact-booleans-and-first-fillet.md) | G2 (accepted): the analytic SSI table — the table is the wall (option i); option (ii) priced, registered |
+| [0034](docs/adr/0034-h1-arithmetic-boundary.md) | H1: the arithmetic boundary — the authentic adaptive Shewchuk predicates vendored |
+| [0035](docs/adr/0035-h2-numerical-taxonomy.md) | H2: the numerical taxonomy — typed tolerances, the derived determinant band, p-curves in double |
+| [0036](docs/adr/0036-persistent-naming-and-shape-history.md) | Persistent naming and shape history (implemented): the derived name, the descent table, the resolver |
 
 ## Testing, determinism, CI
 
@@ -262,17 +278,8 @@ See [docs/architecture/overview.md](docs/architecture/overview.md) for the full 
 
 ## Contributing
 
-The project follows an **ADR-first culture**: architectural decisions are written, reviewed and recorded in `docs/adr/` before the code that implements them; regressions get a failing test before the fix. Open a Codespace (everything needed to build, run and test ships in the dev container), branch from `main`, and keep commits descriptive.
+The project follows an **ADR-first culture**: architectural decisions are written, reviewed and recorded in `docs/adr/` before the code that implements them; regressions get a failing test before the fix. Open a Codespace (everything needed to build, run and test ships in the dev container), branch from `main`, and keep commits descriptive. The conventions — subjects, the pre-delivery rite, where every artifact lives — are in [CONTRIBUTING](CONTRIBUTING.md).
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
-
-**Correction on the record (H1, ADR-0034).** The file under
-`third_party/robust_predicates/` was **not** Shewchuk's — it was a
-hand-written non-adaptive stub imitating his structure (the license
-audit had said so; the README had not). H1 vendored the authentic
-`robust.c` (public domain, rev. May 18, 1996): the adaptive
-implementation is in the tree, with its provenance header and the
-discriminating adaptivity tests as the proof. All other dependencies keep their original licenses (MIT,
-BSD-3, Apache-2.0). The `[ui]` extra pulls in PySide6, the only copyleft (LGPL-3.0) in the tree — dynamic import, replaceable, notices required for closed-source derivatives. The [NOTICE](NOTICE) file lists every third-party component and its license (the ADR-0013 release notice, due since the `v0.1.0-alpha` tag). Full inventory and per-dependency flags: [docs/audits/2026-10-16-third-party-license-audit.md](docs/audits/2026-10-16-third-party-license-audit.md).
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE) — the NOTICE lists every third-party component and its license; the `[ui]` extra pulls in PySide6, the only copyleft (LGPL-3.0) in the tree, dynamically imported and replaceable. The full inventory, the per-dependency flags for closed-source derivatives, and the H1 provenance correction for the vendored predicates: [docs/audits/2026-10-16-third-party-license-audit.md](docs/audits/2026-10-16-third-party-license-audit.md).

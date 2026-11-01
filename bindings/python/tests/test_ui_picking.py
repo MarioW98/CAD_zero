@@ -1,6 +1,6 @@
 """CAD_0 viewport picking regression tests.
 
-Feature (CODESPACES.md, Controls): "Click on shape | Select it". A short
+Feature (docs/CODESPACES.md, Controls): "Click on shape | Select it". A short
 click on a 3D shape must select it — in the feature tree, in the
 property panel, and with a visible highlight in the 3D viewport.
 

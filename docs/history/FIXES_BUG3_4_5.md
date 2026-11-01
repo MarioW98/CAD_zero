@@ -1,5 +1,13 @@
 # CAD_0 — Correzioni Bug 3 / 4 / 5
 
+> **Archivio (Contesto).** Questo file è la cronaca storica della
+> remediation dei Bug 3/4/5 (ottobre 2026), consegnata come bundle di
+> patch e applicata sopra il commit `ac75bc4`; stava in radice come
+> biglietto di consegna. Consegna B m2 (2026-11-01) l'ha archiviato
+> qui in `docs/history/`, dove vive la cronaca: la radice contiene
+> solo ciò che la radice deve contenere. Il contenuto sotto è
+> invariato — la storia non si cancella, si archivia.
+
 Basato su: repo `MarioW98/CAD_zero`, commit `ac75bc4` ("majr fixes", che
 conteneva già i fix di Bug 1 e Bug 2 consegnati in precedenza).
 

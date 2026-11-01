@@ -129,7 +129,7 @@ jobs:
       # need a real GL context, which the offscreen QPA creates through
       # EGL — and Mesa can only open EGL with a display around, so the
       # run happens under Xvfb exactly like the Codespaces app (see
-      # CODESPACES.md). The startup test shows a real window (in its own
+      # docs/CODESPACES.md). The startup test shows a real window (in its own
       # subprocess, exiting via os._exit before Qt/GL teardown).
       # Fresh pytest process on purpose. These two GL-bound files are
       # the ones the ctest bindings target ignores (a display is their

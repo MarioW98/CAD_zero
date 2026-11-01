@@ -24,7 +24,7 @@ like test_ui_import.py / test_ui_navigation.py:
   WindowMaximized state is meaningless, so it is deliberately not
   checked. The subprocess exits through os._exit(0) after printing its
   verdict: the pre-existing interpreter-teardown segfault of shown GL
-  windows (see CODESPACES.md) never fires, and pytest stays isolated
+  windows (see docs/CODESPACES.md) never fires, and pytest stays isolated
   from it.
 """
 
@@ -151,7 +151,7 @@ def test_real_main_runs_and_menus_present():
 
         # Bypass interpreter teardown on purpose: a shown+destroyed GL
         # window segfaults at exit (pre-existing, documented in
-        # CODESPACES.md). os._exit skips Qt/GL destruction entirely.
+        # docs/CODESPACES.md). os._exit skips Qt/GL destruction entirely.
         sys.stdout.flush()
         sys.stderr.flush()
         os._exit(0)

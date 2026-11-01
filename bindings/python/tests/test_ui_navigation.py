@@ -19,7 +19,7 @@ Two layers, same policy as test_ui_import.py:
 
 The navigation part needs a real GL context (offscreen QPA + Mesa
 software GL). When GL is unavailable the test skips with an explicit
-reason; CODESPACES.md documents how to run it with software GL.
+reason; docs/CODESPACES.md documents how to run it with software GL.
 """
 
 from __future__ import annotations
@@ -152,7 +152,7 @@ def _require_gl_window(w):
         pytest.skip(
             "GL context unavailable in this environment — the navigation "
             "smoke test needs software GL (offscreen QPA + Mesa). See "
-            "CODESPACES.md for the documented local run.")
+            "docs/CODESPACES.md for the documented local run.")
     return gl
 
 
