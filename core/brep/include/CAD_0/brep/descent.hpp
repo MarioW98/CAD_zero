@@ -144,6 +144,24 @@ struct DescentRow {
     // Vanished rows: WHAT died and WHY — the tavola's own answer to
     // "which decision killed it" (D3's class-4 payload begins here).
     std::string cause{};
+
+    // The row's subject's IDENTITY (ADR-0036 D3, H2-u6 morso 5 — the
+    // resolver's own read): the ShapeId BESIDE the render, stamped by
+    // the derivation at the same sites that write `name` — the result
+    // rows carry the result entity's own stamp, the VANISHED rows the
+    // DEAD entity's (read from the dying operand's body, the one
+    // place the dead identity lives — the bodies themselves carry no
+    // graveyard). Vertices carry the default (v1 has no vertex names,
+    // D4's queue — the Vertex type carries no id field at all), and
+    // the unnamed classes read depth 0, honestly. THE STRUCTURE THE
+    // RESOLUTION MATCHES: a reference finds its row by ShapeId
+    // equality (structural, never the render — B4's own discipline),
+    // and D3's class-4 payload carries the row itself, so the tavola
+    // ALONE suffices for the old generation's side — no body beside
+    // it. Additive by construction (the field rides last, the
+    // existing initializers keep their meaning): zero decisions,
+    // zero geometry, no golden moves (D5's declaration).
+    geometry::ShapeId shape_id{};
 };
 
 // The tavola itself: rows in the body's own deterministic order

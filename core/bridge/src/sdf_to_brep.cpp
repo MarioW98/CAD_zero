@@ -11,6 +11,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace CAD_0::bridge {
@@ -239,25 +240,48 @@ std::unique_ptr<brep::BRepBody> sdf_to_brep_faceted(
 // ---------------------------------------------------------------------------
 // Primitive fitting: detect known SDF types
 // ---------------------------------------------------------------------------
+
+// The detection's own verdict (H2-u6 morso 5): the describe()
+// prefix the conversion itself switches on — one shared authority,
+// no second detection to drift. Pure prefix check, no parameters
+// parsed here.
+const char* fitted_primitive(const sdf::SDFBody& sdf_body) {
+    const sdf::SDFNode* root = sdf_body.root();
+    if (!root) return nullptr;
+    const std::string desc = root->describe();
+    if (desc.substr(0, 7) == "sphere(") return "sphere";
+    if (desc.substr(0, 4) == "box(") return "box";
+    if (desc.substr(0, 9) == "cylinder(") return "cylinder";
+    return nullptr;
+}
+
 std::unique_ptr<brep::BRepBody> sdf_to_brep_primitive(
-    const sdf::SDFBody& sdf_body) {
+    const sdf::SDFBody& sdf_body, geometry::FeatureId feature) {
 
     const sdf::SDFNode* root = sdf_body.root();
     if (!root) return nullptr;
 
     std::string desc = root->describe();
 
+    // The dispatch shares fitted_primitive's own verdict — one
+    // detection, two consumers (the conversion and the naming).
+    // The nullptr guard FIRST: a body that fits no primitive has no
+    // branch to take (a string_view of nullptr would be UB, and the
+    // loud branch is the honest one: no primitive, no conversion).
+    const char* fit = fitted_primitive(sdf_body);
+    if (fit == nullptr) return nullptr;
+
     // Check for sphere: description must START with "sphere(" (not contain it)
-    if (desc.substr(0, 7) == "sphere(") {
+    if (std::string_view{fit} == "sphere") {
         auto pos = desc.find("r=");
         if (pos != std::string::npos) {
             float r = std::stof(desc.substr(pos + 2));
-            return brep::make_sphere(r);
+            return brep::make_sphere(r, {}, feature);
         }
     }
 
     // Check for box
-    if (desc.substr(0, 4) == "box(") {
+    if (std::string_view{fit} == "box") {
         auto pos = desc.find("e=");
         if (pos != std::string::npos) {
             std::string vals = desc.substr(pos + 2);
@@ -268,21 +292,21 @@ std::unique_ptr<brep::BRepBody> sdf_to_brep_primitive(
                 auto c2 = vals.find(",", c1 + 1);
                 if (c2 != std::string::npos) {
                     float ez = std::stof(vals.substr(c2 + 1));
-                    return brep::make_box({ex, ey, ez});
+                    return brep::make_box({ex, ey, ez}, feature);
                 }
             }
         }
     }
 
     // Check for cylinder
-    if (desc.substr(0, 9) == "cylinder(") {
+    if (std::string_view{fit} == "cylinder") {
         auto pos = desc.find("r=");
         if (pos != std::string::npos) {
             float r = std::stof(desc.substr(pos + 2));
             auto hpos = desc.find("h=");
             if (hpos != std::string::npos) {
                 float h = std::stof(desc.substr(hpos + 2));
-                return brep::make_cylinder(r, h);
+                return brep::make_cylinder(r, h, feature);
             }
         }
     }

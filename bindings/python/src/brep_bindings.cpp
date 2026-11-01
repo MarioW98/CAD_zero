@@ -96,10 +96,14 @@
 #include <nanobind/stl/unique_ptr.h>
 #include <nanobind/stl/vector.h>
 #include <nanobind/stl/optional.h>
+#include <nanobind/stl/pair.h>
+#include <nanobind/stl/tuple.h>
 
 #include "CAD_0/brep/topology.hpp"
 #include "CAD_0/brep/naming.hpp"
 #include "CAD_0/brep/query.hpp"
+#include "CAD_0/brep/descent.hpp"
+#include "CAD_0/brep/resolve.hpp"
 #include "CAD_0/brep/mass_properties.hpp"
 #include "CAD_0/brep/ssi.hpp"
 #include "CAD_0/brep/subtract.hpp"
@@ -714,4 +718,378 @@ void bind_brep(nb::module_& m) {
         "frame moves with its surface. Raises ValueError for a surface\n"
         "family outside the analytic translation table (loud, never a\n"
         "silent skip).");
+
+    // ------------------------------------------------------------------
+    // THE RESOLVER (H2-u6 morso 5, ADR-0036 D3 + D6.4): the four
+    // classes through mutation, the two query surfaces. The
+    // descent-table derivations, the generation + edit-context
+    // constructors, resolve() itself, and the by-name queries —
+    // everything the click-test needs, from Python, on the guide
+    // case: pick the rim, edit the radius, resolve, re-run.
+    // ------------------------------------------------------------------
+
+    // The tavola (the descent table) — an opaque handle with the
+    // row count (the derivation functions emit it, pure and
+    // deterministic; the resolution reads the rows).
+    nb::class_<CAD_0::brep::DescentTable>(brep_mod, "DescentTable")
+        .def("__len__",
+             [](const CAD_0::brep::DescentTable& t) {
+                 return t.rows.size();
+             })
+        .def("__repr__", [](const CAD_0::brep::DescentTable& t) {
+            return "<DescentTable with " +
+                   std::to_string(t.rows.size()) + " rows>";
+        });
+
+    brep_mod.def(
+        "subtract_descent",
+        [](const BRepBody& result, const BRepBody& a,
+           const BRepBody& b) {
+            return CAD_0::brep::subtract_descent(result, a, b);
+        },
+        nb::arg("result"), nb::arg("target"), nb::arg("tool"),
+        "The exact subtract's descent table (ADR-0036 D2, morse 4):\n"
+        "one row per entity of the result (born/kept/absorbed, with\n"
+        "the operand refs and the names) plus the VANISHED tail (the\n"
+        "dying operand's entities, each with its cause and — since\n"
+        "morse 5 — its dead identity's ShapeId). Derived, never\n"
+        "stored: recomputed deterministically from the bodies on\n"
+        "every call.");
+
+    brep_mod.def(
+        "extrude_descent",
+        [](const BRepBody& body,
+           const std::vector<CAD_0::sdf::SketchChain>& chains,
+           std::uint64_t feature, std::uint64_t sketch) {
+            return CAD_0::brep::extrude_descent(
+                body, chains, CAD_0::geometry::FeatureId{feature},
+                CAD_0::geometry::FeatureId{sketch});
+        },
+        nb::arg("body"), nb::arg("chains"), nb::arg("feature"),
+        nb::arg("sketch"),
+        "The extrude's descent table (ADR-0036 D2, morse 3): one\n"
+        "born row per entity, each carrying its FROM — the authored\n"
+        "root (the sketch chain entity). `feature` is the extrude's\n"
+        "own FeatureId (the names' creator part), `sketch` the\n"
+        "sketch's (the FROM references' own feature).");
+
+    brep_mod.def(
+        "factory_descent",
+        [](const BRepBody& body) {
+            return CAD_0::brep::factory_descent(body);
+        },
+        nb::arg("body"),
+        "The factories' descent table (ADR-0036 D2, morse 2): the\n"
+        "trivial all-born tavola, derived on every call.");
+
+    // The generation — one materialized generation of the referenced
+    // feature's output, made whole with the reference's grammar. The
+    // operand bindings (the Subtract kind's legs) are built from the
+    // (feature, kind) pairs the caller holds — it built the bodies.
+    struct PyGeneration {
+        // The storage and the instance declaration, owned HERE (the
+        // resolver's view points into them; the object is built once
+        // and never mutated, so the span stays valid).
+        std::vector<CAD_0::brep::naming::OperandBinding> storage{};
+        CAD_0::brep::naming::OperationNaming naming{};
+        CAD_0::brep::Generation gen{};
+
+        PyGeneration(const BRepBody* body,
+                     const CAD_0::brep::DescentTable* tavola,
+                     CAD_0::brep::naming::FeatureKind kind,
+                     std::vector<std::pair<std::uint64_t,
+                                          CAD_0::brep::naming::FeatureKind>>
+                         operands,
+                     bool multi_chain) {
+            namespace n = CAD_0::brep::naming;
+            for (const auto& [feature, op_kind] : operands) {
+                storage.push_back(
+                    {CAD_0::geometry::FeatureId{feature},
+                     naming_table_of(op_kind)});
+            }
+            switch (kind) {
+            case n::FeatureKind::Box:
+                if (!storage.empty())
+                    throw std::invalid_argument(
+                        "Generation: the box's naming declares no "
+                        "operands (the factories bootstrap from the "
+                        "construction index alone); remedy: pass "
+                        "operands=[] for the factory kinds.");
+                naming = n::OperationNaming{
+                    kind, n::kBoxFaceRoles, n::kBoxEdgeRoles, {}};
+                break;
+            case n::FeatureKind::Sphere:
+                if (!storage.empty())
+                    throw std::invalid_argument(
+                        "Generation: the sphere's naming declares no "
+                        "operands; remedy: pass operands=[].");
+                naming = n::OperationNaming{
+                    kind, n::kSphereFaceRoles, n::kSphereEdgeRoles, {}};
+                break;
+            case n::FeatureKind::Cylinder:
+                if (!storage.empty())
+                    throw std::invalid_argument(
+                        "Generation: the cylinder's naming declares no "
+                        "operands; remedy: pass operands=[].");
+                naming = n::OperationNaming{
+                    kind, n::kCylinderFaceRoles, n::kCylinderEdgeRoles,
+                    {}};
+                break;
+            case n::FeatureKind::Extrude:
+                // The extrude's roots ride the FROM channel (D4 + the
+                // morse-3 register): the tavola's own rows name them,
+                // never an operand binding.
+                if (!storage.empty())
+                    throw std::invalid_argument(
+                        "Generation: the extrude's naming declares no "
+                        "operand bindings - the authored roots ride "
+                        "the tavola's FROM channel (ADR-0036 D4 + the "
+                        "morse-3 register); remedy: pass operands=[].");
+                naming = n::OperationNaming{
+                    kind, n::kExtFaceRoles, n::kExtEdgeRoles, {}};
+                break;
+            case n::FeatureKind::Subtract:
+                if (storage.size() != 2)
+                    throw std::invalid_argument(
+                        "Generation: the subtract's naming binds "
+                        "EXACTLY TWO operands (the target and the "
+                        "tool - the isect/seam slots' own declaration, "
+                        "the SSI table's order); remedy: pass "
+                        "operands=[(target_feature, target_kind), "
+                        "(tool_feature, tool_kind)].");
+                naming = n::OperationNaming{
+                    kind, {}, n::kSubEdgeRoles,
+                    std::span<const n::OperandBinding>{storage}};
+                break;
+            case n::FeatureKind::Sketch:
+                throw std::invalid_argument(
+                    "Generation: the sketch has no naming table - the "
+                    "authored roots are named by the ROOT REFERENCE "
+                    "(the tavola's FROM), never a role table; remedy: "
+                    "pass the CREATING operation's kind (the one that "
+                    "built the referenced body).");
+            }
+            gen = CAD_0::brep::Generation{body, tavola, &naming,
+                                          multi_chain};
+        }
+    };
+
+    nb::class_<PyGeneration>(brep_mod, "Generation",
+        "One materialized generation of the referenced feature's "
+        "output, made whole with the reference's grammar: the body\n"
+        "(required on the NEW side), the tavola (required on the OLD\n"
+        "side), and the naming declaration the reference's paths were\n"
+        "rendered under — the creating operation's own tables for its\n"
+        "born entities, the ORIGINAL creator's for an inherited one\n"
+        "(the absorbed wall inside a subtract's result is the "
+        "EXTRUDE's face).")
+        .def(nb::init<const BRepBody*,
+                      const CAD_0::brep::DescentTable*,
+                      CAD_0::brep::naming::FeatureKind,
+                      std::vector<std::pair<std::uint64_t,
+                          CAD_0::brep::naming::FeatureKind>>,
+                      bool>(),
+             nb::arg("body").none(true),
+             nb::arg("tavola").none(true), nb::arg("kind"),
+             nb::arg("operands") = std::vector<std::pair<
+                 std::uint64_t, CAD_0::brep::naming::FeatureKind>>{},
+             nb::arg("multi_chain") = false,
+             // The generation holds RAW pointers to the body and the
+             // tavola (the resolver's own view) — the Python objects
+             // must outlive it: the keep-alive ties their lifetimes
+             // to the generation's own.
+             nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>(),
+             "Build one generation: body=None allowed on the OLD\n"
+             "side (unread there - the tavola's rows carry the\n"
+             "identities), tavola=None allowed on the NEW side (the\n"
+             "re-derivation reads the body's own stamps). For the\n"
+             "Subtract kind pass the two operands as\n"
+             "[(target_feature, target_kind), (tool_feature,\n"
+             "tool_kind)] — the isect/seam slots' own declaration; "
+             "the\n"
+             "factory and extrude kinds declare no operands (the\n"
+             "extrude's roots ride the tavola's FROM channel).")
+        .def_prop_ro("body", [](const PyGeneration& g) {
+            return g.gen.body;
+        }, nb::rv_policy::reference_internal)
+        .def_prop_ro("tavola", [](const PyGeneration& g) {
+            return g.gen.tavola;
+        }, nb::rv_policy::reference_internal);
+
+    // The edit context — what the edit path EMITS (ADR-0036 D4's
+    // amendment): the no-shift declaration for the v1-covered flows,
+    // the root map when the edit shifts roots and declares them. The
+    // map's entries are (old_chain, old_entity, new_chain,
+    // new_entity) tuples — the sketch's own layout, the feature part
+    // uniform (one sketch feeds one extrude in v1's shapes).
+    struct PyEditContext {
+        CAD_0::brep::EditContext ctx{};
+        std::uint64_t sketch{0};
+
+        PyEditContext(bool no_shift,
+                      const std::vector<std::tuple<std::uint32_t,
+                                                   std::uint32_t,
+                                                   std::uint32_t,
+                                                   std::uint32_t>>&
+                          root_map,
+                      std::uint64_t sketch_id)
+            : sketch(sketch_id) {
+            ctx.roots_no_shift = no_shift;
+            for (const auto& [oc, oe, nc, ne] : root_map) {
+                ctx.root_map.push_back(
+                    {CAD_0::brep::naming::RootRef{
+                         CAD_0::geometry::FeatureId{sketch_id},
+                         CAD_0::brep::naming::RootKind::Entity, oc, oe},
+                     CAD_0::brep::naming::RootRef{
+                         CAD_0::geometry::FeatureId{sketch_id},
+                         CAD_0::brep::naming::RootKind::Entity, nc, ne}});
+            }
+        }
+    };
+
+    nb::class_<PyEditContext>(brep_mod, "EditContext",
+        "The edit context: what the edit path EMITS (ADR-0036 D4's\n"
+        "amendment - the edit that shifts referenced roots EMITS the\n"
+        "root map or REFUSES with the remedy; the resolver CONSUMES\n"
+        "the declaration, never invents it).")
+        .def(nb::init<bool,
+                      std::vector<std::tuple<std::uint32_t, std::uint32_t,
+                                             std::uint32_t, std::uint32_t>>,
+                      std::uint64_t>(),
+             nb::arg("no_shift") = false,
+             nb::arg("root_map") = std::vector<std::tuple<
+                 std::uint32_t, std::uint32_t, std::uint32_t,
+                 std::uint32_t>>{},
+             nb::arg("sketch") = 0,
+             "no_shift=True declares the v1-covered flows (add-at-end,\n"
+             "the parameter edits: the pre-existing roots kept their\n"
+             "positions); root_map=[(old_chain, old_entity,\n"
+             "new_chain, new_entity), ...] declares the shift (the\n"
+             "registered future - v1's authored flows emit none);\n"
+             "sketch is the sketch node's FeatureId (the roots' own\n"
+             "feature, the map's render).");
+
+    // resolve — THE MACHINE, as plain values: the kind, the code (the
+    // four-word family registered for the fillet + the guard's own
+    // token), the report text, and the class's own payload.
+    brep_mod.def(
+        "resolve",
+        [](const CAD_0::geometry::ShapeId& reference,
+           const PyGeneration& old_generation,
+           const PyGeneration& new_generation,
+           const PyEditContext& edit_ctx) {
+            const CAD_0::brep::Resolution r = CAD_0::brep::resolve(
+                reference, old_generation.gen, new_generation.gen,
+                edit_ctx.ctx);
+            nb::dict out;
+            out["text"] = CAD_0::brep::resolution_text(r);
+            out["code"] = CAD_0::brep::resolution_code(r.kind);
+            const auto shape_id_dict =
+                [](const CAD_0::geometry::ShapeId& id) {
+                    nb::dict d;
+                    d["feature"] = id.feature.value;
+                    nb::list path;
+                    for (std::uint8_t i = 0; i < id.subshape.depth; ++i)
+                        path.append(id.subshape.path[i]);
+                    d["path"] = path;
+                    d["generation"] = id.generation.value;
+                    return d;
+                };
+            using K = CAD_0::brep::Resolution::Kind;
+            switch (r.kind) {
+            case K::Resolved:
+                out["kind"] = "resolved";
+                out["id"] = shape_id_dict(r.resolved.id);
+                out["name"] = r.resolved.name;
+                break;
+            case K::Renamed:
+                out["kind"] = "renamed";
+                out["from"] = shape_id_dict(r.renamed.from);
+                out["to"] = shape_id_dict(r.renamed.to);
+                out["from_name"] = r.renamed.from_name;
+                out["to_name"] = r.renamed.to_name;
+                out["map"] = r.renamed.map;
+                break;
+            case K::Ambiguous: {
+                out["kind"] = "ambiguous";
+                nb::list ids, names;
+                for (std::size_t i = 0;
+                     i < r.ambiguous.candidates.size(); ++i) {
+                    ids.append(shape_id_dict(r.ambiguous.candidates[i]));
+                    names.append(r.ambiguous.candidate_names[i]);
+                }
+                out["candidates"] = ids;
+                out["candidate_names"] = names;
+                out["entity_name"] = r.ambiguous.entity_name;
+                out["remedy"] = r.ambiguous.remedy;
+                break;
+            }
+            case K::Vanished: {
+                out["kind"] = "vanished";
+                nb::dict row;
+                row["relation"] = CAD_0::brep::descent_token(
+                    r.vanished.row.relation);
+                row["entity"] = r.vanished.row.entity ==
+                                CAD_0::brep::EntityKind::Vertex
+                                    ? "vertex"
+                                : r.vanished.row.entity ==
+                                          CAD_0::brep::EntityKind::Edge
+                                      ? "edge"
+                                      : "face";
+                row["address"] = r.vanished.row.address;
+                row["name"] = r.vanished.row.name;
+                row["cause"] = r.vanished.row.cause;
+                out["row"] = row;
+                out["why"] = r.vanished.why;
+                out["remedy"] = r.vanished.remedy;
+                break;
+            }
+            case K::ClosureDefect:
+                out["kind"] = "closure_defect";
+                out["orphan"] = shape_id_dict(
+                    r.closure_defect.orphan);
+                out["detail"] = r.closure_defect.detail;
+                break;
+            }
+            return out;
+        },
+        nb::arg("reference"), nb::arg("old_generation"),
+        nb::arg("new_generation"), nb::arg("edit_ctx"),
+        "Resolve a reference BY NAME (the structural ShapeId - the\n"
+        "pick's own answer) across an edit: {kind, code, text, ...}\n"
+        "with the class's own payload - resolved: {id, name} (the\n"
+        "feature re-runs, silently); renamed: {from, to, from_name,\n"
+        "to_name, map} (the map declared, the log says so); ambiguous:\n"
+        "{candidates, candidate_names, entity_name, remedy} (every\n"
+        "candidate nominated, never a guess); vanished: {row, why,\n"
+        "remedy} (what died, why, the remedy - never a mute 'not\n"
+        "found'); closure_defect: {orphan, detail} (the guard: no row\n"
+        "at all is a closure violation, a defect surfaced as such).\n"
+        "Raises ValueError for the input contract's own refusals (a\n"
+        "missing tavola/body/grammar, a foreign grammar - diagnosis +\n"
+        "remedy verbatim).");
+
+    // The query BY NAME — the name plane's own door (D6.4): the
+    // structural name -> the materializing addresses (the seam-wired
+    // pair answers BOTH halves). The loud miss refuses.
+    brep_mod.def(
+        "query_edge_by_name",
+        [](const BRepBody& body, const CAD_0::geometry::ShapeId& name) {
+            return CAD_0::brep::query_edge_by_name(body, name);
+        },
+        nb::arg("body"), nb::arg("name"),
+        "The edges carrying this structural name, in address order:\n"
+        "the seam-wired pair (ADR-0023) answers BOTH halves - one\n"
+        "logical entity, two materialized arcs. Raises ValueError\n"
+        "when no edge carries the name (diagnosis + remedy verbatim).");
+
+    brep_mod.def(
+        "query_face_by_name",
+        [](const BRepBody& body, const CAD_0::geometry::ShapeId& name) {
+            return CAD_0::brep::query_face_by_name(body, name);
+        },
+        nb::arg("body"), nb::arg("name"),
+        "The faces carrying this structural name, in address order.\n"
+        "Raises ValueError when no face carries the name (diagnosis +\n"
+        "remedy verbatim).");
 }

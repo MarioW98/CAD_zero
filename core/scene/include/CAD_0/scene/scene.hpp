@@ -160,10 +160,20 @@ inline sdf::SDFBody materialize_operation(const OperationRecipe& r,
 // with the SDF side) and the exact class boundary (the
 // hole-side-arc refusal — the typed vocabulary's own limit,
 // documented in extrude.hpp).
+//
+// `feature` (H2-u6 morso 5, ADR-0036 D6.4 — the DAG ids wired
+// through): the extrude node's OWN FeatureId, so the prism's names
+// carry the DAG identity (ext#<node id>) and the relational
+// consumers downstream (a subtract's isect legs) embed the real
+// feature part. The morsi 2-4 precedent: the standalone callers
+// read the default's #0, the token is the pin, the id is the
+// caller's to supply.
 inline std::unique_ptr<geometry::HybridBody>
 materialize_extrude_hybrid(const OperationRecipe& r,
-                           const std::vector<sdf::SketchChain>& chains) {
-    auto brep_body = brep::make_prism(chains, r.distance, r.direction);
+                           const std::vector<sdf::SketchChain>& chains,
+                           geometry::FeatureId feature = {}) {
+    auto brep_body =
+        brep::make_prism(chains, r.distance, r.direction, feature);
     auto sdf_body = std::make_unique<sdf::SDFBody>(
         std::make_unique<sdf::ExtrudeSDF>(chains, r.distance,
                                           r.direction));
@@ -431,6 +441,32 @@ inline sdf::SDFBody materialize_operation(
 
 using SceneChangeCallback = std::function<void(SceneChange, std::uint32_t)>;
 
+// operand_naming_of — THE OPERAND'S NAMING TABLE, derived from the
+// node itself (H2-u6 morso 5, ADR-0036 D6.4 — the DAG ids' real
+// cost, made visible here): an EXTRUDE operation names its output
+// under the extrude's walk tables; a fitted PRIMITIVE (the bridge's
+// own verdict — the same detection the conversion runs) under its
+// factory's construction tables; anything else carries NO table —
+// the honest unnamed mode (a subtract result as an operand is out
+// of the exact class anyway: its pierced faces carry inner loops,
+// and the class checks refuse it — the naming derivation never
+// guesses a table the node does not own).
+inline const brep::naming::OperationNaming* operand_naming_of(
+    const SceneNode& n) {
+    if (n.operation.has_value() &&
+        n.operation->type == OperationType::Extrude) {
+        return &brep::naming::kExtNaming;
+    }
+    const char* fit = bridge::fitted_primitive(n.body);
+    if (fit != nullptr) {
+        const std::string_view v{fit};
+        if (v == "box") return &brep::naming::kBoxNaming;
+        if (v == "sphere") return &brep::naming::kSphereNaming;
+        if (v == "cylinder") return &brep::naming::kCylinderNaming;
+    }
+    return nullptr;
+}
+
 // materialize_subtract_hybrid — THE EXACT SIDE (G1 unit 4,
 // ADR-0032 D7): the subtract's second materialization. The node
 // becomes ADR-0002's HybridBody exactly as the extrude's does —
@@ -444,16 +480,30 @@ using SceneChangeCallback = std::function<void(SceneChange, std::uint32_t)>;
 // tangential, swallow, non-convex — each naming its remedy).
 // `sdf_twin` is the recipe's freshly materialized SDF body (the
 // caller's n.body): the hybrid's SDF member is its deep clone.
+//
+// `feature` (H2-u6 morso 5, ADR-0036 D6.4 — the DAG ids wired
+// through, the morse-4 register's own promise redeemed here): the
+// subtract node's OWN FeatureId, and the two operands' naming
+// tables derived from the operand nodes — the born edges carry the
+// RELATIONAL names with the real DAG identities
+// ('sub#<id>:isect[box#<id>:top × ext#<id>:lat(0)]@hi'), while the
+// wall's and the pierced faces' inheritances flow regardless (stamp
+// copies, no table involved). An operand without a table (the
+// unnamed mode) leaves the born edges honestly EMPTY — never a
+// guess — and the class checks refuse the out-of-class operand
+// anyway.
 inline std::unique_ptr<geometry::HybridBody>
 materialize_subtract_hybrid(const OperationRecipe& r,
                             const SceneNode& target,
                             const SceneNode& tool,
-                            const sdf::SDFBody& sdf_twin) {
+                            const sdf::SDFBody& sdf_twin,
+                            geometry::FeatureId feature = {}) {
     const auto resolve = [](const SceneNode& n,
-                            const char* what) {
+                            const char* what,
+                            geometry::FeatureId n_id) {
         if (n.hybrid != nullptr && n.hybrid->brep != nullptr)
             return std::make_unique<brep::BRepBody>(*n.hybrid->brep);
-        auto prim = bridge::sdf_to_brep_primitive(n.body);
+        auto prim = bridge::sdf_to_brep_primitive(n.body, n_id);
         if (prim != nullptr) return prim;
         throw std::invalid_argument(
             std::string("materialize_subtract_hybrid: the ") + what +
@@ -465,11 +515,14 @@ materialize_subtract_hybrid(const OperationRecipe& r,
             "accept the faceted path (the SDF materialization "
             "stands).");
     };
-    auto a = resolve(target, "target");
-    auto b = resolve(tool, "tool");
+    auto a = resolve(target, "target",
+                     geometry::FeatureId{target.id});
+    auto b = resolve(tool, "tool", geometry::FeatureId{tool.id});
+    const brep::SubtractNaming naming{
+        feature, operand_naming_of(target), operand_naming_of(tool)};
     auto brep_body = brep::exact_subtract(
         *a, *b, math::Vec3d{r.offset_x, r.offset_y, r.offset_z},
-        brep::kSubtractTolerance);
+        brep::kSubtractTolerance, naming);
     // BRepWithSDFShell: the exact B-Rep is the properties/export
     // truth, the SDF the display envelope (ADR-0031 D6's division).
     // The accumulator stays ZERO: nothing was converted.
@@ -499,11 +552,14 @@ inline void attach_operation_hybrid(
     try {
         switch (r.type) {
         case OperationType::Extrude:
-            n.hybrid = materialize_extrude_hybrid(r, operands.at(0)->sketch);
+            n.hybrid = materialize_extrude_hybrid(
+                r, operands.at(0)->sketch,
+                geometry::FeatureId{n.id});
             break;
         case OperationType::Subtract:
-            n.hybrid = materialize_subtract_hybrid(r, *operands.at(0),
-                                                   *operands.at(1), n.body);
+            n.hybrid = materialize_subtract_hybrid(
+                r, *operands.at(0), *operands.at(1), n.body,
+                geometry::FeatureId{n.id});
             break;
         }
         n.hybrid_refusal.clear();

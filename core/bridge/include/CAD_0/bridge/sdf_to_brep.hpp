@@ -38,6 +38,7 @@
 #include "CAD_0/brep/topology.hpp"
 #include "CAD_0/brep/analytic.hpp"
 #include "CAD_0/brep/factory.hpp"
+#include "CAD_0/geometry/shape_id.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -60,10 +61,27 @@ std::unique_ptr<brep::BRepBody> sdf_to_brep_faceted(
     const sdf::SDFBody& sdf_body,
     const SdfToBrepOptions& opts = {});
 
+// The primitive-fit VERDICT, without the conversion (H2-u6 morso
+// 5, ADR-0036 D6.4): "sphere" | "box" | "cylinder" when the body is
+// a recognizable primitive — the SAME detection sdf_to_brep_primitive
+// runs — and nullptr otherwise. The naming consumers (the scene's
+// operand-kind derivation, wiring the DAG ids through the hybrid
+// materialization) read the verdict; the conversion stays the
+// bridge's own. Pure detection, no parameters parsed.
+const char* fitted_primitive(const sdf::SDFBody& sdf_body);
+
 // Try to detect if the SDF is a known primitive and create an exact
 // B-Rep body for it. Returns nullptr if no primitive is detected.
+//
+// `feature` (H2-u6 morso 5, ADR-0036 D6.4) is the creating DAG node's
+// FeatureId — the factories' own parameter, defaulted to 0 for the
+// standalone callers: the scene passes the NODE id so the primitive's
+// names carry the DAG identity (box#<node id>) and the relational
+// consumers (a subtract's isect legs) embed the real feature part.
+// Additive: the default preserves every existing call site's answer.
 std::unique_ptr<brep::BRepBody> sdf_to_brep_primitive(
-    const sdf::SDFBody& sdf_body);
+    const sdf::SDFBody& sdf_body,
+    geometry::FeatureId feature = geometry::FeatureId{});
 
 // High-level: tries primitive fitting first, falls back to faceted.
 std::unique_ptr<brep::BRepBody> sdf_to_brep(

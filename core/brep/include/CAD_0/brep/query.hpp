@@ -173,6 +173,38 @@ EdgeInfo query_edge(const BRepBody& body, EdgeId edge_id);
 std::vector<EdgeInfo> query_all_edges(const BRepBody& body);
 
 // ---------------------------------------------------------------------------
+// The query BY NAME — the name plane's own door (ADR-0036 D1 + D6.4,
+// H2-u6 morso 5): the structural name -> the address(s) on the
+// materialized body, for the report and the vivo. The counterpart of
+// the positional queries above, which stay intact — TWO PLANES, TWO
+// DOORS: the address is the body's own bookkeeping (mutable across
+// generations, O(1)), the name is the entity's identity (stable
+// across regenerations, public).
+//
+// The input is the STRUCTURE, never a string: a geometry::ShapeId
+// (the pick's own answer — the `id` field these very queries carry),
+// compared structurally against the body's stamps (ShapeId's own
+// operators; nothing is parsed, nothing rendered to match — the
+// kernel's one-direction discipline, upheld). The GENERATION field
+// is not compared (ADR-0036 D1: the four resolution classes
+// supersede the bare staleness check — the name either answers on
+// this body or it does not).
+//
+// The answer is the LIST of the materializing addresses: the
+// seam-wired pair (ADR-0023) is ONE logical entity materialized as
+// an arc pair — BOTH halves answer to the one name, and the consumer
+// that wants the rim takes the list whole (the pair is the name's
+// materialized form, not two names). A miss is LOUD
+// (std::invalid_argument, diagnosis + remedy): a resolved reference
+// that finds no entity on the body it was resolved against is a
+// caller's mismatched pair, never an empty answer.
+// ---------------------------------------------------------------------------
+std::vector<FaceId> query_face_by_name(const BRepBody& body,
+                                       const geometry::ShapeId& name);
+std::vector<EdgeId> query_edge_by_name(const BRepBody& body,
+                                       const geometry::ShapeId& name);
+
+// ---------------------------------------------------------------------------
 // The body query (G1 unit 6, ADR-0032 D8 at the body level)
 // ---------------------------------------------------------------------------
 

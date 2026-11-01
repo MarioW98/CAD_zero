@@ -8,6 +8,7 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/unique_ptr.h>
+#include <nanobind/stl/vector.h>
 
 #include "CAD_0/geometry/shape.hpp"
 #include "CAD_0/geometry/shape_bodies.hpp"
@@ -37,6 +38,32 @@ void bind_geometry(nb::module_& m) {
 
     nb::class_<ShapeId>(m, "ShapeId")
         .def(nb::init<>())
+        // The structural constructor (H2-u6 morso 5, ADR-0036 D3):
+        // the reference the resolver takes — the creating feature and
+        // the path of role-table indices (INTEGERS, never a parsed
+        // name string: the kernel's one-direction discipline holds;
+        // the pick's own answer carries exactly these values, so the
+        // round-trip is the query surfaces' own fields).
+        .def("__init__",
+             [](nb::pointer_and_handle<ShapeId> v, FeatureId feature,
+                const std::vector<std::uint32_t>& path) {
+                 // The structural constructor (H2-u6 morso 5,
+                 // ADR-0036 D3): the creating feature and the path of
+                 // role-table indices — INTEGERS, never a parsed name
+                 // string (the kernel's one-direction discipline
+                 // holds; the pick's own answer carries exactly these
+                 // values, so the round-trip is the query surfaces'
+                 // own fields).
+                 SubshapeRef ref;
+                 for (const std::uint32_t c : path) ref = ref.push(c);
+                 new (v.p) ShapeId{feature, ref, {}};
+             },
+             nb::arg("feature"), nb::arg("path"),
+             "The structural name: the creating FeatureId and the\n"
+             "path of indices into the declared role tables (the\n"
+             "same values the pick's shape_id carries). The path is\n"
+             "built by materialization and re-built here from\n"
+             "integers — never parsed from a name string.")
         .def_ro("feature",    &ShapeId::feature)
         .def_ro("subshape",   &ShapeId::subshape)
         .def_ro("generation", &ShapeId::generation)

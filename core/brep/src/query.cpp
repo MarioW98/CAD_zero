@@ -148,6 +148,66 @@ std::vector<EdgeInfo> query_all_edges(const BRepBody& body) {
 }
 
 // ---------------------------------------------------------------------------
+// The query BY NAME (ADR-0036 D1 + D6.4, H2-u6 morso 5) — the name
+// plane's own door: the structural name -> the materializing
+// addresses. One pass over the kind's array, structural comparison
+// only (the generation field is not read — D1's own derivation: the
+// four classes supersede the bare staleness check).
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// The by-name miss, loud (the P2 culture): the diagnosis names the
+// name's structure (the ABI's own render — the canonical name render
+// needs the creating operation's grammar, the caller's to consult)
+// and the remedy names the pair that must agree.
+[[noreturn]] void refuse_by_name(const char* which,
+                                 const geometry::ShapeId& name,
+                                 std::size_t count) {
+    std::ostringstream os;
+    os << "query_" << which << "_by_name: no " << which
+       << " of this body carries the name " << name.to_string()
+       << " (" << count << " " << which << "(s) on the body, the "
+          "unnamed ones included) — remedy: the name is the pick's "
+          "own structural answer (the id field the query surfaces "
+          "carry) and must be asked of the body it was resolved "
+          "against; resolve the reference first (CAD_0.brep.resolve) "
+          "and query the generation the resolution named.";
+    throw std::invalid_argument(os.str());
+}
+
+} // namespace
+
+std::vector<FaceId> query_face_by_name(const BRepBody& body,
+                                       const geometry::ShapeId& name) {
+    std::vector<FaceId> out;
+    for (const auto& face : body.solid.shell().faces()) {
+        if (face.shape_id().feature == name.feature &&
+            face.shape_id().subshape == name.subshape) {
+            out.push_back(face.id());
+        }
+    }
+    if (out.empty())
+        refuse_by_name("face", name, body.face_count());
+    return out;
+}
+
+std::vector<EdgeId> query_edge_by_name(const BRepBody& body,
+                                       const geometry::ShapeId& name) {
+    std::vector<EdgeId> out;
+    for (std::size_t i = 0; i < body.edges.size(); ++i) {
+        const auto& edge = body.edges[i];
+        if (edge.shape_id().feature == name.feature &&
+            edge.shape_id().subshape == name.subshape) {
+            out.push_back(static_cast<EdgeId>(i));
+        }
+    }
+    if (out.empty())
+        refuse_by_name("edge", name, body.edges.size());
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // The body query (G1 unit 6): a thin aggregation of the authorities —
 // every number below is another pinned function's own answer.
 // ---------------------------------------------------------------------------

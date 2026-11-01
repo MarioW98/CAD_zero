@@ -74,6 +74,36 @@ const char* entity_token(EntityKind kind) noexcept {
     return "face";  // unreachable — all enum cases handled above
 }
 
+// Stamp the rows' IDENTITIES (H2-u6 morso 5, ADR-0036 D3): the
+// result rows read the described body's own stamps at their
+// addresses; the VANISHED rows read the DYING operand's — the row's
+// address is the dead entity's own, in that body's numbering (the
+// one place the dead identity lives). Vertices stay honestly
+// default (v1's queue: the Vertex type carries no id field at all).
+// One pass, pure bookkeeping — the same stamps the names were
+// rendered from, so structure and render cannot drift.
+void stamp_rows(DescentTable& table, const BRepBody& body,
+                bool vanished_rows) {
+    for (auto& row : table.rows) {
+        if ((row.relation == Descent::Vanished) != vanished_rows)
+            continue;
+        if (row.entity == EntityKind::Edge) {
+            if (row.address < body.edges.size()) {
+                row.shape_id = body.edges[static_cast<std::size_t>(
+                                          row.address)]
+                                   .shape_id();
+            }
+        } else if (row.entity == EntityKind::Face) {
+            const auto& faces = body.solid.shell().faces();
+            if (row.address < faces.size()) {
+                row.shape_id =
+                    faces[static_cast<std::size_t>(row.address)]
+                        .shape_id();
+            }
+        }
+    }
+}
+
 } // namespace
 
 bool descent_closed(const BRepBody& body, const DescentTable& table,
@@ -345,6 +375,10 @@ DescentTable factory_descent(const BRepBody& body) {
             {Descent::Born, EntityKind::Face, face.id(), {},
              face.name(), {}, ""});
     }
+
+    // The rows' identities (morso 5): the body's own stamps, one
+    // pass — the same stamps the names were rendered from.
+    stamp_rows(table, body, /*vanished_rows=*/false);
 
 #ifndef NDEBUG
     // The debug-build activation (D2's hard invariant, the Layer-1
@@ -695,6 +729,10 @@ DescentTable extrude_descent(
     // derived emptiness) agrees with the body's own stamps — the
     // derivation and the construction walked the same recipe, or
     // the tavola lies and refuses to ship.
+    //
+    // The rows' identities (morso 5) follow the same discipline:
+    // the body's own stamps at the derived addresses, one pass.
+    stamp_rows(table, body, /*vanished_rows=*/false);
     {
         const std::vector<std::string> edge_names = body_edge_names(body);
         const std::vector<std::string> face_names = body_face_names(body);
@@ -1027,6 +1065,14 @@ DescentTable subtract_descent(const BRepBody& result, const BRepBody& A,
         }
     }
 #endif
+
+    // The rows' identities (morso 5): the RESULT rows read the
+    // result's own stamps; the VANISHED tail reads the DYING
+    // operand's — the row's address is the dead entity's own, in
+    // B's numbering (the one place the dead identity lives; the
+    // class-4 payload carries it whole).
+    stamp_rows(table, result, /*vanished_rows=*/false);
+    stamp_rows(table, B, /*vanished_rows=*/true);
 
     return table;
 }

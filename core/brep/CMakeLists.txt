@@ -15,6 +15,7 @@ set(CAD_0_BREP_HEADERS
     include/CAD_0/brep/boolean.hpp
     include/CAD_0/brep/naming.hpp
     include/CAD_0/brep/descent.hpp
+    include/CAD_0/brep/resolve.hpp
     include/CAD_0/brep/detail/boolean_test_hooks.hpp
 )
 
@@ -27,6 +28,7 @@ set(CAD_0_BREP_SOURCES
     src/ssi.cpp
     src/naming.cpp
     src/descent.cpp
+    src/resolve.cpp
 )
 
 add_library(CAD_0_brep STATIC ${CAD_0_BREP_SOURCES} ${CAD_0_BREP_HEADERS})

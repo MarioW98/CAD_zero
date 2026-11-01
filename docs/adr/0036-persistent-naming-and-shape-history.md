@@ -506,6 +506,98 @@ ALL in the old tavola is not a user error — it is a closure
 violation, a defect, surfaced as such (D2's closure check is the
 resolver's own floor).
 
+**The morse-5 register (2026-10-31, the resolver's landing — the
+gestures the implementation derived and D3 did not yet pin,
+recorded per D6's protocol in the same act as the code; each cites
+the clause it derives from, and none is a silent extension):**
+
+1. **The tavola's rows gain the STRUCTURE** (from the guard's own
+   clause "D2's closure check is the resolver's own floor", and D3
+   class 4's payload "the tavola's vanished row carries the cause"):
+   `DescentRow.shape_id` — the result rows carry the result
+   entity's own stamp, the VANISHED rows the DEAD entity's (read
+   from the dying operand's body, the one place the dead identity
+   lives — the bodies themselves carry no graveyard). This is what
+   makes the resolver's own signature work: the reference finds its
+   row by ShapeId equality (structural, never the render) and the
+   OLD side needs the tavola ALONE — no body beside it (the
+   click-test's old body may be gone with the rebuild; the tavola
+   is a value). Additive: the field rides last, the existing
+   initializers keep their meaning, no golden moves.
+2. **The reference's grammar is per-CREATOR, not per-generation**
+   (from D1's "an entity that SURVIVES an operation KEEPS ITS
+   NAME"): the wall inside a subtract's result is the EXTRUDE's
+   face — its path walks the extrude's tables, while the rim (born
+   there) walks the subtract's instance registry (the operand
+   bindings the stamping site held, the morse-4 register's own
+   `SubtractNaming`). The resolution's generation input carries the
+   REFERENCE's creating declaration, which the caller holds — it
+   made the reference; a foreign registry refuses loudly, the
+   renderer's own culture.
+3. **The descent's candidate rule** (from D3.2/3.3/3.4's
+   descendants, made one closed rule): the candidates are the new
+   generation's entities under the reference's ROLE SKELETON — the
+   role-table components compared (the structural spine), the
+   authored ROOTS and the multi-chain GROUPS thrown open (the
+   indices that shift with the sketch's own layout). k >= 1 →
+   ambiguous, every candidate named BY NAME (the identities as
+   ShapeIds, structural, and their renders — the error the user
+   reads); k == 0 → vanished. The k == 1-without-map case is
+   deliberately AMBIGUOUS: the one candidate is OFFERED for
+   reselection, never silently followed — the closed door includes
+   the singleton, and the pure structural names (a factory role, a
+   cap) can only ever hit k == 0 after a failed full match (their
+   skeleton IS their full path), so the rule is closed.
+4. **The declaration is REQUIRED even for the benign edit** (from
+   D4's amendment: the edit path EMITS the map or the declaration —
+   the resolver CONSUMES, never invents): without the no-shift
+   declaration the radius edit itself resolves ambiguous — the
+   resolver does not guess the edit's class, because it cannot see
+   the sketch (and must not: guessing the edit's class from the
+   bodies would be exactly the list-diff the amendment forbids).
+   The covered flows' silence is the EDIT PATH'S own act.
+5. **The map's machinery and its boundaries** (from D3.2's honest
+   status and D4's registered maps): the map branch remaps the
+   SINGLE-CHAIN roots (the sketch-chain/construction-group
+   coincidence of the morse-3 register's own note); a GROUPED
+   (multi-chain chain-owned) reference under a map, or a map that
+   moves a root ACROSS CHAINS, refuses LOUDLY naming the registered
+   boundary — never a silent fall-through to the honest classes
+   that would quietly ignore the edit path's own declaration. An
+   ABSENT root (a map that covers the reference's roots partially)
+   is not a death sentence: the descent decides, honestly.
+6. **The vanished-row leg** (from D3.4 and D2's own causes): a
+   reference whose row IS a vanished row — the tool's cap, dead in
+   the old generation's own operation — resolves class 4 with the
+   tavola's cause VERBATIM ("cut away outside the target"): the
+   payload reads the record the operation wrote, never a diagnosis
+   it invents. The other class-4 leg's cause is the resolver's own
+   words, "the authored entity was replaced" — D3.4's own phrase
+   for the edit class the roots' rule exists for.
+7. **The scene's DAG ids wired through** (the morse-4 register's
+   item 2, redeemed here as promised): the extrude's and the
+   subtract's hybrid materializations pass the NODE ids, the
+   bridge's primitive path gains the feature parameter, and the
+   operand naming tables derive from the operand nodes themselves
+   (an Extrude recipe → the walk tables; a fitted primitive, the
+   bridge's own verdict → the factory tables; anything else → the
+   honest unnamed mode — a subtract result as an operand is out of
+   the exact class anyway, its pierced faces carry inner loops).
+   The live bodies answer the DAG names:
+   `sub#<id>:isect[box#<id>:top × ext#<id>:lat(0)]@hi`. The
+   tavola's LODGING in the scene node stays REGISTERED (the
+   resolver's callers derive the tavola — pure, cheap, and the
+   resolution needs the old side's tavola only as a value): the
+   scene's own storage arrives with the first scene-side consumer,
+   the fillet's unit.
+8. **The seam-wired pair is ONE candidate** (from ADR-0023: "the
+   pair is the name's materialized form, not two names"): the
+   ambiguity counts DISTINCT identities — the rim's two materialized
+   halves answer to the one name, the resolution's candidate set
+   holds the one, and the BY-NAME query surface (the name → the
+   addresses, D6.4's first surface) answers BOTH halves — the
+   consumer that wants the rim takes the pair whole.
+
 ### D4. The v1 scope — pinned to the scale, the method of ADR-0031 D5
 
 Not the naming of NX in one ADR — the minimum the CURRENT scale
