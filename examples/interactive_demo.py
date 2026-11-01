@@ -30,11 +30,13 @@ def build_lattice_ball():
     cyl_y = CAD_0.sdf.cylinder(radius=0.4, height=10.0)
     cyl_z = CAD_0.sdf.rotate(
         CAD_0.sdf.cylinder(radius=0.4, height=10.0),
-        CAD_0.math.Quatf.from_axis_angle((1.0, 0.0, 0.0), 3.14159 / 2.0),
+        CAD_0.math.Quatf.from_axis_angle(
+            CAD_0.math.Vec3f(1.0, 0.0, 0.0), 3.14159 / 2.0),
     )
     cyl_x = CAD_0.sdf.rotate(
         CAD_0.sdf.cylinder(radius=0.4, height=10.0),
-        CAD_0.math.Quatf.from_axis_angle((0.0, 1.0, 0.0), 3.14159 / 2.0),
+        CAD_0.math.Quatf.from_axis_angle(
+            CAD_0.math.Vec3f(0.0, 1.0, 0.0), 3.14159 / 2.0),
     )
 
     holes = CAD_0.sdf.union(

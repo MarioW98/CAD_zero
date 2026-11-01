@@ -1,6 +1,7 @@
 """Example: hybrid model — sphere minus cylinder (a hole through a ball).
 
-Shows the native SDF CSG: subtract (boolean difference) and translate.
+Shows the native SDF CSG: subtract (boolean difference). The
+module-level `body` makes it a CLI input (`CAD_0 info examples/sdf_hole.py`).
 """
 
 from __future__ import annotations
@@ -9,14 +10,14 @@ import numpy as np
 
 import CAD_0
 
+# A sphere of radius 2 with a cylinder of radius 0.5 (along Y, height
+# 10) subtracted: ball - cyl.
+_ball = CAD_0.sdf.sphere(radius=2.0)
+_cyl = CAD_0.sdf.cylinder(radius=0.5, height=10.0)
+body = CAD_0.sdf.subtract(_ball, _cyl)
+
 
 def main() -> None:
-    # A sphere of radius 2
-    ball = CAD_0.sdf.sphere(radius=2.0)
-    # A cylinder of radius 0.5 along Y, height 10
-    cyl = CAD_0.sdf.cylinder(radius=0.5, height=10.0)
-    # Subtract: ball - cyl
-    body = CAD_0.sdf.subtract(ball, cyl)
     print(f"Body: {body.describe()}")
     print(f"Lipschitz: {body.lipschitz()}")
 

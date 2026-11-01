@@ -120,8 +120,10 @@ sph = CAD_0.sdf.sphere(radius=2.0)
 cyl = CAD_0.sdf.cylinder(radius=0.5, height=10.0)
 carved = CAD_0.sdf.subtract(sph, cyl)
 
-# Smooth blend — equation-driven, mesh-free.
-b = CAD_0.sdf.translate(CAD_0.sdf.sphere(radius=1.0), (3.0, 0.0, 0.0))
+# Smooth blend — equation-driven, mesh-free. (Offsets are Vec3f,
+# not tuples: the bindings do not auto-convert.)
+b = CAD_0.sdf.translate(CAD_0.sdf.sphere(radius=1.0),
+                        CAD_0.math.Vec3f(3.0, 0.0, 0.0))
 blended = CAD_0.sdf.smooth_union(sph, b, k=0.6)
 
 # Batched evaluation — vectorized (serial: oneTBB is an opt-in).
@@ -203,7 +205,7 @@ CAD_0/
 ├── app/                 # PySide6 desktop app
 ├── scripts/             # Tooling: subject checker, suite launcher, build helper, Codespaces launcher
 ├── docs/                # The register: adr/, audits/, status/, history/, architecture/, manuals
-├── examples/            # Python usage examples (CLI-ready SDF scripts)
+├── examples/            # Python usage examples — the sdf_*.py are CLI-ready SDF scripts
 ├── tests/               # doctest unit + property suites, golden files
 └── third_party/         # Vendored: the authentic Shewchuk robust.c (public domain, ADR-0034)
 ```

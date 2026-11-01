@@ -71,7 +71,14 @@ if _HAS_RICH:
 
 
     @app.command()
-    def eval_sdf(path: Path, output: Path, resolution: int = 64, normals: bool = True):
+    def eval_sdf(
+        path: Path,
+        output: Path = typer.Option(
+            ..., "--output", "-o",
+            help="Output file — STL/OBJ/3MF, format from the extension."),
+        resolution: int = 64,
+        normals: bool = True,
+    ):
         """Evaluate an SDF and export the mesh to a file."""
         import CAD_0
         mod = _load_module(path)
