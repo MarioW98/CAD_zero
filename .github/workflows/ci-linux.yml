@@ -112,8 +112,23 @@ jobs:
           g++-14 --version
           clang++-19 --version
 
+      # The dependency cache (Consegna B m2, docs/dependencies.md):
+      # CPM fetches the pinned sources at configure; the cache makes
+      # the second configure onward network-free for dependencies.
+      # The key is the CMakeLists hash — the pins live there, so a
+      # pin bump invalidates by construction; restore-keys let a
+      # bumped build reuse everything the bump did not move.
+      - name: CPM source cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/CPM
+          key: cpm-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: cpm-${{ runner.os }}-
+
       - name: Configure
-        run: cmake --preset ${{ matrix.preset }}
+        run: |
+          export CPM_SOURCE_CACHE="$HOME/.cache/CPM"
+          cmake --preset ${{ matrix.preset }}
 
       - name: Build
         run: cmake --build --preset ${{ matrix.preset }}
