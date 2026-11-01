@@ -48,7 +48,12 @@ dev = [
 ]
 
 [project.scripts]
-CAD_0 = "CAD_0.cli:app"
+# `main()`, not `app`: without typer (the [cli] extra) `app` is None,
+# so a console script bound to it would die with a bare TypeError —
+# `main()` instead prints the actionable "pip install CAD_0[cli]"
+# message and exits 1. The base install stays a working library and
+# tells the truth about the extra (Consegna B m2).
+CAD_0 = "CAD_0.cli:main"
 
 [tool.scikit-build]
 cmake.minimum-version = "3.22"
