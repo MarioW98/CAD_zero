@@ -3,6 +3,13 @@
 ## Status
 Accepted (2026-10-14; v5 update 2026-10-15) — Phase D, step (c+ fix v5)
 
+Amended 2026-11-02 (H2-u5 m2, the act of acceptance of ADR-0037):
+§3's and §7's coplanar-overlap deferrals are RESOLVED — see the
+amended bullets below, each pointing forward to ADR-0037 (the
+deferral's payment is its D3 overlay, the scope its D4, the
+witnesses its D5). The parallel-plane rule (§8), the slab
+decomposition and the T-junction subdivision stand as written.
+
 ## Context
 
 The first version of this ADR promised Greiner-Hormann (1998) for
@@ -93,9 +100,18 @@ coplanar (normals parallel, vertex of B on A's plane). If yes:
   faces don't contribute to the boolean result.
 - **Partially overlapping (bounding boxes intersect but vertex sets
   differ)**: this is the hard case. For MVP we keep both faces intact
-  and let the deduplication catch exact duplicates. Partial overlap is
-  a documented limitation that requires true edge subdivision
-  (deferred).
+  and let the deduplication catch exact duplicates. Partial overlap
+  was a documented limitation that required true edge subdivision
+  (deferred). **RESOLVED (2026-11-02, ADR-0037 — accepted H2-u5 m2)**:
+  the deferral's payment is ADR-0037 D3's overlay — the union's
+  ALIGNED coplanar pair sewn as the region F_A ∪ F_B (the projection
+  in the one frame, the crossing points born in the plane, the
+  convex-fragment emission, the sewing in the canonical pool); the
+  scope is ADR-0037 D4 (one capability, three shapes: the crossing
+  pair P4/P8, the contained pair P11, the ratification pins); the
+  witnesses are ADR-0037 D5's goldens. The outside-parts algebra
+  keeps every cell it already answers correctly (the opposed pairs,
+  the subtract, the intersect).
 
 ### 4. Identical-body shortcut (kept from previous ADR version)
 
@@ -179,7 +195,14 @@ slab tests verify it (6 faces including the cap at x = -0.7).
   classification suffices for the test cases.
 - **Full edge subdivision for partial overlaps** — the vertex-on-edge
   (T-junction) case is now implemented in `assemble_body` (v5 §10);
-  subdivision of coplanar-overlapping FACES remains deferred.
+  subdivision of coplanar-overlapping FACES **is RESOLVED
+  (2026-11-02, ADR-0037 — accepted H2-u5 m2)**: the union's aligned
+  coplanar pair is sewn by ADR-0037 D3's overlay (the merged region
+  walked through the loops' crossing points, emitted as convex
+  fragments so the composed chain stays in-class, every point through
+  the canonical pool), pinned green by ADR-0037 D5's goldens — P4 the
+  honest box 8/12/6 where this ADR's limitation refused, P8 the
+  stair 20/32/14, P11 the containment 8/12/6.
 - **Non-convex polyhedra** — still requires general point-in-polyhedron
   (ray casting). Convexity constraint kept.
 - **Surface geometry derived from topology** — separate ADR.

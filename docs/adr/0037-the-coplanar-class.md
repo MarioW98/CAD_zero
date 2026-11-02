@@ -2,12 +2,26 @@
 
 ## Status
 
-Proposed (2026-11-02) — delivered as **morso 1 of H2-u5, docs-only**:
-the contract is derived and pinned HERE; no code moves in this
-delivery. The implementation is **morso 2 — the unit's last** — and
-it starts **only on the maintainer's review of this document**: the
-STOP the order pins. Until acceptance, every amendment this ADR
-declares (D6) stays a proposal: the mothers stand as written.
+Accepted (2026-11-02) — morso 1 delivered this contract as
+**Proposed** (docs-only: the derivation pinned, no code moved); the
+maintainer's review found no correction — D1's wall map (eleven
+placements verified by direct execution, the one refusing brick named
+with its structural reason), D2's composite gate (two typed members,
+zero new constants, the seat and the order pinned), D3's overlay (the
+projection, the 2×3 region table cross-checked on seven verified
+cells, the convex-fragment emission, the pool sewing, the 3D↔2D
+coherence rules), D4's scope (one capability, three shapes, the queue
+named behind it) and D5's pre-pinned numbers (the door's 8/12/6,
+20/32/14, 8/12/6; the ratifications 20/32/14, 20/32/14, 16/26/12,
+16/26/12) stood as written. **The acceptance act applies the register
+surgery D6 declares, in the same act — never a late registry
+gesture**: ADR-0035 D2's vocabulary gains the ε_C row (verbatim as D2
+pinned it), and ADR-0025 §3's and §7's coplanar-overlap deferrals are
+RESOLVED, both amended in place, dated, pointing here. Morso 2 — the
+unit's last — implements the door under this contract: the gate at
+the pinned seat, the overlay, the goldens written from D5's numbers
+BEFORE the code, the red demonstrated on the pre-overlay tree, the
+green landed with the door.
 
 Daughter of ADR-0031 D5 (the phase ladder — the one-guide-case
 scale method this ADR's D4 applies verbatim), of ADR-0035 (the
