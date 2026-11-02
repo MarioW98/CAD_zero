@@ -512,6 +512,27 @@ checkpoint, exactly as G1's dispositions fed this one.
    tolerance discipline end-to-end, its own goldens and its own
    refusal surface.]* *Visible value: the classical sphere union,
    exact, with its closed-form volume.*
+
+   **AMENDED (2026-11-02, ADR-0038's acceptance act — the seat
+   re-derived, the promise ratified with its payment schedule
+   named, never dropped):** this rung landed as **G2 unit 2**
+   (ADR-0038), re-derived from zero on the redeemed foundations
+   with the subtract's registered classes FIRST (the ones
+   ADR-0037 D4 queued to G2 by the code's own twice-written
+   pointer) — and the m2 code work then derived the blind hole's
+   **orientation wall** (ADR-0038's m2 amendment, machine-verified:
+   the carried plane's material-side flip is inexpressible in the
+   current frame rule — the cylinder carries the `u_sign` knob,
+   the plane does not). The rung's honest shape as of that act:
+   **the crossed corner family lands in G2-u2 m3** (unaffected —
+   its re-authored loops are Line2s); **the blind family is
+   re-registered to the orientation-decoupling unit** (its
+   goldens already pinned by ADR-0038 D5, the numbers standing);
+   the parete stays registered to the fillet's unit (ADR-0037
+   D3.6's gift traveling with it); and the sphere booleans this
+   item worded remain **re-queued by name** as their own unit,
+   the RACCOLTO's counts traveling to their re-derivation
+   (ADR-0038 D4) — never scheduled here, never dropped.
 3. **The fillet** (the emotional summit) — the rolling-ball
    construction on the two classes, the counts and volume goldens
    (the D3 tables), the **torus mass family**, the **torus SDF

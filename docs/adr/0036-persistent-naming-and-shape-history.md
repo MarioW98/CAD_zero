@@ -723,6 +723,24 @@ consumers:**
   (node granularity); naming the SDF tree's leaves is a separate
   derivation with its own scale, if a consumer ever appears.
 
+**AMENDED (2026-11-02, ADR-0038's acceptance act): the joints'
+verticals' row is DECLARED — the "yet" redeemed.** The walk
+tables' honest emptiness this ADR pinned (the extrude's and the
+subtract's "the vertical at J_i" numbering rows with no naming
+vocabulary beside them — the registers' own gap, cited by
+ADR-0038 D2/D3) is paid by declaration in that act: the row is
+**`joint(i)`** — the vertical at the chain's joint i, CHAIN-OWNED
+(the multi-chain group prefix exactly as `lat`), the genealogy
+the authored root's (the sketch's vertex i — the root reference's
+own form). Its first instance is the crossed guide case's
+absorbed `ext#3:joint(3)` (re-timed to the target's span —
+G2-u2 m3's landing), and the extrude's own bodies answer it on
+every prism thereafter. The landing is the crossed's morso — the
+consumer that pays — per the queue's own discipline ("the
+extension is a table row away when a consumer arrives"); the
+declaration lives in ADR-0038 D2/D3, and this note records the
+redemption where the gap was registered.
+
 ### D5. The discriminating tests — pinned BEFORE the implementation
 
 The ADR-0034 D4 / ADR-0035 D5 protocol verbatim: every claim has

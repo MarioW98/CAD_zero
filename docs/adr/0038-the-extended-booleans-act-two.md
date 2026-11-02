@@ -2,10 +2,42 @@
 
 ## Status
 
-**Proposed (2026-11-02) — docs only: no code moves, no golden moves, no
-format moves in this delivery.** The morsi 2+ implement only on the
-maintainer's review of THIS document — the STOP the order pins: the ADR
-passes the REVISIONE before a morsel of code exists.
+**Accepted (2026-11-02) — with the m2 amendment in the same act (the
+next section).** Morso 1 delivered this contract as **Proposed**
+(docs-only: the derivation pinned, no code moved); the maintainer's
+review accepted the derivation — the RACCOLTO, the class taxonomy's
+citations, the queue's honesty, the ε_line decision, the pre-pinned
+goldens — and morso 2 began under the STOP's own gate. **The code
+work then derived a wall the doc-only draft could not see: IL MURO
+D'ORIENTAMENTO del foro cieco (the blind hole's orientation wall —
+the amendment below, machine-verified on both candidate
+authorings).** The correction is recorded HERE, in the acceptance's
+own act, the ADR's own D3 pattern ("one correction to the order's
+sketch, on the record") applied to the ADR's OWN D2/D5 sketch — the
+derivation, not the expectation, is the authority, and this time the
+derivation is the code's:
+
+- **The blind family (D1.1) is RE-REGISTERED** to the
+  orientation-decoupling unit: the internal cap is the kernel's
+  first carried face whose material side flips, and the kernel's
+  face orientation is baked into the surface frame — the cylinder
+  carries the decoupling knob (`u_sign`, the extrude's own hole-wall
+  precedent), the plane does not. The refusal stays, narrowed to
+  name the coupling and the seat (D1.4's own narrowing clause,
+  extended to the whole blind branch). **D5's numbers stand
+  UNMOVED** — the machine verdict proves the counts (12/17/8/H=1,
+  χ=2) land and the volume is the sole wall: they are the
+  decoupling unit's entry goldens, quoted from here, never
+  re-derived.
+- **The crossed family (m3) is UNAFFECTED** — the derivation: the
+  CCW-sweep constraint bites ARCS only, and the crossed's
+  re-authored loops are Line2s (the square tool's segments host in
+  a mirrored plane domain without constraint). The circular crossed
+  stays queued (D4) with its reason sharpened: it shares the
+  blind's arc class.
+- **The joint(i) row (D2/D3), the ε_line decision (D2) and the
+  parete's seat (D1.3) are unaffected**; the register surgery
+  applies as D6 declares (below).
 
 What this ADR is: **act two of the extended booleans** — the unit
 ADR-0033 D5.2 promised as G2's second rung, re-derived from zero on the
@@ -50,6 +82,154 @@ conventions the derived counts apply), of ADR-0032 (the Layer-2
 provenance contract D2's ε_line decision re-reads; NOT amended — the
 reason below), and of the G1 code itself (subtract.hpp's walls, cited
 line by line in D1 — the repo is the authority).
+
+## THE m2 AMENDMENT (2026-11-02, in the acceptance's own act) — IL MURO D'ORIENTAMENTO: the blind hole's internal cap, derived and machine-verified
+
+**What the code found.** The internal cap is the kernel's first
+carried face whose MATERIAL SIDE FLIPS: the tool's cap(lo) has the
+tool's material above it (the outward −Z); the same disk, carried
+into the result as the cavity's floor, has the RESULT's material
+below it (the outward +Z, into the cavity). Expressing that flip is
+exactly what this kernel cannot do on a plane:
+
+1. **THE FRAME RULE COUPLES THE DOMAIN TO THE OUTWARD NORMAL**
+   (analytic.hpp's own header): every surface's (u,v) frame is
+   right-handed around the outward normal — for a ±Z plane the +Z
+   frame is the (−x,−y) rotation (sense-preserving) and the −Z
+   frame is the (x,−y) MIRROR. `CylinderZSurface` carries the
+   decoupling knob — `u_sign`, landed for the extrude's hole walls
+   (the frame mirrors, the mathematical object unchanged); 
+   `PlaneSurface` has NO knob: its frame is derived rigidly from
+   its normal, and the normal is exactly what the mass machinery
+   reads (`mass_properties.cpp`'s `expand_planar`: F0 =
+   (origin·n)·|A| — the σ-normalized region moments make the
+   outer loop's contribution always positive; the face's sign
+   lives in the stored normal and NOWHERE else).
+2. **THE ARC2 VOCABULARY STORES CCW SWEEPS ONLY, IN THE CO-EDGE'S
+   TRAVERSAL DIRECTION** (pcurve.hpp's pinned semantics): a face's
+   rim loop must read CCW in the face's own domain — a +Z-oriented
+   disc walks its rim θ-up in the world, a −Z-oriented disc walks
+   it θ-down.
+3. **THE XOR + THE WALL'S RECTANGLE TRAVERSAL TIE THE TWO FACES
+   TOGETHER**: the wall's window walk (the CW traversal,
+   region-on-right — the convention the through case pins) walks
+   its two rims in OPPOSITE u-directions, hence opposite
+   θ-directions; each rim's partner face walks it opposite to the
+   wall (the radial-edge XOR). The pierced face at the through
+   side (the box's own +Z face, the G1 machinery UNCHANGED — the
+   additivity clause) walks its rim θ-up. THEREFORE the internal
+   cap at the other end of the window MUST walk its rim θ-down —
+   i.e. its domain MUST be the mirror — i.e. its stored normal
+   MUST be −Z (for the blind-lo family) — i.e. INVERTED relative
+   to the outward the volume demands.
+
+**The two machine verdicts** (the probe: both candidate authorings
+hand-built on the real kernel, the landed through case as the
+sanity oracle — its volume 8−0.5π reproduced first):
+
+- **VARIANT A — the carried plane (the tool's cap(lo) frame
+  verbatim, the loop the extrude's cap_lo form `[e REV, e REV]`,
+  CCW in the mirror domain; the wall the through machinery
+  re-based to [z_cap, z_top])**: EVERY structural gate green —
+  every edge exactly 2 opposite co-edges, the loops closed, the
+  closed-orientable manifold, χ = 2, and **the counts V=12, E=17,
+  F=8, H=1 exactly as D5 pins** (the topology is sound; the
+  numbering tables hold). The volume reads **8 − 0.375π +
+  0.25π/3 ≈ 7.0837**: the cap's contribution inverted (+0.5·πr²
+  where the outward demands −0.5·πr²; the divergence theorem over
+  the stored frames reads the carried cap as if the material sat
+  above it). **The golden 8 − 0.375π ≈ 6.8219 FAILS — the body
+  would be an exact-topology lie about its own mass.**
+- **VARIANT B — the re-oriented plane (the outward +Z the volume
+  demands; the cap's loop `[arc₁ fwd, arc₂ fwd]` — D5's own form,
+  storable, CCW in the +Z rotation domain)**: the XOR then forces
+  the wall's floor-rim walk θ-down AND its top-rim walk θ-down
+  (the pierced top face's θ-up inner loop is the G1 machinery,
+  untouchable by D1.4); the wall's six mandated co-edges, read as
+  directed arcs of the (u,v) domain, form a graph that is **NOT
+  EULERIAN** (the node (0,0): in-degree 2, out-degree 0; the node
+  (−2π,0): in-degree 0, out-degree 2) — **the wall's loop cannot
+  chain: no ordering of the six co-edges closes. The assembly
+  cannot exist.**
+
+The two verdicts are exhaustive over the frame rule (the stored
+normal is either the tool's or the outward one; the domain follows
+it rigidly) — the blind family is UNAUTHORABLE as pinned, and the
+wall is not in the tolerance or the derivation of the counts: it
+is in the kernel's orientation model, one face-class wide.
+
+**The seats, re-derived (each clause citing its mother):**
+
+- **The blind family → the orientation-decoupling unit.** The
+  extension that opens the door: the plane's `u_sign`-equivalent
+  (the frame decoupled from the normal — the carried face's flip
+  bit) or the equivalent face-orientation record, with its OWN ADR,
+  its own goldens and its own risk pass over the G1 suite. That
+  unit's entry goldens are D5's numbers, UNMOVED — this amendment
+  pins them as quoted contract (the machine verdict proves the
+  counts land and the volume is the sole wall). The intra-tool SSI
+  consultation (D2 — the cap × the wall, the entry plane×cylinder
+  ⊥ at the cap quota, the both-domain answer) is derived and
+  FEASIBLE — it is pinned in the m2 tests as the family's ready
+  guide, awaiting the assembly it will steer. The refusal stays:
+  **narrowed** (D1.4's own clause for the both-caps family,
+  extended to the whole blind branch) to name the coupling, the
+  knob's precedent and the real seat — the wall's own answer, not
+  a repainted one.
+- **The crossed family (m3) → LANDS as ordered.** The derivation:
+  the CCW-sweep constraint bites Arc2 only; the crossed's
+  re-authored outer loops, its exit edges, its notch rims and its
+  joint verticals are Line2s and segments end-to-end — the
+  mirrored plane domain of a re-oriented planar wall hosts them
+  without constraint (the through case's own walls prove the
+  Line2 walk in a mirrored frame). The circular crossed stays
+  queued (D4), its reason sharpened by this wall: it shares the
+  blind's arc class, and its consumer is the same decoupling.
+- **The joint(i) row (D2/D3) → unaffected**, m3's landing stands
+  (the crossed's absorbed `ext#3:joint(3)` remains its first
+  instance; the extrude's bodies answer it on every prism).
+- **The ε_line decision (D2) → stands** (the sensitivity stays a
+  declared derivation; ADR-0032 not amended).
+- **The parete (D1.3) → stands** (the fillet's unit; the split
+  gesture's own derivation — and this amendment strengthens its
+  record: the parete was re-seated by a derivation, and so now is
+  the blind).
+- **The RACCOLTO → unaffected** (the harvest's truth travels to
+  the sphere booleans' re-derivation unchanged).
+- **The blind's tavola (47 rows), the name digest and the
+  bindings → travel WITH the family** to the decoupling unit, the
+  numbers unchanged (the tavola's derivation held: out+vanished
+  9/22/16 both ways — the machine verdict's counts confirm it).
+
+**D6's m2, redefined by this amendment:** the morsel lands THE
+WALL — the narrowed refusal (the honest message, the G1 pins
+unmoved: "BLIND" and "Remedy" still answer), the derivation's
+tests (the two machine verdicts pinned in the suite, the red
+demonstrated and PERMANENT — the wall's own name in the test
+file), the intra-tool consultation's pin, and this register
+surgery. The estimates: m3 (the crossed) stands at ≈1–2 days; the
+orientation-decoupling unit carries NO date (the no-promises
+list, D6's own tail discipline).
+
+**The lessons, in the register's own words:**
+
+1. **A docs-only morso's sketches are contracts FOR the
+   derivation, never the derivation.** D2's "[e_top1 fwd, e_top2
+   fwd]" and "the region bits flipped" were written against the
+   frame rule's coupling before any code could check them — the
+   code is the truth-teller, and the record corrects ITSELF at
+   the code's word. The RACCOLTO's lesson ("the code fought the
+   record; the record won") gains its mirror: the record bows to
+   the code when the code is right — the same authority, flowing
+   the other way.
+2. **The kernel's orientation model has a blind spot exactly one
+   face-class wide**: the carried plane with the flipped material
+   side. Every re-oriented face the exact path had built until
+   today was either the box's own (unflipped) or a cylinder (the
+   u_sign knob). The decoupling unit's derivation starts from
+   this asymmetry — the knob exists for one surface family and
+   not the other — and its first consumer is the blind family,
+   with the numbers already pinned.
 
 ## IL RACCOLTO — the old branch's harvest (the inventory, dated)
 
