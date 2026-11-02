@@ -1180,10 +1180,18 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
             std::to_string(blind_lo ? z_lo : z_hi) +
             " lies strictly between the pierced faces z = [" +
             std::to_string(t.z_bot) + ", " + std::to_string(t.z_top) +
-            "]) - the internal cap face class is G2's (it needs the "
-            "SSI-driven cap insertion, not the pass-through circle pair "
-            "G1 builds). Remedy: extend the extrusion distance so the "
-            "tool passes through, or accept the faceted path.");
+            "]) - the internal cap's ORIENTATION WALL (ADR-0038's m2 "
+            "amendment, machine-verified on both candidate authorings): "
+            "the carried cap's material side flips, and the frame rule "
+            "couples the plane's domain to its outward normal with no "
+            "decoupling knob (the cylinder's u_sign has one - the "
+            "extrude's hole-wall precedent - the plane has none), so "
+            "the carried frame reads the mass inverted and the "
+            "re-oriented frame makes the wall's window walk unchainable. "
+            "Remedy: await the orientation-decoupling unit (the family's "
+            "goldens are already pinned - ADR-0038 D5: 12/17/8, "
+            "chi=2, volume 8-0.375pi), extend the extrusion distance so "
+            "the tool passes through, or accept the faceted path.");
     if (!(z_lo <= t.z_bot + tol && z_hi >= t.z_top - tol))
         throw std::logic_error(
             "exact_subtract: the placement decision tree fell through - "
