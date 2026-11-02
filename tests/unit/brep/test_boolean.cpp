@@ -17,7 +17,12 @@
 //   * H2 unit 2: the Layer-1 postconditions are HARD — the partial
 //     coplanar-overlap open shell is REFUSED with its name (the
 //     golden refusal messages), never returned; the multi-shell
-//     union (χ = 4) is accepted as a classification.
+//     union (χ = 4) is accepted as a classification. Since H2 unit 5
+//     (ADR-0037) the aligned coplanar class is SEWN by the overlay —
+//     the former refusal witnesses re-pin to the sewn answer (the
+//     door's own goldens), and the ratifications pin what was
+//     verified-but-unpinned (the parete, the edge-touch, the
+//     across-contact).
 //
 #include <doctest/doctest.h>
 
@@ -30,6 +35,7 @@
 #include "CAD_0/brep/detail/boolean_test_hooks.hpp"
 
 #include <cmath>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -580,62 +586,57 @@ TEST_CASE("ADR-0025: bool_intersect of identical boxes returns one box (regressi
 // BRepBody (two tests asserted it) and could enter the feature tree
 // spacciato per valido. H2 unit 2 flipped the contract: the Layer-1
 // postconditions are hard, the result is REFUSED with its name, and
-// the refusal message IS the golden. The class's full handling is
-// H2 unit 5 — the refusal is the declared interim answer.
+// the refusal message IS the golden. H2 unit 5 (ADR-0037, accepted
+// 2026-11-02) sews the class — the overlay computes the region
+// F_A ∪ F_B the outside-parts algebra cannot express — and the
+// witnesses below re-pin from the refusal to the sewn answer (the
+// re-pin's reason was registered in ADR-0037 D5 before the code
+// existed: the wall's own witnesses become the door's own goldens).
 
-TEST_CASE("H2-u2: bool_union with partial coplanar overlap — the open shell is refused, not returned") {
+TEST_CASE("H2-u2, re-pinned by H2-u5: the partial coplanar overlap union — the sewn answer, the box the wall used to refuse") {
     // Box A: [-1,1]³
     // Box B: [-0.5, 1.5] × [-1, 1] × [-1, 1] (overlaps +X half of A;
-    //        the ±Y and ±Z faces are coplanar with A's)
-    // A ∪ B = [-1,1.5] × [-1,1] × [-1,1], but with partial coplanar
-    // overlap the union's assembly keeps only A's faces left of x=-0.5
-    // and B's faces right of x=1: two open half-shells whose 8 rim
-    // edges (4 at x=-0.5, 4 at x=1) carry a single co-edge. The old
-    // contract returned that body (16V/24E/10F, chi=2, NOT a closed
-    // manifold); the H2 contract refuses it.
+    //        the ±Y and ±Z faces are coplanar with A's, ALIGNED)
+    // The honest answer is the box [-1,1.5] × [-1,1] × [-1,1]: the
+    // merged ±Y/±Z regions are CONVEX (x ∈ [-1,1.5] × the section),
+    // one fragment per pair, no slabs (ADR-0037 D5.1's derivation).
+    // This placement's former contract — the open shell refused, 8
+    // rim edges of 24 — was the H2-u2 interim answer; the overlay
+    // retires it and this witness follows its class.
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_box(Vec3d{1, 1, 1});
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0, 0});
     }
-    bool threw = false;
-    try {
-        auto result = bool_union(*A, *B, kHouseTol);
-        (void)result;
-    } catch (const std::runtime_error& e) {
-        threw = true;
-        const std::string msg = e.what();
-        INFO("refusal message: ", msg);
-        CHECK(msg.find("bool_union") != std::string::npos);
-        CHECK(msg.find("result_edge_not_manifold") != std::string::npos);
-        CHECK(msg.find("8 of 24") != std::string::npos);
-        CHECK(msg.find("PARTIAL COPLANAR OVERLAP") != std::string::npos);
-        CHECK(msg.find("H2 unit 5") != std::string::npos);
-        CHECK(msg.find("Remedy:") != std::string::npos);
-    }
-    CHECK_MESSAGE(threw, "the open shell must be refused, not returned");
+    auto result = bool_union(*A, *B, kHouseTol);
+    REQUIRE(result != nullptr);
+    CHECK(result->vertex_count() == 8);
+    CHECK(result->edge_count()   == 12);
+    CHECK(result->face_count()   == 6);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
 }
 
-TEST_CASE("H2-u2: the open-shell refusal names the rim census (the golden message)") {
-    // The census that used to be asserted on the RETURNED body (8 rim
-    // edges / 16 interior edges) now lives in the refusal text: the
-    // message IS the record of what the assembly produced.
+TEST_CASE("H2-u2, re-pinned by H2-u5: the rim census — 0 of 12 edges carry a single co-edge") {
+    // The census that used to live in the refusal text ("8 of 24
+    // edges carry a single co-edge") retires with its class: the
+    // census is now read from the ANSWER. ADR-0037 D5's mapping: the
+    // refusal's rim-census assertion maps to "0 of 12 edges carry a
+    // single co-edge" on the sewn box.
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_box(Vec3d{1, 1, 1});
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0, 0});
     }
-    try {
-        auto result = bool_union(*A, *B, kHouseTol);
-        (void)result;
-        FAIL("the open shell must be refused, not returned");
-    } catch (const std::runtime_error& e) {
-        const std::string msg = e.what();
-        CHECK(msg.find("8 of 24 edges carry a single co-edge") !=
-              std::string::npos);
-        CHECK(msg.find("must not enter the feature tree") !=
-              std::string::npos);
+    auto result = bool_union(*A, *B, kHouseTol);
+    REQUIRE(result != nullptr);
+    REQUIRE(result->edge_count() == 12);
+    std::size_t single = 0;
+    for (const auto& e : result->edges) {
+        if (e.coedges().size() == 1) ++single;
     }
+    CHECK(single == 0);
 }
 
 TEST_CASE("H2-u2: the union of disjoint bodies is a valid multi-shell answer (chi = 4, accepted)") {
@@ -676,18 +677,25 @@ TEST_CASE("ADR-0024: bool_union of identical boxes returns A (identical-body sho
     CHECK(loops_are_closed(*result));
 }
 
-TEST_CASE("H2-u2: the refusal replaces the old open-shell coedge census") {
+TEST_CASE("H2-u2, re-pinned by H2-u5: the third witness — the historical census test reads the sewn answer") {
     // HISTORICAL: this test asserted the returned open shell's coedge
-    // census (24 edges: 16 with 2 co-edges, 8 rim edges with 1). H2
-    // unit 2 refuses that body — the census survives in the refusal
-    // message (the golden above); nothing with a boundary rim reaches
-    // a caller anymore.
+    // census (24 edges: 16 with 2 co-edges, 8 rim edges with 1), then
+    // (H2-u2) the refusal that replaced it. H2-u5 sews the class:
+    // this placement answers the honest box, and nothing with a
+    // boundary rim is ever returned — the output gate stands behind
+    // the door as it stood in front of it. The witness follows its
+    // class through every contract change: returned -> refused ->
+    // sewn.
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_box(Vec3d{1, 1, 1});
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0, 0});
     }
-    CHECK_THROWS_AS(bool_union(*A, *B, kHouseTol), std::runtime_error);
+    auto result = bool_union(*A, *B, kHouseTol);
+    REQUIRE(result != nullptr);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
 }
 
 // ---------------------------------------------------------------------------
@@ -795,16 +803,27 @@ TEST_CASE("ADR-0024: bool_subtract of overlapping boxes — χ = 2 on the corner
 
 TEST_CASE("ADR-0024: bool_union and bool_intersect of overlapping boxes — exact counts on both sides") {
     // A=[-1,1]³, B shift (0.5,0,0) → overlap [-0.5,1]×[-1,1]×[-1,1].
-    //   intersect = the overlap box: 8V/12E/6F, χ=2, closed manifold.
-    //   union = the partial coplanar overlap class — REFUSED since H2
-    //           unit 2 (the open shell, 8 rim edges of 24, is never
-    //           returned); the intersect side keeps its exact counts.
+    //   intersect = the overlap box: 8V/12E/6F, χ=2, closed manifold
+    //               (this half STANDS — the intersect's own golden,
+    //               untouched by the door).
+    //   union = the aligned coplanar class, SEWN since H2-u5 (the
+    //           overlay, ADR-0037 D3): the honest box [-1,1.5]×
+    //           [-1,1]×[-1,1], the same 8V/12E/6F census. The former
+    //           CHECK_THROWS (the H2-u2 interim refusal) re-pins to
+    //           the answer — the reason registered in ADR-0037 D5
+    //           before the code existed.
     auto A = make_box(Vec3d{1, 1, 1});
     auto B = make_box(Vec3d{1, 1, 1});
     for (auto& v : B->vertices) {
         v.set_position(v.position() + Vec3d{0.5f, 0, 0});
     }
-    CHECK_THROWS_AS(bool_union(*A, *B, kHouseTol), std::runtime_error);
+    auto u = bool_union(*A, *B, kHouseTol);
+    REQUIRE(u != nullptr);
+    CHECK(u->vertex_count() == 8);
+    CHECK(u->edge_count()   == 12);
+    CHECK(u->face_count()   == 6);
+    CHECK(euler_characteristic(*u) == 2);
+    CHECK(is_closed_manifold(*u));
     auto i = bool_intersect(*A, *B, kHouseTol);
     REQUIRE(i != nullptr);
     CHECK(i->vertex_count() == 8);
@@ -849,6 +868,11 @@ TEST_CASE("ADR-0027: wrapper equivalence on the genus-0 boolean fixtures") {
         check(*i);
     }
     // bool_union of boxes touching at a face: 12V/20E/10F, χ = 2.
+    // The partial coplanar open shell — the historical χ=2-but-open
+    // fixture — was refused in H2 unit 2 and is SEWN since H2 unit 5
+    // (the last block below reads it as the healthy fixture it
+    // became); if the wrapper is ever edited, these are the fixture
+    // classes that must notice.
     {
         auto u = bool_union(*make_box(Vec3d{1, 1, 1}), *box_at({0, 0, 2.0f}), kHouseTol);
         REQUIRE(u != nullptr);
@@ -898,12 +922,18 @@ TEST_CASE("ADR-0027: wrapper equivalence on the genus-0 boolean fixtures") {
         CHECK_FALSE(is_closed_manifold(*u));
         check(*u);
     }
-    // The partial coplanar-overlap union: REFUSED since H2 unit 2 —
-    // the open shell is not a fixture anymore, it is an error.
+    // The partial coplanar-overlap union: SEWN since H2-u5 (the
+    // overlay, ADR-0037) — the open shell is neither a fixture nor an
+    // error anymore: the sewn box is a HEALTHY closed fixture of the
+    // equivalence class (χ = 2 through both halves).
     {
-        CHECK_THROWS_AS(bool_union(*make_box(Vec3d{1, 1, 1}),
-                                   *box_at({0.5f, 0, 0}), kHouseTol),
-                        std::runtime_error);
+        auto u = bool_union(*make_box(Vec3d{1, 1, 1}),
+                            *box_at({0.5f, 0, 0}), kHouseTol);
+        REQUIRE(u != nullptr);
+        CHECK(euler_characteristic(*u) == 2);
+        CHECK(is_closed_orientable(*u));
+        CHECK(is_closed_manifold(*u));
+        check(*u);
     }
 }
 
@@ -1916,5 +1946,461 @@ TEST_CASE("H2-u3: the parameter world is independent — ε_P answers the (t,u) 
             p1, p2, p3, p4, segment_tol(1e-3, 1e-8), t2_lo, t2_hi);
         CHECK(r_both == SegmentIsectType::Point);
         CHECK(t2_lo == 1e-7);
+    }
+}
+
+// ===========================================================================
+// H2 unit 5 — THE DOOR (ADR-0037, accepted 2026-11-02): the aligned
+// coplanar union — the overlay, the goldens written from D5 BEFORE
+// the code, the ratifications pinned
+// ===========================================================================
+//
+// The wall map's one refusing brick: the union of two faces in the
+// same plane with ALIGNED normals and overlapping regions — the
+// crossing pair (P4 axis-aligned, P8 diagonal) and the contained pair
+// (P11). The outside-parts algebra decomposes ∪ into (F_A∖F_B) ∪
+// (F_B∖F_A) and loses the middle; the overlay (ADR-0037 D3) computes
+// the region F_A ∪ F_B directly: the projection in the ONE frame,
+// the crossing points born IN the plane (the H1 segment arms), the
+// union boundary walk through them, the emission in CONVEX fragments
+// (the slab decomposition at the region's reflex vertices), the
+// sewing in the canonical pool. The goldens below were pinned by
+// ADR-0037 D5 BEFORE the code existed and demonstrated RED on the
+// pre-overlay tree (the refusal captured by the new tests — the
+// discrimination: the door is new, not repainted); the ratifications
+// (P1/P2/P7/P10) were verified green on the wall map and are pinned
+// HERE so the capability kept is the capability pinned.
+//
+
+namespace {
+
+// The honest-solid identities (D5): closed loops, every edge exactly
+// 2 co-edges in OPPOSITE orientations, χ even — the output gate's
+// class 3 read directly from the body.
+void check_honest_solid(const BRepBody& b) {
+    CHECK(loops_are_closed(b));
+    std::size_t single = 0, paired = 0, bad_orientation = 0;
+    for (const auto& e : b.edges) {
+        const auto n = e.coedges().size();
+        if (n == 1) {
+            ++single;
+        } else if (n == 2) {
+            if (e.coedges()[0]->reversed() == e.coedges()[1]->reversed()) {
+                ++bad_orientation;
+            } else {
+                ++paired;
+            }
+        }
+    }
+    CHECK(single == 0);
+    CHECK(bad_orientation == 0);
+    CHECK(paired == b.edges.size());
+    CHECK(euler_characteristic(b) % 2 == 0);
+}
+
+// The wall map's box placements: the factory box, translated by its
+// vertices (the pinned suites' own pattern — the boolean reads the
+// plane through the loop's first vertex, so the translate is
+// coherent for every count the door pins).
+std::unique_ptr<BRepBody> placed_box(Vec3d half, Vec3d shift) {
+    auto b = make_box(half);
+    for (auto& v : b->vertices) {
+        v.set_position(v.position() + shift);
+    }
+    return b;
+}
+
+// FNV-1a over the body's full structure (the digest pattern, the
+// BVH's own — H2-u4 m2): counts, vertex positions, edge endpoints,
+// the faces' co-edge sequences.
+std::uint64_t fnv1a64_bytes(const void* data, std::size_t n,
+                            std::uint64_t h) {
+    const auto* bytes = static_cast<const unsigned char*>(data);
+    for (std::size_t i = 0; i < n; ++i) {
+        h ^= bytes[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+std::uint64_t door_digest_of(const BRepBody& b) {
+    std::uint64_t h = 14695981039346656037ULL;
+    const std::uint64_t counts[3] = {b.vertex_count(), b.edge_count(),
+                                     b.face_count()};
+    h = fnv1a64_bytes(counts, sizeof counts, h);
+    for (const auto& v : b.vertices) {
+        const double p[3] = {v.position().x, v.position().y,
+                             v.position().z};
+        h = fnv1a64_bytes(p, sizeof p, h);
+    }
+    for (const auto& e : b.edges) {
+        const std::uint64_t ends[2] = {e.vertex(0), e.vertex(1)};
+        h = fnv1a64_bytes(ends, sizeof ends, h);
+    }
+    for (const auto& f : b.solid.shell().faces()) {
+        for (const auto& loop : f.loops()) {
+            for (const auto& ce : loop.coedges()) {
+                const std::uint64_t rec[2] = {
+                    ce.edge(),
+                    static_cast<std::uint64_t>(ce.reversed() ? 1 : 0)};
+                h = fnv1a64_bytes(rec, sizeof rec, h);
+            }
+        }
+    }
+    return h;
+}
+
+} // namespace
+
+TEST_CASE("H2-u5 D5.1: the door — P4 the grid-straddle union answers the honest box (8/12/6, chi=2 closed)") {
+    // A = [-1,1]³, B = [-0.5,1.5]×[-1,1]×[-1,1] — the ±Y and ±Z face
+    // pairs coplanar and ALIGNED, the regions CROSSING. On the
+    // pre-overlay tree this golden is RED: result_edge_not_manifold,
+    // "8 of 24" (the refusal IS the naive counterproof). With the
+    // overlay: the merged ±Y region x ∈ [-1,1.5], z ∈ [-1,1] and the
+    // merged ±Z regions the same — each CONVEX, ONE fragment per
+    // pair, no slabs (D5's derivation) — plus A's -X and B's +X
+    // faces intact: the honest box [-1,1.5]×[-1,1]×[-1,1].
+    auto A = make_box(Vec3d{1, 1, 1});
+    auto B = placed_box(Vec3d{1, 1, 1}, Vec3d{0.5f, 0, 0});
+    auto result = bool_union(*A, *B, kHouseTol);
+    REQUIRE(result != nullptr);
+    CHECK(result->vertex_count() == 8);
+    CHECK(result->edge_count()   == 12);
+    CHECK(result->face_count()   == 6);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
+    check_honest_solid(*result);
+    // The honest box's extent: x ∈ [-1, 1.5], y and z ∈ [-1, 1].
+    for (const auto& v : result->vertices) {
+        CHECK(v.position().x >= -1.0 - 1e-6);
+        CHECK(v.position().x <=  1.5 + 1e-6);
+        CHECK(v.position().y >= -1.0 - 1e-6);
+        CHECK(v.position().y <=  1.0 + 1e-6);
+        CHECK(v.position().z >= -1.0 - 1e-6);
+        CHECK(v.position().z <=  1.0 + 1e-6);
+    }
+}
+
+TEST_CASE("H2-u5 D5.2: the door — P8 the diagonal union answers the stair prism (20/32/14, chi=2 closed)") {
+    // B offset (0.5, 0, 0.5) — the aligned ±Y pairs cross
+    // DIAGONALLY: the merged ±Y region is the stair (x,z) with
+    // vertices (-1,-1), (1,-1), (1,-0.5), (1.5,-0.5), (1.5,1.5),
+    // (-0.5,1.5), (-0.5,1), (-1,1) — 8 vertices, 2 reflex —
+    // slab-split into THREE convex fragments per cap; the lateral
+    // faces contribute the 8 sides. D5's census: V = 2 caps × (8
+    // stair + 2 T) = 20; E = 2 × (10 boundary + 2 slab) + 8
+    // verticals = 32; F = 2 × 3 cap fragments + 8 side faces = 14;
+    // chi = 2. (The pin is the counts and the identities — the
+    // fragment shapes' bit-identity is determinism's own pin below.)
+    auto A = make_box(Vec3d{1, 1, 1});
+    auto B = placed_box(Vec3d{1, 1, 1}, Vec3d{0.5f, 0, 0.5f});
+    auto result = bool_union(*A, *B, kHouseTol);
+    REQUIRE(result != nullptr);
+    CHECK(result->vertex_count() == 20);
+    CHECK(result->edge_count()   == 32);
+    CHECK(result->face_count()   == 14);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
+    check_honest_solid(*result);
+}
+
+TEST_CASE("H2-u5 D5.3: the door — P11 the flush-interior union answers A whole (8/12/6, chi=2 closed)") {
+    // B = [-0.5,0.5]×[-1,1]×[-0.5,0.5] strictly inside A, the ±Y
+    // pairs' regions CONTAINED: the containment cell emits F_A
+    // untouched — kept, in the ADR-0036 vocabulary D1's ratified
+    // semantics rides — and B's other faces lie strictly inside A
+    // and vanish: the union IS A, the honest answer the wall used to
+    // refuse ("8 of 36").
+    auto A = make_box(Vec3d{1, 1, 1});
+    auto B = placed_box(Vec3d{0.5f, 1, 0.5f}, Vec3d{0, 0, 0});
+    auto result = bool_union(*A, *B, kHouseTol);
+    REQUIRE(result != nullptr);
+    CHECK(result->vertex_count() == 8);
+    CHECK(result->edge_count()   == 12);
+    CHECK(result->face_count()   == 6);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
+    check_honest_solid(*result);
+    // A whole: every result vertex is one of A's 8 corners.
+    for (const auto& rv : result->vertices) {
+        bool is_corner = false;
+        for (const auto& av : A->vertices) {
+            const double dx = rv.position().x - av.position().x;
+            const double dy = rv.position().y - av.position().y;
+            const double dz = rv.position().z - av.position().z;
+            if (dx * dx + dy * dy + dz * dz <= 1e-12) {
+                is_corner = true;
+                break;
+            }
+        }
+        CHECK_MESSAGE(is_corner, "P11's answer is A whole — no other vertex exists");
+    }
+}
+
+TEST_CASE("H2-u5 D5.4: the ratification — P1 the boss union (20/32/14, chi=2 closed)") {
+    // B = [1,2]×[-0.5,0.5]×[-0.5,0.5] on A's +X face — the OPPOSED
+    // contained pair (the parete). The wall map verified it green by
+    // direct execution; "verified; unpinned" ends HERE. The gate
+    // routes opposed pairs to today's path byte for byte — this pin
+    // holds the capability the verification measured.
+    auto A = make_box(Vec3d{1, 1, 1});
+    auto B = placed_box(Vec3d{0.5f, 0.5f, 0.5f}, Vec3d{1.5f, 0, 0});
+    auto result = bool_union(*A, *B, kHouseTol);
+    REQUIRE(result != nullptr);
+    CHECK(result->vertex_count() == 20);
+    CHECK(result->edge_count()   == 32);
+    CHECK(result->face_count()   == 14);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
+    check_honest_solid(*result);
+}
+
+TEST_CASE("H2-u5 D5.5: the ratification — P2 the flush notch subtract (20/32/14, chi=2 closed)") {
+    // A \ B, B = [0.5,1]×[-0.5,0.5]×[-0.5,0.5] — the flush notch
+    // (the parete's subtract twin): the same census as the boss, the
+    // notch's cap inverted. The subtract's code radius is untouched
+    // by the door (the gate is the union's pair seat alone); the pin
+    // holds what the wall map verified.
+    auto A = make_box(Vec3d{1, 1, 1});
+    auto B = placed_box(Vec3d{0.25f, 0.5f, 0.5f}, Vec3d{0.75f, 0, 0});
+    auto result = bool_subtract(*A, *B, kHouseTol);
+    REQUIRE(result != nullptr);
+    CHECK(result->vertex_count() == 20);
+    CHECK(result->edge_count()   == 32);
+    CHECK(result->face_count()   == 14);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
+    check_honest_solid(*result);
+}
+
+TEST_CASE("H2-u5 D5.6: the ratification — P7 the full-width boss union, the edge-touch (16/26/12, chi=2 closed)") {
+    // The boss of P1 spanning the full width: B =
+    // [1,2]×[-1,1]×[-0.5,0.5] — the aligned ±Y pairs touch
+    // EDGE-TO-EDGE (no area): NOT the door's cell (the edge-touch
+    // keeps today's path — the pin is the proof it stays green
+    // through the gate's landing).
+    auto A = make_box(Vec3d{1, 1, 1});
+    auto B = placed_box(Vec3d{0.5f, 1, 0.5f}, Vec3d{1.5f, 0, 0});
+    auto result = bool_union(*A, *B, kHouseTol);
+    REQUIRE(result != nullptr);
+    CHECK(result->vertex_count() == 16);
+    CHECK(result->edge_count()   == 26);
+    CHECK(result->face_count()   == 12);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
+    check_honest_solid(*result);
+}
+
+TEST_CASE("H2-u5 D5.7: the ratification — P10 the across-contact union (16/26/12, chi=2 closed)") {
+    // B = [-2,-1]×[-0.5,1.5]×[-1,1] across A's -X face — the
+    // OPPOSED pair with CROSSING regions: the symmetric difference,
+    // the two strips. Opposed pairs keep today's path; the pin holds
+    // the wall map's verification.
+    auto A = make_box(Vec3d{1, 1, 1});
+    auto B = placed_box(Vec3d{0.5f, 1, 1}, Vec3d{-1.5f, 0.5f, 0});
+    auto result = bool_union(*A, *B, kHouseTol);
+    REQUIRE(result != nullptr);
+    CHECK(result->vertex_count() == 16);
+    CHECK(result->edge_count()   == 26);
+    CHECK(result->face_count()   == 12);
+    CHECK(euler_characteristic(*result) == 2);
+    CHECK(is_closed_manifold(*result));
+    CHECK(loops_are_closed(*result));
+    check_honest_solid(*result);
+}
+
+TEST_CASE("H2-u5 D5: the determinism — N=10 rebuilds of each door body, one digest") {
+    // The digest pattern (the BVH's own, H2-u4 m2): FNV-1a over the
+    // body's full structure — counts, vertex positions, edge
+    // endpoints, the faces' co-edge sequences. Ten rebuilds of each
+    // door placement must agree bit for bit (the canonical pool and
+    // the deterministic walk make it true by construction; the test
+    // pins it so it stays true by contract). The suite runs on BOTH
+    // compilers in CI — the digest's equality is read per build.
+    const auto build = [](int which) {
+        auto A = make_box(Vec3d{1, 1, 1});
+        std::unique_ptr<BRepBody> B;
+        if (which == 0) {
+            B = placed_box(Vec3d{1, 1, 1}, Vec3d{0.5f, 0, 0});      // P4
+        } else if (which == 1) {
+            B = placed_box(Vec3d{1, 1, 1}, Vec3d{0.5f, 0, 0.5f});   // P8
+        } else {
+            B = placed_box(Vec3d{0.5f, 1, 0.5f}, Vec3d{0, 0, 0});   // P11
+        }
+        return bool_union(*A, *B, kHouseTol);
+    };
+    for (int which = 0; which < 3; ++which) {
+        std::uint64_t first = 0;
+        for (int i = 0; i < 10; ++i) {
+            auto body = build(which);
+            REQUIRE(body != nullptr);
+            const std::uint64_t d = door_digest_of(*body);
+            if (i == 0) {
+                first = d;
+            } else {
+                INFO("rebuild ", i, " of placement ", which);
+                CHECK(d == first);
+            }
+        }
+    }
+}
+
+TEST_CASE("H2-u5: the overlay seam — the pair decision read directly (P4/P8/P11 the door, the routing's walls)") {
+    // The test-only seam (boolean_test_hooks.hpp): the door's whole
+    // pair decision — the gate (D2's order (a)-(d)), the area
+    // routing (D4's scope), the overlay's fragments (D3). The cap
+    // pairs of the wall map's placements, authored as explicit 3D
+    // loops (the box authoring's own vertex order, CCW around the
+    // face's outward normal).
+    const std::vector<Vec3d> a_cap_y = {  // A's +Y face: (x,z) in [-1,1]^2
+        Vec3d{ 1, 1, -1}, Vec3d{-1, 1, -1},
+        Vec3d{-1, 1,  1}, Vec3d{ 1, 1,  1}};
+    const Vec3d cap_n{0, 1, 0};
+    const auto frags_of = [&](const std::vector<Vec3d>& clip,
+                              Vec3d clip_n) {
+        return overlay_union_fragments_for_tests(a_cap_y, cap_n, clip,
+                                                 clip_n, kHouseTol);
+    };
+
+    // P4's +Y pair (B = [-0.5,1.5]x[-1,1]x[-1,1]): the crossing cell
+    // with the CONVEX merged region — ONE fragment, no slabs (D5's
+    // derivation), the merged rectangle x in [-1,1.5], z in [-1,1].
+    {
+        const std::vector<Vec3d> b_cap = {
+            Vec3d{ 1.5, 1, -1}, Vec3d{-0.5, 1, -1},
+            Vec3d{-0.5, 1,  1}, Vec3d{ 1.5, 1,  1}};
+        const auto frags = frags_of(b_cap, cap_n);
+        REQUIRE(frags.size() == 1);
+        REQUIRE(frags[0].size() == 4);
+        for (const auto& v : frags[0]) {
+            CHECK(v.y == doctest::Approx(1.0));
+            CHECK(v.x >= -1.0 - 1e-9);
+            CHECK(v.x <=  1.5 + 1e-9);
+            CHECK(v.z >= -1.0 - 1e-9);
+            CHECK(v.z <=  1.0 + 1e-9);
+        }
+    }
+
+    // P8's +Y pair (B offset (0.5, 0, 0.5)): the crossing cell with
+    // the NON-CONVEX merged region — the stair, slab-split into
+    // THREE convex fragments whose areas sum to the stair's 5.75
+    // (4 + 4 - 2.25). The pin is the counts and the identities, not
+    // the fragment shapes (D5's own note); the shapes' bit-identity
+    // is the determinism golden's own.
+    {
+        const std::vector<Vec3d> b_cap = {
+            Vec3d{ 1.5, 1, -0.5}, Vec3d{-0.5, 1, -0.5},
+            Vec3d{-0.5, 1,  1.5}, Vec3d{ 1.5, 1,  1.5}};
+        const auto frags = frags_of(b_cap, cap_n);
+        REQUIRE(frags.size() == 3);
+        double area_sum = 0.0;
+        for (const auto& f : frags) {
+            REQUIRE(f.size() >= 3);
+            for (const auto& v : f) CHECK(v.y == doctest::Approx(1.0));
+            // the shoelace over the RIGHT-HANDED (z,x) chart
+            // (z_hat x x_hat = +y_hat): each fragment CCW around the
+            // shared +Y and convex (collinear allowed)
+            double a2 = 0.0;
+            for (std::size_t i = 0; i < f.size(); ++i) {
+                const auto& p = f[i];
+                const auto& q = f[(i + 1) % f.size()];
+                a2 += p.z * q.x - q.z * p.x;
+            }
+            const double area = 0.5 * a2;
+            CHECK(area > 0.0);  // CCW around +n (the material-side rule)
+            area_sum += area;
+            for (std::size_t i = 0; i < f.size(); ++i) {
+                const auto& p = f[i];
+                const auto& q = f[(i + 1) % f.size()];
+                const auto& r = f[(i + 2) % f.size()];
+                const double cross =
+                    (q.z - p.z) * (r.x - q.x) - (q.x - p.x) * (r.z - q.z);
+                CHECK(cross >= -kHouseTol.linear.value);  // convex
+            }
+        }
+        CHECK(area_sum == doctest::Approx(5.75).epsilon(1e-9));
+    }
+
+    // P11's +Y pair (B strictly inside, the tops' section contained):
+    // the containment cell — the containing face KEPT, one fragment
+    // at A's own four corners (the kept face, D1's cap-flush analog).
+    {
+        const std::vector<Vec3d> b_cap = {
+            Vec3d{ 0.5, 1, -0.5}, Vec3d{-0.5, 1, -0.5},
+            Vec3d{-0.5, 1,  0.5}, Vec3d{ 0.5, 1,  0.5}};
+        const auto frags = frags_of(b_cap, cap_n);
+        REQUIRE(frags.size() == 1);
+        REQUIRE(frags[0].size() == 4);
+        for (const auto& v : a_cap_y) {
+            bool found = false;
+            for (const auto& w : frags[0]) {
+                const double dx = v.x - w.x, dy = v.y - w.y, dz = v.z - w.z;
+                if (dx * dx + dy * dy + dz * dz <= 1e-18) found = true;
+            }
+            CHECK_MESSAGE(found, "P11 keeps F_A's own corners");
+        }
+    }
+
+    // P7's +Y pair (the full-width boss: the aligned regions touch
+    // EDGE-TO-EDGE, no area): NOT the door — the seam answers EMPTY
+    // and today's path owns the pair (the ratification golden above).
+    {
+        const std::vector<Vec3d> b_cap = {
+            Vec3d{ 2, 1, -0.5}, Vec3d{ 1, 1, -0.5},
+            Vec3d{ 1, 1,  0.5}, Vec3d{ 2, 1,  0.5}};
+        CHECK(frags_of(b_cap, cap_n).empty());
+    }
+
+    // The stacked pair (A's top at z=1 normal +Z, B's bottom at z=1
+    // normal -Z): OPPOSED — the symmetric difference's own cell,
+    // today's path (the pinned 12/20/10 golden).
+    {
+        const std::vector<Vec3d> a_top = {
+            Vec3d{-1, -1, 1}, Vec3d{ 1, -1, 1},
+            Vec3d{ 1,  1, 1}, Vec3d{-1,  1, 1}};
+        const std::vector<Vec3d> b_bottom = {
+            Vec3d{-1, -1, 1}, Vec3d{-1,  1, 1},
+            Vec3d{ 1,  1, 1}, Vec3d{ 1, -1, 1}};
+        const auto frags = overlay_union_fragments_for_tests(
+            a_top, Vec3d{0, 0, 1}, b_bottom, Vec3d{0, 0, -1}, kHouseTol);
+        CHECK(frags.empty());
+    }
+
+    // A plane PARALLEL but OFFSET (y = 1.5): the linear member's
+    // window rejects it — today's path (the transversal clip).
+    {
+        const std::vector<Vec3d> b_cap = {
+            Vec3d{ 1.5, 1.5, -1}, Vec3d{-0.5, 1.5, -1},
+            Vec3d{-0.5, 1.5,  1}, Vec3d{ 1.5, 1.5,  1}};
+        CHECK(frags_of(b_cap, cap_n).empty());
+    }
+
+    // A plane TILTED inside the angular member's admission (the tilt
+    // 0.0005 < theta_strict ~ 0.0014) whose offset window DRIFTS
+    // across the band (the drift ~ 0.001 >> eps_L): THE WINDOW, never
+    // the single value — the straddle falls back to today's path
+    // (D2's own rule, classify_parallel_plane's discipline).
+    {
+        const std::vector<Vec3d> b_cap = {
+            Vec3d{ 1.5, 1 - 0.0005, -1}, Vec3d{-0.5, 1 - 0.0005, -1},
+            Vec3d{-0.5, 1 + 0.0005,  1}, Vec3d{ 1.5, 1 + 0.0005,  1}};
+        CHECK(frags_of(b_cap, cap_n).empty());
+    }
+
+    // A plane tilted BEYOND the angular member's threshold: the
+    // angular world's own rejection (zero new constants — the strict
+    // threshold D2 row 4).
+    {
+        const std::vector<Vec3d> b_cap = {
+            Vec3d{ 1.5, 1 - 0.005, -1}, Vec3d{-0.5, 1 - 0.005, -1},
+            Vec3d{-0.5, 1 + 0.005,  1}, Vec3d{ 1.5, 1 + 0.005,  1}};
+        CHECK(frags_of(b_cap, cap_n).empty());
     }
 }

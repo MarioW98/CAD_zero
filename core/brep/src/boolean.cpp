@@ -537,7 +537,15 @@ GHVertex* insert_intersection(
     new_v.neighbor = nullptr;
     auto inserted_it = list.insert(std::next(it), new_v);
     GHVertex* inserted = &*inserted_it;
-    GHVertex* orig_next = inserted->next;
+    // H2-u5 (ADR-0037 D3): the successor is the one that held the
+    // position BEFORE this insertion — read from the ORIGINAL node,
+    // never from the fresh copy (whose next is nullptr: the list
+    // insert copies the value, it does not splice pointers). The
+    // overlay's union walk is the first consumer this arm ever had —
+    // the broken relink severed the chain at the first crossing and
+    // the walk died silently (the GH wrapper was seam-dead code until
+    // now; the overlay consumes the arms and the defect surfaced).
+    GHVertex* orig_next = (*it).next;
     // Re-link: orig -> inserted -> orig_next
     inserted->prev = &*it;
     inserted->next = orig_next;
@@ -1256,6 +1264,530 @@ ParallelPlaneClass classify_parallel_plane(
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0037 D2 — THE COPLANARITY GATE (ε_C): the composite decision
+// that admits the planar contact class, seated in the union's pair
+// processing BEFORE the clip (the order (a)-(d) pinned there). Two
+// typed members, ZERO new constants: the ANGULAR member reads the
+// strict parallelity threshold (the same typed world
+// classify_parallel_plane reads, D2 row 4); the LINEAR member reads
+// the operation's ε_L — and the WINDOW, never the single value (the
+// straddle falls back to today's per-vertex clip, the rule
+// classify_parallel_plane practices). The ALIGNMENT (d) is exact by
+// construction: the angular member's admission already guarantees
+// |n_A·n_B| ≥ cos(θ_strict) ≈ 1 − 1e-6 > 0, so the dot product's
+// sign cannot be noise — a predicate the band's own admission makes
+// exact (Family 1 inside the band). The vocabulary row is ADR-0035
+// D2's ε_C (applied in the act of acceptance, H2-u5 m2).
+// ---------------------------------------------------------------------------
+enum class CoplanarPairClass {
+    Transversal,  // outside the gate: today's path, byte for byte
+    Opposed,      // inside the gate, the material straddling the plane
+    Aligned,      // inside the gate, the material on the same side — the door's own cell
+};
+
+CoplanarPairClass classify_coplanar_pair(
+    const Polygon& poly_A, const math::Vec3d& n_A,
+    const Polygon& poly_B, const math::Vec3d& n_B,
+    const BooleanTolerance& tol
+) {
+    const double eps_l = tol.linear.value;
+    // (a) both faces planar — the input gate's own guarantee
+    //     (validate_boolean_input ran on both operands before any
+    //     pair logic). The degenerate-normal guard is the LINEAR
+    //     world's (D2 row 1): a normal shorter than ε_L carries no
+    //     direction to normalize.
+    const double len_A = n_A.length();
+    const double len_B = n_B.length();
+    if (len_A < eps_l || len_B < eps_l ||
+        poly_A.size() < 3 || poly_B.size() < 3) {
+        return CoplanarPairClass::Transversal;
+    }
+    const math::Vec3d a = n_A * (1.0 / len_A);
+    const math::Vec3d b = n_B * (1.0 / len_B);
+    const double dot = a.dot(b);
+    // (b) THE ANGULAR MEMBER — the two-plane analog of the segment
+    //     determinant's admission: sin θ ≤ sin θ_strict, equivalently
+    //     |n_A·n_B| ≥ cos(θ_strict) — the STRICT threshold (D2 row 4),
+    //     zero new constants.
+    if (std::abs(dot) < std::cos(tol.angular.value)) {
+        return CoplanarPairClass::Transversal;
+    }
+    // (c) THE LINEAR MEMBER — the offset WINDOW [d_min, d_max] of
+    //     d(p) = (p − o_B)·n̂_B over F_A's polygon: the window, never
+    //     the single value; only the UNANIMOUSLY-inside pairs are
+    //     admitted (a drifting pair is not coplanar — it clips
+    //     per-vertex, today's path).
+    double d_min = 0.0, d_max = 0.0;
+    bool first_d = true;
+    for (const auto& p : poly_A) {
+        const double d = (p - poly_B[0]).dot(b);
+        if (first_d) {
+            d_min = d_max = d;
+            first_d = false;
+        } else {
+            d_min = std::min(d_min, d);
+            d_max = std::max(d_max, d);
+        }
+    }
+    if (!(d_min >= -eps_l && d_max <= eps_l)) {
+        return CoplanarPairClass::Transversal;
+    }
+    // (d) THE ALIGNMENT — sign(n_A·n_B), exact inside the band.
+    return dot > 0.0 ? CoplanarPairClass::Aligned
+                     : CoplanarPairClass::Opposed;
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0037 D3 — THE OVERLAY: the union's aligned coplanar cell.
+//
+// The region F_A ∪ F_B the outside-parts algebra cannot express
+// (it decomposes ∪ into (F_A∖F_B) ∪ (F_B∖F_A) and loses the middle),
+// computed directly: the projection in the ONE frame (rule a), the
+// crossing points born IN the plane through the H1 segment arms, the
+// union boundary walk through them, the emission in CONVEX fragments
+// (the slab decomposition at the region's reflex vertices — the
+// input gate refuses non-convex faces, so the composed chain
+// A∪B∪C stays in-class), the sewing in the canonical pool (rule c:
+// every computed point ONCE, canonicalized, read by both consumers —
+// the original vertices keep their exact source bytes, the round
+// trip is not taken).
+// ---------------------------------------------------------------------------
+
+// 2D signed area (the shoelace) — the frame is right-handed
+// (u × v = n), so CCW in the chart is CCW around the surviving +n̂
+// (rule b, the material-side rule).
+double signed_area2(const Polygon2D& poly) {
+    double s = 0.0;
+    if (poly.size() < 3) return 0.0;
+    for (std::size_t i = 0; i < poly.size(); ++i) {
+        const Vec2& a = poly[i];
+        const Vec2& b = poly[(i + 1) % poly.size()];
+        s += a.x * b.y - b.x * a.y;
+    }
+    return 0.5 * s;
+}
+
+// The 2D half-space clip — the sh_clip_2d discipline the slab
+// decomposition practices: the symmetric ε_L band (keep d ≤ ε_L
+// inside / d ≥ −ε_L outside) so adjacent pieces share their boundary
+// points bit-identically (the two clips of the same line compute the
+// same t: the negations are exact in FP).
+Polygon2D clip_2d_halfspace(
+    const Polygon2D& poly, Vec2 origin, Vec2 outward, bool keep_inside,
+    double eps_l
+) {
+    if (poly.empty()) return {};
+    Polygon2D res;
+    res.reserve(poly.size() + 1);
+    const std::size_t n = poly.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        const Vec2& curr = poly[i];
+        const Vec2& next = poly[(i + 1) % n];
+        const double d_curr =
+            (curr.x - origin.x) * outward.x + (curr.y - origin.y) * outward.y;
+        const double d_next =
+            (next.x - origin.x) * outward.x + (next.y - origin.y) * outward.y;
+        const bool curr_keep = keep_inside ? (d_curr <= eps_l)
+                                           : (d_curr >= -eps_l);
+        const bool next_keep = keep_inside ? (d_next <= eps_l)
+                                           : (d_next >= -eps_l);
+        if (curr_keep) res.push_back(curr);
+        if (curr_keep != next_keep) {
+            const double denom = d_curr - d_next;
+            if (std::abs(denom) > eps_l) {
+                const double t = d_curr / denom;
+                res.push_back({curr.x + t * (next.x - curr.x),
+                               curr.y + t * (next.y - curr.y)});
+            }
+        }
+    }
+    return res;
+}
+
+// Drop consecutive ε_L duplicates (clip_inside_3d's own discipline).
+void dedup_consecutive2d(Polygon2D& p, double eps_l) {
+    Polygon2D deduped;
+    deduped.reserve(p.size());
+    for (const auto& q : p) {
+        if (deduped.empty()) {
+            deduped.push_back(q);
+        } else {
+            const Vec2& last = deduped.back();
+            const double dx = q.x - last.x;
+            const double dy = q.y - last.y;
+            if (dx * dx + dy * dy > eps_l * eps_l) {
+                deduped.push_back(q);
+            }
+        }
+    }
+    if (deduped.size() >= 2) {
+        const Vec2& first = deduped.front();
+        const Vec2& last = deduped.back();
+        const double dx = first.x - last.x;
+        const double dy = first.y - last.y;
+        if (dx * dx + dy * dy <= eps_l * eps_l) {
+            deduped.pop_back();
+        }
+    }
+    p = std::move(deduped);
+}
+
+// The convexity test — the input gate's own discipline (D2 row 1's
+// mixed form, collinear runs allowed, a negative cross is reflex).
+bool is_convex2d(const Polygon2D& p, double eps_l) {
+    if (p.size() < 3) return false;
+    const std::size_t m = p.size();
+    for (std::size_t i = 0; i < m; ++i) {
+        const Vec2& a = p[i];
+        const Vec2& b = p[(i + 1) % m];
+        const Vec2& c = p[(i + 2) % m];
+        const double cross =
+            (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+        if (cross < -eps_l) return false;
+    }
+    return true;
+}
+
+// The convex hull (Andrew's monotone chain) — deterministic: the
+// points sorted by (x, y), equal points collapsed, collinear
+// hull-edge points dropped (the extreme corners only). CCW result.
+Polygon2D convex_hull_2d(std::vector<Vec2> pts) {
+    std::sort(pts.begin(), pts.end(), [](const Vec2& a, const Vec2& b) {
+        if (a.x != b.x) return a.x < b.x;
+        return a.y < b.y;
+    });
+    pts.erase(std::unique(pts.begin(), pts.end(),
+                          [](const Vec2& a, const Vec2& b) {
+                              return a.x == b.x && a.y == b.y;
+                          }),
+              pts.end());
+    if (pts.size() < 3) return {};
+    std::vector<Vec2> hull(2 * pts.size() + 1);
+    std::size_t k = 0;
+    const auto cross3 = [](const Vec2& o, const Vec2& a, const Vec2& b) {
+        return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    };
+    for (std::size_t i = 0; i < pts.size(); ++i) {
+        while (k >= 2 && cross3(hull[k - 2], hull[k - 1], pts[i]) <= 0.0) {
+            --k;
+        }
+        hull[k++] = pts[i];
+    }
+    for (std::ptrdiff_t i = static_cast<std::ptrdiff_t>(pts.size()) - 2,
+                        t = static_cast<std::ptrdiff_t>(k) + 1;
+         i >= 0; --i) {
+        while (static_cast<std::ptrdiff_t>(k) >= t &&
+               cross3(hull[k - 2], hull[k - 1],
+                      pts[static_cast<std::size_t>(i)]) <= 0.0) {
+            --k;
+        }
+        hull[k++] = pts[static_cast<std::size_t>(i)];
+    }
+    hull.resize(k - 1);
+    return Polygon2D(hull.begin(), hull.end());
+}
+
+// The spike collapse: the slab clips leave an anti-parallel
+// collinear reversal when a split line rides a boundary EDGE (the
+// piece keeps the zero-width appendage beyond the shared corner).
+// The collapse drops the tip — the direct edge (a, b) replaces the
+// doubled traversal in every case (the appendage is measure-zero;
+// D5's census counts the rectangles, not the spikes).
+Polygon2D collapse_spikes(Polygon2D p, double eps_l) {
+    if (p.size() < 3) return p;
+    bool changed = true;
+    std::size_t guard = 0;
+    const std::size_t max_passes = p.size() + 1;
+    while (changed && guard++ < max_passes) {
+        changed = false;
+        for (std::size_t i = 0; i < p.size(); ++i) {
+            if (p.size() < 3) break;
+            const Vec2 a = p[(i + p.size() - 1) % p.size()];
+            const Vec2 tip = p[i];
+            const Vec2 b = p[(i + 1) % p.size()];
+            const double e1x = tip.x - a.x, e1y = tip.y - a.y;
+            const double e2x = b.x - tip.x, e2y = b.y - tip.y;
+            const double l1 = std::sqrt(e1x * e1x + e1y * e1y);
+            const double l2 = std::sqrt(e2x * e2x + e2y * e2y);
+            if (l1 < eps_l || l2 < eps_l) continue;  // the dedup's own food
+            // The derived determinant band (D2.3): |cross| ≤ 4·ε_L·L.
+            const double cross = e1x * e2y - e1y * e2x;
+            if (std::abs(cross) > 4.0 * eps_l * std::max(l1, l2)) {
+                continue;  // not collinear
+            }
+            if (e1x * e2x + e1y * e2y >= 0.0) continue;  // not a reversal
+            p.erase(p.begin() + static_cast<std::ptrdiff_t>(i));
+            changed = true;
+            break;  // restart the scan (the indices moved)
+        }
+    }
+    return p;
+}
+
+// The union boundary walk — the GH arms over the H1 segment
+// machinery: the crossing points of the two loops inserted in both
+// (they are born IN the plane — the degenerate SSI), the entry/exit
+// classification, and the OUTSIDE walk, which stitches the subject's
+// portions outside the clip to the clip's portions outside the
+// subject: the UNION boundary. Returns {} when the walk does not
+// close into exactly one non-degenerate loop (the caller's area
+// invariant and the hull candidate stand behind it).
+Polygon2D union_walk_2d(
+    const Polygon2D& subject_poly, const Polygon2D& clip_poly,
+    double eps_l, double eps_p
+) {
+    GHList subject = build_vertex_list(subject_poly);
+    GHList clip = build_vertex_list(clip_poly);
+    compute_intersections(subject, clip, eps_l, eps_p);
+    classify_intersections(subject, clip_poly, eps_l);
+    classify_intersections(clip, subject_poly, eps_l);
+    auto frags = walk_results(subject, false);
+    std::vector<Polygon2D> keep;
+    for (auto& f : frags) {
+        // dedup FIRST: a consecutive duplicate blinds the spike
+        // detector (the zero-length edge reads as the degenerate
+        // guard's own food and the reversal goes unseen)
+        dedup_consecutive2d(f, eps_l);
+        Polygon2D c = collapse_spikes(std::move(f), eps_l);
+        dedup_consecutive2d(c, eps_l);
+        if (c.size() >= 3 && std::abs(signed_area2(c)) > eps_l * eps_l) {
+            keep.push_back(std::move(c));
+        }
+    }
+    if (keep.size() != 1) return {};
+    if (signed_area2(keep[0]) < 0.0) {
+        std::reverse(keep[0].begin(), keep[0].end());
+    }
+    return keep[0];
+}
+
+// The overlay proper: the merged region of the (aligned, coplanar,
+// area-overlapping) pair set, emitted as convex fragments in 3D.
+// `merged[k]` reports whether partner k actually contributed (the
+// area-overlap routing — the edge-touching and disjoint alignments
+// are NOT the door, D4's scope); an empty return with no merges
+// means the pair set is not the door and the caller keeps today's
+// path. The exact map carries every original vertex's 2D position to
+// its original 3D bytes; every computed point goes through the
+// canonical pool (one point, one instance).
+std::vector<Polygon> overlay_union_fragments(
+    const Polygon& poly_A, const math::Vec3d& n_A,
+    const std::vector<Polygon>& partner_polys,
+    std::vector<bool>& merged,
+    IntersectionTable& table,
+    const BooleanTolerance& tol
+) {
+    const double eps_l = tol.linear.value;
+    const double eps_p = eps_p_of(tol);
+    merged.assign(partner_polys.size(), false);
+    if (poly_A.size() < 3) return {};
+
+    // 1. THE PROJECTION — A's face's frame, ONE isometry (rule a);
+    //    the frame map is exact for the in-plane points, double end
+    //    to end, no quantizer.
+    const LocalFrame frame = build_local_frame(n_A, poly_A[0]);
+    Polygon2D region = project_polygon(frame, poly_A);
+    if (signed_area2(region) < 0.0) {
+        std::reverse(region.begin(), region.end());  // CCW, checked not assumed
+    }
+    std::map<std::pair<double, double>, math::Vec3d> exact;
+    for (std::size_t i = 0; i < poly_A.size(); ++i) {
+        const Vec2 q = project(frame, poly_A[i]);
+        exact.emplace(std::make_pair(q.x, q.y), poly_A[i]);
+    }
+
+    // The relative area guards (the input gate's own form:
+    // kAreaRelTol · scale² — the existing constant, no new number).
+    double scale = 1.0;
+    for (const auto& q : region) {
+        scale = std::max({scale, std::abs(q.x), std::abs(q.y)});
+    }
+    const double area_tol_base = kAreaRelTol * scale * scale;
+
+    bool any_merged = false;
+    for (std::size_t k = 0; k < partner_polys.size(); ++k) {
+        if (partner_polys[k].size() < 3) continue;
+        Polygon2D pk = project_polygon(frame, partner_polys[k]);
+        if (signed_area2(pk) < 0.0) {
+            std::reverse(pk.begin(), pk.end());
+        }
+        // 2. THE DOOR'S SCOPE TEST (D4): the regions must overlap in
+        //    AREA — the 2D overlap (the SH clip by the convex
+        //    partner's edge half-spaces) surviving the ε_L dedup.
+        //    The edge-touching and disjoint alignments keep today's
+        //    path (P7's pinned discipline).
+        Polygon2D overlap = region;
+        const std::size_t cn = pk.size();
+        for (std::size_t j = 0; j < cn && overlap.size() >= 3; ++j) {
+            const Vec2& a = pk[j];
+            const Vec2& b = pk[(j + 1) % cn];
+            const double dx = b.x - a.x;
+            const double dy = b.y - a.y;
+            const double len = std::sqrt(dx * dx + dy * dy);
+            if (len < eps_l) continue;  // the degenerate-edge guard (D2 row 1)
+            const Vec2 outward{dy / len, -dx / len};  // CCW: interior to the left
+            overlap = clip_2d_halfspace(overlap, a, outward,
+                                        /*keep_inside=*/true, eps_l);
+        }
+        dedup_consecutive2d(overlap, eps_l);
+        const double area_overlap = std::abs(signed_area2(overlap));
+        const double area_pk = std::abs(signed_area2(pk));
+        const double area_region = std::abs(signed_area2(region));
+        const double area_tol =
+            area_tol_base + kAreaRelTol * (area_pk + area_region);
+        if (overlap.size() < 3 || area_overlap <= area_tol) {
+            continue;  // no area overlap — this partner is not the door
+        }
+        merged[k] = true;
+        any_merged = true;
+        for (const auto& p3 : partner_polys[k]) {
+            const Vec2 q = project(frame, p3);
+            exact.emplace(std::make_pair(q.x, q.y), p3);
+        }
+        // 3. THE REGION ALGEBRA (D3's table, the union × aligned
+        //    cell). The AREA is the invariant that decides every
+        //    branch — the routing's own robustness (no vertex-set
+        //    fragility): the containment cells by exhaustion, the
+        //    crossing cell by the walk under the invariant, the
+        //    hull candidate for the collinear-contact shapes (the
+        //    no-transversal-crossing union is convex — the reflex
+        //    vertex needs a transversal contact to exist).
+        if (area_overlap >= area_pk - area_tol) {
+            // the partner contained: the region already covers it
+            // (F_A ∪ F_B = the region — the kept face, D1's
+            // cap-flush analog riding in the overlay's cell)
+            continue;
+        }
+        if (area_overlap >= area_region - area_tol) {
+            // the region contained: the partner is the container
+            region = pk;
+            continue;
+        }
+        const double target = area_region + area_pk - area_overlap;
+        const double check_tol = kAreaRelTol * scale * scale * 8.0;
+        Polygon2D walked = union_walk_2d(region, pk, eps_l, eps_p);
+        if (!walked.empty() &&
+            std::abs(std::abs(signed_area2(walked)) - target) <= check_tol) {
+            region = std::move(walked);
+            continue;
+        }
+        // The hull candidate — only when BOTH operands are convex
+        // (the hull of a non-convex region would swallow the stair).
+        if (is_convex2d(region, eps_l) && is_convex2d(pk, eps_l)) {
+            std::vector<Vec2> hv(region.begin(), region.end());
+            hv.insert(hv.end(), pk.begin(), pk.end());
+            Polygon2D hull = convex_hull_2d(std::move(hv));
+            if (!hull.empty() &&
+                std::abs(std::abs(signed_area2(hull)) - target) <= check_tol) {
+                region = std::move(hull);
+                continue;
+            }
+        }
+        throw std::runtime_error(
+            "bool_union: the result was refused — "
+            "overlay_region_irregular: the aligned coplanar pair's "
+            "union region did not close under the overlay's walk or "
+            "hull (the area invariant reads " +
+            std::to_string(target) + " mm^2; neither candidate "
+            "matched). This is a kernel defect in a shape beyond the "
+            "pinned corpus, not a caller error. Remedy: report this "
+            "as a kernel bug with the two inputs; the door's pinned "
+            "shapes (the crossing, the contained) never reach this "
+            "refusal.");
+    }
+    if (!any_merged) return {};
+
+    // 4. THE EMISSION — convex fragments by the slab decomposition
+    //    at the region's REFLEX vertices (D3 §3): the split lines at
+    //    the reflex vertices' u-coordinates; a convex region carries
+    //    no reflex vertex and emits ONE fragment (P4's own cell —
+    //    "one fragment per pair, no slabs", D5's derivation).
+    std::vector<double> splits;
+    for (std::size_t i = 0; i < region.size(); ++i) {
+        const Vec2& prev = region[(i + region.size() - 1) % region.size()];
+        const Vec2& curr = region[i];
+        const Vec2& next = region[(i + 1) % region.size()];
+        const double cross = (curr.x - prev.x) * (next.y - curr.y) -
+                             (curr.y - prev.y) * (next.x - curr.x);
+        if (cross < -eps_l) splits.push_back(curr.x);
+    }
+    std::sort(splits.begin(), splits.end());
+    std::vector<double> split_vals;
+    for (const double s : splits) {
+        if (split_vals.empty() || s - split_vals.back() > eps_l) {
+            split_vals.push_back(s);
+        }
+    }
+    std::vector<Polygon2D> pieces;
+    for (std::size_t j = 0; j <= split_vals.size(); ++j) {
+        Polygon2D piece = region;
+        if (j > 0) {
+            // the slab's left bound: keep u ≥ split_vals[j-1] — the
+            // outward normal points at DECREASING u (d = s−u ≤ ε_L)
+            piece = clip_2d_halfspace(piece, {split_vals[j - 1], 0.0},
+                                      {-1.0, 0.0}, true, eps_l);
+        }
+        if (piece.size() < 3) continue;
+        if (j < split_vals.size()) {
+            // the slab's right bound: keep u ≤ split_vals[j] — the
+            // outward normal points at INCREASING u (d = u−s ≤ ε_L)
+            piece = clip_2d_halfspace(piece, {split_vals[j], 0.0},
+                                      {1.0, 0.0}, true, eps_l);
+        }
+        if (piece.size() < 3) continue;
+        // dedup FIRST (the clip's boundary-on-the-line vertices
+        // arrive doubled; the duplicate would blind the spike
+        // detector), collapse, dedup again (the collapse can bring
+        // near-coincident neighbours together)
+        dedup_consecutive2d(piece, eps_l);
+        piece = collapse_spikes(std::move(piece), eps_l);
+        dedup_consecutive2d(piece, eps_l);
+        if (piece.size() < 3) continue;
+        if (std::abs(signed_area2(piece)) <= eps_l * eps_l) continue;
+        if (signed_area2(piece) < 0.0) {
+            std::reverse(piece.begin(), piece.end());
+        }
+        pieces.push_back(std::move(piece));
+    }
+
+    // 5. THE SEWING + the honest walls: every fragment convex (the
+    //    emission discipline — the composed chain stays in-class),
+    //    every computed point through the canonical pool, every
+    //    original vertex at its exact source bytes.
+    std::vector<Polygon> out;
+    out.reserve(pieces.size());
+    for (auto& piece : pieces) {
+        if (!is_convex2d(piece, eps_l)) {
+            throw std::runtime_error(
+                "bool_union: the result was refused — "
+                "overlay_fragment_not_convex: the merged region's slab "
+                "decomposition left a non-convex fragment (" +
+                std::to_string(piece.size()) + " vertices) — the "
+                "emission discipline refuses it (the input gate "
+                "refuses non-convex faces, and a composed chain must "
+                "not meet its own intermediate body at the gate). "
+                "This is a kernel limitation on a shape beyond the "
+                "pinned corpus, not a caller error. Remedy: report "
+                "this as a kernel bug with the two inputs; the "
+                "rectilinear corpus never reaches this refusal.");
+        }
+        Polygon frag3;
+        frag3.reserve(piece.size());
+        for (const Vec2& q : piece) {
+            const auto it = exact.find({q.x, q.y});
+            if (it != exact.end()) {
+                frag3.push_back(it->second);  // the original bytes — no round trip
+            } else {
+                frag3.push_back(
+                    table.pool().canonicalize(unproject(frame, q)));
+            }
+        }
+        if (frag3.size() >= 3) out.push_back(std::move(frag3));
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // Body assembly — shared by all three boolean ops
 // ---------------------------------------------------------------------------
 
@@ -1487,12 +2019,14 @@ void assemble_body(BRepBody& result, std::vector<ClippedFace>& clipped_faces,
 //                             assembly defect the structure alone
 //                             cannot see (ADR-0022 §7's own analysis).
 //
-// The open-shell refusal names the KNOWN input class behind it — the
-// partial coplanar overlap of ADR-0025 v5's limitation — and declares
-// the refusal the interim answer: the class's full handling is H2
-// unit 5. A refused result throws std::runtime_error (the operation
-// ran; the RESULT failed its postcondition — an input defect would
-// have been caught by the input gate first).
+// The open-shell refusal is GENERIC (H2-u5, ADR-0037's D5
+// declaration: the class's name leaves the code the same commit the
+// class leaves the wall — the union's aligned coplanar pairs are
+// sewn by the overlay now): an unforeseen open rim after assembly
+// is a kernel defect to report, and the remedy says so. A refused
+// result throws std::runtime_error (the operation ran; the RESULT
+// failed its postcondition — an input defect would have been caught
+// by the input gate first).
 void assert_boolean_result_honest(BRepBody& result, const char* op) {
     auto refuse = [op](const std::string& cls, const std::string& diagnosis,
                        const std::string& remedy) {
@@ -1549,18 +2083,18 @@ void assert_boolean_result_honest(BRepBody& result, const char* op) {
                std::to_string(single) + " of " +
                    std::to_string(result.edges.size()) +
                    " edges carry a single co-edge (a boundary rim) — "
-                   "the assembled shell bounds no solid. This is the "
-                   "known PARTIAL COPLANAR OVERLAP class (ADR-0025 v5's "
-                   "limitation): the union of the faces' outside parts "
-                   "leaves the overlap's rim open, and until H2 unit 5 "
-                   "sews the shared-face class the refusal IS the "
-                   "answer. The body is NOT returned and must not "
-                   "enter the feature tree.",
-               "treat the refusal as the operation's honest result; "
-               "the class's full handling (the sewn union boundary) "
-               "is H2 unit 5 of the contract-honesty phase — a "
-               "non-coplanar pair, or the exact subtract, are the "
-               "in-class alternatives today");
+                   "the assembled shell bounds no solid. An open rim "
+                   "after assembly is a kernel defect, not a caller "
+                   "error: the input gate already refused the open "
+                   "operands, and the coplanar contact classes this "
+                   "kernel declares are sewn by their owners (the "
+                   "union's aligned pairs by the overlay, ADR-0037). "
+                   "The body is NOT returned and must not enter the "
+                   "feature tree.",
+               "report this as a kernel bug with the two inputs; an "
+               "unforeseen open rim means an assembly path lost a "
+               "face pair — the operation must never return a "
+               "body whose rim is open");
     }
     if (bad_orientation != 0) {
         refuse("result_edge_not_orientable",
@@ -2109,10 +2643,13 @@ std::unique_ptr<BRepBody> bool_intersect(
     // also used by bool_union and bool_subtract below.
     (void)polygons_coplanar;
 
-    // The greiner_hormann_2d function is exercised directly by
-    // tests/unit/brep/test_boolean.cpp::greiner_hormann_2d_unit_tests
-    // via a public test-only entry point. This keeps GH active and
-    // covered by tests without changing the production code path.
+    // greiner_hormann_2d's ARMS are live in the production path
+    // since H2-u5 (ADR-0037 D3): the overlay's union boundary walk
+    // (union_walk_2d) is built on compute_intersections,
+    // classify_intersections and walk_results — the same machinery
+    // this wrapper composes. The wrapper itself stays a seam for the
+    // 2D clip question; the overlay consumes the arms, not the
+    // wrapper.
     (void)greiner_hormann_2d;
 
     if (clipped_faces.empty()) {
@@ -2181,15 +2718,77 @@ std::unique_ptr<BRepBody> bool_union(
     // against B) and Part 2 (B's faces against A). Quantized by ε_L (D3).
     IntersectionTable table(eps_l);
 
+    // The aligned partners consumed by the overlay (ADR-0037 D3): a
+    // merged pair is emitted ONCE — the region F_A ∪ F_B, from the
+    // face's own side — and the partner's own pass skips it (the
+    // fragments are the pair's whole contribution at that plane).
+    std::set<const Face*> overlay_consumed;
+
     auto process_faces = [&](
         const BRepBody& self,
         const BRepBody& other
     ) {
         for (const auto& face : self.solid.shell().faces()) {
+            if (overlay_consumed.count(&face) != 0) {
+                continue;  // the partner side of a merged pair (D3)
+            }
             Polygon poly = extract_face_polygon(face, self.edges, self.vertices);
             if (poly.size() < 3) continue;
             math::Vec3d o, n;
             if (!get_face_plane(face, self.edges, self.vertices, o, n)) continue;
+
+            // THE GATE (ADR-0037 D2) — seated BEFORE the clip, the
+            // order (a)-(d) pinned: the coplanar class decided per
+            // pair; the ALIGNED cell with area-overlapping regions is
+            // THE DOOR (D3's overlay — the region F_A ∪ F_B the
+            // outside-parts algebra cannot express); everything else
+            // — the transversal pairs, the opposed pairs, the
+            // edge-touching and disjoint alignments — takes TODAY'S
+            // PATH byte for byte (the additivity proof's own scope:
+            // the gate only REROUTES the admitted pairs).
+            {
+                std::vector<Polygon> partner_polys;
+                std::vector<const Face*> partner_faces;
+                for (const auto& face_B : other.solid.shell().faces()) {
+                    if (overlay_consumed.count(&face_B) != 0) continue;
+                    Polygon poly_B = extract_face_polygon(
+                        face_B, other.edges, other.vertices);
+                    if (poly_B.size() < 3) continue;
+                    math::Vec3d o_B, n_B;
+                    if (!get_face_plane(face_B, other.edges, other.vertices,
+                                        o_B, n_B)) {
+                        continue;
+                    }
+                    if (classify_coplanar_pair(poly, n, poly_B, n_B, tol) ==
+                        CoplanarPairClass::Aligned) {
+                        partner_polys.push_back(std::move(poly_B));
+                        partner_faces.push_back(&face_B);
+                    }
+                }
+                if (!partner_polys.empty()) {
+                    std::vector<bool> merged;
+                    auto fragments = overlay_union_fragments(
+                        poly, n, partner_polys, merged, table, tol);
+                    if (!fragments.empty()) {
+                        for (auto& frag : fragments) {
+                            if (frag.size() >= 3) {
+                                clipped_faces.push_back(
+                                    {std::make_shared<PlaneSurface>(frag[0], n),
+                                     std::move(frag)});
+                            }
+                        }
+                        for (std::size_t k = 0; k < partner_faces.size(); ++k) {
+                            if (merged[k]) {
+                                overlay_consumed.insert(partner_faces[k]);
+                            }
+                        }
+                        continue;  // the door consumed this face — the clip never runs
+                    }
+                    // No partner overlaps in area: the edge-touching
+                    // or disjoint alignment — NOT the door's cell
+                    // (D4); today's path owns it (P7's discipline).
+                }
+            }
 
             // Compute the part of `poly` that is inside `other`.
             // Pass the IntersectionTable so interface points are shared.
@@ -2426,6 +3025,40 @@ SegmentIsectType segment_intersection_for_tests(
         case IntersectionType::None:    break;
     }
     return SegmentIsectType::None;
+}
+
+// Test-only entry point — the door's whole pair decision (ADR-0037
+// D2/D3, H2-u5 m2): the coplanarity gate first (only the ALIGNED
+// class is the door's to answer — the transversal and opposed pairs
+// keep today's path, and this seam answers EMPTY for them), then the
+// overlay's area-overlap routing and the merged region's convex
+// fragments. The tolerances arrive as the caller's typed bundle; the
+// canonical pool is the seam's own instance (a single pair has no
+// cross-pair sharing to do).
+std::vector<std::vector<math::Vec3d>> overlay_union_fragments_for_tests(
+    const std::vector<math::Vec3d>& subject,
+    math::Vec3d subject_normal,
+    const std::vector<math::Vec3d>& clip,
+    math::Vec3d clip_normal,
+    const BooleanTolerance& tol
+) {
+    const Polygon poly_subject(subject.begin(), subject.end());
+    const Polygon poly_clip(clip.begin(), clip.end());
+    if (classify_coplanar_pair(poly_subject, subject_normal,
+                               poly_clip, clip_normal, tol) !=
+        CoplanarPairClass::Aligned) {
+        return {};
+    }
+    IntersectionTable table(eps_l_of(tol));
+    std::vector<bool> merged;
+    const auto fragments = overlay_union_fragments(
+        poly_subject, subject_normal, {poly_clip}, merged, table, tol);
+    std::vector<std::vector<math::Vec3d>> out;
+    out.reserve(fragments.size());
+    for (const auto& f : fragments) {
+        out.emplace_back(f.begin(), f.end());
+    }
+    return out;
 }
 
 } // namespace CAD_0::brep

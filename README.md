@@ -220,7 +220,7 @@ See [docs/architecture/overview.md](docs/architecture/overview.md) for the full 
 | B | SDF kernel, marching cubes, vertex welding | ✅ done |
 | C | Viewport architecture, PySide6 desktop app | ✅ done |
 | C+ | Native format + migrators, STL/OBJ import, picking, CI matrix, toolchain contract | ✅ done |
-| D | Radial-edge B-Rep topology, query operators, seam wires, convex booleans | ✅ done ([ADR-0021](docs/adr/0021-brep-topology-data-structure.md)–[0025](docs/adr/0025-proper-greiner-hormann.md)) |
+| D | Radial-edge B-Rep topology, query operators, seam wires, convex booleans — the aligned coplanar union sewn by the overlay (H2-u5, [ADR-0037](docs/adr/0037-the-coplanar-class.md)) | ✅ done ([ADR-0021](docs/adr/0021-brep-topology-data-structure.md)–[0025](docs/adr/0025-proper-greiner-hormann.md), [0037](docs/adr/0037-the-coplanar-class.md)) |
 | E | SDF → B-Rep extraction under hard contracts; the inverse bridge's sign is the true generalized winding number, watertight-only (open meshes refused by name), evaluated hierarchically over the ε_w-bounded BVH | ✅ done ([ADR-0026](docs/adr/0026-sdf-brep-bridge.md), the sign and its hierarchy: [ADR-0035 D2.4/D2.5](docs/adr/0035-h2-numerical-taxonomy.md)) |
 | F | Modeling: boolean feature slice, sketcher MVP | ▶️ in progress — both named slices are in ([ADR-0027](docs/adr/0027-phase-f-boolean-feature-slice.md), [ADR-0030](docs/adr/0030-sketcher-mvp.md)); the constraint solver deferred with its entry criterion |
 | G | The exact B-Rep kernel — road (a), all in house | ▶️ in progress — G1 complete and closed ([ADR-0032](docs/adr/0032-g1-topology-and-exact-primitives.md)); persistent naming landed ([ADR-0036](docs/adr/0036-persistent-naming-and-shape-history.md)); G2 unit 1 of 6 landed ([ADR-0033](docs/adr/0033-g2-exact-booleans-and-first-fillet.md)) |
@@ -271,6 +271,7 @@ The full record — the roadmap with its history and the cronaca of every rung �
 | [0034](docs/adr/0034-h1-arithmetic-boundary.md) | H1: the arithmetic boundary — the authentic adaptive Shewchuk predicates vendored |
 | [0035](docs/adr/0035-h2-numerical-taxonomy.md) | H2: the numerical taxonomy — typed tolerances, the derived determinant band, p-curves in double |
 | [0036](docs/adr/0036-persistent-naming-and-shape-history.md) | Persistent naming and shape history (implemented): the derived name, the descent table, the resolver |
+| [0037](docs/adr/0037-the-coplanar-class.md) | The coplanar class (accepted, implemented): the contact taxonomy, the composite ε_C gate, the aligned union sewn by the overlay |
 
 ## Testing, determinism, CI
 

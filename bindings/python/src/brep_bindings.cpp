@@ -101,6 +101,9 @@
 
 #include "CAD_0/brep/topology.hpp"
 #include "CAD_0/brep/naming.hpp"
+// The polygon booleans' typed bundle (H2-u5 m2: bool_union at the
+// boundary, the door reachable from Python).
+#include "CAD_0/brep/boolean.hpp"
 #include "CAD_0/brep/query.hpp"
 #include "CAD_0/brep/descent.hpp"
 #include "CAD_0/brep/resolve.hpp"
@@ -584,6 +587,39 @@ void bind_brep(nb::module_& m) {
         "ring names. The `feature` is the DAG node's FeatureId\n"
         "(defaulted to 0: the standalone caller reads box#0 - the id\n"
         "is the caller's to supply).");
+    // THE POLYGON UNION (H2-u5 m2, ADR-0025 + ADR-0037 D3): the door
+    // reachable from Python — the three cases of the wall map's one
+    // refusing brick answer (the crossing pair, the diagonal, the
+    // contained flush), the report reads the fused faces, the
+    // maintainer's click-test runs on the live body. The tolerance
+    // is the caller's LINEAR declaration (the exact_subtract
+    // precedent); the angular kinds are the house constants
+    // (kBoolLooseNormalPrefilter / kBoolStrictNormalParallel) — the
+    // typed bundle is assembled at the boundary, one world per field.
+    brep_mod.def(
+        "bool_union",
+        [](const BRepBody& a, const BRepBody& b, double tol) {
+            return CAD_0::brep::bool_union(
+                a, b,
+                CAD_0::brep::BooleanTolerance::plane_family(
+                    CAD_0::math::Tolerance::linear(tol),
+                    CAD_0::brep::kBoolLooseNormalPrefilter,
+                    CAD_0::brep::kBoolStrictNormalParallel));
+        },
+        nb::arg("a"), nb::arg("b"), nb::arg("tol") = 1e-6,
+        "The polygon union (ADR-0025, ADR-0037's overlay since\n"
+        "H2-u5): boundary(A u B) = the outside parts of both\n"
+        "operands — and the ALIGNED coplanar pairs (same plane,\n"
+        "same-facing normals, overlapping regions) are SEWN by the\n"
+        "overlay: the merged region F_A u F_B projected in the one\n"
+        "frame, walked through the loops' crossing points, emitted\n"
+        "as convex fragments with every point through the canonical\n"
+        "pool. The honest box answers where the wall used to refuse\n"
+        "(P4: A=[-1,1]^3, B=[-0.5,1.5]x[-1,1]x[-1,1] -> 8V/12E/6F,\n"
+        "chi=2, closed). Raises ValueError for every input-gate\n"
+        "refusal (the class checks', diagnosis + remedy verbatim)\n"
+        "and RuntimeError for the output gate's honest refusals\n"
+        "(the assembled result that is none of the honest classes).");
 
     // The feature kinds the naming grammar speaks (ADR-0036 D1) —\n"
     // the operand-table selector of exact_subtract's naming context.\n"

@@ -58,8 +58,9 @@ namespace CAD_0::brep {
 // a classification, never an assembly defect, per ADR-0022).
 // Anything else is REFUSED with std::runtime_error and its named
 // class — result_loop_open, result_edge_not_manifold (the open-shell
-// signature: the known partial coplanar overlap class, refused here
-// pending its H2 unit 5 handling), result_edge_not_orientable,
+// signature, generic since H2-u5: the aligned coplanar union is sewn
+// by the overlay, ADR-0037 — an unforeseen open rim is a kernel
+// defect to report), result_edge_not_orientable,
 // result_odd_chi — the body is not returned and cannot enter the
 // feature tree. The refusal message names the class, the measured
 // evidence and the remedy.
@@ -171,6 +172,14 @@ std::unique_ptr<BRepBody> bool_intersect(
 // {B's faces outside A}; the outside parts come from the slab
 // decomposition, interface points through the single-source
 // IntersectionTable, the identical-body shortcut when A == B.
+// The ALIGNED coplanar pairs (same plane, same-facing normals,
+// overlapping regions) are sewn by the OVERLAY (ADR-0037 D3, H2-u5):
+// the region F_A ∪ F_B projected in the one frame, walked through
+// the loops' crossing points (the H1 segment arms), emitted as
+// convex fragments with every point through the canonical pool —
+// the outside-parts algebra cannot express the middle, and the
+// gate (ADR-0037 D2, the composite ε_C) reroutes ONLY those pairs:
+// everything else runs today's path byte for byte.
 // Returns a new BRepBody. `tol` is REQUIRED (ADR-0004).
 std::unique_ptr<BRepBody> bool_union(
     const BRepBody& A, const BRepBody& B,
