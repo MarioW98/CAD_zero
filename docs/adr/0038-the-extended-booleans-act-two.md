@@ -231,6 +231,82 @@ list, D6's own tail discipline).
    not the other — and its first consumer is the blind family,
    with the numbers already pinned.
 
+## THE m3 OUTCOME NOTE (2026-11-02, this act) — the m2 wall registered, the decoupling declared a morso of THIS unit, the register reaching the code
+
+**LA NOTA D'ESITO del morso 2 — the facts, the lines, the pin.**
+The morsel the order sketched as "the blind hole landed" became
+THE WALL's own morse, and it is green: the two machine verdicts
+are pinned in the suite as PERMANENT red (tests/unit/brep/
+test_g2_unit2_blind_wall.cpp — VERDICT A: the carried-plane
+authoring, every structural gate green, the counts 12/17/8/H=1
+exactly as D5 pins, the volume read inverted at 8−0.375π+0.25π/3,
+the golden asserted NOT to be it; VERDICT B: the re-oriented
+plane's mandated wall walk is NOT EULERIAN — the directed graph
+of the six co-edges has exactly the two unbalanced nodes the
+derivation names, the loop cannot chain); the intra-tool SSI
+consultation (the cap × the wall of the same body, the entry
+plane×cylinder ⊥ at the cap quota, the both-domain payloads
+verified coherent onto the entry's own circle) is pinned as the
+family's ready guide; the refusal at the pinned z-band seat
+(subtract.hpp, the blind branch) is NARROWED to name the
+coupling, the `u_sign` precedent, the two verdicts and the seat —
+the G1 pins ("BLIND", "Remedy") still answer, and the full suite
+ran green without a re-pin on both compilers. The register
+surgery of the acceptance act is applied: ADR-0033 D5.2 amended
+(the rung re-derived), ADR-0036's "yet" redeemed by declaration.
+**D5's numbers stand unmoved — the machine proved the counts land
+and the volume is the sole wall — and they are the decoupling
+morso's ENTRY GOLDENS, quoted from here.**
+
+**IL DECOUPLING REGISTRATO COME MORSO DI QUESTA UNITÀ — the
+maintainer's decision, recorded in this act.** The orientation
+decoupling (the plane's `u_sign`-equivalent: the frame decoupled
+from the outward normal, or the equivalent face-orientation
+record — the carried face's flip bit) is **m4 of G2 unit 2**, not
+a separate unit: the blind family is IN v1 scope, and **the unit
+does not close until the blind door opens.** The derivation m4
+starts from is the m2 amendment's own: the knob exists for one
+surface family and not the other (CylinderZSurface.u_sign vs
+PlaneSurface's rigid frame), and the kernel's first carried face
+with a flipped material side is the blind's internal cap. **The
+RACCOLTO's XOR azimuth convention is the truth this morso
+consumes** (the harvest's own words, cited: both faces read their
+regions material-on-left, so their walks on a SHARED rim must
+oppose — the wall's u and the partner's u run the same 3D way
+exactly when the azimuths coincide, so the seam meridian must sit
+on the OPPOSITE side; the negated azimuth is the cylinder pair's,
+the shared one the sphere pair's): the decoupling's authoring is
+exactly this discipline applied to the carried plane — the rim's
+two traversals must oppose, and the flipped face's domain must
+still read CCW for its own region. **The refusal stays alive
+until the door opens** — the message now names the morso (the
+phrase aligned in this same act: "unit" → the registered morso of
+this unit), so the code's words and the register's say the same
+thing. The estimate, labeled as such (the H2 checkpoint's
+measuring lesson): m4 ≈ 1 day — the knob's derivation, the
+assembly the two verdicts already sketched, the goldens already
+pinned; m2's own estimate (≈ 1 day) bought the wall's morse
+instead of the door, and the difference is recorded here, not
+hidden.
+
+**m3 (LO SBORDO) proceeds under this act — independent of the
+wall, by the derivation the m2 amendment already wrote**: the
+crossed corner carries NO cap (nothing is carried — the tool's
+walls re-window, the outer loops re-author), and the CCW-sweep
+constraint bites arcs only — the crossed's re-authored loops are
+Line2s. The door does not pass through the orientation wall. Its
+landing: the corner family's gate (the transverse crossing
+beyond the band at the pierced face's covered corner, the
+split-free variant, the tangential border byte-identical), the
+outer loops re-authored, the `joint(i)` row's first instance (the
+absorbed ext#3:joint(3) — the bill this unit pays, ADR-0036's
+redeemed "yet"), the born rims and exit edges of the SSI grammar
+(the plane×plane entry's unlevelled row — the level ABSENT: the
+pair's planes ARE the line), the golden 12/18/8/H=0/χ=2 with the
+derivation visible, the tavola's 64 rows with the closure green,
+the digest with the crossed case beside the G1 ones, the bindings
+reachable from Python. The m3 estimate stands (≈ 1–2 days).
+
 ## IL RACCOLTO — the old branch's harvest (the inventory, dated)
 
 **The story, verified against the log.** `origin/G2` forked from main

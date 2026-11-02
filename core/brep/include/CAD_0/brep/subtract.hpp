@@ -1188,8 +1188,10 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
             "extrude's hole-wall precedent - the plane has none), so "
             "the carried frame reads the mass inverted and the "
             "re-oriented frame makes the wall's window walk unchainable. "
-            "Remedy: await the orientation-decoupling unit (the family's "
-            "goldens are already pinned - ADR-0038 D5: 12/17/8, "
+            "Remedy: await the orientation-decoupling MORSE of this "
+            "unit (G2-u2 m4, the maintainer's decision registered "
+            "in ADR-0038's m3 outcome note; the family's goldens "
+            "are already pinned - ADR-0038 D5: 12/17/8, "
             "chi=2, volume 8-0.375pi), extend the extrusion distance so "
             "the tool passes through, or accept the faceted path.");
     if (!(z_lo <= t.z_bot + tol && z_hi >= t.z_top - tol))
