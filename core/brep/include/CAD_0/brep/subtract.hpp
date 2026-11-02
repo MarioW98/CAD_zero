@@ -783,6 +783,947 @@ inline bool point_in_profile(const ToolWalk& w, math::Vec2d pt, double tol) {
     return true;
 }
 
+// ===========================================================================
+// THE CROSSED CORNER (G2-u2 m3, ADR-0038 D1.2/D2/D3) — the gate and
+// the assembly. The transverse crossing beyond the band AT the
+// pierced face's covered corner, the split-free variant: the outer
+// loops re-authored around the notch, the exit faces shrunk, the
+// tool's surviving walls re-windowed, the tool's joint vertical
+// re-timed (the absorbed joint(i) — the vocabulary row this unit
+// pays), the dead corner column dropped. Everything else that crosses
+// keeps the CROSSED refusal with the family named.
+// ===========================================================================
+
+// One containment-band trigger (hoisted from the placement tree so
+// the gate can read the sorted set).
+struct Trigger {
+    math::Vec2d origin, normal;
+    double margin;
+};
+
+// The gate's product: the admitted family's geometry, or the full
+// actionable refusal.
+struct CrossedCorner {
+    bool admitted{false};
+    std::string refusal{};
+    std::size_t i0{0}, i1{0};  // the crossing face-edges (i1 = i0+1 mod k)
+    math::Vec2d corner{};      // the covered corner (t.verts[i1])
+    math::Vec2d exit_p{}, exit_q{};  // the exits on i0 / i1
+    std::size_t ent_p{0}, ent_q{0};  // the exit entities
+    std::size_t joint_idx{0};        // the inner joint's index (J_b)
+    math::Vec2d joint{};             // the inner joint's position
+};
+
+// The material-side slack of pt against entity i (positive inside):
+// the left-normal distance for a segment, r - |pt - c| for an arc.
+inline double profile_slack(const ToolWalk& w, std::size_t i,
+                            math::Vec2d pt) {
+    const WalkEntity& e = w.entities[i];
+    if (e.kind == WalkEntity::Kind::Segment) {
+        const math::Vec2d d{e.q.x - e.p.x, e.q.y - e.p.y};
+        const double len = std::sqrt(d.x * d.x + d.y * d.y);
+        const math::Vec2d ln{-d.y / len, d.x / len};
+        return (pt.x - e.p.x) * ln.x + (pt.y - e.p.y) * ln.y;
+    }
+    return e.radius -
+           std::hypot(pt.x - e.center.x, pt.y - e.center.y);
+}
+
+// One candidate exit: an entity of the walk crossing the face-edge
+// `edge` within both spans, strictly interior (the convexity plus the
+// covered corner guarantee exactly one — more is a defect the gate
+// refuses).
+struct ExitHit {
+    std::size_t entity{};
+    bool arc{false};
+    math::Vec2d point{};
+};
+
+inline std::vector<ExitHit> exit_hits(const ToolWalk& w,
+                                      const TargetInfo& t,
+                                      std::size_t edge, double tol) {
+    std::vector<ExitHit> out;
+    const math::Vec2d a = t.verts[edge];
+    const math::Vec2d b =
+        t.verts[(edge + 1) % t.verts.size()];
+    const math::Vec2d f{b.x - a.x, b.y - a.y};
+    const auto cross2 = [](math::Vec2d u, math::Vec2d v) {
+        return u.x * v.y - u.y * v.x;
+    };
+    const auto strictly_interior = [&](math::Vec2d p, math::Vec2d s0,
+                                       math::Vec2d s1) {
+        return std::hypot(p.x - s0.x, p.y - s0.y) > tol &&
+               std::hypot(p.x - s1.x, p.y - s1.y) > tol;
+    };
+    for (std::size_t i = 0; i < w.entities.size(); ++i) {
+        const WalkEntity& e = w.entities[i];
+        if (e.kind == WalkEntity::Kind::Segment) {
+            const math::Vec2d d{e.q.x - e.p.x, e.q.y - e.p.y};
+            const double det = cross2(d, f);
+            if (std::abs(det) < 1e-12) continue;  // parallel
+            const math::Vec2d am{a.x - e.p.x, a.y - e.p.y};
+            const double s = cross2(am, f) / det;
+            const double u = cross2(am, d) / det;
+            if (s < -1e-12 || s > 1.0 + 1e-12) continue;
+            if (u < -1e-12 || u > 1.0 + 1e-12) continue;
+            const math::Vec2d p{e.p.x + s * d.x, e.p.y + s * d.y};
+            if (!strictly_interior(p, e.p, e.q)) continue;
+            if (!strictly_interior(p, a, b)) continue;
+            out.push_back({i, false, p});
+        } else {
+            // The arc's circle against the edge's line: the two
+            // roots, each checked against the arc's own CCW span.
+            const double fl2 = f.x * f.x + f.y * f.y;
+            const math::Vec2d m{a.x - e.center.x, a.y - e.center.y};
+            const double bq = m.x * f.x + m.y * f.y;
+            const double cq = m.x * m.x + m.y * m.y - e.radius * e.radius;
+            const double disc = bq * bq - fl2 * cq;
+            if (disc < 0.0) continue;
+            for (const double root : {(-bq - std::sqrt(disc)) / fl2,
+                                      (-bq + std::sqrt(disc)) / fl2}) {
+                if (root < -1e-12 || root > 1.0 + 1e-12) continue;
+                const math::Vec2d p{a.x + root * f.x,
+                                    a.y + root * f.y};
+                const double ang = norm_two_pi(
+                    std::atan2(p.y - e.center.y, p.x - e.center.x) -
+                    e.psi_start);
+                if (ang > e.sweep + 1e-12) continue;
+                if (!strictly_interior(p, a, b)) continue;
+                out.push_back({i, true, p});
+            }
+        }
+    }
+    return out;
+}
+
+// THE GATE (D1.2's admitted family): exactly two transverse crossings
+// at ADJACENT face-edges, the shared corner strictly covered, the
+// through z-span, exactly one strictly-interior exit per edge, both
+// exits on SEGMENT entities, the notch's inner chain the 2-entity
+// corner (the reversed walk from the i0-exit: the top face's loop
+// walks the notch with the material on the left, which is the
+// footprint's canonical walk REVERSED — the inner chain is always
+// the backward one, and the 2-entity form is q == p-1), the inner
+// joint strictly inside the face, and the pierced face's crossing
+// co-edges LINE-authored (the re-spanning class). Every other
+// crossing keeps the CROSSED refusal, the family named.
+inline CrossedCorner crossed_corner_gate(
+    const BRepBody& A, const ToolWalk& w, const TargetInfo& t,
+    const std::vector<Trigger>& crossing,
+    const std::vector<Trigger>& tangential, std::size_t top_face,
+    double z_lo, double z_hi, double tol) {
+    CrossedCorner cc;
+    const std::size_t k = t.verts.size();
+    const std::size_t n = w.entities.size();
+
+    // The refusal's family, named (the actionable discipline: the
+    // same CROSSES phrase the pin :952 taught, the family and the
+    // landed door added).
+    const auto refuse = [&](const std::string& family) {
+        cc.admitted = false;
+        cc.refusal =
+            "exact_subtract: the tool's profile CROSSES the boundary "
+            "of the pierced face (it pokes beyond the edge from (" +
+            std::to_string(crossing[0].origin.x) + ", " +
+            std::to_string(crossing[0].origin.y) + ") outward along (" +
+            std::to_string(crossing[0].normal.x) + ", " +
+            std::to_string(crossing[0].normal.y) + ") by " +
+            std::to_string(crossing[0].margin) + ") - " + family +
+            ". The CORNER variant (the transverse crossing at the "
+            "pierced face's covered corner, the split-free shape) is "
+            "landed (ADR-0038 D1.2, G2-u2 m3); this placement is out "
+            "of that family. Remedy: place the tool so it covers "
+            "exactly one corner of the pierced face, its two adjacent "
+            "segment edges exiting through the face's two adjacent "
+            "edges (the corner notch), or keep the profile strictly "
+            "inside the pierced face, or accept the faceted path.";
+        return cc;
+    };
+
+    if (!tangential.empty())
+        return refuse("the crossing composes with a TANGENT border "
+                      "(the parete's family, the zero-thickness "
+                      "contact - ADR-0038 D1.3's registered seat)");
+    if (crossing.size() != 2)
+        return refuse("the crossing is not at ONE corner (the "
+                      "mid-edge or the multi-corner shape - the "
+                      "split family, ADR-0038 D4's queue)");
+
+    // The crossing edges' indices in the face's loop (the origins
+    // are the face's own verts, read back).
+    std::size_t ia = k, ib = k;
+    for (std::size_t i = 0; i < k; ++i) {
+        if (crossing[0].origin.x == t.verts[i].x &&
+            crossing[0].origin.y == t.verts[i].y)
+            ia = i;
+        if (crossing[1].origin.x == t.verts[i].x &&
+            crossing[1].origin.y == t.verts[i].y)
+            ib = i;
+    }
+    if (ia >= k || ib >= k)
+        return refuse("the crossing edges do not read back from the "
+                      "pierced face's own loop (an internal "
+                      "inconsistency - report this as a kernel bug)");
+    // Order: i1 = i0 + 1 (the loop's own order, the shared corner
+    // verts[i1] between them).
+    if ((ia + 1) % k == ib) {
+        cc.i0 = ia;
+        cc.i1 = ib;
+    } else if ((ib + 1) % k == ia) {
+        cc.i0 = ib;
+        cc.i1 = ia;
+    } else {
+        return refuse("the two crossed edges are not adjacent (the "
+                      "footprint spans the face - the split family, "
+                      "ADR-0038 D4's queue)");
+    }
+    cc.corner = t.verts[cc.i1];
+
+    // The corner strictly covered (the footprint's every entity's
+    // material side by more than the band).
+    for (std::size_t i = 0; i < n; ++i)
+        if (profile_slack(w, i, cc.corner) <= tol)
+            return refuse("the pierced face's corner is not strictly "
+                          "inside the tool's profile (the crossing "
+                          "misses the corner - the bite or the split "
+                          "family, ADR-0038 D4's queue)");
+
+    // The through z-span (the blind span composes: the composite is
+    // queued behind the decoupling morse, its cap blocked by the m2
+    // wall).
+    if (!(z_lo <= t.z_bot + tol && z_hi >= t.z_top - tol)) {
+        cc.admitted = false;
+        cc.refusal =
+            "exact_subtract: the BLIND-CROSSED COMPOSITE - the tool "
+            "crosses the pierced face's corner AND terminates inside "
+            "the target (its span z = [" + std::to_string(z_lo) +
+            ", " + std::to_string(z_hi) +
+            "] does not cover the pierced pair z = [" +
+            std::to_string(t.z_bot) + ", " + std::to_string(t.z_top) +
+            "]) - the notch with the internal cap is the composite "
+            "family (ADR-0038 D4's queue): its L-shaped cap is "
+            "blocked by the same orientation wall the blind's m2 "
+            "verdicts pinned (the decoupling morse, G2-u2 m4, opens "
+            "it). Remedy: extend the extrusion distance so the tool "
+            "passes through, or accept the faceted path.";
+        return cc;
+    }
+
+    // The exits: exactly one strictly-interior exit per crossed edge.
+    const std::vector<ExitHit> hp = exit_hits(w, t, cc.i0, tol);
+    const std::vector<ExitHit> hq = exit_hits(w, t, cc.i1, tol);
+    if (hp.size() != 1 || hq.size() != 1)
+        return refuse("the footprint's boundary does not cross the "
+                      "two edges exactly once each within their "
+                      "spans (the split or the degenerate family, "
+                      "ADR-0038 D4's queue)");
+    if (hp[0].arc || hq[0].arc)
+        return refuse("the exit is on an ARC entity (the circular "
+                      "crossed - the arc class shares the blind's "
+                      "orientation wall, ADR-0038 D4's queue with "
+                      "the reason sharpened by the m2 amendment)");
+    cc.exit_p = hp[0].point;
+    cc.ent_p = hp[0].entity;
+    cc.exit_q = hq[0].point;
+    cc.ent_q = hq[0].entity;
+
+    // The notch's inner chain: the 2-entity corner — the reversed
+    // walk from the i0-exit (the loop's own direction) reaches the
+    // i1-exit's entity in one step: q == p - 1 (mod n).
+    if ((cc.ent_p + n - cc.ent_q) % n != 1)
+        return refuse("the notch's inner chain is not the "
+                      "single-corner shape (the general crossed, "
+                      "ADR-0038 D4's queue)");
+    cc.joint_idx = cc.ent_q;
+    cc.joint = w.entities[cc.ent_q].q;  // J_q = entity q's end joint
+
+    // The inner joint strictly inside the face (every edge's
+    // material side by more than the band).
+    for (std::size_t i = 0; i < k; ++i) {
+        const double d =
+            (cc.joint.x - t.verts[i].x) * t.normals[i].x +
+            (cc.joint.y - t.verts[i].y) * t.normals[i].y;
+        if (d >= -tol)
+            return refuse("the notch's inner corner is not strictly "
+                          "inside the pierced face (the degenerate "
+                          "band - ADR-0038 D4's queue)");
+    }
+
+    // The pierced face's crossing co-edges carry Segment p-curves
+    // (the re-spanning class: the exit faces' twins of the same
+    // edges are straight by the same fact — the planar side faces
+    // project them as Line2).
+    {
+        const auto& loop =
+            A.solid.shell().faces()[top_face].loops()[0];
+        for (const std::size_t pos : {cc.i0, cc.i1}) {
+            const auto* pc = loop.coedges()[pos].p_curve();
+            if (pc == nullptr || pc->kind != PCurve::Kind::Segment)
+                return refuse("the crossed face-edge is not "
+                              "line-authored (the circular crossed, "
+                              "ADR-0038 D4's queue)");
+        }
+    }
+
+    cc.admitted = true;
+    return cc;
+}
+
+// ---------------------------------------------------------------------------
+// crossed_corner_assemble — the re-authoring (D2): the walk's own
+// chaining discipline throughout. The kept co-edges COPY (the id
+// remapped, the p-curve verbatim); the re-spanned and the new
+// co-edges PROJECT their Line2 payloads (material-on-left, the
+// factories' discipline); every flag derives from the walk's
+// (start, end) against the edge's stored pair — the near endpoint's
+// slot, the factory's own authoring.
+// ---------------------------------------------------------------------------
+inline std::unique_ptr<BRepBody> crossed_corner_assemble(
+    const BRepBody& A, const BRepBody& bp, const ToolWalk& w,
+    const TargetInfo& t, const CrossedCorner& cc, double tol,
+    const SubtractNaming& naming) {
+    const std::size_t V_A = A.vertices.size();
+    const std::size_t E_A = A.edges.size();
+    const std::size_t F_A = A.face_count();
+    const ProvenanceInfo prov = combined_provenance(A, bp);
+    (void)tol;  // the gate consumed the band; the assembly is exact
+
+    // ---- The structural lookups (edge references, never geometric
+    // signatures — the house's own rule).
+    const auto& top_face = A.solid.shell().faces()[t.top_face];
+    const auto& bot_face = A.solid.shell().faces()[t.bottom_face];
+    const EdgeId te_p = top_face.loops()[0].coedges()[cc.i0].edge();
+    const EdgeId te_q = top_face.loops()[0].coedges()[cc.i1].edge();
+    // The side faces: the OTHER users of the crossed top edges.
+    const auto other_user = [&](EdgeId e, FaceId skip1,
+                                FaceId skip2) -> std::size_t {
+        for (std::size_t f = 0; f < A.face_count(); ++f) {
+            if (f == skip1 || f == skip2) continue;
+            for (const auto& loop : A.solid.shell().faces()[f].loops())
+                for (const auto& ce : loop.coedges())
+                    if (ce.edge() == e) return f;
+        }
+        return F_A;
+    };
+    const std::size_t side_p =
+        other_user(te_p, t.top_face, t.bottom_face);
+    const std::size_t side_q =
+        other_user(te_q, t.top_face, t.bottom_face);
+    if (side_p >= F_A || side_q >= F_A || side_p == side_q)
+        throw std::logic_error(
+            "exact_subtract: the crossed assembly could not find the "
+            "exit faces (the structural lookups failed) - report "
+            "this as a kernel bug.");
+    // The bottom twins: the edges shared by the bottom face and the
+    // side faces.
+    const auto bottom_twin = [&](std::size_t side) -> EdgeId {
+        for (const auto& ce : bot_face.loops()[0].coedges())
+            for (const auto& loop :
+                 A.solid.shell().faces()[side].loops())
+                for (const auto& ce2 : loop.coedges())
+                    if (ce2.edge() == ce.edge()) return ce.edge();
+        throw std::logic_error(
+            "exact_subtract: the crossed assembly could not find the "
+            "bottom twin of an exit face's edge - report this as a "
+            "kernel bug.");
+    };
+    const EdgeId be_p = bottom_twin(side_p);
+    const EdgeId be_q = bottom_twin(side_q);
+    // The dead corner column: the edge whose both endpoints sit at
+    // the corner's XY (the prism-class target's joint vertical).
+    std::size_t dead_edge = E_A;
+    std::size_t dead_v0 = V_A, dead_v1 = V_A;
+    for (std::size_t e = 0; e < E_A; ++e) {
+        const auto& ed = A.edges[e];
+        const auto& p0 = A.vertices[ed.vertex(0)].position();
+        const auto& p1 = A.vertices[ed.vertex(1)].position();
+        if (std::abs(p0.x - p1.x) < 1e-12 &&
+            std::abs(p0.y - p1.y) < 1e-12 &&
+            std::abs(p0.x - cc.corner.x) < 1e-12 &&
+            std::abs(p0.y - cc.corner.y) < 1e-12) {
+            dead_edge = e;
+            dead_v0 = ed.vertex(0);
+            dead_v1 = ed.vertex(1);
+            break;
+        }
+    }
+    if (dead_edge >= E_A)
+        throw std::invalid_argument(
+            "exact_subtract: the CROSSED corner - the target carries "
+            "no vertical edge at the covered corner (the family "
+            "takes the prism-class target whose pierced pair shares "
+            "the corner column; a tapered or cornerless target is "
+            "out of the v1 class). Remedy: use a box or planar "
+            "prism target, or accept the faceted path.");
+
+    // ---- The maps: A's survivors compacted (the dead column
+    // dropped), the born appended.
+    std::vector<std::size_t> vmap(V_A, V_A);  // old -> new (V_A = dead)
+    std::vector<std::size_t> emap(E_A, E_A);
+    {
+        std::size_t next = 0;
+        for (std::size_t i = 0; i < V_A; ++i)
+            if (i != dead_v0 && i != dead_v1) vmap[i] = next++;
+        next = 0;
+        for (std::size_t i = 0; i < E_A; ++i)
+            if (i != dead_edge) emap[i] = next++;
+    }
+    const std::size_t v_base = V_A - 2;   // the survivors' count
+    const std::size_t e_base = E_A - 1;   // + the joint vertical
+    // The born vertices: 6/7 = exit_p at z_bot/z_top; 8/9 = the
+    // joint; 10/11 = exit_q (the numbering table the tests pin).
+    const std::size_t v_ex_p_lo = v_base + 0, v_ex_p_hi = v_base + 1;
+    const std::size_t v_j_lo = v_base + 2, v_j_hi = v_base + 3;
+    const std::size_t v_ex_q_lo = v_base + 4, v_ex_q_hi = v_base + 5;
+    // The born edges: 12 = the rim on lat(p) at z_bot (J -> exit_p);
+    // 13 = the rim on lat(q) at z_bot (exit_q -> J); 14 = the rim on
+    // lat(p) at z_top (exit_p -> J); 15 = the rim on lat(q) at z_top
+    // (J -> exit_q); 16/17 = the exit verticals at exit_p/exit_q
+    // (bottom -> top, the seam's own convention).
+    const std::size_t e_rim_p_lo = e_base + 1;
+    const std::size_t e_rim_q_lo = e_base + 2;
+    const std::size_t e_rim_p_hi = e_base + 3;
+    const std::size_t e_rim_q_hi = e_base + 4;
+    const std::size_t e_exit_p = e_base + 5;
+    const std::size_t e_exit_q = e_base + 6;
+
+    // The born exit vertex at a given quota, for a given exit's
+    // entity side (the re-spanned top edges take the z_top pair, the
+    // bottom twins the z_bot ones).
+    const auto born_exit = [&](std::size_t ent, double z) {
+        if (ent == cc.ent_p)
+            return z > 0.5 * (t.z_bot + t.z_top) ? v_ex_p_hi
+                                                 : v_ex_p_lo;
+        return z > 0.5 * (t.z_bot + t.z_top) ? v_ex_q_hi : v_ex_q_lo;
+    };
+
+    auto R = std::make_unique<BRepBody>();
+    auto& shell = R->solid.shell_mut();
+    shell.set_closed(true);
+
+    // ---- A's surviving vertices (the copies carry the records; the
+    // ids compact).
+    for (std::size_t i = 0; i < V_A; ++i) {
+        if (vmap[i] == V_A) continue;
+        R->vertices.push_back(A.vertices[i]);
+        R->vertices.back().set_id(
+            static_cast<VertexId>(vmap[i]));
+    }
+    // ---- The born vertices (the exit pair, the joint pair, the
+    // exit pair — the notch's own order).
+    {
+        const math::Vec3d ex_p_lo{cc.exit_p.x, cc.exit_p.y, t.z_bot};
+        const math::Vec3d ex_p_hi{cc.exit_p.x, cc.exit_p.y, t.z_top};
+        const math::Vec3d j_lo{cc.joint.x, cc.joint.y, t.z_bot};
+        const math::Vec3d j_hi{cc.joint.x, cc.joint.y, t.z_top};
+        const math::Vec3d ex_q_lo{cc.exit_q.x, cc.exit_q.y, t.z_bot};
+        const math::Vec3d ex_q_hi{cc.exit_q.x, cc.exit_q.y, t.z_top};
+        const std::pair<math::Vec3d, std::size_t> born[6] = {
+            {ex_p_lo, v_ex_p_lo}, {ex_p_hi, v_ex_p_hi},
+            {j_lo, v_j_lo},       {j_hi, v_j_hi},
+            {ex_q_lo, v_ex_q_lo}, {ex_q_hi, v_ex_q_hi}};
+        for (const auto& [p, id] : born) {
+            Vertex v{p};
+            v.set_id(static_cast<VertexId>(id));
+            v.set_provenance(prov);
+            R->vertices.push_back(v);
+        }
+    }
+
+    // ---- A's surviving edges, the endpoints remapped and the
+    // corner endpoints of the four re-spanned edges substituted.
+    const auto remap_vertex = [&](std::size_t old_v, std::size_t edge,
+                                  double quota_hint) -> std::size_t {
+        if (vmap[old_v] != V_A) return vmap[old_v];
+        // The dead corner endpoint of a re-spanned edge: the born
+        // exit at the edge's own quota.
+        const auto& pos = A.vertices[old_v].position();
+        const std::size_t ent =
+            (edge == te_p || edge == be_p) ? cc.ent_p : cc.ent_q;
+        (void)quota_hint;
+        return born_exit(ent, pos.z);
+    };
+    for (std::size_t i = 0; i < E_A; ++i) {
+        if (emap[i] == E_A) continue;
+        R->edges.push_back(A.edges[i]);
+        auto& ed = R->edges.back();
+        ed.set_id(static_cast<EdgeId>(emap[i]));
+        ed.set_vertex(0, static_cast<VertexId>(
+                             remap_vertex(ed.vertex(0), i, 0)));
+        ed.set_vertex(1, static_cast<VertexId>(
+                             remap_vertex(ed.vertex(1), i, 0)));
+    }
+    // ---- The joint vertical (the absorbed tool's joint(i),
+    // re-timed) and the born rims/exits.
+    {
+        const auto push = [&](std::size_t a, std::size_t b) {
+            Edge e{static_cast<VertexId>(a),
+                   static_cast<VertexId>(b)};
+            e.set_id(static_cast<EdgeId>(R->edges.size()));
+            e.set_provenance(prov);
+            R->edges.push_back(e);
+        };
+        push(v_j_lo, v_j_hi);    // e_base + 0: the joint
+        push(v_j_lo, v_ex_p_lo); // e_base + 1: rim_p@lo
+        push(v_ex_q_lo, v_j_lo); // e_base + 2: rim_q@lo
+        push(v_ex_p_hi, v_j_hi); // e_base + 3: rim_p@hi
+        push(v_j_hi, v_ex_q_hi); // e_base + 4: rim_q@hi
+        push(v_ex_p_lo, v_ex_p_hi);  // e_base + 5: exit_p
+        push(v_ex_q_lo, v_ex_q_hi);  // e_base + 6: exit_q
+    }
+
+    // ---- The re-authoring helper: one face's outer loop rebuilt by
+    // the walk's own chaining. The spec: per array position, either
+    // COPY (the id remapped), RE-SPAN (the edge known, the corner
+    // endpoint substituted), or a NEW edge (the rims / the exit
+    // vertical / the joint, identified by their (start, end)
+    // positions among the born set). The notch's rims insert after
+    // the re-spanned co-edge that ENDS at a born exit; the dead
+    // co-edge is replaced by the exit vertical of its side's exit.
+    const auto pos3 = [&](std::size_t v) {
+        return R->vertices[v].position();
+    };
+    // Which born edge runs between a and b (vertex ids, either
+    // orientation), and whether the walk traverses it reversed —
+    // the wall's CCW order may run either way.
+    const auto born_edge_of = [&](std::size_t a,
+                                  std::size_t b) {
+        const std::pair<std::size_t, std::size_t> table[7] = {
+            {v_j_lo, v_j_hi},                     // the joint
+            {v_j_lo, v_ex_p_lo}, {v_ex_q_lo, v_j_lo},
+            {v_ex_p_hi, v_j_hi}, {v_j_hi, v_ex_q_hi},
+            {v_ex_p_lo, v_ex_p_hi}, {v_ex_q_lo, v_ex_q_hi}};
+        for (std::size_t i = 0; i < 7; ++i) {
+            if (table[i].first == a && table[i].second == b)
+                return std::pair<std::size_t, bool>{e_base + i,
+                                                    false};
+            if (table[i].first == b && table[i].second == a)
+                return std::pair<std::size_t, bool>{e_base + i,
+                                                    true};
+        }
+        throw std::logic_error(
+            "exact_subtract: the crossed assembly's wall walk lost "
+            "the chaining (no born edge between the walk's "
+            "endpoints) - report this as a kernel bug.");
+    };
+    const auto is_born_vertex = [&](std::size_t v) {
+        return v >= v_base;
+    };
+
+    // Re-author one of A's faces (the top/bottom/side quartet).
+    // `pierced` selects the notch-rims insertion (the top and bottom
+    // faces carry the notch; the side faces carry the exit vertical).
+    const auto reauthor_face = [&](std::size_t face_index,
+                                   bool pierced) {
+        const Face& src = A.solid.shell().faces()[face_index];
+        const auto* surf = src.surface();
+        TranslateReader rd;
+        surf->accept(rd);
+        const PlaneSurface* pl = rd.plane;
+        if (pl == nullptr)
+            throw std::logic_error(
+                "exact_subtract: the crossed assembly met a non-planar "
+                "face in a planar-class target - report this as a "
+                "kernel bug.");
+        const auto dom = [&](const math::Vec3d& p) {
+            return plane_domain(*pl, p);
+        };
+        const auto& ces = src.loops()[0].coedges();
+        const std::size_t kk = ces.size();
+        Loop loop;
+        // The walk's cursor: the first co-edge's start (the dead
+        // corner substituted where the first co-edge is re-spanned).
+        std::size_t cursor = 0;  // a vertex id in R's numbering
+        {
+            const auto& ce0 = ces[0];
+            const std::size_t s0 =
+                ce0.reversed()
+                    ? static_cast<std::size_t>(A.edges[ce0.edge()]
+                                                   .vertex(1))
+                    : static_cast<std::size_t>(
+                          A.edges[ce0.edge()].vertex(0));
+            cursor = remap_vertex(s0, ce0.edge(), 0);
+        }
+        const auto emit = [&](std::size_t edge_id, std::size_t a,
+                              std::size_t b, const PCurve* copy) {
+            const bool fwd =
+                R->edges[edge_id].vertex(0) ==
+                        static_cast<VertexId>(a) &&
+                R->edges[edge_id].vertex(1) ==
+                    static_cast<VertexId>(b);
+            const bool rev =
+                R->edges[edge_id].vertex(0) ==
+                        static_cast<VertexId>(b) &&
+                R->edges[edge_id].vertex(1) ==
+                    static_cast<VertexId>(a);
+            if (!fwd && !rev)
+                throw std::logic_error(
+                    "exact_subtract: the crossed assembly's walk "
+                    "lost the chaining (an edge that does not run "
+                    "between the walk's endpoints) - report this as "
+                    "a kernel bug.");
+            CoEdge ce{static_cast<EdgeId>(edge_id), rev};
+            if (copy != nullptr) {
+                ce.set_p_curve(*copy);
+            } else {
+                ce.set_p_curve(pcurve_segment(
+                    dom(pos3(a)), dom(pos3(b)),
+                    /*interior_left=*/true));
+            }
+            loop.add_coedge(ce);
+            cursor = b;
+        };
+        for (std::size_t j = 0; j < kk; ++j) {
+            const auto& ce = ces[j];
+            const std::size_t old_edge = ce.edge();
+            if (old_edge == dead_edge) {
+                // The dead co-edge is replaced by the exit vertical
+                // of this side's own exit (side_p's re-spanned edges
+                // are te_p/be_p — the exit on the face-edge i0).
+                const bool is_p_side = (face_index == side_p);
+                const std::size_t lo =
+                    is_p_side ? v_ex_p_lo : v_ex_q_lo;
+                const std::size_t hi =
+                    is_p_side ? v_ex_p_hi : v_ex_q_hi;
+                if (cursor != lo && cursor != hi)
+                    throw std::logic_error(
+                        "exact_subtract: the crossed assembly's "
+                        "walk reached the dead edge off the exit "
+                        "vertical's ends - report this as a kernel "
+                        "bug.");
+                const std::size_t other = cursor == lo ? hi : lo;
+                emit(is_p_side ? e_exit_p : e_exit_q, cursor, other,
+                     nullptr);
+                continue;
+            }
+            const bool respan =
+                old_edge == te_p || old_edge == te_q ||
+                old_edge == be_p || old_edge == be_q;
+            // The step's (start, end): the factory's traversal with
+            // the dead endpoint substituted (re-spanned) or verbatim
+            // (kept).
+            const std::size_t s_old = static_cast<std::size_t>(
+                ce.reversed()
+                    ? A.edges[old_edge].vertex(1)
+                    : A.edges[old_edge].vertex(0));
+            const std::size_t e_old = static_cast<std::size_t>(
+                ce.reversed()
+                    ? A.edges[old_edge].vertex(0)
+                    : A.edges[old_edge].vertex(1));
+            const std::size_t s_new =
+                remap_vertex(s_old, old_edge, 0);
+            const std::size_t e_new =
+                remap_vertex(e_old, old_edge, 0);
+            emit(emap[old_edge], s_new, e_new,
+                 respan ? nullptr : ce.p_curve());
+            // The notch's rims: after the re-spanned co-edge that
+            // ends at a born exit (the pierced faces only — exactly
+            // one such co-edge per pierced face: the top's i0 and
+            // the bottom's twin that walks INTO the corner).
+            if (pierced && is_born_vertex(e_new) &&
+                (e_new == v_ex_p_lo || e_new == v_ex_p_hi ||
+                 e_new == v_ex_q_lo || e_new == v_ex_q_hi)) {
+                // From this exit through the joint to the other
+                // exit, the walk's own direction; the emit derives
+                // each flag from the stored pair (the stored rim
+                // directions are the pierced faces' own traversals:
+                // rim_p@lo J->exit_p, rim_q@lo exit_q->J, rim_p@hi
+                // exit_p->J, rim_q@hi J->exit_q).
+                const bool from_p =
+                    e_new == v_ex_p_lo || e_new == v_ex_p_hi;
+                const bool lo_quota =
+                    e_new == v_ex_p_lo || e_new == v_ex_q_lo;
+                const std::size_t jv = lo_quota ? v_j_lo : v_j_hi;
+                const std::size_t other =
+                    lo_quota ? (from_p ? v_ex_q_lo : v_ex_p_lo)
+                             : (from_p ? v_ex_q_hi : v_ex_p_hi);
+                const std::size_t rim_first =
+                    from_p ? (lo_quota ? e_rim_p_lo : e_rim_p_hi)
+                           : (lo_quota ? e_rim_q_lo : e_rim_q_hi);
+                const std::size_t rim_second =
+                    from_p ? (lo_quota ? e_rim_q_lo : e_rim_q_hi)
+                           : (lo_quota ? e_rim_p_lo : e_rim_p_hi);
+                emit(rim_first, cursor, jv, nullptr);
+                emit(rim_second, jv, other, nullptr);
+            }
+        }
+        Face face(std::make_shared<PlaneSurface>(*pl));
+        // The factory's own mathematical plane, copied bit-identical
+        // (the same origin/normal/frame — the copy constructor's own
+        // guarantee); the loop is re-authored below.
+        face.add_loop(std::move(loop));
+        face.set_id(static_cast<FaceId>(face_index));
+        face.set_shape_id(src.shape_id());
+        face.set_name(src.name());
+        face.set_provenance(src.provenance());
+        // Replace A's copy at its own index (the faces keep their
+        // ids — none dies).
+        auto& faces_mut = shell.faces_mut();
+        if (faces_mut.size() <= face_index)
+            faces_mut.resize(face_index + 1);
+        faces_mut[face_index] = std::move(face);
+    };
+
+    // A's faces first (the copies for the kept, the re-authored for
+    // the quartet), then the walls appended. The copies' co-edges
+    // carry A's OWN edge ids — the renumbering (the dead column
+    // compacted away) rewrites them: one rebuild pass over the
+    // copied faces (surface, stamps and p-curves copied verbatim,
+    // the edge references remapped; the quartet is replaced
+    // wholesale by the re-authoring below).
+    for (std::size_t f = 0; f < F_A; ++f)
+        shell.add_face(A.solid.shell().faces()[f]);
+    for (std::size_t f = 0; f < F_A; ++f) {
+        // The quartet is re-authored wholesale below — its copies
+        // (which reference the dead column's edge, by the family's
+        // own shape) are replaced, never rebuilt.
+        if (f == t.top_face || f == t.bottom_face ||
+            f == side_p || f == side_q)
+            continue;
+        const Face& src = A.solid.shell().faces()[f];
+        TranslateReader rd;
+        src.surface()->accept(rd);
+        Face face(std::make_shared<PlaneSurface>(*rd.plane));
+        for (const auto& loop : src.loops()) {
+            Loop nl;
+            nl.set_outer(loop.is_outer());
+            for (const auto& ce : loop.coedges()) {
+                const std::size_t mapped =
+                    emap[static_cast<std::size_t>(ce.edge())];
+                if (mapped == E_A)
+                    throw std::logic_error(
+                        "exact_subtract: the crossed assembly met "
+                        "the dead column's edge in a face outside "
+                        "the re-authored quartet - report this as "
+                        "a kernel bug.");
+                CoEdge nc{static_cast<EdgeId>(mapped),
+                          ce.reversed()};
+                if (ce.p_curve() != nullptr)
+                    nc.set_p_curve(*ce.p_curve());
+                nl.add_coedge(nc);
+            }
+            face.add_loop(std::move(nl));
+        }
+        face.set_id(static_cast<FaceId>(f));
+        face.set_shape_id(src.shape_id());
+        face.set_name(src.name());
+        face.set_provenance(src.provenance());
+        shell.faces_mut()[f] = std::move(face);
+    }
+    reauthor_face(t.top_face, true);
+    reauthor_face(t.bottom_face, true);
+    reauthor_face(side_p, false);
+    reauthor_face(side_q, false);
+
+    // ---- The walls: the tool's surviving laterals, re-windowed to
+    // the notch's rim span (the footprint's clip inside the target).
+    const auto add_crossed_wall = [&](std::size_t ent,
+                                      const Face* lateral) {
+        const WalkEntity& e = w.entities[ent];
+        const math::Vec2d d{e.q.x - e.p.x, e.q.y - e.p.y};
+        const double len = std::sqrt(d.x * d.x + d.y * d.y);
+        const math::Vec2d ln{-d.y / len, d.x / len};
+        const bool is_p = ent == cc.ent_p;
+        const math::Vec2d ex = is_p ? cc.exit_p : cc.exit_q;
+        auto surf = std::make_shared<PlaneSurface>(
+            math::Vec3d{cc.joint.x, cc.joint.y, t.z_bot},
+            math::Vec3d{ln.x, ln.y, 0.0});
+        const auto dom = [&](const math::Vec3d& p) {
+            return plane_domain(*surf, p);
+        };
+        const math::Vec3d c_ex_lo{ex.x, ex.y, t.z_bot};
+        const math::Vec3d c_ex_hi{ex.x, ex.y, t.z_top};
+        const math::Vec3d c_j_lo{cc.joint.x, cc.joint.y, t.z_bot};
+        const math::Vec3d c_j_hi{cc.joint.x, cc.joint.y, t.z_top};
+        const math::Vec2d q1 = dom(c_ex_lo), q2 = dom(c_ex_hi);
+        const math::Vec2d q3 = dom(c_j_hi), q4 = dom(c_j_lo);
+        // The CCW order of the rectangle (the material-on-left
+        // walk): the signed area picks the direction.
+        const auto area = [](math::Vec2d p1, math::Vec2d p2,
+                             math::Vec2d p3, math::Vec2d p4) {
+            return (p1.x * p2.y - p2.x * p1.y) +
+                   (p2.x * p3.y - p3.x * p2.y) +
+                   (p3.x * p4.y - p4.x * p3.y) +
+                   (p4.x * p1.y - p1.x * p4.y);
+        };
+        const bool fwd = area(q1, q2, q3, q4) > 0.0;
+        const math::Vec2d order[4] = {fwd ? q1 : q4, fwd ? q2 : q3,
+                                      fwd ? q3 : q2, fwd ? q4 : q1};
+        const std::size_t v_of[4] = {
+            is_p ? v_ex_p_lo : v_ex_q_lo,
+            is_p ? v_ex_p_hi : v_ex_q_hi, v_j_hi, v_j_lo};
+        const std::size_t v_order[4] = {
+            fwd ? v_of[0] : v_of[3], fwd ? v_of[1] : v_of[2],
+            fwd ? v_of[2] : v_of[1], fwd ? v_of[3] : v_of[0]};
+        Loop loop;
+        for (std::size_t s = 0; s < 4; ++s) {
+            const std::size_t a = v_order[s];
+            const std::size_t b = v_order[(s + 1) % 4];
+            const auto [edge_id, rev] = born_edge_of(a, b);
+            CoEdge ce{static_cast<EdgeId>(edge_id), rev};
+            ce.set_p_curve(pcurve_segment(order[s], order[(s + 1) % 4],
+                                          /*interior_left=*/true));
+            loop.add_coedge(ce);
+        }
+        Face face(surf);
+        face.add_loop(std::move(loop));
+        face.set_id(static_cast<FaceId>(shell.faces().size()));
+        face.set_provenance(prov);
+        if (lateral != nullptr) {
+            face.set_shape_id(lateral->shape_id());
+            face.set_name(lateral->name());
+        }
+        shell.add_face(std::move(face));
+    };
+    // The tool's laterals for the two surviving entities (the
+    // genealogical correspondence — the same lookup the stamping
+    // consults).
+    const auto lateral_of = [&](std::size_t i) -> const Face* {
+        if (w.cap == nullptr) return nullptr;
+        return tool_lateral_of(
+            bp, w.cap->loops()[0].coedges()[i].edge());
+    };
+    // The surviving walls in the tool's canonical walk order (the
+    // entity index ascending — the numbering table's own rule).
+    const std::size_t wall_ents[2] = {std::min(cc.ent_p, cc.ent_q),
+                                      std::max(cc.ent_p, cc.ent_q)};
+    for (const std::size_t ent : wall_ents)
+        add_crossed_wall(ent, lateral_of(ent));
+
+    // ---- THE NAMES (D3): the joint vertical's birth name (the
+    // extrude's own vocabulary — the first instance of the joint(i)
+    // row, stamped from the tool's own feature id, no sub context
+    // involved, exactly the wall's inheritance discipline); the born
+    // rims and exits (the named mode: the sub's relational grammar,
+    // the operands' own stamps the legs).
+    {
+        const Face* const wall_p = lateral_of(cc.ent_p);
+        const Face* const wall_q = lateral_of(cc.ent_q);
+        // THE JOINT: the tool's lateral's stamp carries the tool's
+        // feature id; the path [kExtLatRole, i] declares the
+        // extrude's vocabulary — the joint's name is the absorbed
+        // entity's OWN, derived at the assembly site (the tool's
+        // body does not stamp its verticals: v1's honest boundary;
+        // the subtract authors the first instance).
+        if (wall_p != nullptr &&
+            wall_p->shape_id().subshape.depth == 2 &&
+            wall_p->shape_id().subshape.path[0] ==
+                naming::kExtLatRole) {
+            const geometry::FeatureId tool_feature =
+                wall_p->shape_id().feature;
+            geometry::SubshapeRef ref{};
+            ref = ref.push(naming::kExtJointRole)
+                      .push(static_cast<std::uint32_t>(
+                          cc.joint_idx));
+            R->edges[e_base].set_shape_id(
+                {tool_feature, ref, {}});
+            R->edges[e_base].set_name(naming::render_name(
+                tool_feature, ref, naming::kExtNaming.edges()));
+        }
+        // THE RIMS AND THE EXITS (the named mode): the operands'
+        // legs read the operands' own stamps (the m4 machinery).
+        const Face* const top_operand = &A.solid.shell().faces()[t.top_face];
+        const Face* const bot_operand = &A.solid.shell().faces()[t.bottom_face];
+        const Face* const side_p_operand =
+            &A.solid.shell().faces()[side_p];
+        const Face* const side_q_operand =
+            &A.solid.shell().faces()[side_q];
+        const bool stampable =
+            naming.target != nullptr && naming.tool != nullptr &&
+            wall_p != nullptr && wall_q != nullptr &&
+            top_operand->shape_id().subshape.depth > 0 &&
+            bot_operand->shape_id().subshape.depth > 0 &&
+            side_p_operand->shape_id().subshape.depth > 0 &&
+            side_q_operand->shape_id().subshape.depth > 0 &&
+            wall_p->shape_id().subshape.depth > 0 &&
+            wall_q->shape_id().subshape.depth > 0;
+        if (stampable) {
+            const auto operand_leg =
+                [](geometry::SubshapeRef ref, const Face& operand) {
+                    for (std::uint8_t k = 0;
+                         k < operand.shape_id().subshape.depth; ++k)
+                        ref = ref.push(
+                            operand.shape_id().subshape.path[k]);
+                    return ref;
+                };
+            struct RimSpec {
+                std::size_t edge;
+                std::uint32_t role;
+                const Face* a_leg;
+                const Face* b_leg;
+            };
+            const RimSpec rims[6] = {
+                {e_rim_p_lo, naming::kSubIsectLoRole, bot_operand,
+                 wall_p},
+                {e_rim_q_lo, naming::kSubIsectLoRole, bot_operand,
+                 wall_q},
+                {e_rim_p_hi, naming::kSubIsectHiRole, top_operand,
+                 wall_p},
+                {e_rim_q_hi, naming::kSubIsectHiRole, top_operand,
+                 wall_q},
+                {e_exit_p, naming::kSubIsectRole, side_p_operand,
+                 wall_p},
+                {e_exit_q, naming::kSubIsectRole, side_q_operand,
+                 wall_q},
+            };
+            for (const RimSpec& spec : rims) {
+                const naming::OperandBinding sub_operands[2] = {
+                    {spec.a_leg->shape_id().feature, naming.target},
+                    {spec.b_leg->shape_id().feature, naming.tool},
+                };
+                const naming::OperationNaming sub_naming{
+                    naming::FeatureKind::Subtract, {},
+                    naming::kSubEdgeRoles, sub_operands};
+                geometry::SubshapeRef ref =
+                    geometry::SubshapeRef{}.push(spec.role);
+                ref = operand_leg(ref, *spec.a_leg);
+                ref = operand_leg(ref, *spec.b_leg);
+                R->edges[spec.edge].set_shape_id(
+                    {naming.feature, ref, {}});
+                R->edges[spec.edge].set_name(
+                    naming::render_name(naming.feature, ref,
+                                        sub_naming.edges()));
+            }
+        }
+    }
+
+    // ---- The postconditions (hard, the family's own pins).
+    link_radial_edges(*R);
+    if (!loops_are_closed(*R))
+        throw std::runtime_error(
+            "exact_subtract: postcondition failed - a loop does not "
+            "chain (an assembly defect in the crossed-corner "
+            "builder; report this as a kernel bug)");
+    if (!is_closed_orientable(*R))
+        throw std::runtime_error(
+            "exact_subtract: postcondition failed - the result is "
+            "not a closed orientable manifold (the radial-edge XOR "
+            "or the shell closure broke in the crossed-corner "
+            "builder; report this as a kernel bug)");
+    for (const auto& e : R->edges) {
+        if (e.coedges().size() != 2 ||
+            e.coedges()[0]->reversed() == e.coedges()[1]->reversed())
+            throw std::runtime_error(
+                "exact_subtract: postcondition failed - edge " +
+                std::to_string(e.id()) +
+                " is not manifold-with-XOR (an assembly defect; "
+                "report this as a kernel bug)");
+    }
+    if (inner_loop_count(*R) != 0)
+        throw std::runtime_error(
+            "exact_subtract: postcondition failed - the crossed "
+            "corner's pierced faces must be simply connected (H = 0; "
+            "report this as a kernel bug)");
+    if (euler_characteristic(*R) != euler_characteristic(A))
+        throw std::runtime_error(
+            "exact_subtract: postcondition failed - chi = " +
+            std::to_string(euler_characteristic(*R)) +
+            " (the crossed corner's pinned value is the target's "
+            "own chi - the dent family; report this as a kernel "
+            "bug)");
+    return R;
+}
+
 } // namespace subtract_detail
 
 // ---------------------------------------------------------------------------
@@ -1114,11 +2055,7 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
         // geometric key (origin, then normal — lexicographic), never
         // by input order, so the same geometry always reports the
         // same edge.
-        struct Trigger {
-            math::Vec2d origin, normal;
-            double margin;
-        };
-        std::vector<Trigger> crossing, tangential;
+        std::vector<subtract_detail::Trigger> crossing, tangential;
         for (std::size_t i = 0; i < t.verts.size(); ++i) {
             const math::Vec2d& n = t.normals[i];
             const double line = n.x * t.verts[i].x + n.y * t.verts[i].y;
@@ -1129,7 +2066,9 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
             else if (margin > -tol)
                 tangential.push_back({t.verts[i], n, margin});
         }
-        const auto canonical_less = [](const Trigger& a, const Trigger& b) {
+        const auto canonical_less =
+            [](const subtract_detail::Trigger& a,
+               const subtract_detail::Trigger& b) {
             if (a.origin.x != b.origin.x) return a.origin.x < b.origin.x;
             if (a.origin.y != b.origin.y) return a.origin.y < b.origin.y;
             if (a.normal.x != b.normal.x) return a.normal.x < b.normal.x;
@@ -1137,18 +2076,20 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
         };
         if (!crossing.empty()) {
             std::sort(crossing.begin(), crossing.end(), canonical_less);
-            throw std::invalid_argument(
-                "exact_subtract: the tool's profile CROSSES the boundary "
-                "of the pierced face (it pokes beyond the edge from (" +
-                std::to_string(crossing[0].origin.x) + ", " +
-                std::to_string(crossing[0].origin.y) + ") outward along (" +
-                std::to_string(crossing[0].normal.x) + ", " +
-                std::to_string(crossing[0].normal.y) + ") by " +
-                std::to_string(crossing[0].margin) +
-                ") - the non-annular pierced face is honest G2 "
-                "topology, not G1. Remedy: move or resize the hole so "
-                "its profile stays strictly inside the pierced face, "
-                "or accept the faceted path.");
+            // ==== THE CROSSED CORNER (ADR-0038 D1.2, G2-u2 m3) ====
+            // The transverse crossing beyond the band at the pierced
+            // face's covered corner — the split-free variant — IS the
+            // landed door; every other crossing family keeps the
+            // CROSSED refusal, the family named (the message built by
+            // the gate: the same CROSSES phrase the pin :952 taught).
+            const subtract_detail::CrossedCorner cc =
+                subtract_detail::crossed_corner_gate(
+                    A, w, t, crossing, tangential, t.top_face,
+                    z_lo, z_hi, tol);
+            if (!cc.admitted)
+                throw std::invalid_argument(cc.refusal);
+            return subtract_detail::crossed_corner_assemble(
+                A, *bp, w, t, cc, tol, naming);
         }
         if (!tangential.empty()) {
             std::sort(tangential.begin(), tangential.end(), canonical_less);

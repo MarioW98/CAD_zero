@@ -841,6 +841,56 @@ constexpr const char* kReAuthoredCause =
     "re-authored with the window";
 constexpr const char* kMissCause =
     "the miss: nothing removed (the exact copy stands)";
+// THE CROSSED's own (G2-u2 m3): A's corner column — the vertical and
+// its two corners die because no re-authored face contains them.
+constexpr const char* kColumnCause =
+    "the corner column cut away by the notch";
+
+// A deterministic key for a SubshapeRef (the stamp maps' own): the
+// path's integers, one byte-separated string — structural content
+// only, never the rendered name.
+inline std::string render_path_key(
+    const geometry::SubshapeRef& ref) {
+    std::string key;
+    for (std::uint8_t i = 0; i < ref.depth; ++i) {
+        key += std::to_string(ref.path[i]);
+        key += ',';
+    }
+    return key;
+}
+
+// The vanished rows' stamping when BOTH operands die entities (the
+// crossed): the row's own operand ref names the body the dead
+// entity lives in — operand 0 reads A, operand 1 reads B (the
+// through/miss tables' B-only tail reads B, byte-identical to the
+// single-body stamping it replaces).
+void stamp_rows_crossed_vanished(DescentTable& table,
+                                 const BRepBody& a,
+                                 const BRepBody& b) {
+    for (auto& row : table.rows) {
+        if (row.relation != Descent::Vanished) continue;
+        const BRepBody& src =
+            (!row.operands.empty() &&
+             row.operands[0].operand == 0)
+                ? a
+                : b;
+        if (row.entity == EntityKind::Edge) {
+            if (row.address < src.edges.size()) {
+                row.shape_id =
+                    src.edges[static_cast<std::size_t>(
+                                  row.address)]
+                        .shape_id();
+            }
+        } else if (row.entity == EntityKind::Face) {
+            const auto& faces = src.solid.shell().faces();
+            if (row.address < faces.size()) {
+                row.shape_id =
+                    faces[static_cast<std::size_t>(row.address)]
+                        .shape_id();
+            }
+        }
+    }
+}
 
 // B's +Z cap, the walk's own source face (the same rule
 // read_tool_walk and cap_surface_of practice — the first +Z-ish
@@ -879,6 +929,398 @@ inline const Face* wall_operand_of(const BRepBody& B,
         B, cap->loops()[0].coedges()[j].edge());
 }
 
+// ---------------------------------------------------------------------------
+// THE CROSSED TAVOLA (G2-u2 m3, ADR-0038 D3): the corner notch's 64
+// rows — the two-sided closure's first table where BOTH operands die
+// entities (A's corner column, the tool's outside). Derived by the
+// STAMPS (the renumbering broke the positional rule the through/miss
+// tables ride on: the result's ids compact over the dead column —
+// ShapeId equality is the resolver's own discipline, structural,
+// never the render); the vertex correspondence is the coordinate
+// bit-match (v1 has no vertex identity — the survivors are verbatim
+// copies, the born are new; the day the vertex names land, the
+// correspondence reads the stamps instead).
+//
+// The joint vertical's genealogy reads its OWN stamp's meaning: the
+// path [kExtJointRole, j] names the vertical at the chain's joint j
+// — the walk table's own numbering (the tool's edge 2n + j, the
+// extrude's frozen layout) — one opinion, the same tables the
+// construction consulted.
+// ---------------------------------------------------------------------------
+DescentTable crossed_descent(const BRepBody& result, const BRepBody& A,
+                             const BRepBody& B) {
+    const std::size_t V_A = A.vertices.size();
+    const std::size_t E_A = A.edges.size();
+    const std::size_t F_A = A.face_count();
+
+    // The stamp maps: the result's stamped entities -> the addresses.
+    std::map<std::pair<std::uint64_t, std::string>, std::size_t>
+        redge_of, rface_of;
+    for (std::size_t i = 0; i < result.edges.size(); ++i) {
+        const auto& sid = result.edges[i].shape_id();
+        if (sid.subshape.depth == 0) continue;
+        redge_of.emplace(
+            std::pair{sid.feature.value,
+                      render_path_key(sid.subshape)},
+            i);
+    }
+    for (std::size_t i = 0; i < result.face_count(); ++i) {
+        const auto& sid =
+            result.solid.shell().faces()[i].shape_id();
+        if (sid.subshape.depth == 0) continue;
+        rface_of.emplace(
+            std::pair{sid.feature.value,
+                      render_path_key(sid.subshape)},
+            i);
+    }
+    const auto a_edge_at = [&](std::size_t j) -> std::size_t {
+        const auto& sid = A.edges[j].shape_id();
+        const auto it = redge_of.find(
+            {sid.feature.value, render_path_key(sid.subshape)});
+        return it == redge_of.end() ? result.edges.size()
+                                    : it->second;
+    };
+    const auto a_face_at = [&](std::size_t j) -> std::size_t {
+        const auto& sid =
+            A.solid.shell().faces()[j].shape_id();
+        const auto it = rface_of.find(
+            {sid.feature.value, render_path_key(sid.subshape)});
+        return it == rface_of.end() ? result.face_count()
+                                    : it->second;
+    };
+
+    // The vertex correspondence: the coordinate bit-match (the
+    // survivors are verbatim copies — the positions are bit-identical
+    // by construction; v1's honest rule, documented above).
+    std::vector<std::size_t> rv_of(result.vertices.size(), SIZE_MAX);
+    std::vector<std::size_t> av_of(V_A, SIZE_MAX);
+    for (std::size_t i = 0; i < result.vertices.size(); ++i) {
+        const auto& p = result.vertices[i].position();
+        for (std::size_t j = 0; j < V_A; ++j)
+            if (av_of[j] == SIZE_MAX &&
+                A.vertices[j].position().x == p.x &&
+                A.vertices[j].position().y == p.y &&
+                A.vertices[j].position().z == p.z) {
+                rv_of[i] = j;
+                av_of[j] = i;
+                break;
+            }
+    }
+    std::vector<std::size_t> bv_of(B.vertices.size(), SIZE_MAX);
+    for (std::size_t i = 0; i < result.vertices.size(); ++i) {
+        const auto& p = result.vertices[i].position();
+        for (std::size_t j = 0; j < B.vertices.size(); ++j)
+            if (bv_of[j] == SIZE_MAX &&
+                B.vertices[j].position().x == p.x &&
+                B.vertices[j].position().y == p.y &&
+                B.vertices[j].position().z == p.z) {
+                bv_of[j] = i;
+                break;
+            }
+    }
+
+    // The joint vertical's own stamp: the path [kExtJointRole, j]
+    // names the tool's vertical at joint j (the edge 2n + j).
+    std::size_t n_chain = 0;
+    if (const Face* cap = plus_z_cap(B))
+        n_chain = cap->loops()[0].coedges().size();
+    const auto joint_b_edge = [&](const geometry::ShapeId& sid) {
+        if (sid.subshape.depth == 2 &&
+            sid.subshape.path[0] == naming::kExtJointRole &&
+            n_chain > 0)
+            return 2 * n_chain + sid.subshape.path[1];
+        return static_cast<std::uint64_t>(SIZE_MAX);
+    };
+
+    DescentTable table;
+    table.rows.reserve(result.vertices.size() + result.edges.size() +
+                       result.face_count() + V_A + E_A + F_A +
+                       B.vertices.size() + B.edges.size() +
+                       B.face_count());
+
+    // ---- The result's vertices: the A-matched kept, the rest born.
+    for (std::size_t i = 0; i < result.vertices.size(); ++i) {
+        if (rv_of[i] != SIZE_MAX) {
+            table.rows.push_back(
+                {Descent::Kept, EntityKind::Vertex,
+                 static_cast<std::uint64_t>(i),
+                 {{0, EntityKind::Vertex,
+                   static_cast<std::uint64_t>(rv_of[i])}},
+                 "", {}, ""});
+        } else {
+            table.rows.push_back(
+                {Descent::Born, EntityKind::Vertex,
+                 static_cast<std::uint64_t>(i), {}, "", {}, ""});
+        }
+    }
+
+    // ---- The result's edges: the A-matched kept (the span
+    // unchanged: both endpoints A-matched, the order agreeing) or
+    // absorbed (an endpoint born — the re-spanned); the joint
+    // absorbed of the tool; the rest born.
+    for (std::size_t i = 0; i < result.edges.size(); ++i) {
+        const geometry::ShapeId& sid = result.edges[i].shape_id();
+        bool booked = false;
+        for (std::size_t j = 0; j < E_A && !booked; ++j) {
+            if (a_edge_at(j) != i) continue;
+            booked = true;
+            const bool kept =
+                rv_of[static_cast<std::size_t>(
+                          result.edges[i].vertex(0))] ==
+                    static_cast<std::size_t>(
+                        A.edges[j].vertex(0)) &&
+                rv_of[static_cast<std::size_t>(
+                          result.edges[i].vertex(1))] ==
+                    static_cast<std::size_t>(
+                        A.edges[j].vertex(1));
+            table.rows.push_back(
+                {kept ? Descent::Kept : Descent::Absorbed,
+                 EntityKind::Edge, static_cast<std::uint64_t>(i),
+                 {{0, EntityKind::Edge,
+                   static_cast<std::uint64_t>(j)}},
+                 result.edges[i].name(), {}, ""});
+        }
+        if (booked) continue;
+        const std::uint64_t jb = joint_b_edge(sid);
+        if (jb != static_cast<std::uint64_t>(SIZE_MAX)) {
+            table.rows.push_back(
+                {Descent::Absorbed, EntityKind::Edge,
+                 static_cast<std::uint64_t>(i),
+                 {{1, EntityKind::Edge, jb}},
+                 result.edges[i].name(), {}, ""});
+            continue;
+        }
+        table.rows.push_back(
+            {Descent::Born, EntityKind::Edge,
+             static_cast<std::uint64_t>(i), {},
+             result.edges[i].name(), {}, ""});
+    }
+
+    // ---- The result's faces: the A-matched kept (the loop's edge
+    // sequence, mapped through the edge correspondence, equals the
+    // operand's own) or absorbed; the B-matched (the walls)
+    // absorbed.
+    for (std::size_t i = 0; i < result.face_count(); ++i) {
+        const Face& rf = result.solid.shell().faces()[i];
+        bool booked = false;
+        for (std::size_t j = 0; j < F_A && !booked; ++j) {
+            if (a_face_at(j) != i) continue;
+            booked = true;
+            // The loop comparison: the result's loop's edges, each
+            // mapped to A's own id (the born/unmapped break the
+            // equality), against the operand face's sequence.
+            bool same = rf.loops().size() ==
+                        A.solid.shell().faces()[j].loops().size();
+            if (same) {
+                for (std::size_t li = 0;
+                     li < rf.loops().size() && same; ++li) {
+                    const auto& rc = rf.loops()[li].coedges();
+                    const auto& ac =
+                        A.solid.shell()
+                            .faces()[j]
+                            .loops()[li]
+                            .coedges();
+                    if (rc.size() != ac.size()) {
+                        same = false;
+                        break;
+                    }
+                    for (std::size_t ci = 0; ci < rc.size(); ++ci) {
+                        const std::size_t re = rc[ci].edge();
+                        // Map the result edge back to A's id.
+                        std::size_t a_edge = SIZE_MAX;
+                        for (std::size_t jj = 0; jj < E_A; ++jj)
+                            if (a_edge_at(jj) == re) {
+                                a_edge = jj;
+                                break;
+                            }
+                        if (a_edge != ac[ci].edge()) {
+                            same = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            table.rows.push_back(
+                {same ? Descent::Kept : Descent::Absorbed,
+                 EntityKind::Face, static_cast<std::uint64_t>(i),
+                 {{0, EntityKind::Face,
+                   static_cast<std::uint64_t>(j)}},
+                 rf.name(), {}, ""});
+        }
+        if (booked) continue;
+        // The B-matched (the walls): the stamp finds the tool's own
+        // lateral.
+        for (std::size_t j = 0; j < B.face_count() && !booked; ++j) {
+            const auto& bsid =
+                B.solid.shell().faces()[j].shape_id();
+            const auto& rsid = rf.shape_id();
+            if (bsid.subshape.depth > 0 && rsid == bsid) {
+                booked = true;
+                table.rows.push_back(
+                    {Descent::Absorbed, EntityKind::Face,
+                     static_cast<std::uint64_t>(i),
+                     {{1, EntityKind::Face,
+                       static_cast<std::uint64_t>(j)}},
+                     rf.name(), {}, ""});
+            }
+        }
+        if (booked) continue;
+        // Unmatched (no A stamp, no B stamp): the row is still owed —
+        // emitted with no booked operand, so the old-generation
+        // closure below REFUSES LOUDLY (the m4 precedent).
+        table.rows.push_back(
+            {Descent::Absorbed, EntityKind::Face,
+             static_cast<std::uint64_t>(i), {}, rf.name(), {}, ""});
+    }
+
+    // ---- The vanished tail: A's corner column first (A's own
+    // order), then the tool's dead (B's own order) — each entity in
+    // its own body's numbering, the cause recorded.
+    for (std::size_t j = 0; j < V_A; ++j)
+        if (av_of[j] == SIZE_MAX)
+            table.rows.push_back(
+                {Descent::Vanished, EntityKind::Vertex,
+                 static_cast<std::uint64_t>(j),
+                 {{0, EntityKind::Vertex,
+                   static_cast<std::uint64_t>(j)}},
+                 "", {}, kColumnCause});
+    for (std::size_t j = 0; j < E_A; ++j)
+        if (a_edge_at(j) == result.edges.size())
+            table.rows.push_back(
+                {Descent::Vanished, EntityKind::Edge,
+                 static_cast<std::uint64_t>(j),
+                 {{0, EntityKind::Edge,
+                   static_cast<std::uint64_t>(j)}},
+                 A.edges[j].name(), {}, kColumnCause});
+    for (std::size_t j = 0; j < F_A; ++j)
+        if (a_face_at(j) == result.face_count())
+            table.rows.push_back(
+                {Descent::Vanished, EntityKind::Face,
+                 static_cast<std::uint64_t>(j),
+                 {{0, EntityKind::Face,
+                   static_cast<std::uint64_t>(j)}},
+                 A.solid.shell().faces()[j].name(), {},
+                 kColumnCause});
+
+    // The tool's dead: the re-authored (the notch-chain entities'
+    // curves and the joint's vertex pair) vs the cut-away. The
+    // entities: the matched walls' stamps name them; the joint
+    // vertical's stamp names the joint index.
+    std::vector<bool> b_edge_alive(B.edges.size(), false);
+    std::vector<bool> b_vert_alive(B.vertices.size(), false);
+    std::vector<bool> b_face_alive(B.face_count(), false);
+    std::vector<bool> b_edge_reauth(B.edges.size(), false);
+    std::vector<bool> b_vert_reauth(B.vertices.size(), false);
+    std::size_t joint_idx = SIZE_MAX;
+    for (const auto& row : table.rows) {
+        if (row.entity == EntityKind::Edge &&
+            row.relation == Descent::Absorbed &&
+            row.operands.size() == 1 &&
+            row.operands[0].operand == 1) {
+            const geometry::ShapeId& sid =
+                result.edges[static_cast<std::size_t>(
+                                 row.address)]
+                    .shape_id();
+            if (sid.subshape.depth == 2 &&
+                sid.subshape.path[0] == naming::kExtJointRole)
+                joint_idx = sid.subshape.path[1];
+        }
+    }
+    std::vector<std::size_t> notch_ents;
+    for (std::size_t j = 0; j < B.face_count(); ++j) {
+        const auto& bsid =
+            B.solid.shell().faces()[j].shape_id();
+        if (bsid.subshape.depth == 0) continue;
+        const auto it = rface_of.find(
+            {bsid.feature.value, render_path_key(bsid.subshape)});
+        if (it == rface_of.end()) continue;
+        b_face_alive[j] = true;
+        if (bsid.subshape.depth == 2 &&
+            bsid.subshape.path[0] == naming::kExtLatRole)
+            notch_ents.push_back(bsid.subshape.path[1]);
+    }
+    if (n_chain > 0) {
+        for (const std::size_t ent : notch_ents) {
+            if (ent < B.edges.size()) b_edge_reauth[ent] = true;
+            if (n_chain + ent < B.edges.size())
+                b_edge_reauth[n_chain + ent] = true;
+        }
+    }
+    // The joint vertical itself is ALIVE (the absorbed row's
+    // operand); its vertex pair re-timed (the re-authored cause).
+    if (joint_idx != SIZE_MAX && n_chain > 0) {
+        if (2 * n_chain + joint_idx < B.edges.size())
+            b_edge_alive[2 * n_chain + joint_idx] = true;
+        if (2 * joint_idx < B.vertices.size())
+            b_vert_reauth[2 * joint_idx] = true;
+        if (2 * joint_idx + 1 < B.vertices.size())
+            b_vert_reauth[2 * joint_idx + 1] = true;
+    }
+    for (std::size_t j = 0; j < B.vertices.size(); ++j)
+        if (bv_of[j] != SIZE_MAX) b_vert_alive[j] = true;
+    for (const auto& row : table.rows) {
+        if (row.entity != EntityKind::Edge) continue;
+        if (row.relation == Descent::Absorbed &&
+            row.operands.size() == 1 &&
+            row.operands[0].operand == 1)
+            b_edge_alive[row.operands[0].address] = true;
+    }
+
+    for (std::size_t j = 0; j < B.vertices.size(); ++j)
+        if (!b_vert_alive[j])
+            table.rows.push_back(
+                {Descent::Vanished, EntityKind::Vertex,
+                 static_cast<std::uint64_t>(j),
+                 {{1, EntityKind::Vertex,
+                   static_cast<std::uint64_t>(j)}},
+                 "", {},
+                 b_vert_reauth[j] ? kReAuthoredCause
+                                  : kCutAwayCause});
+    for (std::size_t j = 0; j < B.edges.size(); ++j)
+        if (!b_edge_alive[j])
+            table.rows.push_back(
+                {Descent::Vanished, EntityKind::Edge,
+                 static_cast<std::uint64_t>(j),
+                 {{1, EntityKind::Edge,
+                   static_cast<std::uint64_t>(j)}},
+                 B.edges[j].name(), {},
+                 b_edge_reauth[j] ? kReAuthoredCause
+                                  : kCutAwayCause});
+    for (std::size_t j = 0; j < B.face_count(); ++j)
+        if (!b_face_alive[j])
+            table.rows.push_back(
+                {Descent::Vanished, EntityKind::Face,
+                 static_cast<std::uint64_t>(j),
+                 {{1, EntityKind::Face,
+                   static_cast<std::uint64_t>(j)}},
+                 B.solid.shell().faces()[j].name(), {},
+                 kCutAwayCause});
+
+#ifndef NDEBUG
+    {
+        std::string why;
+        if (!descent_closed(result, table, &why)) {
+            throw std::logic_error(
+                "subtract_descent: the tavola broke its own closure "
+                "(the result side, the crossed) — " + why);
+        }
+        if (!old_generation_closed(A, B, table, &why)) {
+            throw std::logic_error(
+                "subtract_descent: the tavola broke its own closure "
+                "(the old generation, the crossed) — " + why);
+        }
+    }
+#endif
+
+    // The rows' identities: the RESULT rows read the result's own
+    // stamps; the VANISHED tail reads the DYING operand's own body —
+    // the row's own operand ref names it (two dying operands: A's
+    // column, the tool's dead).
+    stamp_rows(table, result, /*vanished_rows=*/false);
+    stamp_rows_crossed_vanished(table, A, B);
+    return table;
+}
+
 } // namespace
 
 DescentTable subtract_descent(const BRepBody& result, const BRepBody& A,
@@ -890,9 +1332,24 @@ DescentTable subtract_descent(const BRepBody& result, const BRepBody& A,
     // The outcome classification, read from the result's own counts
     // (the tavola describes what the result IS — no new geometry, no
     // new decisions): the through-hole appends at least one wall face
-    // (the seam-wired circle's ONE, a chain's n); the miss is the
-    // exact copy.
+    // (the seam-wired circle's ONE, a chain's n) and pierces BOTH
+    // faces of the pair (H = 2); the miss is the exact copy; THE
+    // CROSSED (G2-u2 m3, ADR-0038 D3) appends the walls with the
+    // pierced faces SIMPLY CONNECTED (H = 0 — the L-shaped outer
+    // loops, no inner loops) and A LOSING entities (the corner
+    // column died, the ids renumbered). The discriminator is
+    // POSITIONAL on purpose — never the stamps: a caller may derive
+    // the tavola against a differently-stamped operand (the m5
+    // click-test's fresh bridge conversion, the resolver's own
+    // pattern), and the through/miss tables' positional rule must
+    // keep answering for them. The stamp-based correspondence lives
+    // INSIDE the crossed branch, where the result's own renumbering
+    // forces it. (The m4 morse — the blind door — extends this
+    // classification with its own H = 1 seat, its bill to derive.)
     const bool through = result.face_count() > F_A;
+    const bool crossed = through &&
+                         inner_loop_count(result) == 0;
+    if (crossed) return crossed_descent(result, A, B);
 
     DescentTable table;
     table.rows.reserve(result.vertices.size() + result.edges.size() +

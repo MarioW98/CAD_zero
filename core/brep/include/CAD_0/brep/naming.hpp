@@ -400,14 +400,28 @@ inline constexpr RoleEntry kExtFaceRoles[3] = {
 // e_seam convention (the solid circle's wall and every hole's wall
 // are seam-wired — "the pair seam-wired is the materialized form,
 // the name is one"): born of the chain's entity, chain-owned with
-// the rest ('c1:seam' multi-chain). The walk's OTHER edges — the
-// contour's bottom/top curves and verticals, the solid circle's rim
+// the rest ('c1:seam' multi-chain). THE JOINT(i) ROW (G2-u2 m3,
+// ADR-0038 D2/D3 — the bill this unit pays, ADR-0036's morse
+// registers' "the joints' verticals have no vocabulary row yet"
+// redeemed by declaration): the vertical at the chain's joint i,
+// chain-owned (the multi-chain group prefix exactly as lat), the
+// genealogy the authored root's (the sketch's vertex i — the root
+// reference's own form). The FIRST INSTANCE is the subtract's
+// crossed corner: the absorbed 'ext#3:joint(3)' (the tool's joint
+// vertical re-timed to the target's span) — the extrude's OWN
+// stamping extension (joint(i) on every prism's verticals) is
+// REGISTERED, not landed: it would move the morse-3 name-digest
+// goldens, and the additivity clause forbids a golden that moves;
+// the landing is a table row away when its consumer arrives. The
+// walk's OTHER edges — the contour's bottom/top curves, the solid
+// circle's rim
 // halves, the holes' closed rims — are OUTSIDE D1's v1 extrude
 // vocabulary: they read honestly EMPTY, never a guess (the same
 // queue discipline as the vertex names, D4; the extension is a
 // table row away when a consumer arrives).
-inline constexpr RoleEntry kExtEdgeRoles[1] = {
-    {"seam", RoleForm::Bare, nullptr, nullptr, {}, RoleOwner::Chain},
+inline constexpr RoleEntry kExtEdgeRoles[2] = {
+    {"seam",  RoleForm::Bare,     nullptr, nullptr, {}, RoleOwner::Chain},
+    {"joint", RoleForm::ArgIndex, nullptr, nullptr, {}, RoleOwner::Chain},
 };
 
 // The extrude's naming declaration — the sketch operand's roots are
@@ -424,7 +438,10 @@ inline constexpr OperationNaming kExtNaming{
 inline constexpr std::uint32_t kExtLatRole = 0;    // faces: lat(i)
 inline constexpr std::uint32_t kExtCapLoRole = 1;  // faces: cap(lo)
 inline constexpr std::uint32_t kExtCapHiRole = 2;  // faces: cap(hi)
-inline constexpr std::uint32_t kExtSeamRole = 0;   // edges: seam
+inline constexpr std::uint32_t kExtSeamRole = 0;    // edges: seam
+inline constexpr std::uint32_t kExtJointRole = 1;  // edges: joint(i) —
+// the vertical at the chain's joint i (G2-u2 m3: the morse
+// registers' vocabulary row, landed with the crossed corner)
 
 // ---------------------------------------------------------------------------
 // THE NORMATIVE SUBTRACT ROLE TABLES — ADR-0036 D1 (morso 4, the
@@ -467,10 +484,19 @@ inline constexpr OperandSlot kSubIsectSlots[2] = {
 inline constexpr OperandSlot kSubSeamSlots[1] = {
     {1, false, RoleForm::ArgIndex},  // the wall whose seam this is
 };
-inline constexpr RoleEntry kSubEdgeRoles[3] = {
+inline constexpr RoleEntry kSubEdgeRoles[4] = {
     {"isect", RoleForm::Relational, nullptr, "lo", kSubIsectSlots},
     {"isect", RoleForm::Relational, nullptr, "hi", kSubIsectSlots},
     {"seam",  RoleForm::Relational, nullptr, nullptr, kSubSeamSlots},
+    // THE UNLEVELLED ISECT (G2-u2 m3, ADR-0038 D3 — the crossed
+    // corner's exit edges, the plane×plane entry): the pair's
+    // planes ARE the line, so the level is ABSENT (the overlay's
+    // cross-edge elision, ADR-0037 D6's own form). The row APPENDS —
+    // the levelled indices are frozen by the goldens and do not
+    // move; the frozen bijection's first hit ('isect' -> row 0)
+    // is unchanged, the round-trip's levelled knowledge riding leg
+    // 2 as the morse-4 register already pins for the @lo/@hi pair.
+    {"isect", RoleForm::Relational, nullptr, nullptr, kSubIsectSlots},
 };
 
 // The subtract's TYPE-level declaration: the operand bindings are
@@ -487,6 +513,9 @@ inline constexpr OperationNaming kSubNaming{
 inline constexpr std::uint32_t kSubIsectLoRole = 0;  // edges: isect@lo
 inline constexpr std::uint32_t kSubIsectHiRole = 1;  // edges: isect@hi
 inline constexpr std::uint32_t kSubSeamRole = 2;     // edges: seam
+inline constexpr std::uint32_t kSubIsectRole = 3;    // edges: isect (the
+// UNLEVELLED row — the exit edges, the pair's planes ARE the line;
+// G2-u2 m3)
 
 // ---------------------------------------------------------------------------
 // THE ROOT REFERENCE — the authored roots the tavola's FROM names
