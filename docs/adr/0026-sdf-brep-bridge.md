@@ -7,7 +7,12 @@ follow-up landed; the § Consequences min |f| left-over is resolved.**
 Amended 2026-11-02 (H2-u4 m1): the inverse direction's deferred
 winding-number sign is now IN — see the amended `MeshSDF` sign-fix
 row under Non-goals below; this ADR's own extraction contract is
-untouched by that change.
+untouched by that change. Amended again 2026-11-02 (H2-u4 m2): the
+sign's evaluation is now HIERARCHICAL — the deterministic AABB tree
+with the dipole proxy under the declared ε_w tolerance (ADR-0035
+D2.5), the classification identical to the exact evaluation's by
+the derived composition, the exact O(F) path kept as the test
+seam's reference with the budget-zero counterproof.
 
 Accepted 2026-10-16 with two corrections applied on acceptance (see
 § Corrections below). Implementation, in order: the MVP (faceted
@@ -457,7 +462,23 @@ passing):
   registered follow-up. The B3.5 counterproof (the old vote,
   verbatim, red where the winding number is green) lives in
   `tests/unit/bridge/test_bridge.cpp`. The `describe()` string and
-  the primitive-fit are untouched.
+  the primitive-fit are untouched. **Extended (2026-11-02, H2-u4
+  m2)**: the winding evaluation is now hierarchical — a
+  deterministic AABB tree (true-median split, tie-break by index,
+  byte-identical builds, ADR-0014) whose far nodes contribute
+  through their dipole proxy under the declared ε_w tolerance
+  (ADR-0035 D2.5: the per-node threshold ½/100, the accumulation
+  cap 9/10·½, the classification composed with the sign band and
+  identical to the exact evaluation's by derivation); the nearest
+  triangle stays exact through AABB pruning, so the answered
+  distances are bit-identical and no golden moved. The exact O(F)
+  evaluation survives as the test seam's reference
+  (`detail/winding_test_hooks.hpp`) with the budget-zero
+  counterproof; the discrimination (bound conformance point by
+  point, classification invariance, the replicated stress, the
+  measured speed number, the rebuild digest, the refusal order,
+  the counterproof) lives in
+  `tests/unit/bridge/test_h2_u4_m2_bvh.cpp`.
 - **Primitive-fit rework**: the `describe()` string parsing stays as
   is (working, tested); replacing it with a proper `SDFNode` visitor
   is a later hygiene item, deliberately not part of the MVP.

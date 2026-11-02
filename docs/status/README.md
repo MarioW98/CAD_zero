@@ -57,16 +57,32 @@ what those runs verify, day after day:
   grid, genus-1 extractions, bit-identical re-runs). The inverse
   direction: exact primitive detection (sphere, box, cylinder) plus
   the mesh bridge — **whose sign is the true generalized winding
-  number** (H2-u4 m1, 2026-11-02: van Oosterom–Strackee signed solid
-  angles summed in double, the classification's sign band derived
-  and declared in [ADR-0035 D2.4](../adr/0035-h2-numerical-taxonomy.md),
-  concave and 1e6-translated meshes classified right — the old
-  majority vote survives only as the tests' red counterproof), and
-  the bridge is **watertight only**: open meshes refused by name at
-  load (O(E) once — the free-edge count, the rim triangles, the
-  remedy), so the tessellation fallback refuses its own
-  non-watertight output rather than answer with a wrong sign (a
-  watertight tessellator is the registered follow-up).
+  number, evaluated hierarchically** (H2-u4 m1, 2026-11-02: van
+  Oosterom–Strackee signed solid angles summed in double, the
+  classification's sign band derived and declared in
+  [ADR-0035 D2.4](../adr/0035-h2-numerical-taxonomy.md), concave
+  and 1e6-translated meshes classified right — the old majority
+  vote survives only as the tests' red counterproof); **the
+  hierarchy (H2-u4 m2)**: a deterministic AABB tree over the
+  triangles (true-median split, tie-break by index — byte-identical
+  rebuilds) whose far nodes contribute through their dipole proxy
+  under the declared ε_w tolerance ([ADR-0035
+  D2.5](../adr/0035-h2-numerical-taxonomy.md): the per-node
+  threshold ½/100, the accumulation cap 9/10·½, every
+  approximation bounded by the derived ε_node and the bound — not a
+  felt distance — deciding the traversal), the classification
+  IDENTICAL to the exact evaluation's (the derived composition with
+  the sign band), the answered distances exact, the budget-zero
+  counterproof proving the machine can still answer without
+  approximating — and the wall's abatement a NUMBER: on the
+  10k-triangle sphere, 4.5× the exact O(F) scan on the mixed
+  corpus (near-surface 4.4×, far-field 43×, deep-inside 1.9× — the
+  accumulation cap is the honest limit there). The bridge remains
+  **watertight only**: open meshes refused by name at load (O(E)
+  once — the free-edge count, the rim triangles, the remedy), so
+  the tessellation fallback refuses its own non-watertight output
+  rather than answer with a wrong sign (a watertight tessellator
+  is the registered follow-up).
 - **The desktop app** (PySide6) — registry-driven Create menu,
   feature tree, parametric property panel, undo/redo, viewport
   picking with 3D highlight, STL/OBJ import, STL/OBJ/3MF export,
@@ -98,11 +114,11 @@ what those runs verify, day after day:
   its entry criterion ([ADR-0030](../adr/0030-sketcher-mvp.md)).
 - **The inverse bridge's full direction** (B-Rep → SDF) — the sign
   and the watertight contract are IN (H2-u4 m1, the generalized
-  winding number, see above); what does NOT exist yet is the
-  **watertight tessellator** (the fallback's registered follow-up)
-  and the **hierarchical winding number over a BVH** (H2-u4 m2, with
-  its declared cluster bound — today every query is O(F), honest
-  and green).
+  winding number), and the sign's evaluation is HIERARCHICAL since
+  H2-u4 m2 (the ε_w-bounded BVH, the classification identical by
+  the derived composition, the measured speedup above); what does
+  NOT exist yet is the **watertight tessellator** (the fallback's
+  registered follow-up).
 - **Vertex blends** — unscheduled (ADR-0033's no-promises list).
 - **The demo GIF** — the recorder ships (`scripts/record_demo.py`);
   the recording itself has not been made (the TODO below, carried
@@ -117,7 +133,7 @@ what those runs verify, day after day:
 | C | Viewport architecture, PySide6 desktop app | ✅ done |
 | C+ | Native format + migrators, STL/OBJ import, picking, CI matrix, toolchain contract | ✅ done |
 | **D** | **Radial-edge B-Rep topology (ADR-0012), query operators, seam wires, convex booleans (union/subtract/intersect) with slab decomposition, T-junction subdivision** | ✅ done ([ADR-0021](../adr/0021-brep-topology-data-structure.md)–[0025](../adr/0025-proper-greiner-hormann.md)) |
-| E | SDF → B-Rep extraction under hard topology contracts ([ADR-0026](../adr/0026-sdf-brep-bridge.md)); the inverse bridge's sign: the true generalized winding number, watertight-only ([ADR-0035 D2.4](../adr/0035-h2-numerical-taxonomy.md), H2-u4 m1); the watertight tessellator and the BVH are the registered follow-ups | ✅ done |
+| E | SDF → B-Rep extraction under hard topology contracts ([ADR-0026](../adr/0026-sdf-brep-bridge.md)); the inverse bridge's sign: the true generalized winding number, watertight-only, evaluated hierarchically over the ε_w-bounded BVH ([ADR-0035 D2.4/D2.5](../adr/0035-h2-numerical-taxonomy.md), H2-u4 m1+m2); the watertight tessellator is the registered follow-up | ✅ done |
 | **F** | **Modeling: boolean feature slice in the tree + `.CAD_0` v0.3 operation recipes ([ADR-0027](../adr/0027-phase-f-boolean-feature-slice.md)); sketcher MVP — typed 2D profiles, extrude as a feature, `.CAD_0` v0.4 ([ADR-0030](../adr/0030-sketcher-mvp.md))** | ▶️ in progress |
 | **G** | **The exact B-Rep kernel — road (a), all in house ([ADR-0031](../adr/0031-exact-brep-kernel.md), accepted; ADR-0003 amended: the license whitelist): G1 exact primitives + exact mass properties ([ADR-0032](../adr/0032-g1-topology-and-exact-primitives.md), implemented), G2 exact booleans + the first fillet ([ADR-0033](../adr/0033-g2-exact-booleans-and-first-fillet.md) **accepted 2026-10-26: D2 = option (i), the table is the wall — option (ii) registered priced with its entry criterion, decided at the next checkpoint**), G3 free surfaces** | ▶️ in progress — **G1 COMPLETE AND CLICK-TESTED (2026-10-26): ADR-0032 Implemented (the flip is the click-test's own act, the ADR-0030 precedent), the ADR-0031 internal checkpoint recorded (the estimates stand), ADR-0033 accepted with the table-boundary decision taken — D2 = option (i), the wall; the review carried one correction to the record (the cylinder pair's unequal-radii limit missed the typed transverse interior, corrected where it stood); G2 unit 1 of 6 LANDED — the table**: the four typed entries, one derivation each (the classical formulas ARE the goldens: √(R²−d²), the radical plane, ±√(R²−r²), the mid-plane lines at ±√(r²−d²/4)), the p-curves typed in BOTH domains (the framed SphereSurface/CircleCurve, the latitude Line2s, the full-period convention), the re-frame rule with its derived frame budget (one axis family per face — the incompatible family finds the wall, option (i) coherent to the end), the degenerates with pinned dispositions (the tangent point/circle/double line, the empty classes named, the co-radial coincident — the dedup rule's trigger), the wall as returned records (the Viviani quartic, the Steinmetz sinusoids in both domains, the corrected unequal-radii gate, plane×cylinder and plane×plane pointed to their landed owners, the cone registered with no writer, the toroidal rows registered for the fillet's unit, the provenance gate on approximated operands) — all of it QUERYABLE from Python (`CAD_0.brep.ssi_query`, with `translate_body` for positioning) before any boolean consumes it, bit-identical across re-runs (hex-digest pinned); no boolean moved, the format did not move, the display did not change — units 2–6 follow (the booleans extended, the fillet, the degenerates' corpus, the UI, the guide case end-to-end); G1 units 1–6 all landed — unit 1, the data model (p-curves on co-edges, Layer-2 provenance, χ = V−E+F−H); unit 2, the primitives with true trimming + the face query in the bindings; unit 3, the exact extrude (the HybridBody on the node); unit 4, the exact subtract (the plane∩cylinder SSI, the pinned through-hole topology, the honest refusals); unit 5, the exact mass properties (the divergence theorem over the exact faces, all_exact the honesty flag, the classical formulas as the tests); unit 6, the report and the guide case end-to-end — the Debug report grew mass + provenance beside χ (with the H term in the label) and genus through `CAD_0.report` (the single consumer of the mass API and the body query, no second opinion), the property panel shows the numbers READ-ONLY (QLabels that cannot emit parameter_changed — the UI-bug lesson made structural, the exact/approximated flag visible, a faceted body's polyhedral numbers never disguised as exact), and the guide-case example prints the D7.5 table side by side (12/17/7/2, χ=0, genus 1, abc − πr²h, I_zz = abc(a²+b²)/12 − πr⁴h/2 — every row PASS) with the radius edit bit-identical through ONE undo entry, running in the CI as a suite member; the v0.4 golden pinned with the table's numbers, the v0.3 golden honestly faceted |
 | H | STEP AP203 MVP (ADR-0010) | planned |

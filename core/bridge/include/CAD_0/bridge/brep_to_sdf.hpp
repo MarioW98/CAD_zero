@@ -14,6 +14,19 @@
 // double (the H1/ADR-0034 discipline; float32 vertices and the
 // float32 query enter double exactly, once, at the boundary).
 //
+// THE HIERARCHY (H2-u4 m2): the winding sum is evaluated over a
+// deterministic AABB tree built once at load — far nodes contribute
+// through their dipole proxy under the DECLARED approximation
+// budget ε_w, every approximation bounded by the derived ε_node and
+// the accumulated bound composed honestly with morso 1's sign band
+// (ADR-0035 D2.5). The classification is identical to the exact
+// evaluation's (derived), the answered distance is exact, the builds
+// are byte-identical (ADR-0014), and the exact O(F) evaluation
+// survives as the test seam's reference with the budget-zero
+// counterproof: the machine can still answer without approximating.
+// Queries are const and serial (ADR-0009's shipped world) — no
+// parallelism here in secret.
+//
 // THE CONTRACT — WATERTIGHT ONLY: the winding number is defined only
 // on CLOSED, consistently oriented meshes. mesh_to_sdf validates the
 // mesh at load (O(E), once) and REFUSES open meshes with an

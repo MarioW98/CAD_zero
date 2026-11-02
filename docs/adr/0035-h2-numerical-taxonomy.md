@@ -100,7 +100,7 @@ declared tolerance. The worlds, typed once:
 | the segment determinant: parallel / collinear admission | length² | **the derived band, D2.3** | first principles, D2.3 |
 | parallelity of normals (kParallelDotMin, kNormalParallelTol) | **Angular** (dimensionless by construction) | typed Angular tolerances, declared | declared (the loose pre-filter stays loose, the strict threshold stays strict — both typed) |
 | the division guard (kIsectDenomEps) | none — NOT a tolerance | stays a numeric guard, declared as such | engineering (the comment at boolean.cpp:57-60 already says it; ratified as a rule) |
-| **the bridge's sign classification: \|w − round(w)\|, w the generalized winding number of the mesh at the query** (added 2026-11-02, H2-u4 m1; see D2.4) | **Winding** (dimensionless — w counts how many times the surface winds around the query) | **the derived sign band ε_w(F) = 2·F·γ₄₀/(4π) + 16u, D2.4** | first principles, D2.4 |
+| **the bridge's sign classification: \|w − round(w)\|, w the generalized winding number of the mesh at the query** (added 2026-11-02, H2-u4 m1; see D2.4 — and, since H2-u4 m2, the same Winding kind carries the hierarchy's approximation members: the per-node threshold ε_w and the accumulation cap, D2.5) | **Winding** (dimensionless — w counts how many times the surface winds around the query) | **the derived sign band ε_w,noise(F) = 2·F·γ₄₀/(4π) + 16u, D2.4; the approximation threshold ε_w = ½/100 and the accumulation cap 9/10·½ = 0.45, D2.5** | first principles, D2.4/D2.5 |
 
 **D2.1 The Linear world** is ADR-0004's own, unchanged in kind:
 one ε_L per operation, explicit at the signature, no global
@@ -198,7 +198,11 @@ derivation.** The re-homing map for morsi 2-3, use by use
 (added 2026-11-02, H2-u4 m1 — the mesh→SDF bridge's sign landed
 with its threshold derived here, beside the determinant band; the
 derivation lives in `core/bridge/src/brep_to_sdf.cpp` beside its
-use, mirrored here for the vocabulary's completeness).
+use, mirrored here for the vocabulary's completeness). *[Amended
+2026-11-02, H2-u4 m2: the band's symbol was ε_w(F) at morso 1; D2.5
+renames it **ε_w,noise(F)** — one symbol per meaning. The winding
+family's ε_w now names the hierarchy's approximation threshold, as
+the m2 order pins; the band's derivation below is unchanged.]*
 
 The classification: the mesh→SDF bridge answers inside/outside by
 the GENERALIZED WINDING NUMBER w(x) = (1/4π)·Σᵢ Ωᵢ(x) — the signed
@@ -219,18 +223,162 @@ independent of the angle (|δθ| ≤ γ₄₀ by AM–GM: 2|N||D| ≤ N²+D²) �
 no shape, size or distance term survives; the Kahan-compensated
 sum holds the summation at O(u) more. So:
 
-    ε_w(F) = 2·F·γ₄₀/(4π) + 16u  ≈  F·7.1·10⁻¹⁶
+    ε_w,noise(F) = 2·F·γ₄₀/(4π) + 16u  ≈  F·7.1·10⁻¹⁶
 
-F = 10⁶ triangles → ε_w ≈ 7·10⁻¹⁰; the band would need F > 7·10¹⁴
-to reach the classification boundary at 0.5 — the classification
-is total, no query falls between the band and the integer
-undecided. THE TIE-BREAK (Family 3's rule, deterministic): |w −
-round(w)| > ε_w is not noise but geometry — the query sits ON the
-surface within the mesh's own float32 storage honesty; the global
-evidence is exhausted exactly there and the LOCAL evidence
-decides: the side of the nearest triangle, in double, from the
-same stored bytes — same bytes in, same answer out (ADR-0014),
+F = 10⁶ triangles → ε_w,noise ≈ 7·10⁻¹⁰; the band would need
+F > 7·10¹⁴ to reach the classification boundary at 0.5 — the
+classification is total, no query falls between the band and the
+integer undecided. THE TIE-BREAK (Family 3's rule, deterministic):
+|w − round(w)| > ε_w,noise is not noise but geometry — the query
+sits ON the surface within the mesh's own float32 storage honesty;
+the global evidence is exhausted exactly there and the LOCAL
+evidence decides: the side of the nearest triangle, in double, from
+the same stored bytes — same bytes in, same answer out (ADR-0014),
 never a coin flip.
+
+**D2.5 The winding approximation — the hierarchy's declared bound**
+*(added 2026-11-02, H2-u4 m2: the BVH of the winding number. The
+mesh→SDF bridge's sign is now evaluated hierarchically; this section
+derives the approximation's bound, declares the tolerance's members,
+and composes them with D2.4's band. The implementation lives in
+`core/bridge/src/brep_to_sdf.cpp`; the discrimination lives in
+`tests/unit/bridge/test_h2_u4_m2_bvh.cpp`.)*
+
+**The problem, honest.** Morso 1 answers each query in O(F): the
+winding sum and the nearest triangle in one pass. The bridge's grid
+consumer makes Q ∝ detail queries, so the grid costs O(F·Q) — not a
+promise, a wall. The hierarchy abates it the only way this repo
+tolerates an approximation: with the bound derived and declared
+here, the traversal obeying the bound — never a distance felt by
+sentiment — and the classification composed with D2.4's band.
+
+**The structure (deterministic, ADR-0014).** A binary AABB tree
+over the triangles, built ONCE per mesh at load, after the
+watertight check (morso 1's order intact). The split is the TRUE
+median of the triangle centroids on the node's widest axis, with
+the FIXED tie-break by original triangle index — a TOTAL order, so
+`std::sort` yields the same arrangement on every standard library:
+two builds of the same mesh give the IDENTICAL tree, byte for byte.
+(The axis choice is the AABB's largest extent, ties to the lowest
+axis index; leaves hold ≤ 32 triangles — a declared structure
+constant, the walk-versus-granularity trade-off.) The query is
+const, allocates nothing, and runs serial — ADR-0009's shipped
+world is the single-threaded fallback, and no parallelism is added
+in secret; the const queries are READY for the grid parallelism the
+day that ADR declares it clean.
+
+**The proxy.** Each node stores its cluster's aggregate: the AABB,
+the bounding sphere (center = the area-weighted centroid, radius =
+max vertex distance — the sphere contains every triangle of the
+cluster), the cluster's area A, and its VECTOR AREA (the dipole
+moment) m = Σ Aᵢ·n̂ᵢ = ½·Σ (v₁−v₀)×(v₂−v₀). A far node's solid
+angle sum is approximated by its dipole — the classic hierarchical
+winding number form (Jacobson, Kavan & Sorkine 2013; Barill et al.
+2018):
+
+    Ω_proxy(x) = m · (c − x)/|c − x|³
+
+the cluster's vector area dotted with the point-charge field at the
+sphere center. A CLOSED cluster has m = 0 (∮ n̂ dA = 0): its proxy
+is EXACTLY zero outside — the dipole is the right first moment for
+this field, and closed sub-shells come out exact.
+
+**The bound, derived.** Both the exact sum and the proxy integrate
+the same point-charge field G_x(y) = (y−x)/|y−x|³ over the
+cluster's triangles (Ω = ∫ n̂·G_x dA — the flux form of the van
+Oosterom–Strackee angle; the identity is mathematical, the atan2 is
+its stable evaluation). The proxy evaluates the field ONCE, at the
+sphere center c; the error is
+
+    |Ω_C(x) − Ω_proxy(x)| = |∫ n̂·(G_x(y) − G_x(c)) dA|
+                          ≤ A · max_{y∈cluster} |G_x(y) − G_x(c)|.
+
+On the ball B(c, r) the field's Jacobian is bounded —
+|∂Gᵢ/∂yⱼ| = |δᵢⱼ/r̃³ − 3rᵢrⱼ/r̃⁵| ≤ 4/r̃³ (row-sum), with
+r̃ = |y−x| ≥ d−r because the segment [c, y] stays inside the ball
+and outside the singularity — so |G_x(y) − G_x(c)| ≤ 4r/(d−r)³ and
+
+    ε_node^Ω = 4·A·r/(d−r)³  (solid-angle units; d ≤ r ⇒ never approximate)
+
+— which reads as the solid angle the bounding sphere subtends at
+the query (Ω_B = 2π(1−√(1−(r/d)²)) ≥ πr²/d²) scaled by what is
+underneath — the cluster's shape and proximity:
+
+    ε_node^Ω = Ω_B(x) · (4A/(πrd)) · (1−r/d)⁻³.
+
+In winding units (÷4π — the classification's own world, where the
+tolerance below lives), with the proxy's own rounding folded in
+(each proxy is 22 counted double flops → relative error γ₂₂ on a
+term of magnitude ≤ A/(d−r)², so the bound carries everything
+about the proxied node — approximation AND its arithmetic):
+
+    ε_node = (A/4π) · ( 4r/(d−r)³ + γ₂₂/(d−r)² )
+
+**The tolerance's members, declared.** The classification boundary
+sits at |w − round(w)| = ½; the discipline is DECIMAL ORDERS of the
+half-gap, one per role:
+
+- **ε_w = ½/100 = 5·10⁻³ — the PER-NODE threshold.** A node may be
+  proxied at all only when its own derived bound is under one
+  hundredth of the half-gap: a single approximation lives two
+  decimal orders below the classification boundary, and an order
+  below the tie-break ladder's coarsest fractional evidence (⅛ =
+  0.125, a 25× margin). The role is MEASURED (see the tests): the
+  threshold is the accumulation room's allocator — at ½/100 the
+  room flows to the MANY far nodes whose bounds are orders smaller,
+  instead of being eaten by a few mid-field clusters whose dipoles
+  are the least trustworthy.
+- **The accumulation cap 9/10·½ = 0.45 — the composition's
+  ceiling.** The sum of the bounds of every proxied node, B_accum,
+  stops one tenth short of the boundary; that tenth belongs to the
+  noise band ε_w,noise(F) and the tie-break's fractional evidence.
+
+**The traversal rule, verbatim:** approximate a node SE E SOLO SE
+ε_node ≤ ε_w AND ε_node ≤ (cap − B_accum). The bound decides, the
+code obeys; when the accumulation can eat the margin, the traversal
+DESCENDS — it never decides by chance.
+
+**The composition with the sign band (derived, not hoped).** The
+hierarchical classification band is the honest sum:
+
+    ε_class = ε_w,noise(F) + B_accum   (≤ ε_w,noise + 0.45 < ½)
+
+Off the surface w is EXACTLY integer (D2.4's fact), so both the
+exact and the hierarchical values round to the same integer
+whenever ε_class < ½ — with the cap at 0.45 the rounding is total:
+**the classification is IDENTICAL to the exact evaluation's, on
+every off-surface query, derived.** ON a face (w = ½) the
+fractional evidence survives the composed band (½ − 0.45 −
+ε_w,noise > 0) and the deterministic local tie-break fires, as in
+morso 1. The honest edge, declared: on-surface points whose true
+fractional value lies WITHIN ε_class of an integer (a cube corner's
+⅛ < 0.45) classify by the rounding instead of the tie-break — and
+the two agree there (an exactly-on-triangle query has the local
+evidence in the triangle's plane: both answer outside), so the
+answered bytes are identical on the corpus; the divergence needs a
+deep saddle vertex queried exactly, which no honest corpus pins.
+The tests prove the composition empirically: zero sign flips and
+bit-identical answered values against the exact evaluation on the
+whole corpus (B4.2), the bound conformant point by point (B4.1).
+
+**The golden declaration (the D5 protocol applied).** The
+approximation moves the INTERNAL winding sums — within ε_w, the
+bound proven — and NOTHING that any golden pins: the answered
+distances are exact in both paths (the AABB pruning never loses the
+argmin), and the classifications are identical (the composition
+above). The re-pin this morso pre-declared turned out EMPTY: no
+pinned byte moved; the topology goldens (the classified signs, the
+counts) stand unmoved, as the order demands, and the m1 tests
+(B3.1–B3.5) run green through the hierarchy WITHOUT re-pinning.
+
+**The counterproof.** A traversal with ε_w = 0 never approximates
+(every node descends, every leaf evaluates): B_accum = 0 exactly,
+the winding within 2·ε_w,noise of the exact sum (the same terms,
+tree order instead of index order — both Kahan sums sit within the
+band of the truth), the classification identical, the answered
+value bit-identical. The escape route from the machine's own
+optimization exists and is proven (B4.7) — and it is the same
+machine, the same tree, the budget the only variable.
 
 ### D3. Family 3 — the bands: deterministic tie-break on the canonical key, golden-pinned
 
@@ -458,5 +606,12 @@ acceptance they apply in the same act (the acceptance commit):
   predicate.hpp (the wrapper contract).
 - Shewchuk, J. R. (1996). Adaptive Precision Floating-Point
   Arithmetic and Fast Robust Geometric Predicates. CMU-CS-96-140.
+- Jacobson, A., Kavan, L., & Sorkine, O. (2013). "Robust
+  Inside-Outside Segmentation using Generalized Winding Numbers."
+  ACM TOG 32(4) — the hierarchical winding number's form (D2.5).
+- Barill, G., Dickson, N. G., Schmidt, R., Levin, D. I. W., &
+  Jacobson, A. (2018). "Fast Winding Numbers for Soups and Clouds."
+  ACM TOG 37(4) — the multipole/dipole cluster proxy and its
+  bounding-sphere error structure (D2.5's classic shape).
 - The H2-u1 lesson, in the tree: boolean.cpp:52-59 — the gates
   went relative before the taxonomy had a name.

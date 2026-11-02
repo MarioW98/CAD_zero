@@ -3,6 +3,7 @@
 set(CAD_0_BRIDGE_HEADERS
     include/CAD_0/bridge/sdf_to_brep.hpp
     include/CAD_0/bridge/brep_to_sdf.hpp
+    include/CAD_0/bridge/detail/winding_test_hooks.hpp
 )
 
 set(CAD_0_BRIDGE_SOURCES
