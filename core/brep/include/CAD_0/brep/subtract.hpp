@@ -989,8 +989,9 @@ inline CrossedCorner crossed_corner_gate(
                           "family, ADR-0038 D4's queue)");
 
     // The through z-span (the blind span composes: the composite is
-    // queued behind the decoupling morse, its cap blocked by the m2
-    // wall).
+    // queued behind the chain cap insertion — the m4 door landed the
+    // SEAM-WIRED CIRCLE family, and the composite's L-shaped cap is
+    // the CHAIN form the walk table still queues).
     if (!(z_lo <= t.z_bot + tol && z_hi >= t.z_top - tol)) {
         cc.admitted = false;
         cc.refusal =
@@ -1001,11 +1002,12 @@ inline CrossedCorner crossed_corner_gate(
             "] does not cover the pierced pair z = [" +
             std::to_string(t.z_bot) + ", " + std::to_string(t.z_top) +
             "]) - the notch with the internal cap is the composite "
-            "family (ADR-0038 D4's queue): its L-shaped cap is "
-            "blocked by the same orientation wall the blind's m2 "
-            "verdicts pinned (the decoupling morse, G2-u2 m4, opens "
-            "it). Remedy: extend the extrusion distance so the tool "
-            "passes through, or accept the faceted path.";
+            "family (ADR-0038 D4's queue): its L-shaped cap needs the "
+            "CHAIN cap insertion — the per-entity rim projection the "
+            "walk table queues (the blind's decoupling landed for the "
+            "SEAM-WIRED CIRCLE family, G2-u2 m4; this cap is the "
+            "chain form). Remedy: extend the extrusion distance so "
+            "the tool passes through, or accept the faceted path.";
         return cc;
     }
 
@@ -1020,7 +1022,7 @@ inline CrossedCorner crossed_corner_gate(
     if (hp[0].arc || hq[0].arc)
         return refuse("the exit is on an ARC entity (the circular "
                       "crossed - the arc class shares the blind's "
-                      "orientation wall, ADR-0038 D4's queue with "
+                      "carried-cap family, ADR-0038 D4's queue with "
                       "the reason sharpened by the m2 amendment)");
     cc.exit_p = hp[0].point;
     cc.ent_p = hp[0].entity;
@@ -1724,6 +1726,451 @@ inline std::unique_ptr<BRepBody> crossed_corner_assemble(
     return R;
 }
 
+// ---------------------------------------------------------------------------
+// blind_door_assemble — THE BLIND DOOR (ADR-0038 D1.1/D2 + the m4
+// decoupling rule): the seam-wired circle blind, one cap strictly
+// inside, the other side through. THE DECOUPLING THROUGHOUT: the
+// carried cap keeps its NATIVE FRAME (the tool's own cap surface,
+// copied bit-identical — the plane, the domain) and gains the
+// INVERTED REGION BIT (the rim arcs authored hole=true, "the
+// material now outside the profile" — the pierced faces' inner-loop
+// precedent applied to a carried face); the WALK serves the topology
+// — the wall is the through machinery's seam-wired window re-based
+// to [z_floor, z_pierced] VERBATIM (u_sign = -1, region-on-right),
+// the pierced face's inner loop is the G1 machinery unchanged, the
+// cap's loop follows its OWN frame parity (the caps' own walks:
+// cap(lo) the reversed cycle, cap(hi) the canonical — exactly the
+// pierced faces' convention), and the RACCOLTO's XOR azimuth closes
+// the wall's window and the cap's rim on the SAME seam pair with
+// OPPOSITE directions. The rim is typed by the INTRA-TOOL SSI
+// consultation (D2: the tool's cap × the tool's wall, the same body
+// twice — the entry plane×cylinder ⊥ at the cap quota, the
+// both-domain answer the m2 tests pinned as the family's guide).
+// ---------------------------------------------------------------------------
+inline std::unique_ptr<BRepBody> blind_door_assemble(
+    const BRepBody& A, const BRepBody& bp, const ToolWalk& w,
+    const TargetInfo& t, bool cap_is_lo, double tol,
+    const SubtractNaming& naming) {
+    const ProvenanceInfo prov = combined_provenance(A, bp);
+    (void)tol;  // the gate consumed the band; the assembly is exact
+
+    // ---- The quotas: the floor (the carried cap's own) and the
+    // pierced quota (the window's other end, the through side).
+    // v = 0 is the window's LOW end: the floor for blind_lo, the
+    // pierced face for blind_hi (the mirror read upside down — the
+    // numbering table is the through case's own, re-based).
+    const double z_floor = cap_is_lo ? w.z_lo : w.z_hi;
+    const std::size_t pierced = cap_is_lo ? t.top_face : t.bottom_face;
+    const double z_pierced = cap_is_lo ? t.z_top : t.z_bot;
+    const double z_v0 = std::min(z_floor, z_pierced);
+    const double z_v1 = std::max(z_floor, z_pierced);
+    const double h = z_v1 - z_v0;
+
+    // ---- THE INTRA-TOOL CONSULTATION (D2 — the insertion's guide):
+    // the tool's near cap × the tool's wall, the same body twice.
+    // The near cap: the plane whose normal points the carried cap's
+    // own way (the -Z cap for cap_is_lo, the +Z cap otherwise); the
+    // wall: the CylinderZSurface (the circle tool's single lateral).
+    const PlaneSurface* cap_surf = nullptr;
+    const Face* cap_face = nullptr;
+    const CylinderZSurface* tool_wall = nullptr;
+    for (const auto& f : bp.solid.shell().faces()) {
+        const auto* surf = f.surface();
+        if (surf == nullptr) continue;
+        TranslateReader r;
+        surf->accept(r);
+        if (r.plane != nullptr) {
+            const double nz = r.plane->normal_vec().z;
+            if ((cap_is_lo && nz < -0.9) || (!cap_is_lo && nz > 0.9)) {
+                cap_surf = r.plane;
+                cap_face = &f;
+            }
+        } else if (r.cyl_z != nullptr) {
+            tool_wall = r.cyl_z;
+        }
+    }
+    if (cap_surf == nullptr || cap_face == nullptr || tool_wall == nullptr)
+        throw std::logic_error(
+            "exact_subtract: the blind door's intra-tool consultation "
+            "could not find the carried cap x the wall of the same "
+            "body (the tool's own faces) - report this as a kernel "
+            "bug.");
+    const PlaneCylinderSSI ans =
+        ssi_plane_cylinder(*cap_surf, *tool_wall, tol, tol);
+    if (ans.kind != PlaneCylinderSSI::Kind::Circle ||
+        std::abs(ans.circle_center.x - w.circle_center.x) > tol ||
+        std::abs(ans.circle_center.y - w.circle_center.y) > tol ||
+        std::abs(ans.circle_center.z - z_floor) > tol ||
+        std::abs(ans.circle_radius - w.circle_radius) > tol)
+        throw std::logic_error(
+            "exact_subtract: the blind door's intra-tool consultation "
+            "disagrees with the walk (the cap x the wall must answer "
+            "the circle at the cap quota, the wall's own radius) - "
+            "report this as a kernel bug.");
+
+    // The rim's parameters FROM the entry's both-domain answer: the
+    // cap-side circle (the logical rim — its materialized form the
+    // seam-wired arc pair below) and the wall-side quota (the Line2
+    // v = const, the window's floor edge re-based by the walk).
+    const auto cap_dom = [&](const math::Vec2d& xy) {
+        return plane_domain(*cap_surf,
+                            math::Vec3d{xy.x, xy.y, z_floor});
+    };
+    const math::Vec2d rim_center = cap_dom(w.circle_center);
+    const double rim_radius = ans.circle_radius;
+
+    auto R = std::make_unique<BRepBody>();
+    auto& shell = R->solid.shell_mut();
+    shell.set_closed(true);
+
+    // ---- A verbatim (the ids preserved, the factory's own p-curves
+    // and stamps intact).
+    R->vertices = A.vertices;
+    R->edges = A.edges;
+    for (const auto& f : A.solid.shell().faces()) shell.add_face(f);
+
+    const std::size_t n = w.entities.size();  // the circle: n = 2
+    const std::size_t v_base = R->vertices.size();
+    const std::size_t e_base = R->edges.size();
+    const auto vid = [&](std::size_t i) { return static_cast<VertexId>(i); };
+    const auto eid = [&](std::size_t i) { return static_cast<EdgeId>(i); };
+
+    // The joints of the canonical walk: J_i = entity i's q.
+    std::vector<math::Vec2d> J(n), P(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        J[i] = w.entities[i].q;
+        P[i] = w.entities[i].p;
+    }
+
+    // ---- The walk tables (the through case's circle layout, the
+    // quotas re-based): 2i = J_i at z_v0, 2i+1 = J_i at z_v1;
+    // e_base+i = entity i's curve at v=0 (J_(i-1) -> J_i), e_base+n+i
+    // = its v=h copy, e_base+2n = the seam at J_0 (the +X meridian).
+    for (std::size_t i = 0; i < n; ++i) {
+        Vertex vb{math::Vec3d{J[i].x, J[i].y, z_v0}};
+        vb.set_id(vid(v_base + 2 * i));
+        vb.set_provenance(prov);
+        R->vertices.push_back(vb);
+        Vertex vt{math::Vec3d{J[i].x, J[i].y, z_v1}};
+        vt.set_id(vid(v_base + 2 * i + 1));
+        vt.set_provenance(prov);
+        R->vertices.push_back(vt);
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t prev = (i + n - 1) % n;
+        Edge eb{vid(v_base + 2 * prev), vid(v_base + 2 * i)};
+        eb.set_id(eid(e_base + i));
+        eb.set_provenance(prov);
+        R->edges.push_back(eb);
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::size_t prev = (i + n - 1) % n;
+        Edge et{vid(v_base + 2 * prev + 1), vid(v_base + 2 * i + 1)};
+        et.set_id(eid(e_base + n + i));
+        et.set_provenance(prov);
+        R->edges.push_back(et);
+    }
+    {
+        // The seam: the vertical at J_0 (the seam meridian +X),
+        // v = 0 -> v = h — the through case's own layout (2i/2i+1 =
+        // J_i at the window's two ends).
+        Edge ev{vid(v_base), vid(v_base + 1)};
+        ev.set_id(eid(e_base + 2 * n));
+        ev.set_provenance(prov);
+        R->edges.push_back(ev);
+    }
+
+    // ---- THE WALL — the through machinery's seam-wired window,
+    // re-based to [z_v0, z_v1] (the u_sign = -1 cavity frame, the
+    // window [u0-2pi, u0] x [0, h], region-on-right on every Line2).
+    const auto line_rr = [](math::Vec2d a, math::Vec2d b) {
+        return pcurve_segment(a, b, /*interior_left=*/false);
+    };
+    {
+        const double psi0 =
+            std::atan2(J[0].y - w.circle_center.y,
+                       J[0].x - w.circle_center.x);
+        const double u0 = -psi0;
+        auto surf = std::make_shared<CylinderZSurface>(
+            w.circle_center, w.circle_radius, z_v0, -1);
+        const double f0 = u0;
+        const double fp = subtract_detail::kPi;
+        const double ftp = subtract_detail::kTwoPi;
+        const double fh = h;
+        Loop loop;
+        CoEdge s_down{eid(e_base + 2 * n), true};
+        s_down.set_p_curve(line_rr({f0, fh}, {f0, 0.0}));
+        CoEdge bot1{eid(e_base + 1), false};
+        bot1.set_p_curve(line_rr({f0, 0.0}, {f0 - fp, 0.0}));
+        CoEdge bot0{eid(e_base + 0), false};
+        bot0.set_p_curve(
+            line_rr({f0 - fp, 0.0}, {f0 - ftp, 0.0}));
+        CoEdge s_up{eid(e_base + 2 * n), false};
+        s_up.set_p_curve(
+            line_rr({f0 - ftp, 0.0}, {f0 - ftp, fh}));
+        CoEdge top0{eid(e_base + n + 0), true};
+        top0.set_p_curve(
+            line_rr({f0 - ftp, fh}, {f0 - fp, fh}));
+        CoEdge top1{eid(e_base + n + 1), true};
+        top1.set_p_curve(line_rr({f0 - fp, fh}, {f0, fh}));
+        loop.add_coedge(s_down);
+        loop.add_coedge(bot1);
+        loop.add_coedge(bot0);
+        loop.add_coedge(s_up);
+        loop.add_coedge(top0);
+        loop.add_coedge(top1);
+        Face face(surf);
+        face.add_loop(std::move(loop));
+        face.set_id(static_cast<FaceId>(shell.faces().size()));
+        face.set_provenance(prov);
+        // The ABSORBED wall inherits the tool's lateral's stamp (the
+        // wall is the extrude's face, not the subtract's).
+        if (w.cap != nullptr) {
+            const Face* lateral = subtract_detail::tool_lateral_of(
+                bp, w.cap->loops()[0].coedges()[0].edge());
+            if (lateral != nullptr) {
+                face.set_shape_id(lateral->shape_id());
+                face.set_name(lateral->name());
+            }
+        }
+        shell.add_face(std::move(face));
+    }
+
+    // ---- THE PIERCED FACE'S INNER LOOP — the G1 machinery
+    // unchanged: the +Z face walks the canonical cycle, the -Z face
+    // the reversed one (their own frames' parity), the bits flipped
+    // (the material outside the profile: the arcs hole = true).
+    {
+        const auto& pf = A.solid.shell().faces()[pierced];
+        TranslateReader pr;
+        pf.surface()->accept(pr);
+        const PlaneSurface* pl = pr.plane;
+        const auto dom = [&](const math::Vec2d& xy) {
+            return plane_domain(
+                *pl, math::Vec3d{xy.x, xy.y, z_pierced});
+        };
+        Loop inner;
+        inner.set_outer(false);
+        if (cap_is_lo) {
+            // The +Z pierced face: [entity 0 FWD, ..., entity n-1
+            // FWD] on the v = h pair.
+            for (std::size_t i = 0; i < n; ++i) {
+                const auto& e = w.entities[i];
+                CoEdge ce{eid(e_base + n + i), false};
+                const math::Vec2d c = dom(e.center);
+                const math::Vec2d s = dom(e.p);
+                ce.set_p_curve(pcurve_arc(
+                    c, e.radius, /*hole=*/true,
+                    std::atan2(s.y - c.y, s.x - c.x), e.sweep));
+                inner.add_coedge(ce);
+            }
+        } else {
+            // The -Z pierced face: the reversed cycle [entity 0 REV,
+            // entity n-1 REV, ..., entity 1 REV] on the v = 0 pair.
+            const auto add = [&](std::size_t i) {
+                const auto& e = w.entities[i];
+                CoEdge ce{eid(e_base + i), true};
+                const math::Vec2d c = dom(e.center);
+                const math::Vec2d s = dom(e.q);  // the REVERSED start
+                ce.set_p_curve(pcurve_arc(
+                    c, e.radius, /*hole=*/true,
+                    std::atan2(s.y - c.y, s.x - c.x), e.sweep));
+                inner.add_coedge(ce);
+            };
+            add(0);
+            for (std::size_t k = n - 1; k >= 1; --k) add(k);
+        }
+        shell.faces_mut()[pierced].add_loop(std::move(inner));
+    }
+
+    // ---- THE INTERNAL CAP — the m4 decoupling's own authoring: the
+    // tool's cap face carried with its NATIVE FRAME (the surface
+    // copied bit-identical — the same mathematical plane, the same
+    // domain), the loop the cap's OWN walk (the caps' frame parity:
+    // cap(lo) the reversed cycle, cap(hi) the canonical — the same
+    // walks the extrude authored, re-based onto the born rim pair),
+    // and the region bit INVERTED: the rim arcs carry hole = true —
+    // "the material is now outside the profile" (D1.1), the walk's
+    // own declaration that the material side flipped. The mass
+    // machinery reads the bit (the outer loop's region side) and
+    // the volume answers the golden the wall refused.
+    {
+        Loop loop;
+        if (cap_is_lo) {
+            // The -Z cap: the REVERSED cycle on the v = 0 pair —
+            // [entity n-1 REV, ..., entity 0 REV] (the mirror
+            // domain's only storable form: the CCW-only vocabulary
+            // forces it, and the extrude's own cap(lo) walks it).
+            for (std::size_t k = n; k-- > 0;) {
+                const auto& e = w.entities[k];
+                CoEdge ce{eid(e_base + k), true};
+                const math::Vec2d s = cap_dom(J[k]);  // REV: start q
+                ce.set_p_curve(pcurve_arc(
+                    rim_center, rim_radius, /*hole=*/true,
+                    std::atan2(s.y - rim_center.y,
+                               s.x - rim_center.x),
+                    e.sweep));
+                loop.add_coedge(ce);
+            }
+        } else {
+            // The +Z cap: the CANONICAL cycle on the v = h pair —
+            // [entity 0 FWD, ..., entity n-1 FWD].
+            for (std::size_t i = 0; i < n; ++i) {
+                const auto& e = w.entities[i];
+                CoEdge ce{eid(e_base + n + i), false};
+                const math::Vec2d s = cap_dom(P[i]);  // FWD: start p
+                ce.set_p_curve(pcurve_arc(
+                    rim_center, rim_radius, /*hole=*/true,
+                    std::atan2(s.y - rim_center.y,
+                               s.x - rim_center.x),
+                    e.sweep));
+                loop.add_coedge(ce);
+            }
+        }
+        Face face(std::make_shared<PlaneSurface>(*cap_surf));
+        face.add_loop(std::move(loop));
+        face.set_id(static_cast<FaceId>(shell.faces().size()));
+        face.set_provenance(prov);
+        // The ABSORBED cap inherits the tool's own stamp (one face
+        // in, one face out — the wall's own disposition).
+        face.set_shape_id(cap_face->shape_id());
+        face.set_name(cap_face->name());
+        shell.add_face(std::move(face));
+    }
+
+    // ---- THE NAMES (D3): the floor rim — the grammar's FIRST
+    // INTRA-BODY row (the carried cap x the wall of the same body,
+    // the level absent: the cap's plane IS the level); the pierced
+    // rim and the seam in the G1 forms; the stamping in the pass
+    // that builds, the operands' own stamps the legs.
+    {
+        const Face* const wall_operand =
+            (w.cap != nullptr)
+                ? subtract_detail::tool_lateral_of(
+                      bp, w.cap->loops()[0].coedges()[0].edge())
+                : nullptr;
+        const Face* const pierced_operand =
+            &A.solid.shell().faces()[pierced];
+        const bool stampable =
+            naming.target != nullptr && naming.tool != nullptr &&
+            wall_operand != nullptr &&
+            wall_operand->shape_id().subshape.depth > 0 &&
+            pierced_operand->shape_id().subshape.depth > 0 &&
+            cap_face->shape_id().subshape.depth > 0;
+        if (stampable) {
+            const auto operand_leg =
+                [](geometry::SubshapeRef ref, const Face& operand) {
+                    for (std::uint8_t k = 0;
+                         k < operand.shape_id().subshape.depth; ++k)
+                        ref = ref.push(
+                            operand.shape_id().subshape.path[k]);
+                    return ref;
+                };
+            const auto stamp =
+                [&](std::size_t index,
+                    const geometry::SubshapeRef& ref,
+                    const naming::OperandBinding* bindings,
+                    std::size_t binding_count) {
+                    const naming::OperationNaming sub_naming{
+                        naming::FeatureKind::Subtract, {},
+                        naming::kSubEdgeRoles,
+                        {bindings, binding_count}};
+                    R->edges[index].set_shape_id(
+                        {naming.feature, ref, {}});
+                    R->edges[index].set_name(naming::render_name(
+                        naming.feature, ref, sub_naming.edges()));
+                };
+
+            // The pierced rim (the G1 form, levelled): the pierced
+            // face's leg + the wall's, at the window's pierced end.
+            {
+                const naming::OperandBinding sub_operands[2] = {
+                    {pierced_operand->shape_id().feature,
+                     naming.target},
+                    {wall_operand->shape_id().feature, naming.tool},
+                };
+                const std::uint32_t level =
+                    cap_is_lo ? naming::kSubIsectHiRole
+                              : naming::kSubIsectLoRole;
+                const geometry::SubshapeRef rim =
+                    operand_leg(operand_leg(
+                                    geometry::SubshapeRef{}.push(level),
+                                    *pierced_operand),
+                                *wall_operand);
+                const std::size_t lo0 = e_base + (cap_is_lo ? n : 0);
+                stamp(lo0 + 0, rim, sub_operands, 2);
+                stamp(lo0 + 1, rim, sub_operands, 2);
+            }
+            // The floor rim (the INTRA-BODY row, unlevelled): BOTH
+            // legs the tool's own — the carried cap first, the wall
+            // second (the declared slot order).
+            {
+                const naming::OperandBinding sub_operands[2] = {
+                    {cap_face->shape_id().feature, naming.tool},
+                    {wall_operand->shape_id().feature, naming.tool},
+                };
+                const geometry::SubshapeRef rim = operand_leg(
+                    operand_leg(
+                        geometry::SubshapeRef{}.push(
+                            naming::kSubIsectIntraRole),
+                        *cap_face),
+                    *wall_operand);
+                const std::size_t fl0 =
+                    e_base + (cap_is_lo ? 0 : n);
+                stamp(fl0 + 0, rim, sub_operands, 2);
+                stamp(fl0 + 1, rim, sub_operands, 2);
+            }
+            // The seam (the G1 form): the wall's own.
+            {
+                const naming::OperandBinding sub_operands[2] = {
+                    {pierced_operand->shape_id().feature,
+                     naming.target},
+                    {wall_operand->shape_id().feature, naming.tool},
+                };
+                const geometry::SubshapeRef seam = operand_leg(
+                    geometry::SubshapeRef{}.push(naming::kSubSeamRole),
+                    *wall_operand);
+                stamp(e_base + 2 * n, seam, sub_operands, 2);
+            }
+        }
+    }
+
+    // ---- The postconditions (hard, the family's own pins).
+    link_radial_edges(*R);
+    if (!loops_are_closed(*R))
+        throw std::runtime_error(
+            "exact_subtract: postcondition failed - a loop does not "
+            "chain (an assembly defect in the blind-door builder; "
+            "report this as a kernel bug)");
+    if (!is_closed_orientable(*R))
+        throw std::runtime_error(
+            "exact_subtract: postcondition failed - the result is not "
+            "a closed orientable manifold (the radial-edge XOR or the "
+            "shell closure broke in the blind-door builder; report "
+            "this as a kernel bug)");
+    for (const auto& e : R->edges) {
+        if (e.coedges().size() != 2 ||
+            e.coedges()[0]->reversed() == e.coedges()[1]->reversed())
+            throw std::runtime_error(
+                "exact_subtract: postcondition failed - edge " +
+                std::to_string(e.id()) +
+                " is not manifold-with-XOR (an assembly defect; "
+                "report this as a kernel bug)");
+    }
+    if (inner_loop_count(*R) != 1)
+        throw std::runtime_error(
+            "exact_subtract: postcondition failed - the blind hole "
+            "pierces exactly ONE face (H = 1; report this as a "
+            "kernel bug)");
+    if (euler_characteristic(*R) != euler_characteristic(A))
+        throw std::runtime_error(
+            "exact_subtract: postcondition failed - chi = " +
+            std::to_string(euler_characteristic(*R)) +
+            " (the blind hole's pinned value is the target's own "
+            "chi - the dent family; report this as a kernel bug)");
+    return R;
+}
+
 } // namespace subtract_detail
 
 // ---------------------------------------------------------------------------
@@ -2110,31 +2557,55 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
         }
     }
 
-    // (3) The z-bands: the blind hole vs the through-hole.
+    // (3) The z-bands: the blind door (one cap inside — the
+    //     orientation decoupling landed, G2-u2 m4), the both-inside
+    //     cavity, the through-hole.
     const bool blind_lo = z_lo > t.z_bot + tol && z_lo < t.z_top - tol;
     const bool blind_hi = z_hi > t.z_bot + tol && z_hi < t.z_top - tol;
-    if (blind_lo || blind_hi)
+    if (blind_lo && blind_hi)
         throw std::invalid_argument(
-            "exact_subtract: the BLIND hole - the tool terminates inside "
-            "the target (its " +
-            std::string(blind_lo ? "bottom" : "top") + " cap at z = " +
-            std::to_string(blind_lo ? z_lo : z_hi) +
-            " lies strictly between the pierced faces z = [" +
-            std::to_string(t.z_bot) + ", " + std::to_string(t.z_top) +
-            "]) - the internal cap's ORIENTATION WALL (ADR-0038's m2 "
-            "amendment, machine-verified on both candidate authorings): "
-            "the carried cap's material side flips, and the frame rule "
-            "couples the plane's domain to its outward normal with no "
-            "decoupling knob (the cylinder's u_sign has one - the "
-            "extrude's hole-wall precedent - the plane has none), so "
-            "the carried frame reads the mass inverted and the "
-            "re-oriented frame makes the wall's window walk unchainable. "
-            "Remedy: await the orientation-decoupling MORSE of this "
-            "unit (G2-u2 m4, the maintainer's decision registered "
-            "in ADR-0038's m3 outcome note; the family's goldens "
-            "are already pinned - ADR-0038 D5: 12/17/8, "
-            "chi=2, volume 8-0.375pi), extend the extrusion distance so "
-            "the tool passes through, or accept the faceted path.");
+            "exact_subtract: the BLIND cavity - both the tool's caps "
+            "lie strictly inside the target (z = [" +
+            std::to_string(z_lo) + ", " + std::to_string(z_hi) +
+            "] within the pierced pair z = [" + std::to_string(t.z_bot) +
+            ", " + std::to_string(t.z_top) +
+            "]) - the fully-internal cavity: the result would be a "
+            "TWO-SHELL body (the outer shell and the cavity's own, "
+            "chi = 2*2 = 4), and the single-shell derivation the "
+            "report practices has no row for it (ADR-0038 D4's queue, "
+            "the multi-shell honesty). Remedy: extend the extrusion "
+            "distance so the tool passes through - or leaves exactly "
+            "one cap inside (the blind hole family, landed G2-u2 m4) "
+            "- or accept the faceted path.");
+    if (blind_lo || blind_hi) {
+        // ==== THE BLIND DOOR (ADR-0038 D1.1/D2 + the m4 rule) ====
+        // Exactly one cap strictly inside, the other side through —
+        // the SEAM-WIRED CIRCLE family the decoupling opened (the
+        // carried cap keeps its native frame and gains the inverted
+        // region bit; the walk serves the topology). The CHAIN
+        // profile's blind is its own honest boundary: the per-entity
+        // rim projection is the walk table's row away (ADR-0038 D4's
+        // queue, no consumer today).
+        if (!w.is_circle)
+            throw std::invalid_argument(
+                "exact_subtract: the BLIND hole - the tool terminates "
+                "inside the target (its " +
+                std::string(blind_lo ? "bottom" : "top") + " cap at z = " +
+                std::to_string(blind_lo ? z_lo : z_hi) +
+                " lies strictly between the pierced faces z = [" +
+                std::to_string(t.z_bot) + ", " + std::to_string(t.z_top) +
+                "]) and the tool is a CHAIN profile - the landed door is "
+                "the SEAM-WIRED CIRCLE family (the SSI-guided cap "
+                "insertion, ADR-0038 D1.1/D2 with the m4 decoupling "
+                "rule); the chain's per-entity rim projection is the "
+                "walk table's queued row (ADR-0038 D4's queue, no "
+                "consumer today). Remedy: use a circular tool (the "
+                "extruded circle profile), extend the extrusion "
+                "distance so the tool passes through, or accept the "
+                "faceted path.");
+        return subtract_detail::blind_door_assemble(
+            A, *bp, w, t, blind_lo, tol, naming);
+    }
     if (!(z_lo <= t.z_bot + tol && z_hi >= t.z_top - tol))
         throw std::logic_error(
             "exact_subtract: the placement decision tree fell through - "

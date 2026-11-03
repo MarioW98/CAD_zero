@@ -307,9 +307,27 @@ Contrib expand_planar(const PlaneSurface& pl, const Moments2& reg) {
 // The exact planar face: the loops' Green sums with the winding sign
 // σ and the positional semantics (first loop = outer, subsequent =
 // holes — ADR-0021; outer-minus-inner is the region arithmetic).
+//
+// THE REGION SIDE (G2-u2 m4, ADR-0038's decoupling rule — the frame
+// serves the geometry, the walk serves the topology): the OUTER
+// loop's region bits declare which side of the walk the face's
+// material lies on. A loop authored per the sketch discipline
+// declares region-on-LEFT (interior_left = true / hole = false —
+// every factory face, the extrude's caps, the re-authored outer
+// loops) and the outward the divergence reads is the frame normal;
+// a CARRIED face whose material side flips (the blind hole's
+// internal cap — the kernel's first) declares region-on-RIGHT on
+// its own native frame, and the outward is the frame normal's
+// OPPOSITE: the whole contribution negates. The bits, not the walk
+// direction, carry the side — the winding σ still normalizes the
+// moments (any authored direction reads its magnitude correctly),
+// exactly as before; only the SIGN's master moves, from the frame
+// alone to the frame AND the declared side. An outer loop whose
+// entities declare BOTH sides has no region at all — refused loud.
 Contrib planar_contrib(const PlaneSurface& pl, const Face& f, double tol,
                        std::size_t face_index) {
     Moments2 reg;
+    int outer_side = 0;  // +1: region on the LEFT; -1: on the RIGHT
     for (std::size_t li = 0; li < f.loops().size(); ++li) {
         const auto& loop = f.loops()[li];
 
@@ -349,9 +367,42 @@ Contrib planar_contrib(const PlaneSurface& pl, const Face& f, double tol,
             if (pc->kind == PCurve::Kind::Segment) {
                 add_segment(L, pc->segment.a.x, pc->segment.a.y,
                             pc->segment.b.x, pc->segment.b.y);
+                if (li == 0) {
+                    const int side =
+                        pc->segment.interior_left ? 1 : -1;
+                    if (outer_side == 0) outer_side = side;
+                    else if (outer_side != side)
+                        throw std::invalid_argument(
+                            "mass_properties: face " +
+                            std::to_string(face_index) +
+                            "'s outer loop declares its region on BOTH "
+                            "sides (a segment with interior_left = " +
+                            std::to_string(!pc->segment.interior_left) +
+                            " beside one with " +
+                            std::to_string(outer_side > 0) +
+                            ") - a boundary whose entities disagree has "
+                            "no region to integrate. Remedy: report the "
+                            "body's construction.");
+                }
             } else if (pc->kind == PCurve::Kind::Arc) {
                 add_arc(L, pc->arc.center.x, pc->arc.center.y,
                         pc->arc.radius, pc->arc.start_angle, pc->arc.sweep);
+                if (li == 0) {
+                    const int side = pc->arc.hole ? -1 : 1;
+                    if (outer_side == 0) outer_side = side;
+                    else if (outer_side != side)
+                        throw std::invalid_argument(
+                            "mass_properties: face " +
+                            std::to_string(face_index) +
+                            "'s outer loop declares its region on BOTH "
+                            "sides (an arc with hole = " +
+                            std::to_string(pc->arc.hole) +
+                            " beside an entity with region-on-" +
+                            std::string(outer_side > 0 ? "left" : "right") +
+                            ") - a boundary whose entities disagree has "
+                            "no region to integrate. Remedy: report the "
+                            "body's construction.");
+                }
             } else {
                 throw std::invalid_argument(
                     "mass_properties: face " + std::to_string(face_index) +
@@ -374,7 +425,18 @@ Contrib planar_contrib(const PlaneSurface& pl, const Face& f, double tol,
         const double sigma = L.A > 0.0 ? 1.0 : -1.0;
         reg.accumulate(L, (li == 0 ? 1.0 : -1.0) * sigma);
     }
-    return expand_planar(pl, reg);
+    Contrib c = expand_planar(pl, reg);
+    if (outer_side < 0) {
+        // THE DECOUPLING'S READ (the m4 rule): the outer loop declares
+        // the region on the RIGHT of its walk — the material side is
+        // the frame normal's OPPOSITE, and the divergence term of the
+        // WHOLE face negates (F0, Fi, Fij — one outward, one face).
+        c.F0 = -c.F0;
+        for (int i = 0; i < 3; ++i) c.Fi[i] = -c.Fi[i];
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j) c.Fij[i][j] = -c.Fij[i][j];
+    }
+    return c;
 }
 
 // The unified cylinder frame: x = P0 + v·a + r·radial(φ), with

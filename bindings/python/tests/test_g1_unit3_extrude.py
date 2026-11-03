@@ -260,13 +260,19 @@ def test_honesty_chain_prism_exact_subtracted_approximated():
 
     # (G1 unit 4 amended this clause: the subtract's exact side
     # LANDED. This scene's tool spans z in [1, 5] against the box's
-    # [-1.5, 1.5] - a BLIND hole, and the exact subtract refuses it
-    # honestly: the actionable reason is recorded, the SDF display
-    # path stands. The in-class through-hole materializes exact and
-    # is pinned by unit 4's own suite.)
-    assert dn.exact_brep is None
-    assert "BLIND" in dn.hybrid_refusal
-    assert "Remedy" in dn.hybrid_refusal
+    # [-1.5, 1.5] - a BLIND hole; the orientation decoupling opened
+    # that family with G2-u2 m4, so the node's exact side
+    # MATERIALIZES now (12/17/8, the dent family). The refusal-era
+    # pin is retired with the wall; the honesty chain below - the
+    # SDF side's bridge extract staying faceted - is unchanged.)
+    assert dn.exact_brep is not None
+    assert dn.hybrid_refusal == ""
+    summary = brep_mod.body_query(dn.exact_brep)
+    assert summary["V"] == 12
+    assert summary["E"] == 17
+    assert summary["F"] == 8
+    assert summary["H"] == 1
+    assert summary["chi"] == 2
 
     # Its bridge extract stays faceted/approximated — the honesty
     # chain, unchanged (the unit-1 provenance rules propagate the

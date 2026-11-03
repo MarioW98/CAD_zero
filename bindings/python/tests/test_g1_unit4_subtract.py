@@ -187,9 +187,13 @@ def test_out_of_class_target_refusal_visible():
     assert not n.operand_missing
 
 
-def test_blind_hole_refusal_visible():
+def test_blind_hole_answers_the_door():
     # The tool ends inside the box: the blind hole's actionable
-    # refusal, end to end through the node.
+    # refusal (the pin :973) is TRANSFORMED — the orientation
+    # decoupling landed (G2-u2 m4, ADR-0038's rule: the carried cap
+    # keeps its native frame and gains the inverted region bit), and
+    # the same call materializes the exact B-Rep end to end through
+    # the node.
     s = scene.Scene()
     box = s.add_node("Box", CAD_0.sdf.box(V3(1.0, 1.0, 1.0)))
     sid = s.add_sketch_node("S", _circle_sketch())
@@ -197,10 +201,29 @@ def test_blind_hole_refusal_visible():
     did = s.add_operation_node("Sub", box, eid, 0.0, 0.0, -1.2)
     n = s.get_node(did)
 
-    assert n.exact_brep is None
-    assert "BLIND" in n.hybrid_refusal
-    # The remedy is named.
-    assert "Remedy" in n.hybrid_refusal
+    assert n.exact_brep is not None
+    assert n.hybrid_refusal == ""
+    # The blind family's golden (ADR-0038 D5): 12/17/8, H = 1,
+    # chi = 2; the volume abc - pi r^2 (z_cap - z_bot) = 8 -
+    # 0.0875pi — read from the live.
+    summary = CAD_0.brep.body_query(n.exact_brep)
+    assert summary["V"] == 12
+    assert summary["E"] == 17
+    assert summary["F"] == 8
+    assert summary["H"] == 1
+    assert summary["chi"] == 2
+    mp = CAD_0.brep.mass_properties(n.exact_brep)
+    # The cap's own quota is the FLOAT-EXTRUDED one (the float32
+    # 1.6f promoted to double, the offset applied): abc - pi r^2
+    # (z_cap + 1) — the height AND the offset are the recipe's own
+    # float32s.
+    import struct
+    z_floor = (struct.unpack("f", struct.pack("f", 1.6))[0] -
+              struct.unpack("f", struct.pack("f", 1.2))[0])
+    assert abs(mp["volume"] -
+               (8.0 - 0.0625 * 3.14159265358979 *
+                (1.0 + z_floor))) < 1e-9
+    assert mp["all_exact"]
 
 
 def test_radius_edit_determinism():

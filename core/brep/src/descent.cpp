@@ -1337,19 +1337,218 @@ DescentTable subtract_descent(const BRepBody& result, const BRepBody& A,
     // CROSSED (G2-u2 m3, ADR-0038 D3) appends the walls with the
     // pierced faces SIMPLY CONNECTED (H = 0 — the L-shaped outer
     // loops, no inner loops) and A LOSING entities (the corner
-    // column died, the ids renumbered). The discriminator is
-    // POSITIONAL on purpose — never the stamps: a caller may derive
-    // the tavola against a differently-stamped operand (the m5
-    // click-test's fresh bridge conversion, the resolver's own
-    // pattern), and the through/miss tables' positional rule must
-    // keep answering for them. The stamp-based correspondence lives
-    // INSIDE the crossed branch, where the result's own renumbering
-    // forces it. (The m4 morse — the blind door — extends this
-    // classification with its own H = 1 seat, its bill to derive.)
+    // column died, the ids renumbered); THE BLIND (G2-u2 m4,
+    // ADR-0038's m4 rule) appends the wall AND the carried cap (H =
+    // 1 — exactly one pierced face, the cavity's floor the second
+    // absorbed operand face). The discriminator is POSITIONAL on
+    // purpose — never the stamps: a caller may derive the tavola
+    // against a differently-stamped operand (the m5 click-test's
+    // fresh bridge conversion, the resolver's own pattern), and the
+    // through/miss tables' positional rule must keep answering for
+    // them. The stamp-based correspondence lives INSIDE the crossed
+    // branch, where the result's own renumbering forces it. (The m4
+    // morse's H = 1 seat — the bill registered in the dispatch's
+    // own words — is paid here.)
     const bool through = result.face_count() > F_A;
     const bool crossed = through &&
                          inner_loop_count(result) == 0;
     if (crossed) return crossed_descent(result, A, B);
+    const bool blind = through && inner_loop_count(result) == 1;
+    if (blind) {
+        // ---- THE BLIND TAVOLA (the m4 door): the same positional
+        // discipline as the through/miss tables — the floor's
+        // correspondence reads the NORMAL SIGN (the carried cap
+        // keeps its native frame: the floor's normal names the
+        // tool's own cap, the near one; the far cap dies cut away).
+        DescentTable table;
+        table.rows.reserve(result.vertices.size() +
+                           result.edges.size() +
+                           result.face_count() + B.vertices.size() +
+                           B.edges.size() + B.face_count());
+
+        for (std::size_t i = 0; i < result.vertices.size(); ++i) {
+            if (i < V_A) {
+                table.rows.push_back(
+                    {Descent::Kept, EntityKind::Vertex,
+                     static_cast<std::uint64_t>(i),
+                     {{0, EntityKind::Vertex,
+                       static_cast<std::uint64_t>(i)}},
+                     "", {}, ""});
+            } else {
+                table.rows.push_back(
+                    {Descent::Born, EntityKind::Vertex,
+                     static_cast<std::uint64_t>(i), {}, "", {}, ""});
+            }
+        }
+        for (std::size_t i = 0; i < result.edges.size(); ++i) {
+            if (i < E_A) {
+                table.rows.push_back(
+                    {Descent::Kept, EntityKind::Edge,
+                     static_cast<std::uint64_t>(i),
+                     {{0, EntityKind::Edge,
+                       static_cast<std::uint64_t>(i)}},
+                     result.edges[i].name(), {}, ""});
+            } else {
+                table.rows.push_back(
+                    {Descent::Born, EntityKind::Edge,
+                     static_cast<std::uint64_t>(i), {},
+                     result.edges[i].name(), {}, ""});
+            }
+        }
+        // The carried cap's normal sign, read once from the result's
+        // own floor face (the LAST face the assembly appended): it
+        // names the tool's near cap (the same sign) against the far
+        // one (the opposite, cut away outside).
+        double floor_nz = 0.0;
+        {
+            const auto& faces = result.solid.shell().faces();
+            if (F_A + 1 < faces.size()) {
+                const auto* surf = faces[F_A + 1].surface();
+                if (surf != nullptr &&
+                    surf->family() == SurfaceFamily::Plane) {
+                    subtract_detail::TranslateReader r;
+                    surf->accept(r);
+                    if (r.plane != nullptr)
+                        floor_nz = r.plane->normal_vec().z;
+                }
+            }
+        }
+        for (const auto& face : result.solid.shell().faces()) {
+            const std::size_t i = face.id();
+            if (i < F_A) {
+                // A's own faces: the pierced one absorbed (its inner
+                // loop born of the rim), the rest kept.
+                const bool pierced = face.loops().size() > 1;
+                table.rows.push_back(
+                    {pierced ? Descent::Absorbed : Descent::Kept,
+                     EntityKind::Face, static_cast<std::uint64_t>(i),
+                     {{0, EntityKind::Face,
+                       static_cast<std::uint64_t>(i)}},
+                     face.name(), {}, ""});
+                continue;
+            }
+            const auto* surf = face.surface();
+            const bool is_cyl =
+                surf != nullptr &&
+                surf->family() == SurfaceFamily::Cylinder;
+            if (i == F_A && is_cyl) {
+                // THE ABSORBED WALL: the tool's own lateral,
+                // re-windowed to [z_floor, z_pierced] — the row's
+                // operand the lateral face in the tool's own body
+                // (the circle's single wall, the walk entity 0's
+                // own — the same lookup the through table
+                // practices).
+                const Face* lateral =
+                    wall_operand_of(B, plus_z_cap(B), 0);
+                if (lateral != nullptr) {
+                    table.rows.push_back(
+                        {Descent::Absorbed, EntityKind::Face,
+                         static_cast<std::uint64_t>(i),
+                         {{1, EntityKind::Face,
+                           static_cast<std::uint64_t>(
+                               lateral->id())}},
+                         face.name(), {}, ""});
+                } else {
+                    table.rows.push_back(
+                        {Descent::Absorbed, EntityKind::Face,
+                         static_cast<std::uint64_t>(i), {},
+                         face.name(), {}, ""});
+                }
+                continue;
+            }
+            // THE ABSORBED INTERNAL CAP: the tool's near cap (the
+            // carried face — the floor), found by the normal sign.
+            {
+                const Face* near_cap = nullptr;
+                for (const auto& bf : B.solid.shell().faces()) {
+                    if (!is_cap_face(bf)) continue;
+                    subtract_detail::TranslateReader r;
+                    bf.surface()->accept(r);
+                    if (r.plane == nullptr) continue;
+                    const double nz = r.plane->normal_vec().z;
+                    if ((floor_nz < 0.0 && nz < 0.0) ||
+                        (floor_nz > 0.0 && nz > 0.0)) {
+                        near_cap = &bf;
+                        break;
+                    }
+                }
+                if (near_cap != nullptr) {
+                    table.rows.push_back(
+                        {Descent::Absorbed, EntityKind::Face,
+                         static_cast<std::uint64_t>(i),
+                         {{1, EntityKind::Face,
+                           static_cast<std::uint64_t>(
+                               near_cap->id())}},
+                         face.name(), {}, ""});
+                } else {
+                    // No near cap found (a malformed tool the class
+                    // checks missed): the row is still owed — the
+                    // old-generation closure below REFUSES LOUDLY.
+                    table.rows.push_back(
+                        {Descent::Absorbed, EntityKind::Face,
+                         static_cast<std::uint64_t>(i), {},
+                         face.name(), {}, ""});
+                }
+            }
+        }
+
+        // ---- the VANISHED tail, the dying operand's own order: the
+        // tool's split pair, rims and seam re-authored with the
+        // re-based window; the FAR cap cut away outside (the near
+        // cap and the lateral are absorbed — booked above).
+        for (std::size_t i = 0; i < B.vertices.size(); ++i)
+            table.rows.push_back(
+                {Descent::Vanished, EntityKind::Vertex,
+                 static_cast<std::uint64_t>(i),
+                 {{1, EntityKind::Vertex,
+                   static_cast<std::uint64_t>(i)}},
+                 "", {}, kReAuthoredCause});
+        for (std::size_t i = 0; i < B.edges.size(); ++i)
+            table.rows.push_back(
+                {Descent::Vanished, EntityKind::Edge,
+                 static_cast<std::uint64_t>(i),
+                 {{1, EntityKind::Edge,
+                   static_cast<std::uint64_t>(i)}},
+                 B.edges[i].name(), {}, kReAuthoredCause});
+        for (const auto& face : B.solid.shell().faces()) {
+            if (!is_cap_face(face)) continue;
+            subtract_detail::TranslateReader r;
+            face.surface()->accept(r);
+            const double nz = r.plane->normal_vec().z;
+            // The NEAR cap survived (absorbed — the floor); only the
+            // far one died.
+            if ((floor_nz < 0.0 && nz < 0.0) ||
+                (floor_nz > 0.0 && nz > 0.0))
+                continue;
+            table.rows.push_back(
+                {Descent::Vanished, EntityKind::Face,
+                 static_cast<std::uint64_t>(face.id()),
+                 {{1, EntityKind::Face,
+                   static_cast<std::uint64_t>(face.id())}},
+                 face.name(), {}, kCutAwayCause});
+        }
+
+#ifndef NDEBUG
+        {
+            std::string why;
+            if (!descent_closed(result, table, &why)) {
+                throw std::logic_error(
+                    "subtract_descent: the tavola broke its own "
+                    "closure (the result side, the blind) — " + why);
+            }
+            if (!old_generation_closed(A, B, table, &why)) {
+                throw std::logic_error(
+                    "subtract_descent: the tavola broke its own "
+                    "closure (the old generation, the blind) — " +
+                    why);
+            }
+        }
+#endif
+
+        stamp_rows(table, result, /*vanished_rows=*/false);
+        stamp_rows(table, B, /*vanished_rows=*/true);
+        return table;
+    }
 
     DescentTable table;
     table.rows.reserve(result.vertices.size() + result.edges.size() +

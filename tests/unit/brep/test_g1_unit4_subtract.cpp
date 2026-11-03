@@ -54,6 +54,7 @@
 #include "CAD_0/brep/extrude.hpp"
 #include "CAD_0/brep/analytic.hpp"
 #include "CAD_0/brep/factory.hpp"
+#include "CAD_0/brep/mass_properties.hpp"
 #include "CAD_0/brep/query.hpp"
 #include "CAD_0/brep/topology.hpp"
 #include "CAD_0/sdf/sketch_entities.hpp"
@@ -970,25 +971,41 @@ TEST_CASE("G1-U4 degenerate: the crossing circle - the actionable refusal") {
     CHECK(msg.find("Remedy") != std::string::npos);
 }
 
-TEST_CASE("G1-U4 degenerate: the blind hole - the actionable refusal") {
-    // The tool ends INSIDE A (z_B'_hi = 0.5 < z_top = 1): the
-    // internal cap face class is G2's.
+TEST_CASE("G1-U4 the blind hole - the door's answer (G2-u2 m4's "
+          "transformation of the refusal pin :973)") {
+    // The tool ends INSIDE A (z_B'_hi = 0.4 < z_top = 1): the pin
+    // that refused the internal cap face class for G2 now ANSWERS —
+    // the orientation decoupling landed (ADR-0038's m4 rule: the
+    // carried cap keeps its native frame and gains the inverted
+    // region bit; the walk serves the topology). The same call, the
+    // declared transformation (D1.4: the refusal pins become the
+    // doors' green tests).
     auto a = b::make_box({1.0f, 1.0f, 1.0f});
     auto tool = b::make_prism(circle_chains(), 1.6f, +1);  // z in [0,1.6]
     // offset -1.2 -> z in [-1.2, 0.4]: the top cap is inside.
-    bool threw = false;
-    std::string msg;
-    try {
-        auto r = b::exact_subtract(*a, *tool, {0.0f, 0.0f, -1.2f},
-                                    b::kSubtractTolerance);
-        (void)r;
-    } catch (const std::invalid_argument& e) {
-        threw = true;
-        msg = e.what();
-    }
-    REQUIRE(threw);
-    CHECK(msg.find("BLIND") != std::string::npos);
-    CHECK(msg.find("Remedy") != std::string::npos);
+    auto r = b::exact_subtract(*a, *tool, {0.0f, 0.0f, -1.2f},
+                               b::kSubtractTolerance);
+    REQUIRE(r != nullptr);
+    // The blind family's pinned golden (ADR-0038 D5): 12/17/8,
+    // H = 1, chi = 2 — the dent family; the volume abc -
+    // pi r^2 (z_cap - z_bot) = 8 - 0.0875pi.
+    REQUIRE(r->vertex_count() == 12);
+    REQUIRE(r->edge_count() == 17);
+    REQUIRE(r->face_count() == 8);
+    REQUIRE(b::inner_loop_count(*r) == 1);
+    REQUIRE(b::euler_characteristic(*r) == 2);
+    CHECK(b::is_closed_orientable(*r));
+    const auto mp =
+        b::mass_properties(*r, CAD_0::math::Tolerance::linear(1e-9));
+    // The cap's own quota is the FLOAT-EXTRUDED one (double(1.6f)
+    // offset by the float -1.2f): abc - pi r^2 (z_cap + 1), z_cap =
+    // double(1.6f) - 1.2.
+    const double z_floor = static_cast<double>(1.6f) -
+                           static_cast<double>(1.2f);
+    CHECK(std::abs(mp.volume -
+                   (8.0 - 0.0625 * 3.14159265358979 *
+                        (1.0 + z_floor))) < 1e-9);
+    CHECK(mp.all_exact);
 }
 
 TEST_CASE("G1-U4 degenerate: the oblique target (a tetrahedron) - the angle named") {

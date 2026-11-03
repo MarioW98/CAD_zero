@@ -156,15 +156,19 @@ def test_the_half_context_and_the_tableless_kinds_refuse():
 
 def test_the_class_checks_still_refuse_verbatim():
     """The kernel's own refusals cross as ValueErrors, diagnosis and
-    remedy verbatim (the blind hole — the tool ends inside)."""
+    remedy verbatim. (The one-cap blind this file pinned opened with
+    G2-u2 m4 — the same call now materializes, pinned by the m4
+    suite; the refused blind sub-family that keeps these words is
+    the BOTH-CAPS-INSIDE cavity, the tool fully within.)"""
     box, chains, tool, result = _guide_case()
-    blind = brep_mod.make_prism(_guide_chains(), 1.6, +1, feature=3)
+    cavity = brep_mod.make_prism(_guide_chains(), 0.8, +1, feature=3)
     with pytest.raises(ValueError) as exc_info:
         brep_mod.exact_subtract(
-            box, blind, Vec3f(0.0, 0.0, -1.2),
+            box, cavity, Vec3f(0.0, 0.0, -0.4),
             feature=4, target=brep_mod.FeatureKind.Box,
             tool=brep_mod.FeatureKind.Extrude)
     assert "BLIND" in str(exc_info.value)
+    assert "TWO-SHELL" in str(exc_info.value)
     assert "Remedy" in str(exc_info.value)
 
 

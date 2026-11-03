@@ -163,7 +163,8 @@ def test_the_unnamed_mode_honest_boundaries():
 
 def test_the_still_refused_families_keep_their_words():
     """The borders: the mid-edge crossing (the pin's own circle),
-    the tangential byte-identical, the blind wall alive — the door
+    the tangential byte-identical; the blind family opened with
+    G2-u2 m4 (the door
     opened exactly where the derivation admits it."""
     box = brep_mod.make_box(Vec3f(1.0, 1.0, 1.0))
 

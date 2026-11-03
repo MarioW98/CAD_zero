@@ -63,13 +63,16 @@
 // with the both-domain answer — the insertion's guide, awaiting the
 // assembly it will steer.
 //
-// The refusal itself: the z-band branch (subtract.hpp's pinned
-// seat) keeps refusing — NARROWED (ADR-0038's m2 amendment extends
-// D1.4's narrowing clause to the whole blind branch) to name the
-// coupling, the knob's precedent and the real seat. The G1 pins
-// ("BLIND", "Remedy") still answer; the suite is green without a
-// re-pin (the additivity clause, verified by the G1 file's own
-// tests running unchanged beside this one).
+// THE m4 UPDATE (2026-11-04, dated on the record): THE DOOR OPENED.
+// The decoupling rule (ADR-0038's m4 section — the frame serves the
+// geometry, the walk serves the topology) carries the cap with its
+// NATIVE FRAME and the INVERTED REGION BIT, and the two verdict
+// tests below stand UNTOUCHED as the door's own specification: the
+// same pair of facts, the opposite outcome. The refusal test that
+// closed this file is TRANSFORMED into the counterproof (the same
+// call now answers — the m4 file tests/unit/brep/
+// test_g2_unit2_m4_blind_door.cpp carries the door's full bill);
+// the narrowed message retired with the wall.
 #include <doctest/doctest.h>
 
 #include "CAD_0/brep/factory.hpp"
@@ -515,44 +518,47 @@ TEST_CASE("G2-U2 m2 the wall's guide: the INTRA-TOOL SSI consultation "
 }
 
 // ---------------------------------------------------------------------------
-// The refusal — the same call that yesterday refused (the G1 pin,
-// test_g1_unit4_subtract.cpp's blind case) answers today with the
-// wall's own name: the narrowed message, the family's seat, the
-// goldens it awaits. The G1 pins ("BLIND", "Remedy") still hold —
-// the suite is green without a re-pin.
+// THE COUNTERPROOF (the m4 transformation of the m2 refusal pin):
+// the same call that refused yesterday — the G1 pin's own
+// parameters (the tool from below, its top cap inside) — ANSWERS
+// today (G2-u2 m4: the decoupling rule landed, the narrowed message
+// retired with the wall). The door's full bill (the golden, the
+// authoring, the names, the tavola, the bindings) lives in
+// test_g2_unit2_m4_blind_door.cpp; here the wall's own file pins
+// the transformation itself: the same call, the opposite outcome.
 // ---------------------------------------------------------------------------
-TEST_CASE("G2-U2 m2 the wall: the refusal NARROWED - the same call "
-          "answers with the orientation coupling named, the goldens "
-          "cited") {
+TEST_CASE("G2-U2 m2 the wall's counterproof: the same call ANSWERS - "
+          "the door the decoupling opened (G2-u2 m4)") {
     // The G1 pin's own parameters (the tool from below, its top
     // cap inside): box [-1,1]^3, circle r=0.25 z in [-1.2, 0.4].
-    auto a = b::make_box({1.0f, 1.0f, 1.0f});
+    auto a = b::make_box({1.0, 1.0, 1.0});
     std::vector<s::SketchChain> chains;
     chains.push_back(s::SketchChain{
         {s::sketch_circle({0.0f, 0.0f}, 0.25f, false)}});
     auto tool = b::make_prism(chains, 1.6f, +1);
-    bool threw = false;
-    std::string msg;
-    try {
-        auto r = b::exact_subtract(*a, *tool, {0.0f, 0.0f, -1.2f},
-                                    b::kSubtractTolerance);
-        (void)r;
-    } catch (const std::invalid_argument& e) {
-        threw = true;
-        msg = e.what();
-    }
-    REQUIRE(threw);
-    // The G1 pins, unmoved.
-    CHECK(msg.find("BLIND") != std::string::npos);
-    CHECK(msg.find("Remedy") != std::string::npos);
-    // The narrowing: the coupling, the knob's precedent, the
-    // verdicts, the seat and the family's pinned goldens.
-    CHECK(msg.find("ORIENTATION WALL") != std::string::npos);
-    CHECK(msg.find("u_sign") != std::string::npos);
-    CHECK(msg.find("decoupling") != std::string::npos);
-    CHECK(msg.find("unchainable") != std::string::npos);
-    CHECK(msg.find("12/17/8") != std::string::npos);
-    CHECK(msg.find("ADR-0038") != std::string::npos);
+    auto r = b::exact_subtract(*a, *tool, {0.0f, 0.0f, -1.2f},
+                               b::kSubtractTolerance);
+    // The same call that the m2 pin refused: the door's own shape.
+    REQUIRE(r != nullptr);
+    REQUIRE(r->vertex_count() == 12);
+    REQUIRE(r->edge_count() == 17);
+    REQUIRE(r->face_count() == 8);
+    REQUIRE(b::inner_loop_count(*r) == 1);
+    REQUIRE(b::euler_characteristic(*r) == 2);
+    CHECK(b::is_closed_orientable(*r));
+    // The volume the wall refused to read: abc - pi r^2 (z_cap -
+    // z_bot) = 8 - 0.0875pi — the decoupling's own answer (the m2
+    // verdict's inverted read is VARIANT A's fact above, still
+    // pinned, still true for that authoring).
+    const auto mp =
+        b::mass_properties(*r, CAD_0::math::Tolerance::linear(1e-9));
+    // The cap's own quota is the FLOAT-EXTRUDED one (double(1.6f)
+    // offset by the float -1.2f) — the honest number: abc - pi r^2 (z_cap +
+    // 1) with z_cap = double(1.6f) - 1.2.
+    const double z_floor = static_cast<double>(1.6f) -
+                           static_cast<double>(1.2f);
+    CHECK(close(mp.volume, 8.0 - 0.0625 * kPi * (1.0 + z_floor)));
+    CHECK(mp.all_exact);
 }
 
 // ---------------------------------------------------------------------------

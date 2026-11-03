@@ -91,11 +91,13 @@
 // closure green.
 //
 // THE ADDITIVITY (D1.4): the G1 suite, the coplanar door's goldens
-// and THE BLIND WALL'S PINS (test_g2_unit2_blind_wall.cpp — the wall
-// stays red-demonstrated, its refusal honest) all green WITHOUT a
-// re-pin: they run beside this file in the same binary, and the
-// still-refused families keep their refusals (the crossing circle's
-// "CROSSES", the tangential byte-identical, the blind's wall).
+// and THE BLIND WALL'S PINS (test_g2_unit2_blind_wall.cpp — the two
+// verdict tests stay the door's specification, untouched) all green
+// WITHOUT a re-pin: they run beside this file in the same binary,
+// and the still-refused families keep their refusals (the crossing
+// circle's "CROSSES", the tangential byte-identical; the blind's
+// family OPENED with G2-u2 m4 — the border sub-case below pins the
+// transformation, the m4 file the full bill).
 #include <doctest/doctest.h>
 
 #include "CAD_0/brep/factory.hpp"
@@ -885,34 +887,28 @@ TEST_CASE("G2-U2 m3 the counterproof and the borders: the corner "
         CHECK(msg.find("Remedy") != std::string::npos);
     }
 
-    // THE BLIND WALL — the m2 pin, alive: the blind family keeps its
-    // refusal with the orientation wall's own name (the decoupling
-    // morse cited). The crossed door does not pass through it.
+    // THE BLIND DOOR — the m2 wall's own case, TRANSFORMED (G2-u2
+    // m4: the decoupling landed, the wall retired): the same call
+    // the m3 pinned as a border now answers — the door's shape,
+    // one assertion each, the m4 file carrying the full bill.
     {
         auto a = b::make_box({1.0, 1.0, 1.0});
         std::vector<s::SketchChain> chains{
             s::SketchChain{{s::sketch_circle({0.0f, 0.0f}, 0.25f,
                                              false)}}};
         auto tool = b::make_prism(chains, 1.6f, +1);
-        bool threw = false;
-        std::string msg;
-        try {
-            auto r = b::exact_subtract(*a, *tool, {0.0, 0.0, -1.2},
-                                        b::kSubtractTolerance);
-            (void)r;
-        } catch (const std::invalid_argument& e) {
-            threw = true;
-            msg = e.what();
-        }
-        REQUIRE(threw);
-        CHECK(msg.find("BLIND") != std::string::npos);
-        CHECK(msg.find("ORIENTATION WALL") != std::string::npos);
-        CHECK(msg.find("Remedy") != std::string::npos);
+        auto r = b::exact_subtract(*a, *tool, {0.0, 0.0, -1.2},
+                                   b::kSubtractTolerance);
+        REQUIRE(r != nullptr);
+        REQUIRE(r->face_count() == 8);
+        REQUIRE(b::inner_loop_count(*r) == 1);
+        REQUIRE(b::euler_characteristic(*r) == 2);
     }
 
     // THE BLIND-CROSSED COMPOSITE — the notch footprint with the
     // blind span: refused with its own honest name (the queued
-    // family, the composite's cap blocked by the wall).
+    // family; the m4 sharpened the reason — the L-shaped cap needs
+    // the CHAIN cap insertion, the row the circle door queues).
     {
         auto a = b::make_box({1.0, 1.0, 1.0});
         auto tool = b::make_prism(square_chains_corner(), 2.0f, +1);

@@ -484,7 +484,16 @@ inline constexpr OperandSlot kSubIsectSlots[2] = {
 inline constexpr OperandSlot kSubSeamSlots[1] = {
     {1, false, RoleForm::ArgIndex},  // the wall whose seam this is
 };
-inline constexpr RoleEntry kSubEdgeRoles[4] = {
+// THE INTRA-BODY SLOTS (G2-u2 m4, ADR-0038 D3 — the blind hole's
+// floor rim): the carried cap × the wall, BOTH legs the tool's own
+// faces — the slots' forms follow the operands' own entries (the
+// cap's face role is ArgWord — cap(lo)/cap(hi), the word riding the
+// operand's own path component; the wall's is ArgIndex — lat(i)).
+inline constexpr OperandSlot kSubIsectIntraSlots[2] = {
+    {0, false, RoleForm::ArgWord},   // the tool's carried cap
+    {1, false, RoleForm::ArgIndex},  // the tool's wall
+};
+inline constexpr RoleEntry kSubEdgeRoles[5] = {
     {"isect", RoleForm::Relational, nullptr, "lo", kSubIsectSlots},
     {"isect", RoleForm::Relational, nullptr, "hi", kSubIsectSlots},
     {"seam",  RoleForm::Relational, nullptr, nullptr, kSubSeamSlots},
@@ -497,6 +506,18 @@ inline constexpr RoleEntry kSubEdgeRoles[4] = {
     // is unchanged, the round-trip's levelled knowledge riding leg
     // 2 as the morse-4 register already pins for the @lo/@hi pair.
     {"isect", RoleForm::Relational, nullptr, nullptr, kSubIsectSlots},
+    // THE INTRA-BODY ISECT (G2-u2 m4, ADR-0038 D3 — the blind
+    // hole's floor rim): the carried cap × the wall of the SAME
+    // body — the grammar's FIRST intra-body row (the same operand
+    // twice; the level ABSENT: the cap's plane IS the level — the
+    // same elision the exit edges taught). The legs are the TOOL's
+    // own cap (the cap's face role, ArgWord: cap(lo)/cap(hi)) and
+    // the tool's wall (indexed: lat(0)) — the slots' operand
+    // indices address the INSTANCE's bindings, which the stamping
+    // site builds with BOTH legs bound to the tool. The row
+    // APPENDS again — the m3's indices stay frozen.
+    {"isect", RoleForm::Relational, nullptr, nullptr,
+     kSubIsectIntraSlots},
 };
 
 // The subtract's TYPE-level declaration: the operand bindings are
@@ -516,6 +537,10 @@ inline constexpr std::uint32_t kSubSeamRole = 2;     // edges: seam
 inline constexpr std::uint32_t kSubIsectRole = 3;    // edges: isect (the
 // UNLEVELLED row — the exit edges, the pair's planes ARE the line;
 // G2-u2 m3)
+inline constexpr std::uint32_t kSubIsectIntraRole = 4;  // edges: isect
+// (the INTRA-BODY row — the carried cap × the wall of the same
+// body, the blind hole's floor rim, the level absent: the cap's
+// plane IS the level; G2-u2 m4)
 
 // ---------------------------------------------------------------------------
 // THE ROOT REFERENCE — the authored roots the tavola's FROM names
