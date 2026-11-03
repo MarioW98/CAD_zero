@@ -307,6 +307,99 @@ derivation visible, the tavola's 64 rows with the closure green,
 the digest with the crossed case beside the G1 ones, the bindings
 reachable from Python. The m3 estimate stands (≈ 1–2 days).
 
+## THE m4 RULE (2026-11-04, the unit's closing act) — IL DECOUPLING D'ORIENTAMENTO: the frame serves the geometry, the walk serves the topology
+
+**The wall's own door, derived — completing the sketch D2 wrote
+against the coupling the m2 amendment found.** The m2 verdicts
+were exhaustive over ONE master: the stored normal serving BOTH
+the geometry and the volume (VARIANT A — the chain green, the
+mass a lie) or the re-oriented frame serving the volume
+(VARIANT B — the loop storable, the wall's walk non-Eulerian).
+The rule the code derives keeps the sketch's words and splits
+their master: **the carried face keeps its NATIVE FRAME — the
+cap's plane, the domain, the p-curves, the inherited provenance
+and stamp — and gains the INVERTED REGION BIT; the WALK is
+authored in the RESULT's canonical direction, region-on-right —
+NOT in the cap's frame.** TWO orientations with TWO masters: the
+frame serves the GEOMETRY (the domains, the p-curves, the
+queries — the p-curve payloads live in the domain and the domain
+maps to 3D whichever side the material lies on), the walk
+serves the TOPOLOGY (the chain, the XOR, the volume). The
+volume's master moves with it: **the mass machinery consults the
+outer loop's region side** — a planar face whose outer loop
+declares its region on the RIGHT of the walk (the bits the
+p-curve vocabulary already carries: `hole`/`interior_left`, the
+pierced faces' inner-loop precedent) reads its divergence
+contribution NEGATED, for the outward the theorem needs is the
+frame normal's opposite. The cap inside the cavity now
+contributes its true term BECAUSE its walk declares
+region-on-right; the frame flip alone read it inverted — the
+defect was the wrong master, not the sign.
+
+**THE CHAIN — the RACCOLTO's XOR azimuth, consumed.** The wall's
+window [z_cap, z_pierced] and the cap's rim close on the SAME
+seam pair with OPPOSITE directions (every edge exactly two
+opposite co-edges): the harvest's own words, applied to the
+plane partner — the wall's u and the cap's domain azimuth run
+the shared circle in opposite senses, the negated azimuth of
+the cylinder pair. Concretely, the assembly the m2 verdicts
+already sketched, each piece its own precedent: the WALL is the
+through machinery re-based VERBATIM (CylinderZSurface on the
+cavity's u_sign = −1, the window [u₀−2π, u₀] × [0, z_pierced −
+z_cap], the seam-wired walk region-on-right — the m2 probe's
+own authoring, chainable exactly as VARIANT A proved); the
+PIERCED face's inner loop is the G1 machinery unchanged (D1.4's
+additivity clause); THE CAP'S LOOP follows its OWN frame parity
+— the caps' own walks (cap(lo) the reversed cycle, cap(hi) the
+canonical — exactly the pierced faces' inner-loop convention,
+the frame parity the extrude itself pins), the arc pair split
+at the seam pair in the cap's own domain — and the BITS carry
+the flip. **One correction to D2/D5's sketch, on the record**
+(the m2 amendment's own pattern: the derivation, not the
+expectation, is the authority): the sketch's floor loop
+"`[arc₁ fwd, arc₂ fwd]`" is the +Z frame's form — the carried
+cap(lo)'s storable form in its native mirror domain is its own
+reversed cycle `[e₁ REV, e₀ REV]` (the CCW-only vocabulary
+forces it; VARIANT A proved it storable and chainable, and it
+is the door's own authoring now). The direction follows the
+frame; the bits carry the region — one rule, both mirrors
+(blind_hi's carried cap(hi) walks the canonical cycle in the
+rotation domain, the same rule read on the other parity).
+
+**The scope, MAI "tutte":** the family that lands is the
+SEAM-WIRED CIRCLE blind (exactly one cap strictly inside, the
+other side through — D1.1's admission; the footprint strictly
+inside the pierced face, the containment bands' own margin) —
+the SSI-guided insertion the consultation steers (the intra-tool
+pair, the entry plane×cylinder ⊥ at the cap quota, the
+both-domain answer — m2's pinned guide, consumed here). The
+CHAIN blind (a polygonal tool's cap insertion — the per-entity
+rim projection) is refused with its own name: the same
+decoupling carries it, but the walk table's per-entity rows are
+a landing of their own and no consumer asks today (the D4
+discipline, never a naked "tutte"). The BOTH-CAPS-INSIDE family
+keeps its refusal WITH ITS OWN NAME (the fully-internal cavity:
+the two-shell body, χ = 2·2 — D4's queue intact, the report's
+single-shell derivation rule the honest reason). The m2
+narrowed message RETIRES with the wall: the blind branch's
+words become the cavity's own and the chain's own — the G1
+pins' words ("BLIND", "Remedy") still answer on the refused
+families.
+
+**The goldens stand unmoved — and the volume's master is named:**
+D5's 12/17/8/H=1/χ=2 and 8−0.375π are the door's entry tests
+(the m2 verdict proved the counts land; the machinery change
+gives the volume its true master). The tavola (47 rows, the
+closure green), the names (the floor rim
+`sub#4:isect[ext#3:cap(lo) × ext#3:lat(0)]` — the grammar's
+FIRST INTRA-BODY row, the level absent; the pierced rim and the
+seam in the G1 forms; the cap absorbed, keeping ext#3:cap(lo)),
+the digest and the determinism, the bindings and the
+click-test — the m3's own bill, replicated on this door. The
+unit closes with this landing: the blind door was the last
+registered morse of G2 unit 2, and the wall it opens through is
+the one the unit's own m2 found.
+
 ## IL RACCOLTO — the old branch's harvest (the inventory, dated)
 
 **The story, verified against the log.** `origin/G2` forked from main
