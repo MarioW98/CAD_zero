@@ -171,9 +171,21 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._tabs)
         # node_id -> the open SketchCanvas view (one per sketch).
         self._sketch_views = {}
+        # node_id -> the sketch's SOLVER SESSION (G4 m3, ADR-0040
+        # D4): the constraint list outlives the view's close/reopen —
+        # the constraints are the editing session's state until m4
+        # serializes them (the format bump is m4's own, the register
+        # arbitrates the number against the fillet line). The dict
+        # dies with the project (on_new / a load): declared, by
+        # design, until the bridge lands.
+        self._sketch_sessions = {}
         # (sketch_id, chain, index) of the entity selected on a
         # canvas — the panel's entity context (None = node context).
         self._selected_entity = None
+        # The constraint-row registry (the panel's constraint rows:
+        # label -> the authored index — the registry consumer
+        # pattern, rebuilt on every entity-surface routing).
+        self._constraint_row_registry = {}
 
     def _setup_dock_widgets(self) -> None:
         # Simple QTreeWidget for the feature tree. ExtendedSelection
@@ -279,6 +291,77 @@ class MainWindow(QMainWindow):
         self._extrude_action = QAction("&Extrude...", self)
         self._extrude_action.triggered.connect(self.on_extrude)
         feature_menu.addAction(self._extrude_action)
+
+        # ----- Constraints menu (G4 m3, ADR-0040 D4) -----
+        # THE SELECTION-DRIVEN MENU, the registry pattern: the actions
+        # arm the canvas's two-step pick (the pair kinds) or act on
+        # the current selection (the dimensions, the pin); the Pin
+        # submenu carries the SELECTED entity's own fields (the
+        # kernel's names, sketch_field_names — never a UI-side
+        # table); the enablement follows the active view and the
+        # selection on every change. Every item calls the canvas's
+        # public solver surface and NOTHING else — the semantics are
+        # the canvas's own (the tool selector's own discipline).
+        constraints_menu = self.menuBar().addMenu("&Constraints")
+        self._constraint_actions = {}
+
+        def _add_constraint_action(label, slot, kind_key):
+            act = QAction(label, self)
+            act.triggered.connect(slot)
+            constraints_menu.addAction(act)
+            self._constraint_actions[kind_key] = act
+            return act
+
+        _add_constraint_action(
+            "Add &Coincidence (two endpoints)",
+            lambda checked: self._constraint_gesture("coincidence"),
+            "coincidence")
+        _add_constraint_action(
+            "Add &Parallel (two segments)",
+            lambda checked: self._constraint_gesture("parallel"),
+            "parallel")
+        _add_constraint_action(
+            "Add &Perpendicular (two segments)",
+            lambda checked: self._constraint_gesture("perpendicular"),
+            "perpendicular")
+        _add_constraint_action(
+            "Add &Tangent (segment, circle)",
+            lambda checked: self._constraint_gesture("tangent"),
+            "tangent")
+        _add_constraint_action(
+            "Add &Distance (two endpoints)",
+            lambda checked: self._constraint_gesture("distance"),
+            "distance")
+        constraints_menu.addSeparator()
+        _add_constraint_action(
+            "Add &Length (selected segment)",
+            lambda checked: self._dimension_gesture("length"),
+            "length")
+        _add_constraint_action(
+            "Add &Radius (selected circle/arc)",
+            lambda checked: self._dimension_gesture("radius"),
+            "radius")
+        # The Pin submenu: rebuilt on open (aboutToShow) from the
+        # SELECTED entity's fields — the selection's own items.
+        self._pin_menu = constraints_menu.addMenu("&Pin at Field...")
+        self._pin_menu.aboutToShow.connect(self._rebuild_pin_menu)
+        constraints_menu.addSeparator()
+        self._remove_constraint_action = QAction(
+            "&Remove Last Constraint", self)
+        self._remove_constraint_action.triggered.connect(
+            lambda checked: self._active_solver_gesture(
+                lambda view: view.remove_last_constraint()))
+        constraints_menu.addAction(self._remove_constraint_action)
+        self._solve_action = QAction("&Solve", self)
+        self._solve_action.setShortcut(QKeySequence("Ctrl+L"))
+        self._solve_action.triggered.connect(
+            lambda checked: self._active_solver_gesture(
+                lambda view: view.solve_now()))
+        constraints_menu.addAction(self._solve_action)
+        for act in self._constraint_actions.values():
+            act.setEnabled(False)
+        self._remove_constraint_action.setEnabled(False)
+        self._solve_action.setEnabled(False)
 
         # ----- Edit menu -----
         edit_menu = self.menuBar().addMenu("&Edit")
@@ -415,9 +498,13 @@ class MainWindow(QMainWindow):
                       "the rim",
             "arc": "Arc (4): press-drag-release fixes r and a0, the "
                   "click fixes a1",
+            "rectangle": "Rectangle (5): press at a corner, release "
+                         "at the opposite one — 4 segments + 13 "
+                         "constraints in one act (ADR-0040 D1)",
         }
         for tool, key in (("select", "1"), ("segment", "2"),
-                          ("circle", "3"), ("arc", "4")):
+                          ("circle", "3"), ("arc", "4"),
+                          ("rectangle", "5")):
             act = QAction(tool.capitalize(), self, checkable=True)
             act.setShortcut(QKeySequence(key))
             act.setToolTip(tips[tool])
@@ -455,6 +542,11 @@ class MainWindow(QMainWindow):
             self._scene.clear()
         for nid in list(self._sketch_views):
             self._close_sketch_view(nid)
+        # The sessions die with the project (G4 m3's declared
+        # boundary: the constraints are session state until m4
+        # serializes them — a fresh document starts empty).
+        self._sketch_sessions.clear()
+        self._constraint_row_registry = {}
         self._node_params.clear()
         self._node_types.clear()
         self._feature_tree.clear()
@@ -754,7 +846,7 @@ class MainWindow(QMainWindow):
         self.open_sketch_view(state["node_id"])
         self._status.showMessage(
             f"Created {self._scene.get_node(state['node_id']).name} "
-            "— pick a tool on the sketch toolbar (1–4) and drag to draw",
+            "— pick a tool on the sketch toolbar (1–5) and drag to draw",
             4000)
 
     def open_sketch_view(self, node_id: int) -> Optional[SketchCanvas]:
@@ -769,11 +861,22 @@ class MainWindow(QMainWindow):
         view = self._sketch_views.get(node_id)
         if view is not None:
             self._tabs.setCurrentWidget(view)
+            self._update_constraints_menu()
             return view
         view = SketchCanvas(self._scene, self._command_stack, node_id,
                             parent=self)
         view.entity_selected.connect(self._on_canvas_entity_selected)
         view.sketch_edited.connect(self._on_canvas_sketch_edited)
+        # The node's OWN solver session attaches (G4 m3): the one the
+        # window keeps alive across view close/reopen — the canvas's
+        # lazy one is the standalone canvas's, replaced here before
+        # any gesture can land on it.
+        from .sketch_workbench import SketchSolverSession
+        session = self._sketch_sessions.get(node_id)
+        if session is None:
+            session = SketchSolverSession(self._scene, node_id)
+            self._sketch_sessions[node_id] = session
+        view.set_session(session)
         self._sketch_views[node_id] = view
         self._tabs.addTab(view, f"Sketch: {node.name}")
         self._tabs.setCurrentWidget(view)
@@ -781,6 +884,7 @@ class MainWindow(QMainWindow):
         # fires only when the tab actually changed — this also covers
         # the already-current case; idempotent either way).
         self._sync_sketch_selector()
+        self._update_constraints_menu()
         return view
 
     def _close_sketch_view(self, node_id: int) -> None:
@@ -820,7 +924,12 @@ class MainWindow(QMainWindow):
     def _on_canvas_entity_selected(self, target) -> None:
         """A canvas selected (or deselected) an entity: route its
         named parameters to the panel (the registry consumer — zero
-        new panel code, D5.1)."""
+        new panel code, D5.1), and — the workbench's extension (G4
+        m3, D3.1/D4) — the VALUE-CARRYING CONSTRAINTS that bind it as
+        EDITABLE rows (their labels the constraints' own renders,
+        their edits the re-value route through the solve) plus the
+        solver's words as the trailing read-only row."""
+        self._update_constraints_menu()
         if target is None:
             self._selected_entity = None
             self._on_tree_selection_changed()
@@ -835,7 +944,19 @@ class MainWindow(QMainWindow):
         chains = self._scene.sketch_chains(node_id)
         e = chains[chain][index]
         label = f"{e['kind']}[chain {chain} #{index}]"
-        self._property_panel.set_parameters(label, params_from_entity(e))
+        params = params_from_entity(e)
+        readonly = {}
+        session = self._sketch_sessions.get(node_id)
+        if session is not None:
+            rows, registry = session.constraint_rows(chain, index)
+            self._constraint_row_registry = registry
+            params.update(rows)
+            words = session.feedback_text()
+            readonly["Solver"] = words if words else session.bill_text()
+        else:
+            self._constraint_row_registry = {}
+        self._property_panel.set_parameters_and_readonly(
+            label, params, readonly)
 
     def _on_canvas_sketch_edited(self) -> None:
         """A canvas committed a write: the recipe changed — refresh
@@ -851,7 +972,19 @@ class MainWindow(QMainWindow):
         update IN PLACE (no row destroyed, the committing editor
         stays live); any other label → the rebuild is DEFERRED to the
         next loop pass, when every event handler has returned.
+
+        The workbench's declaration (G4 m3): the constraint rows'
+        LABELS (the constraints' own renders, value included) and the
+        Solver words row refresh at the next full ROUTING (a
+        selection change, a different surface, the sketch node's
+        tree selection) — an edit committed from a panel editor
+        leaves that editor's rows one act stale by design, because
+        the rebuild that would refresh them cannot run while the
+        editor's own handler is on the stack (the use-after-free
+        above); the canvas's status area carries the current words
+        meanwhile, always.
         """
+        self._update_constraints_menu()
         self._refresh_operation_rows()
         self._refresh_viewport()
         if self._selected_entity is not None:
@@ -907,10 +1040,6 @@ class MainWindow(QMainWindow):
 
     # ----- Sketch tool selector (the wiring that reaches D5.1) -----
 
-    EMPTY_SKETCH_HINT = (
-        "empty sketch — pick a tool (1 Select, 2 Segment, 3 Circle, "
-        "4 Arc) and drag to draw")
-
     def _active_sketch_view(self) -> Optional[SketchCanvas]:
         """The SketchCanvas of the CURRENT tab, or None (the 3D view
         or no view at all): the one view the selector acts on."""
@@ -930,6 +1059,7 @@ class MainWindow(QMainWindow):
 
     def _on_tab_changed(self, _index: int) -> None:
         self._sync_sketch_selector()
+        self._update_constraints_menu()
 
     def _sync_sketch_selector(self) -> None:
         """Reflect the active view in the selector: toolbar visibility,
@@ -971,6 +1101,82 @@ class MainWindow(QMainWindow):
             return  # a refusal (or the hint itself) holds the channel
         view._status_message = self.EMPTY_SKETCH_HINT
         view.update()
+
+    # ----- The Constraints menu's wiring (G4 m3, ADR-0040 D4) -----
+
+    EMPTY_SKETCH_HINT = (
+        "empty sketch — pick a tool (1 Select, 2 Segment, 3 Circle, "
+        "4 Arc, 5 Rectangle) and drag to draw")
+
+    def _active_solver_gesture(self, gesture) -> None:
+        """Run a solver-surface callable on the ACTIVE sketch view —
+        the one surface every Constraints-menu item reaches; the
+        canvas owns every semantic that follows."""
+        view = self._active_sketch_view()
+        if view is not None:
+            gesture(view)
+        self._update_constraints_menu()
+
+    def _constraint_gesture(self, kind: str) -> None:
+        self._active_solver_gesture(lambda view: view.arm_constraint(kind))
+
+    def _dimension_gesture(self, kind: str) -> None:
+        if kind == "length":
+            self._active_solver_gesture(
+                lambda view: view.add_length_on_selected())
+        else:
+            self._active_solver_gesture(
+                lambda view: view.add_radius_on_selected())
+
+    def _rebuild_pin_menu(self) -> None:
+        """The Pin submenu, rebuilt from the SELECTED entity's own
+        fields at open time (the selection-driven surface: the items
+        ARE the selection's — the kernel's field names in the recipe's
+        own order, never a UI-side table)."""
+        self._pin_menu.clear()
+        view = self._active_sketch_view()
+        if view is None:
+            return
+        for name in view.pin_field_names():
+            act = QAction(name, self)
+            act.triggered.connect(
+                lambda checked, n=name: self._active_solver_gesture(
+                    lambda v, field=n: v.pin_field(field)))
+            self._pin_menu.addAction(act)
+
+    def _update_constraints_menu(self) -> None:
+        """The selection-driven enablement: the pair arming and the
+        solve/remove need an ACTIVE view; the dimensions need the
+        selection's kind; the pin needs a selected entity. Called on
+        every tab change, view open/close, selection change and
+        sketch edit — the same sync points the tool selector
+        practices."""
+        view = self._active_sketch_view()
+        active = view is not None
+        selected_kind = None
+        if active and view.selected_entity() is not None:
+            chain, index = view.selected_entity()
+            node = self._scene.get_node(view.node_id()) \
+                if self._scene is not None else None
+            if node is not None:
+                chains = self._scene.sketch_chains(view.node_id())
+                if chain < len(chains) and index < len(chains[chain]):
+                    selected_kind = chains[chain][index]["kind"]
+        for kind, act in self._constraint_actions.items():
+            if kind in ("coincidence", "parallel", "perpendicular",
+                        "tangent", "distance"):
+                act.setEnabled(active)
+            elif kind == "length":
+                act.setEnabled(selected_kind == "segment")
+            elif kind == "radius":
+                act.setEnabled(selected_kind in ("circle", "arc"))
+        has_constraints = False
+        if active:
+            session = view.session()
+            has_constraints = session is not None and \
+                session.constraint_count() > 0
+        self._remove_constraint_action.setEnabled(has_constraints)
+        self._solve_action.setEnabled(active)
 
     # ----- Extrude command (ADR-0030 D5.5/D5.6) -----
 
@@ -1980,17 +2186,32 @@ class MainWindow(QMainWindow):
             return
         if node.kind == "sketch":
             # The sketch node itself: read-only summary — the entity
-            # payload is addressed per entity (canvas selection).
+            # payload is addressed per entity (canvas selection). The
+            # workbench's rows ride the same surface (G4 m3): LA
+            # BOLLETTA (the honest DoF counter, the bill's own text),
+            # the constraints' count and renders (the register's own
+            # words, describe_constraint), and the solver's words.
             chains = self._scene.sketch_chains(node_id)
             entities = sum(len(c) for c in chains)
             closed = "yes" if self._scene.sketch_closed(node_id) else \
                 "NO — open chains (the extrude would refuse)"
-            self._property_panel.set_readonly_fields(node.name, {
+            fields = {
                 "Kind": "Sketch (world XY)",
                 "Chains": str(len(chains)),
                 "Entities": str(entities),
                 "Fully defined": closed,
-            })
+            }
+            session = self._sketch_sessions.get(node_id)
+            if session is not None:
+                fields["DoF"] = session.bill_text()
+                renders = session.describe_all()
+                fields["Constraints"] = (
+                    "{} (session — m4 serializes)".format(len(renders)))
+                for render in renders:
+                    fields[render] = ""
+                words = session.feedback_text()
+                fields["Solver"] = words if words else "—"
+            self._property_panel.set_readonly_fields(node.name, fields)
             return
         # Operation node (ADR-0027 D5): the placement offsets are the
         # editable params; the operand summary (names + ids) and any
@@ -2129,6 +2350,25 @@ class MainWindow(QMainWindow):
         # route a released drag uses — one truth, two affordances
         # (D5.2). The write validates through the kernel and lands as
         # ONE undo entry; the panel re-routes from the recipe after.
+        #
+        # THE CONSTRAINT ROWS FIRST (G4 m3, the registry consumer): a
+        # row whose label is a constraint's own render routes to the
+        # RE-VALUE through the solve (the dimension edit — the golden
+        # 8's own act as a gesture), never to the entity's fields.
+        if self._selected_entity is not None and \
+                name in self._constraint_row_registry:
+            index = self._constraint_row_registry[name]
+            node_id = self._selected_entity[0]
+            view = self._sketch_views.get(node_id)
+            if view is not None:
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    return
+                view.revalue_constraint(index, value)
+                self._on_canvas_sketch_edited()
+            return
+
         if self._selected_entity is not None:
             try:
                 value = float(value)

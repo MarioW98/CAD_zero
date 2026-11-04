@@ -394,6 +394,30 @@ void bind_scene(nb::module_& m) {
         })
         .def_prop_ro("value", [](const sdf::SketchConstraint& c) {
             return c.value;
+        })
+        // The operands, READ-ONLY (the m3 workbench's consumer
+        // surface): the panel's constraint rows and the tests'
+        // independent verification navigate the recipe's own
+        // addresses; every WRITE still goes through the factories
+        // and the model's admission — the operands are data, never
+        // a construction route.
+        .def_prop_ro("a", [](const sdf::SketchConstraint& c) {
+            return c.a;
+        })
+        .def_prop_ro("b", [](const sdf::SketchConstraint& c) {
+            return c.b;
+        })
+        .def_prop_ro("ea", [](const sdf::SketchConstraint& c) {
+            return c.ea;
+        })
+        .def_prop_ro("eb", [](const sdf::SketchConstraint& c) {
+            return c.eb;
+        })
+        .def_prop_ro("pin", [](const sdf::SketchConstraint& c) {
+            return c.pin;
+        })
+        .def_prop_ro("case_bit", [](const sdf::SketchConstraint& c) {
+            return c.case_bit;
         });
 
     scene_mod.def("constraint_coincidence",
@@ -579,6 +603,55 @@ void bind_scene(nb::module_& m) {
              "The model's chains as plain dicts (the sketch_chains "
              "shape — the same reader the canvas consumes): the "
              "recipe's own values, the solved state included.");
+
+    // ---- The workbench's two renders (ADR-0040 D4, G4 m3) ----------
+    //
+    // The interface CONSUMES the register's own words — never a
+    // Python-side paraphrase that could drift from the kernel's
+    // vocabulary. The constraint's name is the culprit's render in
+    // every refusal (describe_constraint, the m2's own function);
+    // the field names are the recipe's own serialization order (the
+    // pin's x_i addressing — the same names the format writes, so
+    // the pin menu and the panel speak the recipe's language, not a
+    // UI-side copy of it).
+    scene_mod.def("describe_constraint",
+        [](const sdf::SketchConstraint& c,
+           const std::vector<sdf::SketchChain>& chains) {
+            return sdf::describe_constraint(c, chains);
+        },
+        nb::arg("constraint"), nb::arg("chains"),
+        "The constraint's own name — the culprit's render the "
+        "refusals quote and the panel's constraint rows carry "
+        "(VERBATIM from the kernel: the interface never paraphrases "
+        "the register).");
+
+    scene_mod.def("sketch_field_names",
+        [](const std::vector<sdf::SketchChain>& chains,
+           sdf::SketchEntityRef r) -> nb::list {
+            if (r.chain >= chains.size() ||
+                r.entity >= chains[r.chain].entities.size())
+                throw std::runtime_error(
+                    "sketch_field_names: no entity at chain " +
+                    std::to_string(r.chain) + " index " +
+                    std::to_string(r.entity) +
+                    " — the names are the recipe's own fields, read "
+                    "from a real entity.");
+            nb::list names;
+            const sdf::SketchEntity& e =
+                chains[r.chain].entities[r.entity];
+            const std::size_t dof = sdf::sketch_entity_dof(e.kind);
+            for (std::size_t f = 0; f < dof; ++f)
+                names.append(sdf::sketch_field_name(e.kind,
+                                                    std::uint8_t(f)));
+            return names;
+        },
+        nb::arg("chains"), nb::arg("entity"),
+        "The entity's parameter field names in the recipe's own "
+        "serialization order (segment: x0, y0, x1, y1; circle: cx, "
+        "cy, r; arc: cx, cy, r, a0, sweep) — the pin's x_i "
+        "addressing. The list's INDEX is the pin's field index; the "
+        "names are the kernel's own (sketch_field_name), never a "
+        "UI-side table.");
 
     scene_mod.attr("eps_solve_lin") = sdf::kSolveEpsLin;
     scene_mod.attr("eps_solve_ang") = sdf::kSolveEpsAng;

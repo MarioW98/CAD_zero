@@ -20,6 +20,20 @@ view is the world XY plane seen from +Z: +X right, +Y up. Pan and
 zoom are transient view state, never document state; a reopened
 sketch fits its content (D5.6).
 
+THE WORKBENCH (ADR-0040 D4, G4 m3): the canvas carries the SOLVER
+SESSION — the authored constraint list (session state; m4 owns the
+serialization), LA BOLLETTA on the status line (the honest DoF
+counter, recomputed at the COLD SITES only — every write route
+funnels through ``_after_write``, the certificate's own economy:
+zero cost at rest), and THE CLASSES IN WORDS (the last
+solve/admission's answer, the register's own vocabulary). The
+rectangle macro is the one new TOOL (D1's composition: four
+segments + thirteen constraints in ONE act); the constraint
+gestures arm a two-step pick (the selection-driven menu's better
+half). The D5.1–D5.5 rules below are NOT touched: the suggestions
+stay value-offers FOREVER (the axes family is queued, ADR-0040
+D1's promise — a suggestion never writes a constraint).
+
 Class validation (D5.5) calls the KERNEL's predicates through the
 bindings — ``scene.sketch_entity_error`` — never a UI-side rulebook.
 The definition state (D5.3) is ``scene.sketch_chain_closed`` — the
@@ -184,6 +198,48 @@ def _kernel_entity_error(entity) -> str:
     return CAD_0.scene.sketch_entity_error(entity)
 
 
+def _solve_status(name: str):
+    """The solve status enum value by its own name (the register's
+    vocabulary: solved / not_solvable / degenerate)."""
+    import CAD_0
+    return getattr(CAD_0.scene.SketchSolveStatus, name)
+
+
+def _chains_value_identical(a, b) -> bool:
+    """Two chains dumps value-identical (the m2's own discipline:
+    FIELD-WISE, never raw bytes — every sketch payload struct carries
+    tail padding the language leaves unspecified; the contract covers
+    the VALUES the recipe serializes, and that is what is compared,
+    field for field)."""
+    if len(a) != len(b):
+        return False
+    for ca, cb in zip(a, b):
+        if len(ca) != len(cb):
+            return False
+        for ea, eb in zip(ca, cb):
+            if ea["kind"] != eb["kind"]:
+                return False
+            if ea["kind"] == "segment":
+                if (ea["a"][0], ea["a"][1], ea["b"][0], ea["b"][1],
+                        ea["interior_left"]) != \
+                        (eb["a"][0], eb["a"][1], eb["b"][0], eb["b"][1],
+                         eb["interior_left"]):
+                    return False
+            elif ea["kind"] == "circle":
+                if (ea["center"][0], ea["center"][1], ea["radius"],
+                        ea["hole"]) != \
+                        (eb["center"][0], eb["center"][1], eb["radius"],
+                         eb["hole"]):
+                    return False
+            else:
+                if (ea["center"][0], ea["center"][1], ea["radius"],
+                        ea["start_angle"], ea["sweep"], ea["hole"]) != \
+                        (eb["center"][0], eb["center"][1], eb["radius"],
+                         eb["start_angle"], eb["sweep"], eb["hole"]):
+                    return False
+    return True
+
+
 def make_entity(kind: str, params: dict):
     """The named-parameter table -> the kernel entity, via the bound
     factories (the single construction route — the canvas, the panel
@@ -220,7 +276,7 @@ class SketchCanvas(QWidget):
     # Emitted after every committed write (the recipe changed).
     sketch_edited = Signal()
 
-    TOOLS = ("select", "segment", "circle", "arc")
+    TOOLS = ("select", "segment", "circle", "arc", "rectangle")
 
     def __init__(self, scene, command_stack, node_id: int,
                  parent: Optional[QWidget] = None) -> None:
@@ -244,7 +300,15 @@ class SketchCanvas(QWidget):
         self._inline_editor: Optional[QLineEdit] = None
         self._pan = None              # middle-button pan anchor
 
+        # The workbench (G4 m3): the solver session (None until the
+        # main window attaches the node's own — the lazy one below is
+        # the standalone canvas's), and the armed two-step constraint
+        # pick's transient state (an abort clears it, zero entries).
+        self._session = None
+        self._armed = None
+
         self._fit_content()
+        self._ensure_session()
 
     # --- public surface (the view's contract) ---------------------------
 
@@ -266,6 +330,42 @@ class SketchCanvas(QWidget):
         """The pinned rejection channel (D5.5): the message persists
         until the next gesture begins. Asserted by the D6 smoke."""
         return self._status_message
+
+    # --- the workbench's solver surface (ADR-0040 D4, G4 m3) --------
+
+    def set_session(self, session) -> None:
+        """The main window attaches the NODE'S OWN session (it survives
+        the view's close/reopen — the constraints are the editing
+        session's state until m4 serializes them)."""
+        self._session = session
+        self.update()
+
+    def session(self):
+        return self._session
+
+    def _ensure_session(self):
+        if self._session is None and self._scene is not None:
+            from .sketch_workbench import SketchSolverSession
+            self._session = SketchSolverSession(self._scene,
+                                                self._node_id)
+        return self._session
+
+    def bill_text(self) -> str:
+        """LA BOLLETTA — the honest DoF counter as the bill's own text
+        (the cache recomputed at the cold sites only; the reading at
+        rest costs nothing). The interface never computes a number:
+        it QUOTES the graph's."""
+        session = self._ensure_session()
+        return session.bill_text() if session is not None else ""
+
+    def feedback_text(self) -> str:
+        """THE CLASSES IN WORDS — the last solve/admission's answer,
+        the register's own vocabulary (solved with the free count,
+        sketch_not_solvable with the residual and the culprit,
+        sketch_over_constrained with the culprit, sketch_degenerate
+        with the kernel's own message)."""
+        session = self._ensure_session()
+        return session.feedback_text() if session is not None else ""
 
     def selected_entity(self):
         return self._selected
@@ -539,11 +639,19 @@ class SketchCanvas(QWidget):
             return
         world = self.screen_to_world(pos.x(), pos.y())
 
+        # The armed constraint pick comes FIRST (the two-step gesture
+        # owns the press while armed — D4's selection-driven menu's
+        # arming half): a transient pick, no write until the second
+        # click completes the operands.
+        if self._armed is not None:
+            self._armed_pick(world)
+            return
+
         # A running inline editor commits on focus-out/return; a new
         # press cancels it (an aborted edit writes nothing).
         self._cancel_inline_editor()
 
-        if self._tool in ("segment", "circle", "arc") and \
+        if self._tool in ("segment", "circle", "arc", "rectangle") and \
                 self._gesture is None and self._drag is None:
             self._status_message = ""  # a new gesture clears the channel
             if self._tool == "arc":
@@ -616,6 +724,8 @@ class SketchCanvas(QWidget):
                 self._complete_segment(world, event.modifiers())
             elif self._gesture["kind"] == "circle":
                 self._complete_circle(world)
+            elif self._gesture["kind"] == "rectangle":
+                self._complete_rectangle(world)
             elif self._gesture["kind"] == "arc" and \
                     self._gesture["phase"] == "radius":
                 self._finish_arc_radius(world)
@@ -813,6 +923,581 @@ class SketchCanvas(QWidget):
     def _make_entity(self, kind: str, params: dict):
         return make_entity(kind, params)
 
+    # --- the workbench's acts (ADR-0040 D4, G4 m3) -----------------------
+    #
+    # Every act below is ONE command on the shared stack: the execute
+    # writes (through the same scene routes every other write uses),
+    # the undo restores what the act moved — and when the act runs
+    # the solve, the undo restores the WHOLE pre-act recipe (the
+    # solve may move several entities, the golden 8's own lesson)
+    # plus the constraint list; the redo re-executes from the
+    # restored state, deterministically, bit-identically.
+
+    def _constraint_command(self, factory, description: str) -> None:
+        """The one-constraint act: the pre-admission on the current
+        model (the honest record first — a refused candidate never
+        enters the list), then the command whose execute admits for
+        real (the same state, the same verdict) and whose undo
+        removes what landed. The arming ends HERE either way: a
+        completed constraint or a refusal both answer the gesture —
+        the armed pick never outlives its own answer."""
+        session = self._ensure_session()
+        self._armed = None
+        self._gesture = None
+        candidate = factory()
+        record = session.model().add_constraint(candidate)
+        if not record.admitted:
+            # sketch_over_constrained, at the admission: the record's
+            # message IS the words (the class, the culprit, the bill,
+            # the remedy — VERBATIM, never a paraphrase).
+            session.report_refusal(record)
+            self.update()
+            return
+        state = {"landed": False}
+
+        def execute():
+            rec = session.admit(candidate)
+            state["landed"] = rec.admitted
+            self._after_write()
+
+        def undo():
+            if state["landed"]:
+                session.remove_at(session.constraint_count() - 1)
+            self._after_write()
+
+        if self._stack is not None:
+            self._stack.push(execute, undo, description)
+        else:
+            execute()
+
+    def arm_constraint(self, kind: str) -> None:
+        """The selection-driven menu's arming half: the two-step pick
+        for the pair constraints (coincidence/distance pick ENDPOINTS,
+        parallel/perpendicular pick SEGMENTS, tangent picks a segment
+        then a circle). The state is transient — ESC, right-click or
+        a tool switch aborts it with zero entries (D5.1's rule)."""
+        if kind not in ("coincidence", "parallel", "perpendicular",
+                        "tangent", "distance"):
+            return
+        self._abort_any_interaction()
+        self._tool = "select"
+        self._armed = {"kind": kind, "first": None}
+        self._status_message = ""
+        self.update()
+
+    def _armed_hint(self, message: str) -> None:
+        self._status_message = message
+        self.update()
+
+    def _armed_pick(self, world) -> None:
+        """One click of the armed pick: the first stores the operand,
+        the second lands the constraint (ONE undo entry). A missed
+        click repeats the hint — the arming persists, nothing
+        written."""
+        armed = self._armed
+        kind = armed["kind"]
+        session = self._ensure_session()
+        import CAD_0
+        scene = CAD_0.scene
+
+        if kind in ("coincidence", "distance"):
+            first_identity = None
+            if armed["first"] is not None:
+                f = armed["first"]
+                first_identity = (f[0], f[1], f[2])
+            pick = self._endpoint_ref_at(world, exclude=first_identity)
+            if pick is None:
+                self._armed_hint(
+                    "{}: no endpoint within reach — click nearer an "
+                    "endpoint (or ESC aborts)".format(kind))
+                return
+            chain, index, is_end, point = pick
+            if armed["first"] is None:
+                armed["first"] = pick
+                self._armed_hint(
+                    "{}: first endpoint at ({:.6g}, {:.6g}) — click "
+                    "the second".format(kind, point[0], point[1]))
+                self.update()
+                return
+            f_chain, f_index, f_end, f_point = armed["first"]
+            if kind == "coincidence":
+                self._constraint_command(
+                    lambda: scene.constraint_coincidence(
+                        scene.SketchPointRef(
+                            scene.SketchEntityRef(f_chain, f_index), f_end),
+                        scene.SketchPointRef(
+                            scene.SketchEntityRef(chain, index), is_end)),
+                    "Constraint coincidence")
+            else:
+                # The distance lands at the CURRENT measure (the same
+                # rule the pin practices: the value the gesture writes
+                # is the one the geometry has, visible; the edit
+                # follows through the row).
+                value = math.hypot(point[0] - f_point[0],
+                                   point[1] - f_point[1])
+                if value <= 0.0:
+                    self._armed_hint(
+                        "distance: the two endpoints coincide — |PQ| = 0 "
+                        "is the coincidence's question (the right tool "
+                        "for v = 0); the arming persists")
+                    return
+                self._constraint_command(
+                    lambda: scene.constraint_distance(
+                        scene.SketchPointRef(
+                            scene.SketchEntityRef(f_chain, f_index), f_end),
+                        scene.SketchPointRef(
+                            scene.SketchEntityRef(chain, index), is_end),
+                        value),
+                    "Constraint distance")
+            return
+
+        # parallel / perpendicular / tangent: ENTITY picks (the 10 px
+        # exact-formula rule, D5.2's own).
+        hit = self._entity_at(world)
+        if hit is None:
+            self._armed_hint(
+                "{}: no entity within the pick threshold — click "
+                "nearer one (or ESC aborts)".format(kind))
+            return
+        chain, index, _dist = hit
+        entity = self._entity(chain, index)
+        if entity is None:
+            return
+        if kind == "tangent":
+            if armed["first"] is None:
+                if entity["kind"] != "segment":
+                    self._armed_hint(
+                        "tangent: the FIRST operand must be a segment "
+                        "— click a segment (or ESC aborts)")
+                    return
+                armed["first"] = (chain, index)
+                self._armed_hint(
+                    "tangent: segment s{} — click the circle".format(
+                        index))
+                self.update()
+                return
+            f_chain, f_index = armed["first"]
+            first = self._entity(f_chain, f_index)
+            if first is None or first["kind"] != "segment":
+                self._armed_hint(
+                    "tangent: the first operand is no longer a "
+                    "segment — restart the arming")
+                self._armed = None
+                return
+            if entity["kind"] != "circle":
+                self._armed_hint(
+                    "tangent: the SECOND operand must be a circle "
+                    "(v1's table: linea x cerchio) — click a circle")
+                return
+            chains = session.native_chains_now()
+            bit = scene.derive_tangent_case_bit(
+                chains, scene.SketchEntityRef(f_chain, f_index),
+                scene.SketchEntityRef(chain, index))
+            self._constraint_command(
+                lambda: scene.constraint_tangent(
+                    scene.SketchEntityRef(f_chain, f_index),
+                    scene.SketchEntityRef(chain, index), bit),
+                "Constraint tangent")
+            return
+
+        if entity["kind"] != "segment":
+            self._armed_hint(
+                "{}: the operands must be SEGMENTS — click a "
+                "segment (or ESC aborts)".format(kind))
+            return
+        if armed["first"] is None:
+            armed["first"] = (chain, index)
+            self._armed_hint(
+                "{}: segment s{} — click the second segment".format(
+                    kind, index))
+            self.update()
+            return
+        f_chain, f_index = armed["first"]
+        factory = (scene.constraint_parallel if kind == "parallel"
+                   else scene.constraint_perpendicular)
+        self._constraint_command(
+            lambda: factory(scene.SketchEntityRef(f_chain, f_index),
+                            scene.SketchEntityRef(chain, index)),
+            "Constraint " + kind)
+
+    def _endpoint_ref_at(self, world, exclude=None):
+        """The nearest endpoint within the coincidence's own threshold
+        (SUGGEST_COINCIDE_PX, D5.4's constant — the same reach the
+        suggestion practices): (chain, index, is_end, point).
+
+        THE AMBIGUITY AT A SHARED POINT, answered honestly: at a
+        chain's joint several endpoints sit at the SAME coordinates
+        (the neighbours' copies) — a second click on the point the
+        first pick already took means the OTHER endpoint there (the
+        coincidence's own question), so the identical pick is passed
+        over for the next candidate within reach. Deterministic: the
+        candidates sort by (distance, authored order)."""
+        candidates = []
+        for ci, ei, is_end, pt in self._all_endpoint_refs():
+            d_px = self.px(math.hypot(world[0] - pt[0],
+                                      world[1] - pt[1]))
+            if d_px <= SUGGEST_COINCIDE_PX:
+                candidates.append((d_px, len(candidates),
+                                   ci, ei, is_end, pt))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda c: (c[0], c[1]))
+        if exclude is not None:
+            for c in candidates:
+                identity = (c[2], c[3], c[4])
+                if identity != exclude:
+                    return (c[2], c[3], c[4], c[5])
+        c = candidates[0]
+        return (c[2], c[3], c[4], c[5])
+
+    def _all_endpoint_refs(self):
+        """(chain, index, is_end, point) for every endpoint — the
+        armed coincidence/distance pick's material."""
+        out = []
+        for ci, chain in enumerate(self._chains()):
+            for ei, e in enumerate(chain):
+                ends = entity_endpoints(e)
+                if ends is None:
+                    continue
+                out.append((ci, ei, False, ends[0]))
+                out.append((ci, ei, True, ends[1]))
+        return out
+
+    def add_length_on_selected(self) -> None:
+        """The length dimension on the SELECTED segment, at the
+        CURRENT measure (the pin's own rule: the value the gesture
+        writes is the one the geometry has — the values visible,
+        D5.1)."""
+        if self._selected is None:
+            return
+        chain, index = self._selected
+        e = self._entity(chain, index)
+        if e is None or e["kind"] != "segment":
+            return
+        value = segment_length(e)
+        import CAD_0
+        scene = CAD_0.scene
+        self._constraint_command(
+            lambda: scene.constraint_length(
+                scene.SketchEntityRef(chain, index), value),
+            "Constraint length")
+
+    def add_radius_on_selected(self) -> None:
+        """The radius dimension on the SELECTED circle/arc, at the
+        current radius."""
+        if self._selected is None:
+            return
+        chain, index = self._selected
+        e = self._entity(chain, index)
+        if e is None or e["kind"] not in ("circle", "arc"):
+            return
+        value = float(e["radius"])
+        import CAD_0
+        scene = CAD_0.scene
+        self._constraint_command(
+            lambda: scene.constraint_radius(
+                scene.SketchEntityRef(chain, index), value),
+            "Constraint radius")
+
+    def pin_field(self, field_name: str) -> None:
+        """IL PIN (D4, the DIMENSION family's fourth form): the atom
+        x_i = v on the SELECTED entity's named field — the value the
+        parameter has AT THE MOMENT OF THE GESTURE (never a rounded
+        copy), one linear equation, differentiable everywhere, any v.
+        The queued families (symmetry, axes, equations) do NOT land
+        here: this gesture and nothing else is the under-constrained's
+        road to FULL."""
+        if self._selected is None:
+            return
+        chain, index = self._selected
+        e = self._entity(chain, index)
+        if e is None:
+            return
+        from .sketch_workbench import field_value
+        import CAD_0
+        scene = CAD_0.scene
+        try:
+            value = field_value(e, field_name)
+        except KeyError:
+            return
+        field_index = self._field_index(chain, index, field_name)
+        if field_index is None:
+            return
+        self._constraint_command(
+            lambda: scene.constraint_pin(
+                scene.SketchParamRef(
+                    scene.SketchEntityRef(chain, index), field_index),
+                value),
+            "Pin " + field_name)
+
+    def _field_index(self, chain: int, index: int, field_name: str):
+        """The field's position in the recipe's own serialization
+        order (the kernel's sketch_field_names — the list's index IS
+        the pin's field index; the names are the kernel's, never a
+        UI-side table)."""
+        session = self._ensure_session()
+        import CAD_0
+        scene = CAD_0.scene
+        names = scene.sketch_field_names(
+            session.native_chains_now(),
+            scene.SketchEntityRef(chain, index))
+        names = [str(n) for n in names]
+        if field_name not in names:
+            return None
+        return names.index(field_name)
+
+    def pin_field_names(self):
+        """The SELECTED entity's pinnable fields, the kernel's own
+        names (the Pin menu's items — the selection-driven surface)."""
+        if self._selected is None:
+            return []
+        chain, index = self._selected
+        if self._entity(chain, index) is None:
+            return []
+        session = self._ensure_session()
+        import CAD_0
+        scene = CAD_0.scene
+        return [str(n) for n in scene.sketch_field_names(
+            session.native_chains_now(),
+            scene.SketchEntityRef(chain, index))]
+
+    def remove_last_constraint(self) -> None:
+        """D3.3's remove, wired to the last authored constraint (the
+        remedy the admissions name: 'remove it, or remove what it
+        duplicates'). ONE undo entry; the counter refreshes — the
+        cold site."""
+        session = self._ensure_session()
+        if session.constraint_count() == 0:
+            return
+        state = {}
+
+        def execute():
+            state["index"] = session.constraint_count() - 1
+            state["constraint"] = session.constraint_at(state["index"])
+            session.remove_at(state["index"])
+            self._after_write()
+
+        def undo():
+            if state.get("constraint") is not None:
+                session.reinsert(state["index"], state["constraint"])
+            self._after_write()
+
+        if self._stack is not None:
+            self._stack.push(execute, undo, "Remove last constraint")
+        else:
+            execute()
+
+    def revalue_constraint(self, index: int, value: float) -> None:
+        """The dimension edit through the solve (the golden 8's own
+        act, now a gesture): the re-value, the solve, the store-back
+        — ONE undo entry whose restore is the WHOLE pre-act recipe
+        plus the constraint list; the DAG pass re-materializes the
+        dependents (the established propagation, now through the
+        solve). The factory's value rule refuses an illegal value
+        with the kernel's own remedy — the previous value stands."""
+        session = self._ensure_session()
+        constraint = session.constraint_at(index)
+        if constraint is None:
+            return
+        try:
+            self._solver_edit_command(
+                lambda: session.revalue_at(index, value),
+                "Revalue constraint {}".format(index))
+        except (ValueError, RuntimeError) as exc:
+            self._reject("revalue refused: {} — the previous value "
+                         "stands".format(exc))
+            return
+
+    def solve_now(self) -> None:
+        """IL SOLVE as an explicit act: the model's own answer, the
+        classes in words; the store-back ONLY on solved (the two
+        honest failures leave the recipe untouched — D2.2). An act
+        that would change nothing pushes no command (nothing to
+        undo)."""
+        session = self._ensure_session()
+        model, result, refused = session.solve()
+        if refused or result.status != _solve_status("solved"):
+            # The words carry the answer; the recipe stands.
+            self.update()
+            return
+        before = self._chains()
+        after = model.chains_dump()
+        if _chains_value_identical(before, after):
+            self.update()
+            return
+        self._solver_edit_command(lambda: None, "Solve constraints")
+
+    def _recipe_snapshot(self):
+        """The WHOLE recipe as kernel entities — the undo's restore
+        material for every act that runs the solve (the solve may
+        move several entities: the one undo entry captures the whole
+        pre-act state, the golden 8's own discipline)."""
+        from .sketch_workbench import entities_from_dicts
+        return [entities_from_dicts(chain) for chain in self._chains()]
+
+    def _restore_recipe(self, snapshot) -> None:
+        for ci, chain_entities in enumerate(snapshot):
+            for ei, e in enumerate(chain_entities):
+                self._scene.sketch_set_entity(self._node_id, ci, ei, e)
+
+    def _solver_edit_command(self, mutate, description: str) -> None:
+        """The ONE-command discipline for every act that runs the
+        solve (the entity edit, the re-value, the explicit solve):
+        execute = mutate + solve + store-back; undo = restore the
+        whole snapshot (the recipe AND the constraint list); redo
+        re-executes from the restored state — deterministic,
+        bit-identical (ADR-0014 on the solve). On the honest
+        failures the recipe keeps the mutation (the user's authored
+        act stands) and the words carry the class."""
+        session = self._ensure_session()
+        snap_entities = self._recipe_snapshot()
+        snap_constraints = session.constraints()
+        solved_flag = _solve_status("solved")
+
+        def execute():
+            mutate()
+            model, result, refused = session.solve()
+            if not refused and result.status == solved_flag:
+                session.store_solved(model)
+            self._after_write()
+
+        def undo():
+            self._restore_recipe(snap_entities)
+            session.restore(snap_constraints)
+            self._after_write()
+
+        if self._stack is not None:
+            self._stack.push(execute, undo, description)
+        else:
+            execute()
+
+    # --- IL MACRO RETTANGOLO (D1's composition, the gesture) ---------
+
+    def _complete_rectangle(self, world) -> None:
+        """Press, drag, release at the opposite corner: 4 entities +
+        13 constraints in ONE act (D1's own table: 4 coincidences +
+        2 parallels + 1 perpendicular + 2 lengths at the gesture's
+        values — the values visible, D5.1's rule), ONE undo entry,
+        the bill reading 16 - 13 = 3 right after the gesture. The
+        rectangle is NOT a fourth entity kind: it is four segments
+        and four right angles, the composition."""
+        g = self._gesture
+        a = g["a"]
+        w = world[0] - a[0]
+        h = world[1] - a[1]
+        # The degenerate release: either side within the 2 px
+        # threshold refuses (a rectangle with a zero side is a
+        # segment, not a composition).
+        if self.px(abs(w)) < GESTURE_THRESHOLD_PX or \
+                self.px(abs(h)) < GESTURE_THRESHOLD_PX:
+            self._reject("rectangle refused: the width {:.6g} or the "
+                         "height {:.6g} is within the 2 px gesture "
+                         "threshold (a degenerate side)".format(w, h))
+            return
+        # The CCW normalization: the four corners A, B, C, D ordered
+        # so the interior sits on the LEFT of every directed edge
+        # (the outer contour's own convention — the traversal follows
+        # the drag, whichever way it went).
+        b = (a[0] + w, a[1])
+        c = (world[0], world[1])
+        d = (a[0], a[1] + h)
+        if w * h < 0.0:
+            b, d = d, b  # the drag went right-down or left-up: reverse
+        corners = (a, b, c, d)
+
+        import CAD_0
+        from .sketch_workbench import native_chains
+        scene = CAD_0.scene
+        session = self._ensure_session()
+        # The macro's own chain: a NEW one (the rectangle is its own
+        # closed contour), reusing an empty trailing one if the recipe
+        # happens to carry it (the _create_entity pattern).
+        chains = self._chains()
+        n_chain = len(chains)
+        if chains and not chains[-1]:
+            n_chain = len(chains) - 1
+        segments = [
+            self._make_entity("segment", {
+                "x0": corners[i][0], "y0": corners[i][1],
+                "x1": corners[(i + 1) % 4][0],
+                "y1": corners[(i + 1) % 4][1],
+                "interior_left": True})
+            for i in range(4)]
+        # The lengths at the gesture's values (the visible dimensions):
+        length_w = math.hypot(corners[1][0] - corners[0][0],
+                              corners[1][1] - corners[0][1])
+        length_h = math.hypot(corners[2][0] - corners[1][0],
+                              corners[2][1] - corners[1][1])
+        # The 13, addressed on the macro's own chain (D1's own table:
+        # 4 coincidences + 2 parallels + 1 perpendicular + 2 lengths).
+        er = scene.SketchEntityRef
+        pr = scene.SketchPointRef
+        constraints = [
+            scene.constraint_coincidence(
+                pr(er(n_chain, 0), True), pr(er(n_chain, 1), False)),
+            scene.constraint_coincidence(
+                pr(er(n_chain, 1), True), pr(er(n_chain, 2), False)),
+            scene.constraint_coincidence(
+                pr(er(n_chain, 2), True), pr(er(n_chain, 3), False)),
+            scene.constraint_coincidence(
+                pr(er(n_chain, 3), True), pr(er(n_chain, 0), False)),
+            scene.constraint_parallel(er(n_chain, 0), er(n_chain, 2)),
+            scene.constraint_parallel(er(n_chain, 1), er(n_chain, 3)),
+            scene.constraint_perpendicular(er(n_chain, 0), er(n_chain, 1)),
+            scene.constraint_length(er(n_chain, 0), length_w),
+            scene.constraint_length(er(n_chain, 1), length_h),
+        ]
+
+        # THE PRE-ADMISSION (the atomicity guard): all 13 admit at
+        # the gesture's own geometry — the scratch model carries the
+        # four new segments as the new chain — or the whole act
+        # refuses, NOTHING written (an atom that half-lands is a
+        # corruption, not a macro).
+        scratch_chains = native_chains(self._scene, self._node_id)
+        if n_chain < len(scratch_chains):
+            scratch_chains[n_chain] = scene.SketchChain(segments)
+        else:
+            scratch_chains.append(scene.SketchChain(segments))
+        scratch = scene.SketchSolveModel(scratch_chains)
+        for existing in session.constraints():
+            # the refused stay out — the session's own rebuild policy
+            scratch.add_constraint(existing)
+        for c in constraints:
+            record = scratch.add_constraint(c)
+            if not record.admitted:
+                session.report_refusal(record)
+                self._reject("rectangle refused: " + record.message)
+                return
+
+        state = {"base": None, "landed": 0}
+
+        def execute():
+            for seg in segments:
+                self._scene.sketch_add_entity(self._node_id, n_chain, seg)
+            state["base"] = len(self._chains()[n_chain]) - 4
+            state["landed"] = 0
+            for c in constraints:
+                if session.admit(c).admitted:
+                    state["landed"] += 1
+            self._after_write()
+            self._select((n_chain, state["base"]))
+
+        def undo():
+            for i in reversed(range(4)):
+                self._scene.sketch_remove_entity(
+                    self._node_id, n_chain, state["base"] + i)
+            for _i in range(state["landed"]):
+                session.remove_at(session.constraint_count() - 1)
+            self._after_write()
+            self._select(None)
+
+        self._gesture = None
+        if self._stack is not None:
+            self._stack.push(execute, undo, "Rectangle macro")
+        else:
+            execute()
+
+
     def _create_entity(self, entity, chain_target) -> None:
         """The completed gesture: the kernel's class check first
         (D5.5 — no second copy), then ONE undoable write. An accepted
@@ -921,7 +1606,17 @@ class SketchCanvas(QWidget):
         """Every parameter write goes through here — the panel's text
         route and the canvas's gesture route are ONE route (D5.2:
         one truth, two affordances). The kernel's class check runs
-        BEFORE the write; the edit is ONE undo entry."""
+        BEFORE the write; the edit is ONE undo entry.
+
+        UNDER THE SOLVER (G4 m3, D4's fifth surface): when the
+        session carries constraints, the same ONE command also runs
+        the solve and stores the solved recipe back — the free
+        parameter's edit, the solve that holds the constraints, the
+        fields' update, the DAG pass, all one act (the golden 8's
+        own chain). The undo restores the WHOLE pre-act recipe (the
+        solve may move several entities, not just the edited one).
+        With NO constraints the pre-solver path stands untouched
+        (the additivity clause: the propagation world unchanged)."""
         kind = old_entity["kind"]
         new_entity = self._make_entity(kind, new_params)
         # The undo restores the OLD entity: captured as a kernel entity
@@ -930,6 +1625,14 @@ class SketchCanvas(QWidget):
         error = _kernel_entity_error(new_entity)
         if error:
             self._reject("edit refused: " + error)
+            return
+
+        session = self._ensure_session()
+        if session is not None and session.constraint_count() > 0:
+            def mutate():
+                self._scene.sketch_set_entity(self._node_id, chain, index,
+                                               new_entity)
+            self._solver_edit_command(mutate, description)
             return
 
         def apply(entity):
@@ -1055,21 +1758,29 @@ class SketchCanvas(QWidget):
     # --- shared helpers -------------------------------------------------------
 
     def _abort_any_interaction(self) -> None:
-        """ESC / right-click: no entity, no write, no undo entry, the
-        parameters untouched. An abort is not an undo."""
+        """ESC / right-click / a tool switch: no entity, no write, no
+        undo entry, the parameters untouched. An abort is not an
+        undo. The armed constraint pick dies here too (an aborted
+        arming wrote nothing)."""
         self._cancel_inline_editor()
         changed = self._gesture is not None or self._drag is not None or \
-            self._pan is not None
+            self._pan is not None or self._armed is not None
         self._gesture = None
         self._drag = None
         self._pan = None
+        self._armed = None
         if changed:
             self.update()
 
     def _after_write(self) -> None:
-        """The post-write pass: the DAG re-materializes every
-        dependent (the established propagation), the view repaints,
-        the main window refreshes its rows."""
+        """The post-write pass: LA BOLLETTA refreshes (THE COLD SITE —
+        the one place the counter moves; a read at rest costs
+        nothing), the DAG re-materializes every dependent (the
+        established propagation), the view repaints, the main window
+        refreshes its rows."""
+        session = self._ensure_session()
+        if session is not None:
+            session.refresh_bill()
         self._scene.rebuild_operations()
         self.update()
         self.sketch_edited.emit()
@@ -1091,6 +1802,7 @@ class SketchCanvas(QWidget):
         self._draw_dimension_labels(p)
         self._draw_preview(p)
         self._draw_glyph(p)
+        self._draw_armed(p)
         self._draw_handles(p)
         self._draw_status(p)
         p.end()
@@ -1171,6 +1883,28 @@ class SketchCanvas(QWidget):
                 r = self.px(math.hypot(g["cursor"][0] - g["a"][0],
                                        g["cursor"][1] - g["a"][1]))
                 p.drawEllipse(QPointF(c[0], c[1]), r, r)
+            elif g["kind"] == "rectangle":
+                # The composition's preview: the four dashed sides at
+                # the gesture's own corners (the values visible — the
+                # width and the height render beside them, D5.1).
+                ax, ay = g["a"]
+                cx, cy = g["cursor"]
+                w, h = cx - ax, cy - ay
+                if self.px(abs(w)) >= GESTURE_THRESHOLD_PX and \
+                        self.px(abs(h)) >= GESTURE_THRESHOLD_PX:
+                    pts = [(ax, ay), (ax + w, ay), (cx, cy), (ax, ay + h)]
+                    if w * h < 0.0:
+                        pts = [(ax, ay), (ax, ay + h), (cx, cy),
+                               (ax + w, ay)]
+                    s = [self.world_to_screen(*pt) for pt in pts]
+                    for i in range(4):
+                        j = (i + 1) % 4
+                        p.drawLine(QPoint(int(s[i][0]), int(s[i][1])),
+                                   QPoint(int(s[j][0]), int(s[j][1])))
+                    mid = self.world_to_screen(0.5 * (ax + cx),
+                                               0.5 * (ay + cy))
+                    p.drawText(QPoint(int(mid[0]) + 6, int(mid[1]) - 6),
+                               "{:.6g} x {:.6g}".format(abs(w), abs(h)))
             elif g["kind"] == "arc":
                 c = self.world_to_screen(*g["center"])
                 if g["phase"] == "radius":
@@ -1241,6 +1975,25 @@ class SketchCanvas(QWidget):
         p.drawText(QPoint(int(s[0]) + 8, int(s[1]) - 8),
                    "SHIFT: " + text)
 
+    def _draw_armed(self, p) -> None:
+        """The armed constraint pick's affordances: the candidate
+        endpoints as 4 px dots (the coincidence/distance pick's
+        targets — seeing what you pick is the glyph's own rule), the
+        first stored pick as a filled marker."""
+        armed = self._armed
+        if armed is None:
+            return
+        if armed["kind"] in ("coincidence", "distance"):
+            p.setPen(QPen(COLOR_GLYPH, 1))
+            for _ci, _ei, _is_end, pt in self._all_endpoint_refs():
+                s = self.world_to_screen(*pt)
+                p.drawEllipse(QPointF(s[0], s[1]), 4.0, 4.0)
+            first = armed["first"]
+            if first is not None:
+                p.setBrush(COLOR_GLYPH)
+                s = self.world_to_screen(*(first[3]))
+                p.drawEllipse(QPointF(s[0], s[1]), 5.0, 5.0)
+
     def _draw_handles(self, p) -> None:
         if self._selected is None:
             return
@@ -1269,11 +2022,26 @@ class SketchCanvas(QWidget):
                        "gap {:.4g}".format(dist))
 
     def _draw_status(self, p) -> None:
-        """The pinned rejection channel: #FF6E6E, in the canvas status
-        bar, persisting until the next gesture begins (D5.5)."""
-        if not self._status_message:
-            return
-        p.setPen(COLOR_REJECTION)
-        p.drawText(self.rect().adjusted(8, 0, -8, -8),
-                   Qt.AlignBottom | Qt.AlignLeft | Qt.TextWordWrap,
-                   self._status_message)
+        """The in-canvas status bar (the pinned chrome, D5.3): the
+        rejection channel (#FF6E6E, bottom-left, persisting until the
+        next gesture), THE CLASSES IN WORDS (the last solve's answer,
+        the register's own vocabulary, above the rejection), and LA
+        BOLLETTA bottom-right — the honest DoF counter, the bill's
+        own text, the under-constraint REPORTED, never hidden."""
+        words = self.feedback_text()
+        if words:
+            p.setPen(QColor("#BDBDBD"))
+            bottom = 30 if self._status_message else 8
+            p.drawText(self.rect().adjusted(8, 0, -8, -bottom),
+                       Qt.AlignBottom | Qt.AlignLeft | Qt.TextWordWrap,
+                       words)
+        if self._status_message:
+            p.setPen(COLOR_REJECTION)
+            p.drawText(self.rect().adjusted(8, 0, -8, -8),
+                       Qt.AlignBottom | Qt.AlignLeft | Qt.TextWordWrap,
+                       self._status_message)
+        bill = self.bill_text()
+        if bill:
+            p.setPen(QColor("#BDBDBD"))
+            p.drawText(self.rect().adjusted(8, 0, -8, -8),
+                       Qt.AlignBottom | Qt.AlignRight, bill)
