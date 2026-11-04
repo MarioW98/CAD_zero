@@ -1244,7 +1244,7 @@ TEST_CASE("G1-U4 landing: the out-of-class target keeps its SDF, the refusal VIS
           sc.get_node(tid)->body.sample({0.0f, 0.0f, 0.0f}).value);
 }
 
-TEST_CASE("G1-U4 landing: the v0.4 golden materializes the EXACT subtract NOW") {
+TEST_CASE("G1-U4 landing: the v0.5 golden materializes the EXACT subtract NOW (the same document since the bump)") {
     // The parametric-hole document (sketch -> extrude -> subtract):
     // in class (the Z-axis circle prism through the box), so on load
     // the subtract node's hybrid materializes — 12/17/7/2, exact/0.
@@ -1253,7 +1253,7 @@ TEST_CASE("G1-U4 landing: the v0.4 golden materializes the EXACT subtract NOW") 
     // (they pin the node's body, which did not move).
     const std::filesystem::path golden =
         std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
-        "native_v0_4_0.CAD_0";
+        "native_v0_5_0.CAD_0";
     REQUIRE(std::filesystem::exists(golden));
 
     auto doc = CAD_0::io::native::load_file(golden);

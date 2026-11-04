@@ -1,16 +1,19 @@
-"""CAD_0.ui.sketch_workbench — the solver session (ADR-0040 D4, G4 m3).
+"""CAD_0.ui.sketch_workbench — the solver session (ADR-0040 D4, G4 m3;
+the persistence G4 m4).
 
 THE WORKBENCH DERIVED, NOT PAINTED. The solver landed in m2 with its
 whole surface queryable from Python (the H2-u6 discipline); this
 module is the CONSUMER that turns it into the interface's state:
 
-  * the authored CONSTRAINT LIST — session state in m3. The format
-    bump is NOT this morso's to take (the parallel discipline: m4
-    owns the serialization — the constraints as FIELDS, never raw
-    structs, the padding discovery paid — and the register arbitrates
-    the version number against the fillet line). The list lives for
-    the lifetime of the editing session and is declared as such:
-    saving the project drops it, by design, until m4 lands.
+  * the authored CONSTRAINT LIST — PAYLOAD since m4 (ADR-0040
+    D3.1: the list rides the sketch node's payload beside the
+    chains, the format's v0.5 named fields). The session HYDRATES
+    from the node at construction (a loaded file's constraints are
+    the recipe's own data) and every mutation — add, remove,
+    re-value, restore — ends with the list written BACK to the node
+    inside the same command: the payload is the truth, the session
+    the editing surface. Saving persists the constraints; the m3
+    "session state" declaration is retired by this very act.
   * LA BOLLETTA — the honest DoF counter, recomputed at the COLD
     SITES only (a constraint added/removed/re-valued, a parameter
     write, a pin, an entity write): the cache below is the whole
@@ -29,7 +32,9 @@ single construction route — the kernel factories, the same one the
 canvas, the panel and the main window build entities through) and
 re-admits the authored list in order. The m2's padding lesson is
 practiced here by construction: no raw struct crosses this module,
-only kernel-built objects and their dict form.
+only kernel-built objects and their dict form — and the same lesson
+now owns the FILE side (the format's v0.5: named fields, never raw
+structs, the padding does not exist in the file).
 """
 
 from __future__ import annotations
@@ -150,12 +155,27 @@ class SketchSolverSession:
     def __init__(self, scene, node_id: int) -> None:
         self._scene = scene
         self._node_id = node_id
-        self._constraints = []       # the authored list (kernel objects)
+        # The authored list, HYDRATED from the payload (G4 m4): a
+        # loaded file's constraints are the recipe's own data — the
+        # session picks them up exactly as the chains are picked up,
+        # through the scene's own surface, never a second copy built
+        # by hand.
+        self._constraints = list(scene.sketch_constraints(node_id))
         self._bill_text = ""         # the counter's cache (cold sites only)
         self._feedback = ""          # the last solve/admission's words
         self.refresh_bill()
 
     # ----- the state the commands mutate (inside commands only) -----
+
+    def _flush(self) -> None:
+        """The payload write-back (G4 m4): the whole authored list to
+        the sketch node — the ONE route every mutation ends with, so
+        the payload and the session cannot drift and the format
+        serializes what the author authored (the list's identity is
+        the authored ORDER; the write is whole-list, never a
+        per-item patch)."""
+        self._scene.sketch_set_constraints(self._node_id,
+                                           list(self._constraints))
 
     def constraints(self):
         return list(self._constraints)
@@ -181,6 +201,7 @@ class SketchSolverSession:
         if record.admitted:
             self._constraints.append(constraint)
             self._feedback = ""
+            self._flush()
         else:
             self._feedback = record.message
         self.refresh_bill()
@@ -194,6 +215,7 @@ class SketchSolverSession:
             return False
         del self._constraints[index]
         self._feedback = ""
+        self._flush()
         self.refresh_bill()
         return True
 
@@ -208,6 +230,7 @@ class SketchSolverSession:
             return False
         self._constraints[index] = rebuild_with_value(
             self._constraints[index], value)
+        self._flush()
         self.refresh_bill()
         return True
 
@@ -219,6 +242,7 @@ class SketchSolverSession:
             self._constraints.insert(index, constraint)
         else:
             self._constraints.append(constraint)
+        self._flush()
         self.refresh_bill()
 
     def restore(self, constraints) -> None:
@@ -226,6 +250,7 @@ class SketchSolverSession:
         list back as it was (the objects themselves, captured by the
         command — the same kernel objects, never rebuilt)."""
         self._constraints = list(constraints)
+        self._flush()
         self.refresh_bill()
 
     def report_refusal(self, record) -> None:

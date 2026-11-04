@@ -648,14 +648,17 @@ TEST_CASE("G1-U2 compat: the faceted world still writes no p-curves — bridge e
                     CHECK(ce.p_curve() == nullptr);
     }
 
-    // The four historical goldens: they load, they materialize through
-    // the document's own path (the bridge's faceted extraction), their
-    // topology class is unchanged (the io/bridge suites pin the full
-    // tables), and the p-curve field stays empty on every body — the
-    // exact primitives' new content must not leak into the faceted
-    // world's serialization or its bridge path.
+    // The four goldens (the historical pre-sketch trio + the current
+    // v0.5 parametric hole; a v0.4-declaring file is the version door's
+    // own fixture since the bump — refused with the remedy, kept
+    // frozen): they load, they materialize through the document's own
+    // path (the bridge's faceted extraction), their topology class is
+    // unchanged (the io/bridge suites pin the full tables), and the
+    // p-curve field stays empty on every body — the exact primitives'
+    // new content must not leak into the faceted world's serialization
+    // or its bridge path.
     const char* goldens[] = {"native_v0_1_0.CAD_0", "native_v0_2_0.CAD_0",
-                             "native_v0_3_0.CAD_0", "native_v0_4_0.CAD_0"};
+                             "native_v0_3_0.CAD_0", "native_v0_5_0.CAD_0"};
     for (const char* name : goldens) {
         CAPTURE(name);
         const auto path = golden_file(name);

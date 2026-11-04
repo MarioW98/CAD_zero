@@ -88,6 +88,7 @@
 #include <cstdio>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -244,6 +245,43 @@ struct SketchConstraint {
 /// The constraint's consumption (D1's derived table).
 inline std::size_t sketch_constraint_consumption(const SketchConstraint& c) noexcept {
     return c.kind == SketchConstraint::Kind::Coincidence ? 2 : 1;
+}
+
+/// The kind's own NAME — the one vocabulary every consumer quotes: the
+/// bindings' ``kind`` property, the file's ``"kind"`` field (G4 m4: the
+/// constraints ride NAMED fields — kind, operands, value, case bit,
+/// pin — and the field's value is the kernel's own word, never a
+/// second spelling invented beside it). One home, zero drift.
+inline const char* sketch_constraint_kind_name(
+    SketchConstraint::Kind k) noexcept {
+    switch (k) {
+    case SketchConstraint::Kind::Coincidence:   return "coincidence";
+    case SketchConstraint::Kind::Parallel:      return "parallel";
+    case SketchConstraint::Kind::Perpendicular: return "perpendicular";
+    case SketchConstraint::Kind::Tangent:       return "tangent";
+    case SketchConstraint::Kind::Length:        return "length";
+    case SketchConstraint::Kind::Radius:        return "radius";
+    case SketchConstraint::Kind::Distance:      return "distance";
+    case SketchConstraint::Kind::Pin:           return "pin";
+    }
+    return "?";
+}
+
+/// The name's kind — the reader's half of the same vocabulary (the
+/// file's ``"kind"`` dispatch). Returns false for anything else: the
+/// CALLER names the unknown word in its own explicit error (the house
+/// idiom — the refusal quotes what it read).
+inline bool sketch_constraint_kind_from_name(
+    std::string_view name, SketchConstraint::Kind& out) noexcept {
+    if (name == "coincidence")   { out = SketchConstraint::Kind::Coincidence; return true; }
+    if (name == "parallel")      { out = SketchConstraint::Kind::Parallel; return true; }
+    if (name == "perpendicular") { out = SketchConstraint::Kind::Perpendicular; return true; }
+    if (name == "tangent")       { out = SketchConstraint::Kind::Tangent; return true; }
+    if (name == "length")        { out = SketchConstraint::Kind::Length; return true; }
+    if (name == "radius")        { out = SketchConstraint::Kind::Radius; return true; }
+    if (name == "distance")      { out = SketchConstraint::Kind::Distance; return true; }
+    if (name == "pin")           { out = SketchConstraint::Kind::Pin; return true; }
+    return false;
 }
 
 // --- The factories, each VALIDATING its value rules with the ADR's

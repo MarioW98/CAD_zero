@@ -1,23 +1,29 @@
 // tests/unit/io/test_native.cpp
 //
-// Native project format (.CAD_0, ADR-0007 + ADR-0007a + ADR-0027 D4) —
-// unit tests.
+// Native project format (.CAD_0, ADR-0007 + ADR-0007a + ADR-0027 D4
+// + ADR-0030 D4 + ADR-0040 D3.1/D6) — unit tests.
 //
 // Coverage per the feature plan:
 //   * round-trip: SDF evaluation is BIT-IDENTICAL after save/load
 //   * golden v0.1.0 (frozen legacy fixture): loads through the
-//     migrator CHAIN (0.1.0 → 0.2.0 → 0.3.0 → 0.4.0); SDF values
-//     bit-identical
+//     migrator CHAIN (0.1.0 → 0.2.0 → 0.3.0 → 0.4.0 → 0.5.0); SDF
+//     values bit-identical
 //   * golden v0.2.0: loads through the 0.2.0 → 0.3.0 migrator; the
 //     migrated re-serialization is byte-identical to a fresh save of
 //     the current build
 //   * golden v0.3.0: the pierced-box document with an operation recipe;
 //     migrates with an identical extraction report (χ = 0 / genus 1,
 //     ADR-0027's MVP shape)
-//   * golden v0.4.0 (ADR-0030 D4): the parametric hole — a sketch, an
-//     extrude recipe, a subtract consuming them; extraction χ = 0 /
-//     genus 1; byte-identical round-trip
-//   * v0.4 sketch payload: parameter-class corruption is a loud load
+//   * golden v0.4.0 (ADR-0030 D4): FROZEN HISTORY since the v0.5 bump
+//     — the VERSION DOOR's own fixture (G4 m4): a 0.4-declaring file
+//     is refused WITH THE REMEDY ("the format moved to v0.5: re-save
+//     from the sketch")
+//   * golden v0.5.0 (ADR-0040 D3.1, G4 m4): the parametric hole WITH
+//     its radius dimension — the constraints ride the sketch payload
+//     in NAMED FIELDS beside the chains; extraction χ = 0 / genus 1
+//     (the load never solves — the pins are the authored geometry's);
+//     byte-identical round-trip, constraints and all
+//   * v0.5 sketch payload: parameter-class corruption is a loud load
 //     error; an open chain loads as the legal editing state with its
 //     extrude in the visible PENDING state; a missing sketch is the
 //     visible DANGLING state; operand-kind mismatches, self-references
@@ -160,9 +166,25 @@ std::filesystem::path golden_v4_path() {
     // The v0.4.0 golden (ADR-0030 D4): the parametric-hole document —
     // a sketch, an extrude consuming it, a subtract consuming them
     // both. The MVP use case, frozen: "draw a circle, extrude it,
-    // subtract it from a box".
+    // subtract it from a box". FROZEN HISTORY since the v0.5 bump
+    // (G4 m4): the bytes a v0.4.0 writer produced, kept verbatim as
+    // the version door's own fixture (the gate test below refuses it
+    // WITH THE REMEDY — the file declares 0.4.0, this build reads
+    // 0.5.0, and the v0.4 writer never wrote a constraint).
     return std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
            "native_v0_4_0.CAD_0";
+}
+
+std::filesystem::path golden_v5_path() {
+    // The v0.5.0 golden (ADR-0040 D3.1, G4 m4): the parametric hole
+    // WITH its constraint — the radius dimension rides the sketch
+    // payload's NAMED FIELDS beside the chains. Regenerable via
+    // CAD_0_GENERATE_GOLDEN=1 after an INTENTIONAL format change (the
+    // companion declaration required per ADR-0007 — the reason rides
+    // the landing commit's body: "v0.5: the constraints ride named
+    // fields").
+    return std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
+           "native_v0_5_0.CAD_0";
 }
 
 // The pierced-box scene of the v0.3.0 golden (ADR-0027's MVP shape):
@@ -206,21 +228,28 @@ scene::Scene make_pierced_scene() {
     return s;
 }
 
-// The parametric-hole scene of the v0.4.0 golden (ADR-0030's use
-// case): draw a circle, extrude it, subtract it from a box — the
-// through-hole is PARAMETRIC now (the sketch is its provenance, not a
-// builder cylinder). Geometry: the circle r=0.25 at the origin,
-// extruded 3 units +Z (the prism spans z in [0, 3]), consumed by the
-// subtract with offset_z = -1.5 — the tool spans z in [-1.5, 1.5],
-// the same through-hole the v0.3 golden cut with a primitive.
+// The parametric-hole scene of the v0.4.0/v0.5.0 goldens (ADR-0030's
+// use case, ADR-0040 D3.1's guide case): draw a circle, extrude it,
+// subtract it from a box — the through-hole is PARAMETRIC now (the
+// sketch is its provenance, not a builder cylinder). Geometry: the
+// circle r=0.25 at the origin, extruded 3 units +Z (the prism spans
+// z in [0, 3]), consumed by the subtract with offset_z = -1.5 — the
+// tool spans z in [-1.5, 1.5], the same through-hole the v0.3 golden
+// cut with a primitive. Since v0.5 (G4 m4) the sketch carries the
+// RADIUS DIMENSION — the guide case's own truth: the circle's radius
+// IS the recipe's parameter, and the constraint list rides the
+// payload beside the chains (the bill at rest: 3 − 1 = 2 free,// reported, never hidden; the load NEVER solves — D2.3).
 scene::Scene make_parametric_hole_scene() {
     scene::Scene s;
     {
         std::vector<sdf::SketchChain> chains;
         chains.push_back({{sdf::sketch_circle(
             math::Vec2f{0.0f, 0.0f}, 0.25f, false)}});
-        const std::uint32_t id =
-            s.add_sketch_node("Hole_Sketch", std::move(chains));
+        std::vector<sdf::SketchConstraint> constraints;
+        constraints.push_back(sdf::constraint_radius(
+            sdf::SketchEntityRef{0, 0}, 0.25));
+        const std::uint32_t id = s.add_sketch_node(
+            "Hole_Sketch", std::move(chains), std::move(constraints));
         REQUIRE(id == 1);
     }
     {
@@ -298,16 +327,19 @@ std::string read_file(const std::filesystem::path& p) {
 
 TEST_SUITE("io native format") {
 
-TEST_CASE("version constant + migrator chain (ADR-0007/0007a/0027/0030)") {
+TEST_CASE("version constant + migrator chain (ADR-0007/0007a/0027/0030/0040)") {
     CHECK(native::kNativeVersion.major == 0);
-    CHECK(native::kNativeVersion.minor == 4);
+    CHECK(native::kNativeVersion.minor == 5);
     CHECK(native::kNativeVersion.patch == 0);
     // The registered chain: 0.1.0 -> 0.2.0 (ADR-0007a, no-op),
-    // 0.2.0 -> 0.3.0 (ADR-0027 D4, content no-op) and
-    // 0.3.0 -> 0.4.0 (ADR-0030 D4, content no-op).
-    CHECK(native::migrator_count() == 3);
+    // 0.2.0 -> 0.3.0 (ADR-0027 D4, content no-op), 0.3.0 -> 0.4.0
+    // (ADR-0030 D4, content no-op) and 0.4.0 -> 0.5.0 (ADR-0040 D6,
+    // content no-op — the step the pre-sketch goldens walk THROUGH;
+    // a file DECLARING 0.4.x never reaches it: the version door
+    // refuses it with the remedy, see the gate test below).
+    CHECK(native::migrator_count() == 4);
 
-    const auto v = native::parse_version("0.4.0");
+    const auto v = native::parse_version("0.5.0");
     CHECK(v == native::kNativeVersion);
 
     CHECK_THROWS_WITH_AS(native::parse_version("0.1"),
@@ -476,7 +508,7 @@ TEST_CASE("golden v0.2.0: loads through the 0.2→0.3 migrator; migrated save ==
     native::save_file(tmp, make_canonical_scene(),
                       make_canonical_camera(), make_golden_meshes());
     const std::string fresh_save = read_file(tmp);
-    CHECK(fresh_save.find("\"version\": \"0.4.0\"") != std::string::npos);
+    CHECK(fresh_save.find("\"version\": \"0.5.0\"") != std::string::npos);
     std::filesystem::remove(tmp);
 
     // (b) Load the golden: the 0.2.0 → 0.3.0 migrator runs, framing,
@@ -592,12 +624,12 @@ TEST_CASE("golden v0.3.0: pierced box with recipe - migrates, extraction chi=0 g
         std::filesystem::temp_directory_path() / "cad0_golden_v3_check.CAD_0";
 
     // (a) The migrated golden re-serializes to exactly the bytes a
-    // fresh v0.4.0 save of the same scene produces — the migrator
-    // (0.3.0 → 0.4.0, content no-op) loses nothing, and the drift
-    // detector survives the bump.
+    // fresh v0.5.0 save of the same scene produces — the migrator
+    // (0.3.0 → 0.4.0 → 0.5.0, content no-op) loses nothing, and the
+    // drift detector survives the bump.
     native::save_file(tmp, make_pierced_scene(), make_canonical_camera());
-    const std::string fresh_v4 = read_file(tmp);
-    CHECK(fresh_v4.find("\"version\": \"0.4.0\"") != std::string::npos);
+    const std::string fresh_save = read_file(tmp);
+    CHECK(fresh_save.find("\"version\": \"0.5.0\"") != std::string::npos);
     std::filesystem::remove(tmp);
 
     const native::ParsedDocument doc = native::load_file(gp);
@@ -606,7 +638,7 @@ TEST_CASE("golden v0.3.0: pierced box with recipe - migrates, extraction chi=0 g
         native::ParsedDocument doc_copy = doc;
         native::install_document(s, std::move(doc_copy));
         native::save_file(tmp, s, doc.camera);
-        CHECK(read_file(tmp) == fresh_v4);
+        CHECK(read_file(tmp) == fresh_save);
         std::filesystem::remove(tmp);
     }
 
@@ -645,49 +677,112 @@ TEST_CASE("golden v0.3.0: pierced box with recipe - migrates, extraction chi=0 g
 }
 
 // ---------------------------------------------------------------------------
-// v0.4.0 — the sketcher's document layer (ADR-0030 D4)
+// v0.4.0 — the sketcher's document layer (ADR-0030 D4); v0.5.0 — the
+// constraints' named fields (ADR-0040 D3.1, G4 m4)
 // ---------------------------------------------------------------------------
 
-TEST_CASE("golden v0.4.0: the parametric hole - sketch, extrude, subtract; chi=0 genus=1") {
-    // Regeneration mode (maintainer-only, never active in CI):
-    //   CAD_0_GENERATE_GOLDEN=1 ./CAD_0_tests
-    // rewrites the v0.4.0 golden after an INTENTIONAL format change
-    // (companion ADR required per ADR-0007).
-    if (const char* env = std::getenv("CAD_0_GENERATE_GOLDEN");
-        env && std::string_view(env) == "1") {
-        std::filesystem::create_directories(golden_v4_path().parent_path());
-        native::save_file(golden_v4_path(), make_parametric_hole_scene(),
-                          make_canonical_camera());
-        MESSAGE("golden file (re)written: ", golden_v4_path().string());
-        return;
-    }
-
+TEST_CASE("version door: a v0.4-declaring file is refused WITH THE REMEDY (G4 m4)") {
+    // The v0.4.0 golden is FROZEN HISTORY — and since the v0.5 bump it
+    // is the version door's own fixture: the bytes a v0.4.0 writer
+    // produced, declaring 0.4.0, refused by this 0.5.0 build with the
+    // remedy. The gate's reason is the bump's reason: the v0.4 writer
+    // never wrote a constraint (they were session state in that era),
+    // so a v0.4 sketch's authored constraints are exactly what the
+    // file cannot carry — opening it as v0.5 would present the sketch
+    // as if nothing were lost. KIND and payload pinned: the exception
+    // is std::runtime_error, the message carries the remedy verbatim.
     const std::filesystem::path gp = golden_v4_path();
     const std::string missing = "golden file missing: " + gp.string();
     REQUIRE_MESSAGE(std::filesystem::exists(gp), missing);
     const std::string golden = read_file(gp);
+
+    // The fixture still declares its own era (frozen bytes, verbatim).
     CHECK(golden.find("\"version\": \"0.4.0\"") != std::string::npos);
+    // ... and it carries the v0.4 payload shape (the sketch, the
+    // recipes) — the document the remedy speaks of.
+    CHECK(golden.find("\"kind\": \"sketch\"") != std::string::npos);
+    CHECK(golden.find("\"type\": \"extrude\"") != std::string::npos);
+
+    // THE DOOR: load_file refuses, naming both versions, with the
+    // remedy the register practices ("the format moved to v0.5:
+    // re-save from the sketch").
+    CHECK_THROWS_WITH_AS(native::load_file(gp),
+        doctest::Contains("the format moved to v0.5: re-save from the "
+                          "sketch"), std::runtime_error);
+    // The same door on the TEXT entry point (parse_document): a
+    // minimal 0.4-declaring document — the gate is the VERSION's own,
+    // before any payload is even looked at, and the refusal names
+    // both ends. PATCH does not save a 0.4 file: the door is the
+    // MINOR's (0.4.7 is the same era, the same lossy writer).
+    const std::string decl_v4 =
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.4.0\","
+        " \"scene\": { \"next_id\": 1, \"nodes\": [] }}";
+    CHECK_THROWS_WITH_AS(native::parse_document(decl_v4),
+        doctest::Contains("the format moved to v0.5: re-save from the "
+                          "sketch"), std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(decl_v4),
+        doctest::Contains("0.4.0"), std::runtime_error);
+    const std::string decl_v4_patch =
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.4.7\","
+        " \"scene\": { \"next_id\": 1, \"nodes\": [] }}";
+    CHECK_THROWS_WITH_AS(native::parse_document(decl_v4_patch),
+        doctest::Contains("the format moved to v0.5"), std::runtime_error);
+
+    // The remedy is not a silent rewrite: the file on disk is
+    // untouched by the refusal (nothing "migrated" behind the user).
+    CHECK(read_file(gp) == golden);
+}
+
+TEST_CASE("golden v0.5.0: the parametric hole with its radius dimension - named fields, chi=0 genus=1") {
+    // Regeneration mode (maintainer-only, never active in CI):
+    //   CAD_0_GENERATE_GOLDEN=1 ./CAD_0_tests
+    // rewrites the v0.5.0 golden after an INTENTIONAL format change
+    // (companion declaration required per ADR-0007; the v0.5 landing's
+    // own reason: "v0.5: the constraints ride named fields").
+    if (const char* env = std::getenv("CAD_0_GENERATE_GOLDEN");
+        env && std::string_view(env) == "1") {
+        std::filesystem::create_directories(golden_v5_path().parent_path());
+        native::save_file(golden_v5_path(), make_parametric_hole_scene(),
+                          make_canonical_camera());
+        MESSAGE("golden file (re)written: ", golden_v5_path().string());
+        return;
+    }
+
+    const std::filesystem::path gp = golden_v5_path();
+    const std::string missing = "golden file missing: " + gp.string();
+    REQUIRE_MESSAGE(std::filesystem::exists(gp), missing);
+    const std::string golden = read_file(gp);
+    CHECK(golden.find("\"version\": \"0.5.0\"") != std::string::npos);
 
     // (a) The fresh save of the parametric-hole scene IS the golden
     // bytes (the writer is the current one — no bump in between).
     const std::filesystem::path tmp =
-        std::filesystem::temp_directory_path() / "cad0_golden_v4_check.CAD_0";
+        std::filesystem::temp_directory_path() / "cad0_golden_v5_check.CAD_0";
     native::save_file(tmp, make_parametric_hole_scene(), make_canonical_camera());
     CHECK(read_file(tmp) == golden);
     std::filesystem::remove(tmp);
 
-    // (b) The golden carries the v0.4 payload in the ADR-0030 D4
-    // shape: the sketch node, the extrude recipe, the subtract recipe.
+    // (b) The golden carries the v0.5 payload: the sketch node, the
+    // extrude recipe, the subtract recipe — and the CONSTRAINTS array
+    // beside the chains, in NAMED FIELDS (the radius dimension on the
+    // hole circle: the guide case's own parameter, D3.1). The fields
+    // are pinned as text — the m2's padding lesson's mirror: the file
+    // says the FIELD's name, never a struct's byte.
     CHECK(golden.find("\"kind\": \"sketch\"") != std::string::npos);
     CHECK(golden.find("\"type\": \"circle\"") != std::string::npos);
     CHECK(golden.find("\"type\": \"extrude\"") != std::string::npos);
     CHECK(golden.find("\"type\": \"subtract\"") != std::string::npos);
+    CHECK(golden.find("\"constraints\"") != std::string::npos);
+    CHECK(golden.find("\"kind\": \"radius\"") != std::string::npos);
+    CHECK(golden.find("\"value\": 0.25") != std::string::npos);
+    CHECK(golden.find("\"chain\"") != std::string::npos);
+    CHECK(golden.find("\"entity\"") != std::string::npos);
 
     // (c) Load: four nodes, every recipe intact, nothing dangling or
-    // pending. The sketch's entity data is bit-exact; the extrude's
-    // recipe is the source of truth; the subtract consumed the
-    // extrude (itself re-materialized from the sketch — pass 2
-    // propagates in one pass).
+    // pending. The sketch's entity data is bit-exact; the CONSTRAINT
+    // rides the payload exactly as authored (the load never solves —
+    // D2.3: the recipe is the truth, the bill at rest 3 − 1 = 2 free
+    // is the NEXT cold act's own answer, never the loader's).
     const native::ParsedDocument doc = native::load_file(gp);
     REQUIRE(doc.nodes.size() == 4);
 
@@ -703,6 +798,15 @@ TEST_CASE("golden v0.4.0: the parametric hole - sketch, extrude, subtract; chi=0
     CHECK(sk->sketch[0].entities[0].circle.radius == 0.25f);
     CHECK(sk->sketch[0].entities[0].circle.hole == false);
     CHECK(sdf::chain_is_closed(sk->sketch[0]));
+
+    // THE CONSTRAINT, field for field: kind, operand (the canonical
+    // index chain 0 → entity 0), value — the authored dimension.
+    REQUIRE(sk->sketch_constraints.size() == 1);
+    const sdf::SketchConstraint& rc = sk->sketch_constraints[0];
+    CHECK(rc.kind == sdf::SketchConstraint::Kind::Radius);
+    CHECK(rc.ea.chain == 0);
+    CHECK(rc.ea.entity == 0);
+    CHECK(rc.value == 0.25);
 
     const scene::SceneNode* ex = &doc.nodes[1];
     REQUIRE(ex->id == 2);
@@ -740,7 +844,10 @@ TEST_CASE("golden v0.4.0: the parametric hole - sketch, extrude, subtract; chi=0
 
     // (d) The extraction report on the final body: the parametric hole
     // is genus 1 — the SAME topological contract as the v0.3 pierced
-    // box, now reached through the sketcher's path (D6's clause).
+    // box, now reached through the sketcher's path (D6's clause). The
+    // constraint rides the payload WITHOUT touching the geometry: the
+    // pins are EXACTLY the v0.4 golden's own pins (the load never
+    // solves — the solved values are the authored values).
     bridge::SdfToBrepOptions opts;
     opts.march_resolution = 48;
     const bridge::SdfToBrepReport rep =
@@ -772,7 +879,7 @@ TEST_CASE("golden v0.4.0: the parametric hole - sketch, extrude, subtract; chi=0
     CHECK(rep2.chi == rep.chi);
 }
 
-TEST_CASE("sketch: v0.4 round-trip is byte-identical (parametric hole)") {
+TEST_CASE("sketch: v0.5 round-trip is byte-identical (parametric hole, constraints and all)") {
     scene::Scene s = make_parametric_hole_scene();
     const native::NativeCamera cam = make_canonical_camera();
 
@@ -805,6 +912,18 @@ TEST_CASE("sketch: v0.4 round-trip is byte-identical (parametric hole)") {
     CHECK(sk2->sketch[0].entities[0].circle.radius == 0.25f);
     CHECK(sk2->sketch[0].entities[0].circle.hole == false);
 
+    // THE CONSTRAINTS survived the cycle exactly (the v0.5 payload's
+    // own member): kind, canonical operand indices, value — field for
+    // field, the authored dimension back (D3.1: the round-trip
+    // preserves BOTH — the entity's solved fields and the constraint
+    // list; the load trusts both, never re-solves).
+    REQUIRE(sk2->sketch_constraints.size() == 1);
+    CHECK(sk2->sketch_constraints[0].kind ==
+          sdf::SketchConstraint::Kind::Radius);
+    CHECK(sk2->sketch_constraints[0].ea.chain == 0);
+    CHECK(sk2->sketch_constraints[0].ea.entity == 0);
+    CHECK(sk2->sketch_constraints[0].value == 0.25);
+
     // The recipes survived exactly (source of truth).
     const scene::SceneNode* ex2 = s2.get_node(2);
     REQUIRE(ex2->operation.has_value());
@@ -833,7 +952,7 @@ TEST_CASE("sketch: v0.4 round-trip is byte-identical (parametric hole)") {
 
 TEST_CASE("sketch: parameter-class corruption is a loud load error (ADR-0029 family)") {
     const auto sketch_doc =
-        [](const char* entities, const char* version = "0.4.0") {
+        [](const char* entities, const char* version = "0.5.0") {
             return std::string("{\"format\": \"CAD_0 native\", \"version\": \"") +
                    version +
                    "\", \"scene\": { \"next_id\": 2, \"nodes\": ["
@@ -892,7 +1011,7 @@ TEST_CASE("sketch: parameter-class corruption is a loud load error (ADR-0029 fam
         doctest::Contains("unknown entity type"), std::runtime_error);
     // A sketch node never carries the other representations' fields.
     CHECK_THROWS_WITH_AS(native::parse_document(
-        "{\"format\": \"CAD_0 native\", \"version\": \"0.4.0\","
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.5.0\","
         " \"scene\": { \"next_id\": 2, \"nodes\": ["
         "  { \"id\": 1, \"name\": \"S\", \"kind\": \"sketch\","
         "    \"body\": { \"op\": \"box\", \"extent\": [1.0, 1.0, 1.0] },"
@@ -913,7 +1032,7 @@ TEST_CASE("sketch: an open chain loads as the legal editing state; its extrude i
     // chain) away.
     const std::string text = R"JSON({
       "format": "CAD_0 native",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "scene": {
         "next_id": 3,
         "nodes": [
@@ -970,7 +1089,7 @@ TEST_CASE("sketch: a missing sketch operand loads with the visible dangling stat
     // the visible dangling state — never a load error, never a rebind.
     const std::string text = R"JSON({
       "format": "CAD_0 native",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "scene": {
         "next_id": 3,
         "nodes": [
@@ -997,7 +1116,7 @@ TEST_CASE("sketch: extrude self-reference and operand-kind mismatch are explicit
     // Self-reference: the extrude is its own sketch.
     const std::string selfref = R"JSON({
       "format": "CAD_0 native",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "scene": { "next_id": 2, "nodes": [
         { "id": 1, "name": "Ouroboros",
           "body": { "op": "box", "extent": [1.0, 1.0, 1.0] },
@@ -1016,7 +1135,7 @@ TEST_CASE("sketch: extrude self-reference and operand-kind mismatch are explicit
     // body). Explicit, by role.
     const std::string ex_of_sdf = R"JSON({
       "format": "CAD_0 native",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "scene": { "next_id": 3, "nodes": [
         { "id": 1, "name": "Box",
           "body": { "op": "box", "extent": [1.0, 1.0, 1.0] } },
@@ -1031,7 +1150,7 @@ TEST_CASE("sketch: extrude self-reference and operand-kind mismatch are explicit
 
     const std::string sub_of_sketch = R"JSON({
       "format": "CAD_0 native",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "scene": { "next_id": 3, "nodes": [
         { "id": 1, "name": "S", "kind": "sketch",
           "sketch": { "chains": [ { "entities": [
@@ -1049,7 +1168,7 @@ TEST_CASE("sketch: extrude self-reference and operand-kind mismatch are explicit
 TEST_CASE("sketch: extrude recipe parameter-class corruption is a loud load error") {
     const auto extrude_doc = [](const char* params) {
         return std::string(R"JSON({
-          "format": "CAD_0 native", "version": "0.4.0",
+          "format": "CAD_0 native", "version": "0.5.0",
           "scene": { "next_id": 3, "nodes": [
             { "id": 1, "name": "S", "kind": "sketch",
               "sketch": { "chains": [ { "entities": [
@@ -1122,7 +1241,7 @@ TEST_CASE("sketch: a stale cached extrude body is caught by the pass-2 rebuild")
     // extrude prism, not the stale box cache.
     const std::string stale = R"JSON({
       "format": "CAD_0 native",
-      "version": "0.4.0",
+      "version": "0.5.0",
       "scene": {
         "next_id": 3,
         "nodes": [

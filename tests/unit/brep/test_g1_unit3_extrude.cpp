@@ -1441,10 +1441,10 @@ TEST_CASE("G1-U3 determinism: the radius edit cycle regenerates both materializa
     CHECK(sdf_digest(*n->hybrid->sdf) == sdf_before);
 }
 
-TEST_CASE("G1-U3 determinism: the v0.4 golden re-loads and re-materializes the exact prism identically") {
+TEST_CASE("G1-U3 determinism: the v0.5 golden re-loads and re-materializes the exact prism identically (the same document since the bump)") {
     const std::filesystem::path golden =
         std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
-        "native_v0_4_0.CAD_0";
+        "native_v0_5_0.CAD_0";
     REQUIRE(std::filesystem::exists(golden));
 
     auto doc = CAD_0::io::native::load_file(golden);

@@ -308,12 +308,14 @@ TEST_CASE("G1-U6 query_body: the MULTI-SHELL body - genus n/d, the D6 rule") {
 
 // ---------------------------------------------------------------------------
 // FAMILY 2 — THE GOLDENS: the guide case pinned with its numbers
-// (v0.4), the honest faceted twin (v0.3).
+// (the parametric-hole document — v0.5 bytes since the G4 m4 bump, the
+// same geometry and the same numbers; a v0.4-declaring file is the
+// version door's own fixture now), the honest faceted twin (v0.3).
 // ---------------------------------------------------------------------------
-TEST_CASE("G1-U6 golden v0.4: the guide body's report IS the D7.5 table") {
+TEST_CASE("G1-U6 golden v0.5: the guide body's report IS the D7.5 table (the same document since the bump)") {
     const std::filesystem::path golden =
         std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
-        "native_v0_4_0.CAD_0";
+        "native_v0_5_0.CAD_0";
     REQUIRE(std::filesystem::exists(golden));
 
     auto doc = CAD_0::io::native::load_file(golden);

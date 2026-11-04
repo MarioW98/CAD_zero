@@ -699,17 +699,19 @@ TEST_CASE("G1-U1 D3: backward compatibility — every GOLDEN body is disk-faced,
         CHECK(b::genus_from_chi(0).value_or(-1) == 1);
     }
 
-    // v0.4.0: the parametric hole — the sketcher's chain (sketch →
-    // extrude → subtract) reaching the SAME topological contract as
-    // v0.3: χ = 0, genus 1, H = 0.
+    // v0.5.0: the parametric hole (the same document since the G4 m4
+    // bump — the constraints ride the payload, the geometry does not
+    // move) — the sketcher's chain (sketch → extrude → subtract)
+    // reaching the SAME topological contract as v0.3: χ = 0, genus 1,
+    // H = 0.
     {
-        const auto gp = golden_file("native_v0_4_0.CAD_0");
+        const auto gp = golden_file("native_v0_5_0.CAD_0");
         const std::string missing = "golden file missing: " + gp.string();
         REQUIRE_MESSAGE(std::filesystem::exists(gp), missing);
         const auto doc = CAD_0::io::native::load_file(gp);
         REQUIRE(doc.nodes.size() == 4);
         REQUIRE(doc.nodes[3].operation.has_value());
-        check(doc.nodes[3].body, 48, 0, "v0.4.0 parametric hole (subtract)");
+        check(doc.nodes[3].body, 48, 0, "v0.5.0 parametric hole (subtract)");
     }
 }
 

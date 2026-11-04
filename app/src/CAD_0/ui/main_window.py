@@ -172,12 +172,12 @@ class MainWindow(QMainWindow):
         # node_id -> the open SketchCanvas view (one per sketch).
         self._sketch_views = {}
         # node_id -> the sketch's SOLVER SESSION (G4 m3, ADR-0040
-        # D4): the constraint list outlives the view's close/reopen —
-        # the constraints are the editing session's state until m4
-        # serializes them (the format bump is m4's own, the register
-        # arbitrates the number against the fillet line). The dict
-        # dies with the project (on_new / a load): declared, by
-        # design, until the bridge lands.
+        # D4): the constraint list outlives the view's close/reopen.
+        # Since m4 the list rides the PAYLOAD (the node's own data,
+        # the format's v0.5): the session is the editing surface, the
+        # node the truth — a session re-hydrates from the payload at
+        # construction, so the dict dying with the project loses
+        # nothing (a load re-hydrates from the file).
         self._sketch_sessions = {}
         # (sketch_id, chain, index) of the entity selected on a
         # canvas — the panel's entity context (None = node context).
@@ -542,9 +542,10 @@ class MainWindow(QMainWindow):
             self._scene.clear()
         for nid in list(self._sketch_views):
             self._close_sketch_view(nid)
-        # The sessions die with the project (G4 m3's declared
-        # boundary: the constraints are session state until m4
-        # serializes them — a fresh document starts empty).
+        # The sessions die with the project (the editing SURFACES,
+        # never the data: since m4 the constraints ride the payload —
+        # a fresh document starts empty, a loaded one re-hydrates
+        # from the file's own v0.5 fields).
         self._sketch_sessions.clear()
         self._constraint_row_registry = {}
         self._node_params.clear()
@@ -1590,13 +1591,16 @@ class MainWindow(QMainWindow):
         if node is not None and node.kind == "mesh":
             is_mesh = True
         if node is not None and node.kind == "sketch":
-            # A sketch's recipe is its entity payload: snapshot the
-            # chains (dict form) for the id-stable undo — deleting a
-            # sketch referenced by an extrude SUCCEEDS, the extrude
-            # enters the visible dangling state, undo recovers it
-            # (D5.6).
+            # A sketch's recipe is its entity payload AND its
+            # constraint list (G4 m4): snapshot both for the
+            # id-stable undo — deleting a sketch referenced by an
+            # extrude SUCCEEDS, the extrude enters the visible
+            # dangling state, undo recovers it WHOLE (D5.6, the
+            # constraints with the chains — the payload's two
+            # members travel together).
             is_sketch = True
             sketch_payload = self._scene.sketch_chains(node_id)
+            sketch_constraints = self._scene.sketch_constraints(node_id)
             sketch_name = node.name
         name = self._shape_display_name(shape_type) if shape_type else (
             node.name if node is not None else "")
@@ -1637,9 +1641,12 @@ class MainWindow(QMainWindow):
                 return
             if is_sketch:
                 # The sketch returns WITH ITS ORIGINAL ID and its full
-                # entity payload; the DAG pass recovers the dependents.
+                # payload — the chains AND the authored constraint
+                # list (G4 m4: the two members of the payload travel
+                # together); the DAG pass recovers the dependents.
                 chains = self._chains_from_payload(sketch_payload)
-                self._scene.restore_sketch_node(nid, sketch_name, chains)
+                self._scene.restore_sketch_node(nid, sketch_name, chains,
+                                                sketch_constraints)
                 new_item = QTreeWidgetItem([sketch_name, "Sketch"])
                 new_item.setData(0, Qt.UserRole, nid)
                 idx = state.get("tree_item_idx")
@@ -2206,7 +2213,8 @@ class MainWindow(QMainWindow):
                 fields["DoF"] = session.bill_text()
                 renders = session.describe_all()
                 fields["Constraints"] = (
-                    "{} (session — m4 serializes)".format(len(renders)))
+                    "{} (ride the payload — v0.5 named fields)"
+                    .format(len(renders)))
                 for render in renders:
                     fields[render] = ""
                 words = session.feedback_text()

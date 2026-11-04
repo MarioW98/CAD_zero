@@ -27,6 +27,7 @@
 #include "CAD_0/sdf/transforms.hpp"
 #include "CAD_0/sdf/mesh_extract.hpp"
 #include "CAD_0/sdf/sketch_profile.hpp"
+#include "CAD_0/sdf/sketch_solver.hpp"
 #include "CAD_0/sdf/sketch_extrude.hpp"
 #include "CAD_0/brep/extrude.hpp"
 #include "CAD_0/brep/subtract.hpp"
@@ -247,6 +248,18 @@ struct SceneNode {
     // Sdf/Mesh-kind nodes.
     std::vector<sdf::SketchChain> sketch;
 
+    // The sketch's CONSTRAINT LIST (ADR-0040 D3.1, G4 m4): the authored
+    // list rides the payload BESIDE the chains — recipe data in
+    // authored order (append-only in v1, D3.3), the dimensions ARE the
+    // recipe's parameters. The list is ADDED DATA, never a derived
+    // cache: nothing here is re-solved at load (D2.3 — the recipe is
+    // the truth), nothing is validated against the chains at rest (a
+    // hand-edited file's inconsistency is the NEXT solve's to
+    // overwrite, the certificate's to catch at materialization). The
+    // working MODEL is always rebuilt from (chains, list) at the cold
+    // sites — the workbench's own discipline.
+    std::vector<sdf::SketchConstraint> sketch_constraints;
+
     // The mesh every consumer (viewport, export, bindings) should see:
     // the tessellation cache for Sdf nodes, THE geometry for Mesh
     // nodes. This is the honest accessor — code that assumes an SDF
@@ -351,8 +364,8 @@ struct SceneNode {
           body(other.body), transform(other.transform),
           visible(other.visible), cached_mesh(other.cached_mesh),
           mesh_dirty(other.mesh_dirty), mesh(other.mesh),
-          sketch(other.sketch), factory(other.factory),
-          params(other.params), builder(other.builder),
+          sketch(other.sketch), sketch_constraints(other.sketch_constraints),
+          factory(other.factory), params(other.params), builder(other.builder),
           operation(other.operation),
           operand_missing(other.operand_missing),
           hybrid_refusal(other.hybrid_refusal),
@@ -381,6 +394,7 @@ struct SceneNode {
         mesh_dirty = other.mesh_dirty;
         mesh = other.mesh;
         sketch = other.sketch;
+        sketch_constraints = other.sketch_constraints;
         factory = other.factory;
         params = other.params;
         builder = other.builder;
@@ -629,13 +643,15 @@ public:
     // chain_is_closed (sketch_profile.hpp) are the one opinion the
     // sketch node, the extrude's precondition and the canvas share.
 
-    std::uint32_t add_sketch_node(const std::string& name,
-                                  std::vector<sdf::SketchChain> chains = {}) {
+    std::uint32_t add_sketch_node(
+        const std::string& name, std::vector<sdf::SketchChain> chains = {},
+        std::vector<sdf::SketchConstraint> constraints = {}) {
         SceneNode node;
         node.id = next_id_++;
         node.name = name.empty() ? ("Sketch_" + std::to_string(node.id)) : name;
         node.kind = NodeKind::Sketch;
         node.sketch = std::move(chains);
+        node.sketch_constraints = std::move(constraints);
         node.mesh_dirty = false; // nothing 3D to tessellate, ever
         nodes_.push_back(std::move(node));
         notify(SceneChange::NodeAdded, nodes_.back().id);
@@ -644,8 +660,13 @@ public:
 
     // Id-stable re-creation of a sketch node (command redo of a
     // sketch create/delete, the F-1 fix applied to the third kind).
-    std::uint32_t restore_sketch_node(std::uint32_t id, const std::string& name,
-                                      std::vector<sdf::SketchChain> chains) {
+    // The constraints ride the restore too (G4 m4): the list is part
+    // of the node's payload — a delete's undo returns the sketch
+    // WHOLE, chains and authored list together.
+    std::uint32_t restore_sketch_node(
+        std::uint32_t id, const std::string& name,
+        std::vector<sdf::SketchChain> chains,
+        std::vector<sdf::SketchConstraint> constraints = {}) {
         if (get_node(id) != nullptr)
             throw std::runtime_error(
                 "Scene::restore_sketch_node: id " + std::to_string(id) +
@@ -656,6 +677,7 @@ public:
         node.name = name.empty() ? ("Sketch_" + std::to_string(id)) : name;
         node.kind = NodeKind::Sketch;
         node.sketch = std::move(chains);
+        node.sketch_constraints = std::move(constraints);
         node.mesh_dirty = false;
         nodes_.push_back(std::move(node));
         if (next_id_ <= id) next_id_ = id + 1;
@@ -726,6 +748,44 @@ public:
             static_cast<std::ptrdiff_t>(index));
         notify(SceneChange::NodeModified, id);
         return true;
+    }
+
+    // ---- The constraint list (ADR-0040 D3.1, G4 m4) --------------------
+    // The authored list's payload surface: the workbench session is
+    // the editing state, the NODE is the truth — every mutation ends
+    // with the list written back here (inside the same command), so
+    // the format serializes what the author authored. The structural
+    // validation (operand kinds, in-range addresses) is NOT here: it
+    // is the MODEL's own, at the next solve — the same division the
+    // entity payload practices (the parameter class at parse, the
+    // certificate at materialization).
+
+    // The authored list, by value (the caller owns its copy; the
+    // kernel objects are plain data).
+    std::vector<sdf::SketchConstraint> sketch_constraints_of(
+        std::uint32_t id) const {
+        const SceneNode* n = get_node(id);
+        if (n == nullptr)
+            throw std::runtime_error(
+                "Scene::sketch_constraints_of: node " +
+                std::to_string(id) + " does not exist");
+        if (n->kind != NodeKind::Sketch)
+            throw std::runtime_error(
+                "Scene::sketch_constraints_of: node " +
+                std::to_string(id) + " (kind " + node_kind_name(n->kind) +
+                ") is not a sketch - the constraint list is the sketch "
+                "node's editing surface (ADR-0002 honest dispatch)");
+        return n->sketch_constraints;
+    }
+
+    // The whole-list write (the session's flush route: the list's
+    // identity is the authored ORDER, and every session mutation ends
+    // here — add, remove, re-value, restore — one route, no drift).
+    void sketch_set_constraints(
+        std::uint32_t id, std::vector<sdf::SketchConstraint> list) {
+        SceneNode* n = sketch_of(id, "Scene::sketch_set_constraints");
+        n->sketch_constraints = std::move(list);
+        notify(SceneChange::NodeModified, id);
     }
 
     // Set a parameter on a node (triggers rebuild + re-tessellation).

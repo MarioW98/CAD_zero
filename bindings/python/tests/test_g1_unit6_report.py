@@ -233,8 +233,13 @@ def test_determinism_bit_identical():
     assert d3 == d1
 
 
-def test_golden_v0_4_report_agrees_with_the_table():
-    path = _ROOT / "tests" / "golden" / "native_v0_4_0.CAD_0"
+def test_golden_v0_5_report_agrees_with_the_table():
+    # The same parametric-hole document since the G4 m4 format bump
+    # (the v0.5 bytes carry the constraints beside the chains; the
+    # geometry and every number are the document's own — a
+    # v0.4-declaring file is the version door's fixture now, refused
+    # with the remedy).
+    path = _ROOT / "tests" / "golden" / "native_v0_5_0.CAD_0"
     assert path.exists()
     s = scene.Scene()
     CAD_0.io.load(path, s)

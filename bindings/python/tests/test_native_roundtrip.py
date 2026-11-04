@@ -61,8 +61,9 @@ def test_native_version():
     # on the Python side. History: 0.2.0 was the binary blob container
     # (ADR-0007a); 0.3.0 the operation recipes (ADR-0027 D4); 0.4.0 the
     # sketcher's document layer — sketch nodes and extrude recipes
-    # (ADR-0030 D4).
-    assert CAD_0.io.NATIVE_VERSION == "0.4.0"
+    # (ADR-0030 D4); 0.5.0 the constraints riding the sketch payload
+    # as named fields (ADR-0040 D3.1, G4 m4).
+    assert CAD_0.io.NATIVE_VERSION == "0.5.0"
 
 
 def test_roundtrip_scene_and_metadata(saved_path):

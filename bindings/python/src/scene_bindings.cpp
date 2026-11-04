@@ -380,17 +380,10 @@ void bind_scene(nb::module_& m) {
 
     nb::class_<sdf::SketchConstraint>(scene_mod, "SketchConstraint")
         .def_prop_ro("kind", [](const sdf::SketchConstraint& c) {
-            switch (c.kind) {
-            case sdf::SketchConstraint::Kind::Coincidence:   return "coincidence";
-            case sdf::SketchConstraint::Kind::Parallel:      return "parallel";
-            case sdf::SketchConstraint::Kind::Perpendicular: return "perpendicular";
-            case sdf::SketchConstraint::Kind::Tangent:       return "tangent";
-            case sdf::SketchConstraint::Kind::Length:        return "length";
-            case sdf::SketchConstraint::Kind::Radius:        return "radius";
-            case sdf::SketchConstraint::Kind::Distance:      return "distance";
-            case sdf::SketchConstraint::Kind::Pin:           return "pin";
-            }
-            return "?";
+            // The kernel's own word (G4 m4): the file's "kind" field
+            // and this property are the SAME vocabulary — one home
+            // (sketch_constraint_kind_name), zero drift.
+            return sdf::sketch_constraint_kind_name(c.kind);
         })
         .def_prop_ro("value", [](const sdf::SketchConstraint& c) {
             return c.value;
@@ -687,20 +680,30 @@ void bind_scene(nb::module_& m) {
              "factory. Returns the new node id.")
         .def("add_sketch_node",
              [](scene::Scene& s, const std::string& name,
-                std::vector<sdf::SketchChain> chains) {
-                 return s.add_sketch_node(name, std::move(chains));
+                std::vector<sdf::SketchChain> chains,
+                std::vector<sdf::SketchConstraint> constraints) {
+                 return s.add_sketch_node(name, std::move(chains),
+                                          std::move(constraints));
              },
              nb::arg("name"), nb::arg("chains"),
-             "Create a sketch node with initial chains. Returns the new "
+             nb::arg("constraints") = std::vector<sdf::SketchConstraint>{},
+             "Create a sketch node with initial chains (and, optionally, "
+             "an initial authored constraint list — G4 m4: the list "
+             "rides the payload beside the chains). Returns the new "
              "node id.")
         .def("restore_sketch_node",
              [](scene::Scene& s, std::uint32_t id, const std::string& name,
-                std::vector<sdf::SketchChain> chains) {
-                 return s.restore_sketch_node(id, name, std::move(chains));
+                std::vector<sdf::SketchChain> chains,
+                std::vector<sdf::SketchConstraint> constraints) {
+                 return s.restore_sketch_node(id, name, std::move(chains),
+                                              std::move(constraints));
              },
              nb::arg("node_id"), nb::arg("name"), nb::arg("chains"),
+             nb::arg("constraints") = std::vector<sdf::SketchConstraint>{},
              "Re-create a sketch node with a PINNED id (command redo "
-             "of a sketch create/delete). Raises RuntimeError if the id "
+             "of a sketch create/delete), chains AND authored "
+             "constraint list together (G4 m4 — the payload's two "
+             "members travel together). Raises RuntimeError if the id "
              "is in use — never a silent rebind.")
         .def("sketch_add_entity",
              &scene::Scene::sketch_add_entity,
@@ -766,6 +769,24 @@ void bind_scene(nb::module_& m) {
              nb::arg("id"),
              "The sketch payload as [[entity dict, ...], ...] — the "
              "panel/canvas read surface.")
+        // ---- The constraint list (ADR-0040 D3.1, G4 m4): the payload
+        // member beside the chains — the session's flush route and the
+        // file's ride. The objects are the bound kernel objects (the
+        // factories' own products, read through the same fields the
+        // format writes: never a second struct built by hand).
+        .def("sketch_constraints",
+             &scene::Scene::sketch_constraints_of, nb::arg("id"),
+             "The sketch's AUTHORED constraint list, in authored order "
+             "(the payload member beside the chains — G4 m4). The "
+             "structural validity is the MODEL's own question, at the "
+             "next solve; this is the recipe's data, never a verdict.")
+        .def("sketch_set_constraints",
+             &scene::Scene::sketch_set_constraints,
+             nb::arg("id"), nb::arg("constraints"),
+             "Write the WHOLE authored list back to the sketch node "
+             "(the workbench session's flush route: every mutation — "
+             "add, remove, re-value, restore — ends here, inside the "
+             "same command). Raises RuntimeError on a non-sketch node.")
         // ---- D5.3: per-chain closure, the kernel's single opinion ——
         // the same chain_is_closed behind sketch_closed and the
         // extrude's closure precondition. The canvas's amber aspect

@@ -1,9 +1,10 @@
 // core/io/include/CAD_0/io/native.hpp
 //
 // Native project format (.CAD_0) — implements ADR-0007 + ADR-0007a
-// + ADR-0027 D4 (the v0.3.0 bump).
+// + ADR-0027 D4 (the v0.3.0 bump) + ADR-0030 D4 (the v0.4.0 bump)
+// + ADR-0040 D3.1/D6 (the v0.5.0 bump).
 //
-// Format (v0.3.0):
+// Format (v0.5.0):
 //   * A binary container (ADR-0007a, codec in native_blob.hpp):
 //     [magic "CAD0BLOB" | json_len u32 LE | blob_len u32 LE] + JSON block
 //     + blob section. Files starting with '{' are legacy v0.1.0 pure-JSON
@@ -82,24 +83,42 @@ struct NativeVersion {
 
 // The version this build reads and writes. 0.4.0: the sketcher's
 // document layer (ADR-0030 D4) — Sketch-kind nodes with their entity
-// chains, and Extrude recipes on Sdf nodes. The migrator chain
-// upgrades older documents: 0.1.0 → 0.2.0 (ADR-0007a, no-op),
-// 0.2.0 → 0.3.0 (ADR-0027 D4, content no-op) and 0.3.0 → 0.4.0
-// (ADR-0030 D4, content no-op — v0.3 documents carry no sketch
-// fields; the v0.3 writer refused Sketch nodes loudly).
-inline constexpr NativeVersion kNativeVersion{0, 4, 0};
+// chains, and Extrude recipes on Sdf nodes. 0.5.0 (ADR-0040 D3.1,
+// G4 m4): the sketch payload gains the CONSTRAINTS array — every
+// constraint rides NAMED FIELDS (kind, the operands as canonical
+// indices chain→entity→field, the value, the tangent's case bit, the
+// pin with its parameter index), never a raw struct: the m2's
+// padding discovery paid (tail padding in a memcpy'd struct is
+// garbage bytes in the DIGEST — two saves of the same sketch, two
+// hashes, the silent death of ADR-0014's determinism). The version
+// door stays honest at the bump: a file DECLARING v0.4 is REFUSED
+// WITH THE REMEDY ("the format moved to v0.5: re-save from the
+// sketch") — the v0.4 writer never wrote a constraint, and a v0.4
+// sketch's authored constraints are exactly the thing the file
+// cannot carry; opening it as v0.5 would present the sketch as if
+// nothing were lost. Files declaring an OLDER pre-sketch version
+// (v0.1–v0.3, no sketch payload ever) keep walking the migrator
+// chain to the current number; a NEWER file is refused by name.
+// The migrator chain upgrades older documents: 0.1.0 → 0.2.0
+// (ADR-0007a), 0.2.0 → 0.3.0 (ADR-0027 D4), 0.3.0 → 0.4.0
+// (ADR-0030 D4) and 0.4.0 → 0.5.0 (ADR-0040 D6 — the step the
+// pre-sketch goldens walk THROUGH; the v0.4-DECLARING file never
+// reaches it, the door above refuses it first).
+inline constexpr NativeVersion kNativeVersion{0, 5, 0};
 
 // A Migrator transforms a parsed JSON document from `from_version` to
 // `to_version`. Registered in a chain indexed by the version pair. The
 // registered steps today: the no-op 0.1.0 → 0.2.0 upgrade (ADR-0007a),
-// the no-op 0.2.0 → 0.3.0 upgrade (ADR-0027 D4) and the no-op
-// 0.3.0 → 0.4.0 upgrade (ADR-0030 D4). Any file whose
-// MAJOR.MINOR differs from the current version and has no registered
-// chain of steps fails with an explicit error.
+// the no-op 0.2.0 → 0.3.0 upgrade (ADR-0027 D4), the no-op
+// 0.3.0 → 0.4.0 upgrade (ADR-0030 D4) and the no-op 0.4.0 → 0.5.0
+// upgrade (ADR-0040 D6). Any file whose MAJOR.MINOR differs from the
+// current version and has no registered chain of steps fails with an
+// explicit error — except a v0.4-declaring file, which fails EARLIER
+// and LOUDER: the remedy gate (see kNativeVersion above).
 using Migrator = std::function<void(json::JsonValue&)>;
 
 void register_migrator(NativeVersion from, NativeVersion to, Migrator m);
-std::size_t migrator_count() noexcept; // test hook: 3 (0.1→0.2, 0.2→0.3, 0.3→0.4)
+std::size_t migrator_count() noexcept; // test hook: 4 (0.1→0.2, 0.2→0.3, 0.3→0.4, 0.4→0.5)
 
 // Parse "MAJOR.MINOR.PATCH" (e.g. "0.1.0"). Throws std::runtime_error
 // with an explicit message on malformed input.

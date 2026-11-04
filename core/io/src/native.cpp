@@ -10,6 +10,7 @@
 #include "CAD_0/sdf/operators.hpp"
 #include "CAD_0/sdf/primitives.hpp"
 #include "CAD_0/sdf/sketch_extrude.hpp"
+#include "CAD_0/sdf/sketch_solver.hpp"
 #include "CAD_0/sdf/transforms.hpp"
 
 #include <algorithm>
@@ -98,6 +99,29 @@ const bool kMigrator0304Registered [[maybe_unused]] = [] {
     register_migrator(NativeVersion{0, 3, 0}, NativeVersion{0, 4, 0},
                       [](json::JsonValue&) {
                           // no-op by design — see ADR-0030 D4.
+                      });
+    return true;
+}();
+
+// The 0.4.0 -> 0.5.0 migrator (ADR-0040 D6): a deliberate CONTENT
+// no-op — and the step exists ONLY for the WALK, never for the door.
+// A v0.1/v0.2/v0.3 document (pre-sketch: no sketch payload ever, the
+// v0.3 writer refused Sketch nodes loudly) walks the whole chain to
+// the current number through this step — a missing "constraints"
+// member parses as the empty list, the same field tolerance PATCH
+// files rely on. A file DECLARING 0.4.x never reaches this step: the
+// version door refuses it first, with the remedy — the v0.4 writer
+// never wrote a constraint (they were session state in that era, the
+// register's own declaration), and this build refuses to open a
+// constraints-bearing-era sketch as if nothing were lost. The entry
+// exists so the chain 0.1.0 → … → 0.5.0 is explicit, registered, and
+// exercised by the frozen pre-sketch goldens on every CI run; the
+// stricter-than-letter rule (a different MAJOR.MINOR without a
+// registered migrator fails explicitly) holds as before.
+const bool kMigrator0405Registered [[maybe_unused]] = [] {
+    register_migrator(NativeVersion{0, 4, 0}, NativeVersion{0, 5, 0},
+                      [](json::JsonValue&) {
+                          // no-op by design — see ADR-0040 D6.
                       });
     return true;
 }();
@@ -370,13 +394,265 @@ std::vector<sdf::SketchChain> parse_sketch_chains(const JsonValue& chains_v,
     return chains;
 }
 
-std::vector<sdf::SketchChain> parse_sketch_payload(const JsonValue& node_v,
-                                                   std::uint32_t node_id) {
-    const JsonValue& sk = node_v.at("sketch");
-    if (!sk.is_object())
-        type_error("object for node \"sketch\"", sk);
-    return parse_sketch_chains(
-        sk.at("chains"), "sketch node " + std::to_string(node_id));
+// (The sketch node's own payload — chains + constraints — is parsed
+// inline in parse_document's node loop, where the v0.5 constraints
+// array joins the chains beside it; the chains helper above stays the
+// extrude's cached body's shared route.)
+
+// ---- Sketch constraints (ADR-0040 D3.1: the v0.5 payload) ------------------
+//
+// THE RULE, WITHOUT EXCEPTIONS: the constraints array writes FIELDS —
+// kind, the operands as CANONICAL INDICES (chain → entity → field:
+// the serialization's own order, the addressing stable by
+// construction in the round-trip: a pin that points at the yoke field
+// before the save points at the same field after the load), the
+// value, the tangent's case bit, the pin with its parameter index —
+// NEVER a raw struct, NEVER memcpy, NEVER sizeof. Every field named,
+// read and written by name; the padding DOES NOT EXIST in the file.
+// The m2's discovery is the reason this section exists: a raw-struct
+// image carries the tail padding the language leaves unspecified —
+// two saves of the same sketch, two digests, the silent death of
+// ADR-0014's determinism. The entity payload (above) already
+// practices the field discipline; this morso closes the door for the
+// constraints' path, forever.
+//
+// The shape (one object per constraint, the kind's own fields only —
+// an unused operand is NEVER written as a null):
+//
+//   { "kind": "coincidence",
+//     "a":  { "entity": { "chain": C, "entity": E }, "end": "start" },
+//     "b":  { "entity": { "chain": C, "entity": E }, "end": "end" } }
+//   { "kind": "parallel",      "ea": {…}, "eb": {…} }
+//   { "kind": "perpendicular", "ea": {…}, "eb": {…} }
+//   { "kind": "tangent",       "ea": {…}, "eb": {…}, "case_bit": -1 }
+//   { "kind": "length",        "ea": {…}, "value": 4 }
+//   { "kind": "radius",        "ea": {…}, "value": 2 }
+//   { "kind": "distance",      "a": {…}, "b": {…}, "value": 5 }
+//   { "kind": "pin",
+//     "pin": { "entity": { "chain": C, "entity": E }, "field": F },
+//     "value": 0 }
+//
+// The parse builds through the KERNEL FACTORIES (the single
+// construction route: the value rules — v > 0 for the named
+// dimensions, any finite v for the pin — are the factories' own,
+// enforced at load exactly as the entity payload enforces its
+// parameter class). The structural rules (operand kinds, in-range
+// addresses, the pin's field index) are NOT the loader's: they are
+// the MODEL's, at the next solve, and the certificate's at
+// materialization — a hand-edited file's inconsistency is the next
+// solve's to overwrite (D2.3/D3.1, inchiodate: the load NEVER
+// resolves, the recipe is the truth).
+
+JsonValue entity_ref_to_json(const sdf::SketchEntityRef& r) {
+    return JsonValue(JsonObject{})
+        .set("chain", JsonValue(static_cast<double>(r.chain)))
+        .set("entity", JsonValue(static_cast<double>(r.entity)));
+}
+
+JsonValue point_ref_to_json(const sdf::SketchPointRef& p) {
+    return JsonValue(JsonObject{})
+        .set("entity", entity_ref_to_json(p.entity))
+        .set("end", JsonValue(p.end == sdf::SketchEnd::End ? "end" : "start"));
+}
+
+JsonValue sketch_constraint_to_json(const sdf::SketchConstraint& c) {
+    using Kind = sdf::SketchConstraint::Kind;
+    JsonValue v(JsonObject{});
+    v.as_object().emplace_back(
+        "kind", JsonValue(sdf::sketch_constraint_kind_name(c.kind)));
+    switch (c.kind) {
+    case Kind::Coincidence:
+        v.as_object().emplace_back("a", point_ref_to_json(c.a));
+        v.as_object().emplace_back("b", point_ref_to_json(c.b));
+        break;
+    case Kind::Parallel:
+    case Kind::Perpendicular:
+        v.as_object().emplace_back("ea", entity_ref_to_json(c.ea));
+        v.as_object().emplace_back("eb", entity_ref_to_json(c.eb));
+        break;
+    case Kind::Tangent:
+        v.as_object().emplace_back("ea", entity_ref_to_json(c.ea));
+        v.as_object().emplace_back("eb", entity_ref_to_json(c.eb));
+        v.as_object().emplace_back("case_bit", JsonValue(static_cast<double>(c.case_bit)));
+        break;
+    case Kind::Length:
+    case Kind::Radius:
+        v.as_object().emplace_back("ea", entity_ref_to_json(c.ea));
+        v.as_object().emplace_back("value", JsonValue(c.value));
+        break;
+    case Kind::Distance:
+        v.as_object().emplace_back("a", point_ref_to_json(c.a));
+        v.as_object().emplace_back("b", point_ref_to_json(c.b));
+        v.as_object().emplace_back("value", JsonValue(c.value));
+        break;
+    case Kind::Pin:
+        v.as_object().emplace_back(
+            "pin", JsonValue(JsonObject{})
+                       .set("entity", entity_ref_to_json(c.pin.entity))
+                       .set("field", JsonValue(static_cast<double>(c.pin.field))));
+        v.as_object().emplace_back("value", JsonValue(c.value));
+        break;
+    }
+    return v;
+}
+
+// The sketch node's constraints array (the payload member beside the
+// chains — D3.1). ALWAYS written by the v0.5 writer, empty or not:
+// the payload's own shape, no conditional formatting (byte-stable
+// round-trips by construction).
+JsonValue sketch_constraints_to_json(
+    const std::vector<sdf::SketchConstraint>& constraints) {
+    JsonArray arr;
+    arr.reserve(constraints.size());
+    for (const sdf::SketchConstraint& c : constraints)
+        arr.push_back(sketch_constraint_to_json(c));
+    return JsonValue(std::move(arr));
+}
+
+// A non-negative integer index (chain/entity/field): the JSON parser
+// stores every number as a double; an index must be integral and
+// >= 0 — a negative or fractional index is a TYPE error (in-range is
+// the MODEL's own question, at the next solve, never the loader's).
+std::size_t require_index(const JsonValue& v, const std::string& where,
+                          const char* field) {
+    if (!v.is_number())
+        type_error(std::string("number for constraint field \"") + field + "\"", v);
+    const double d = v.as_number();
+    if (!(d >= 0.0) || d != std::floor(d) ||
+        d > static_cast<double>(
+                std::numeric_limits<std::size_t>::max() / 4))
+        throw std::runtime_error(
+            "native format: " + where + ": field \"" + field +
+            "\" must be a non-negative integer index (got " +
+            std::to_string(d) + ")");
+    return static_cast<std::size_t>(d);
+}
+
+sdf::SketchEntityRef parse_entity_ref(const JsonValue& v,
+                                      const std::string& where,
+                                      const char* field) {
+    if (!v.is_object())
+        type_error(std::string("object for constraint field \"") + field + "\"", v);
+    return sdf::SketchEntityRef{
+        require_index(v.at("chain"), where, "chain"),
+        require_index(v.at("entity"), where, "entity")};
+}
+
+sdf::SketchPointRef parse_point_ref(const JsonValue& v,
+                                    const std::string& where,
+                                    const char* field) {
+    if (!v.is_object())
+        type_error(std::string("object for constraint field \"") + field + "\"", v);
+    const JsonValue& end_v = v.at("end");
+    if (!end_v.is_string())
+        type_error("string for constraint field \"end\"", end_v);
+    const std::string end = end_v.as_string();
+    if (end != "start" && end != "end")
+        throw std::runtime_error(
+            "native format: " + where + ": field \"end\" must be \"start\" "
+            "or \"end\", got \"" + end + "\" — the point operand names its "
+            "own endpoint (the arc's are derived, the circle has none)");
+    return sdf::SketchPointRef(parse_entity_ref(v.at("entity"), where, "entity"),
+                               end == "end" ? sdf::SketchEnd::End
+                                             : sdf::SketchEnd::Start);
+}
+
+double require_constraint_value(const JsonValue& v, const std::string& where) {
+    if (!v.is_number())
+        type_error("number for constraint field \"value\"", v);
+    return v.as_number();
+}
+
+sdf::SketchConstraint parse_sketch_constraint(const JsonValue& v,
+                                              const std::string& where,
+                                              std::size_t index) {
+    if (!v.is_object())
+        type_error("object for sketch constraint", v);
+    const JsonValue& kind_v = v.at("kind");
+    if (!kind_v.is_string())
+        type_error("string for constraint field \"kind\"", kind_v);
+    const std::string kind = kind_v.as_string();
+    sdf::SketchConstraint::Kind k;
+    if (!sdf::sketch_constraint_kind_from_name(kind, k))
+        throw std::runtime_error(
+            "native format: " + where + " constraint #" +
+            std::to_string(index) + " has an unknown constraint kind \"" +
+            kind + "\" (this build reads coincidence, parallel, "
+            "perpendicular, tangent, length, radius, distance and pin — "
+            "ADR-0040 D1; the file was likely written by a newer CAD_0 "
+            "version or hand-edited)");
+    const std::string at = where + " constraint #" + std::to_string(index);
+    switch (k) {
+    case sdf::SketchConstraint::Kind::Coincidence:
+        return sdf::constraint_coincidence(
+            parse_point_ref(v.at("a"), at, "a"),
+            parse_point_ref(v.at("b"), at, "b"));
+    case sdf::SketchConstraint::Kind::Parallel:
+        return sdf::constraint_parallel(parse_entity_ref(v.at("ea"), at, "ea"),
+                                        parse_entity_ref(v.at("eb"), at, "eb"));
+    case sdf::SketchConstraint::Kind::Perpendicular:
+        return sdf::constraint_perpendicular(
+            parse_entity_ref(v.at("ea"), at, "ea"),
+            parse_entity_ref(v.at("eb"), at, "eb"));
+    case sdf::SketchConstraint::Kind::Tangent: {
+        const JsonValue& cb = v.at("case_bit");
+        if (!cb.is_number())
+            type_error("number for constraint field \"case_bit\"", cb);
+        const double bit = cb.as_number();
+        return sdf::constraint_tangent(
+            parse_entity_ref(v.at("ea"), at, "ea"),
+            parse_entity_ref(v.at("eb"), at, "eb"),
+            static_cast<int>(bit));
+    }
+    case sdf::SketchConstraint::Kind::Length:
+        return sdf::constraint_length(parse_entity_ref(v.at("ea"), at, "ea"),
+                                      require_constraint_value(v.at("value"), at));
+    case sdf::SketchConstraint::Kind::Radius:
+        return sdf::constraint_radius(parse_entity_ref(v.at("ea"), at, "ea"),
+                                      require_constraint_value(v.at("value"), at));
+    case sdf::SketchConstraint::Kind::Distance:
+        return sdf::constraint_distance(
+            parse_point_ref(v.at("a"), at, "a"),
+            parse_point_ref(v.at("b"), at, "b"),
+            require_constraint_value(v.at("value"), at));
+    case sdf::SketchConstraint::Kind::Pin: {
+        const JsonValue& p = v.at("pin");
+        if (!p.is_object())
+            type_error("object for constraint field \"pin\"", p);
+        const std::size_t field = require_index(p.at("field"), at, "field");
+        if (field > static_cast<std::size_t>(
+                        std::numeric_limits<std::uint8_t>::max()))
+            throw std::runtime_error(
+                "native format: " + at + ": field \"field\" must be a "
+                "parameter index 0..255 (got " + std::to_string(field) + ")");
+        return sdf::constraint_pin(
+            sdf::SketchParamRef{
+                parse_entity_ref(p.at("entity"), at, "entity"),
+                static_cast<std::uint8_t>(field)},
+            require_constraint_value(v.at("value"), at));
+    }
+    }
+    throw std::logic_error("parse_sketch_constraint: unreachable kind");
+}
+
+// The constraints array beside the chains: present in every v0.5
+// file; a MISSING member is the empty list (the field tolerance PATCH
+// files rely on — the pre-0.5 walks of the migrator chain and the
+// PATCH-compat rule both arrive here).
+std::vector<sdf::SketchConstraint> parse_sketch_constraints(
+    const JsonValue& sk, std::uint32_t node_id) {
+    const JsonValue* constraints_v = sk.find("constraints");
+    if (constraints_v == nullptr)
+        return {};
+    if (!constraints_v->is_array())
+        type_error("array for sketch \"constraints\"", *constraints_v);
+    const std::string where = "sketch node " + std::to_string(node_id);
+    std::vector<sdf::SketchConstraint> constraints;
+    constraints.reserve(constraints_v->as_array().size());
+    for (const JsonValue& cv : constraints_v->as_array())
+        constraints.push_back(
+            parse_sketch_constraint(cv, where, constraints.size()));
+    return constraints;
 }
 
 // ---- Mesh blob headers (ADR-0007a) -----------------------------------------
@@ -916,6 +1192,10 @@ std::string serialize_document(const scene::Scene& s, const NativeCamera& cam,
             // payload; arc endpoints are derived, never stored). No
             // builder, no params, no body, no mesh (ADR-0002 honest
             // dispatch: a sketch is 2D data, never faked as an SDF).
+            // v0.5.0 (ADR-0040 D3.1): the CONSTRAINTS array rides the
+            // payload beside the chains — named fields, never raw
+            // structs (the m2's padding discovery paid, once and
+            // forever on this path).
             JsonArray chains;
             chains.reserve(node.sketch.size());
             for (const sdf::SketchChain& c : node.sketch) {
@@ -930,7 +1210,9 @@ std::string serialize_document(const scene::Scene& s, const NativeCamera& cam,
             n.emplace_back("kind", JsonValue("sketch"));
             n.emplace_back("sketch",
                 JsonValue(JsonObject{})
-                    .set("chains", JsonValue(std::move(chains))));
+                    .set("chains", JsonValue(std::move(chains)))
+                    .set("constraints",
+                         sketch_constraints_to_json(node.sketch_constraints)));
         } else {
             if (!node.builder.empty())
                 n.emplace_back("builder", JsonValue(node.builder));
@@ -1059,6 +1341,47 @@ ParsedDocument parse_document(std::string_view text,
     NativeVersion file_version = parse_version(version_v.as_string());
 
     if (!file_version.same_major_minor(kNativeVersion)) {
+        // THE NEWER DOOR, by name (first): a file of THIS major but a
+        // LATER minor is from a build this one cannot follow — the
+        // walk below would only say "no migrator", which hides the
+        // direction; the honest gate names it (the house's own
+        // phrasing, ADR-0007: surface, never silently drop).
+        if (file_version.major == kNativeVersion.major &&
+            file_version.minor > kNativeVersion.minor)
+            throw std::runtime_error(
+                "native format: file version " +
+                version_to_string(file_version) +
+                " cannot be read by this build (expects " +
+                version_to_string(kNativeVersion) +
+                "): the file was likely written by a NEWER CAD_0 "
+                "version — migrators run upgrade-only (ADR-0007), and "
+                "this build never guesses a downgrade. Remedy: open "
+                "the file with the CAD_0 version that wrote it.");
+        // THE v0.4 DOOR, with the remedy (G4 m4, ADR-0040 D3.1/D6):
+        // the constraints are the v0.5 payload, and the v0.4 writer
+        // never wrote one (they were session state in that era — the
+        // register's own declaration). A v0.4 file's sketches are
+        // exactly the thing the file cannot carry whole; opening it
+        // as v0.5 would present a constraint-less sketch as if
+        // nothing were lost — the silent loss ADR-0007's culture
+        // refuses. The gate is the anachronism discipline the reader
+        // already practices at the payload (a v0.3 file cannot carry
+        // a sketch), lifted to the version door.
+        if (file_version.major == 0 && file_version.minor == 4)
+            throw std::runtime_error(
+                "native format: file version " +
+                version_to_string(file_version) +
+                " cannot be read by this build (expects " +
+                version_to_string(kNativeVersion) +
+                "): the format moved to v0.5: re-save from the sketch. "
+                "The constraints ride named fields since v0.5 "
+                "(ADR-0040 D3.1) and the v0.4 writer never wrote one "
+                "(they were session state in that era) — a v0.4 "
+                "sketch's authored constraints are exactly what the "
+                "file cannot carry, and this build refuses to open it "
+                "as if nothing were lost. Remedy: re-author the "
+                "constraints from the sketch in this build and save — "
+                "they ride named fields from v0.5 on.");
         // MAJOR or MINOR mismatch → the migrator CHAIN, walked one
         // MINOR step at a time (ADR-0007): 0.1.0 → 0.2.0 → 0.3.0 → …
         // Each step's lookup key normalizes the file's PATCH to zero:
@@ -1252,6 +1575,15 @@ ParsedDocument parse_document(std::string_view text,
             // (pairwise intersections, chain closure) is
             // materialization-time by design (ADR-0030 D2 revision 1):
             // an open chain is a legal, visibly-flagged editing state.
+            // v0.5.0 (ADR-0040 D3.1/D2.3): the CONSTRAINTS array rides
+            // beside the chains. The load NEVER solves and never
+            // validates the constraints' structure against the chains:
+            // the recipe is the truth (the same doctrine that keeps
+            // the body a cache) — a hand-edited file's inconsistency
+            // is the NEXT solve's to overwrite, the certificate's to
+            // catch at materialization. Only the VALUE class is the
+            // loader's (the factories' own rules, exactly as the
+            // entities' parameter class above).
             for (const char* leftover :
                  {"builder", "params", "body", "operation", "mesh"})
                 if (node_v.find(leftover))
@@ -1261,7 +1593,14 @@ ParsedDocument parse_document(std::string_view text,
                         "but carries a non-sketch field \"" + leftover +
                         "\" — the representations never mix (ADR-0002 "
                         "honest dispatch; a sketch is 2D data)");
-            node.sketch = parse_sketch_payload(node_v, node.id);
+            {
+                const JsonValue& sk = node_v.at("sketch");
+                if (!sk.is_object())
+                    type_error("object for node \"sketch\"", sk);
+                node.sketch = parse_sketch_chains(
+                    sk.at("chains"), "sketch node " + std::to_string(node.id));
+                node.sketch_constraints = parse_sketch_constraints(sk, node.id);
+            }
             doc.nodes.push_back(std::move(node));
             continue;
         }
