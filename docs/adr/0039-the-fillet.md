@@ -2,12 +2,27 @@
 
 ## Status
 
-**Proposed (2026-11-04) — delivered as morso 1 of G2-u3, docs-only:
-the derivation pinned, NO code moves.** The implementation is morsi
-2+, and **morso 2 starts only on the maintainer's review of THIS
-document** — the STOP the order pins. Until acceptance, every
-amendment this ADR declares (D6) stays a proposal: the mothers stand
-as written.
+**Accepted (2026-11-04) — the maintainer's review returned, the m2
+order given (IL MORSO 1: LO SPIGOLO DEL BOX, IL FIANCO CILINDRICO),
+and the register surgery applied in the same act (D6's own list,
+below).** Born Proposed (2026-11-04) as morso 1 of G2-u3, docs-only:
+the derivation pinned, NO code moves — the STOP held until this
+review. With acceptance every amendment D6 declares is applied and
+dated, and the morsi 2+ ladder is unlocked per its own order (m2 the
+cylindrical flank first, the chiral torus after).
+
+**ONE CORRECTION TO D6's OWN TEXT, on the record at the accepting
+act (the register's arbitration standing over the registration's
+wording): the v0.5.0 MINOR bump this ADR registered for its m4 does
+NOT land as the tree's next number — the sketch line (G4 m4,
+2026-11-04) arbitrated the MINOR to itself against this line's
+registered need, never two bumps the same day; the fillet's m4
+REBASES on the landed number (v0.5.0 → v0.6.0, the 0007-series
+companion and chained migrator discipline unchanged, ADR-0007/0027
+still untouched as mothers).** No other D6 clause moves: ADR-0032,
+0037 and 0038 stay NOT amended for the reasons D6 already wrote (the
+derivations, not the expectations, are the authority); ADR-0005's ABI
+unchanged.
 
 Daughter of **ADR-0033** (the fillet's own contract: D3 the two
 derived classes with their counts and volumes, D4 the degenerates'

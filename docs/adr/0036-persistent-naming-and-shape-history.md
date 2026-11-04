@@ -236,6 +236,23 @@ name := <feature> ":" <role>
    of the role. The genealogy is finite and acyclic because the
    DAG is (a role references only strictly older features).
 
+   **AMENDED (2026-11-04, ADR-0039's acceptance act — the clause
+   gains ONE sentence, the extension the fillet's tangent wires
+   derived):** "a role references only strictly older features"
+   reads, from the fillet's unit on, as "— **or a
+   strictly-earlier-born row of the SAME feature's construction
+   order**" (ADR-0039 D3): the tangent wire's second operand is
+   the flank, a row of the SAME feature born EARLIER in the
+   construction's own walk (the surface before its trimming
+   curves). The reference stays acyclic — the construction is a
+   DAG, the flank renders through the body's binding alone, never
+   back through the isect — so the rule's purpose (finiteness,
+   acyclicity) is preserved, exactly the m2-amendment pattern the
+   register practices. The grammar's kind table gains `fil` and
+   the fillet's role rows (the flank, the isect tangency wires —
+   the level absent; naming.hpp's normative tables, the extension
+   living in the tables, this ADR's words standing).
+
 **The relational roles (the classes the project has today):**
 
 - **The extrude** (born): `ext#F:lat(i)`, `ext#F:cap(lo)`,

@@ -456,6 +456,20 @@ acceptable for the guide case. The unit-5 machinery extends to:
   them): the spherical segment and cap closed forms — the
   classical πh²(3R−h)/3 family — are the tests.
 
+**RATIFIED (2026-11-04, ADR-0039's acceptance act — this section is
+the fillet unit's v1 contract, the daughter quoting, never
+re-deriving):** the two classes this section derived are ADR-0039's
+D1 verbatim (1 the box edge → the cylindrical flank, 10/15/7/χ=2,
+ℓ·ρ²(1−π/4); 2 the hole rim → the toroidal flank, 14/20/9/H=1/χ=2
+on the blind base, V_ρ's form above) — the daughter's derivations
+CONFIRM them on the new guide cases, the numbers quoted from here.
+D4's corpus below is v1's refusal surface (the names carried into
+the payloads); the torus-chirality promise in this section's own
+text ("it flips to the one right-handed rule the day its first loop
+is authored") is REDEEMED — the day is m3 (ADR-0039 D1.2), the
+cone's riding-or-waiting the review's one named open point, its
+decision recorded in the m3 register.
+
 ### D4. The degenerates of the fillet — each with a disposition, pinned
 
 - **Radius too large for the topology** — three named families,
@@ -549,6 +563,22 @@ silence. One note, nothing rewritten underneath.)*
    kind, which is the demonstrated need ADR-0007 requires before
    the format moves; no other unit touches it. *Visible value:
    the first feature impossible yesterday.*
+
+   **AMENDED (2026-11-04, ADR-0039's acceptance act — the rung
+   landed as G2 unit 3, its wording corrected where the register
+   arbitrated over it):** the construction landed per ADR-0039's
+   own morsi (m2 the cylindrical flank — the box-edge class,
+   10/15/7/χ=2, 7.5+π/8, the names and the 35-row tavola; m3 the
+   chiral torus — the rim class, the mass family, the flip with
+   its pins; m4 the recipe; m5 the UI; m6 the click-test). ONE
+   CORRECTION to this item's own text, on the record: the **v0.5
+   MINOR bump** named here belongs to the SKETCH LINE's act
+   (G4 m4, 2026-11-04 — the register's arbitration against this
+   line's registered need, never two bumps the same day); this
+   line's m4 rebases on the landed number (v0.5.0 → v0.6.0, the
+   0007-series discipline this item worded standing unchanged).
+   Never dropped, never silently reworded: the promise kept, the
+   number corrected where it was decided.
 4. **The degenerates + the adversarial corpus** — D4's families,
    each pinned to a golden or a named error; the corpus in the
    CI. *Visible value: the refusals are answers.*
