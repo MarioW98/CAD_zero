@@ -621,10 +621,12 @@ std::unique_ptr<BRepBody> one_face_body(
 
 } // namespace
 
-TEST_CASE("G1-U5 error contract: the cone and torus families refuse actionably") {
+TEST_CASE("G1-U5 error contract: the cone family refuses actionably "
+          "(the torus's out-of-class refusal RETIRED with G2-u3 m3's "
+          "landing - ADR-0039 D1.2: the toroidal patch family joined "
+          "the mass machinery, the cone keeps its seat, no writer)") {
     std::vector<std::shared_ptr<CAD_0::brep::SurfaceGeometry>> surfs;
     surfs.push_back(std::make_shared<b::ConeSurface>(0.5f, 1.0f));
-    surfs.push_back(std::make_shared<b::TorusSurface>(1.0f, 0.3f));
     for (const auto& surf : surfs) {
         auto body = one_face_body(surf);
         bool threw = false;

@@ -35,14 +35,19 @@
 // test_analytic_surfaces.cpp, which also pins the rule itself as a
 // regression guard.
 //
-// KNOWN LEFTOVERS, registered for the units that will write their
-// p-curves (pre-existing, out of G1 unit 2's class — no factory
-// produces them today, so no p-curve writer exercises them):
-// ConeSurface and TorusSurface are still left-handed. Their frames
-// flip the same one-line way the day their first trimming loop is
-// authored, with their own discriminating pins — not before (an
-// untested flip of surfaces nobody trims would be exactly the
-// silent drift the house forbids).
+// THE LEFTOVER PAIR FLIPPED (2026-11-04, G2-u3 m3, ADR-0039 D1.2 —
+// the promise kept on its own day): the torus's first trimming loop
+// is authored in this unit (the fillet's toroidal flank), and the
+// registered left-handed pair — TorusSurface and ConeSurface — turned
+// right-handed in the same act, the same one-line u = -azimuth flip
+// the cylinder received, WITH THEIR DISCRIMINATING PINS (the frame
+// rule pointwise, tests/unit/brep/test_analytic_surfaces.cpp: the
+// guard that FAILS on the left-handed frame). The cone RIDES with
+// the family (the register's economy: the correction made ONCE, the
+// pins on both — no cone writer exists yet; its first trimming loop
+// remains the gate its own unit will pay). The family's frames are
+// ALL right-handed now; the record lives in the m3 register and in
+// ADR-0032's amendment, pointing here.
 //
 // H1 (ADR-0034): every surface's parameters, arithmetic and answers
 // are DOUBLE — the exact path's domain. FLOAT appears only at the
@@ -321,10 +326,14 @@ public:
         : base_radius_(base_radius), height_(height), origin_(origin) {}
 
     math::Vec3d evaluate(double u, double v) const override {
+        // The one-line flip (G2-u3 m3, ADR-0039 D1.2): u = -azimuth,
+        // the third component negated — du x dv turns from the
+        // left-handed frame to the right-handed one, like every
+        // analytic surface.
         const double r = base_radius_ * (1.0 - v / height_);
         return {origin_.x + r * std::cos(u),
                 origin_.y + v,
-                origin_.z + r * std::sin(u)};
+                origin_.z - r * std::sin(u)};
     }
 
     math::Vec3d normal(double u, double v) const override {
@@ -332,7 +341,7 @@ public:
         const double slope = base_radius_ / height_;
         const double c = std::cos(u), s = std::sin(u);
         const double n = 1.0 / std::sqrt(slope * slope + 1.0);
-        return {c * n, slope * n, s * n};
+        return {c * n, slope * n, -s * n};
     }
 
     SurfaceFamily family() const override { return SurfaceFamily::Cone; }
@@ -361,17 +370,21 @@ public:
         : R_(R), r_(r), origin_(origin) {}
 
     math::Vec3d evaluate(double u, double v) const override {
+        // The one-line flip (G2-u3 m3, ADR-0039 D1.2): u = -azimuth,
+        // the third component negated — du x dv = +(R + r cos v)
+        // . r . n_out (left-handed before, verified; the tube's outer
+        // radial, the CylinderZSurface precedent's own one-liner).
         const double cu = std::cos(u), su = std::sin(u);
         const double cv = std::cos(v), sv = std::sin(v);
         return {origin_.x + (R_ + r_ * cv) * cu,
                 origin_.y + r_ * sv,
-                origin_.z + (R_ + r_ * cv) * su};
+                origin_.z - (R_ + r_ * cv) * su};
     }
 
     math::Vec3d normal(double u, double v) const override {
         const double cv = std::cos(v), sv = std::sin(v);
         const double cu = std::cos(u), su = std::sin(u);
-        return {cv * cu, sv, cv * su};
+        return {cv * cu, sv, -cv * su};
     }
 
     SurfaceFamily family() const override { return SurfaceFamily::Torus; }
@@ -390,6 +403,69 @@ public:
 private:
     double R_, r_;
     math::Vec3d origin_;
+};
+
+// TorusZ — THE FILLET'S OWN WRITER (G2-u3 m3, ADR-0039 D1.2): the
+// Z-axis torus, the CylinderZSurface precedent read one family over.
+// The tube's center circle rides the ring at (cx, cy) around the
+// world Z axis at quota z_c; u = the azimuth (u = 0 the seam
+// meridian +X, the ADR-0023 discipline the wall's own seam follows),
+// v = the meridian angle (v = 0 the OUTER equator). The frame is
+// RIGHT-HANDED FROM BIRTH:
+//
+//   evaluate(u, v) = ((R + r cos v) cos u + cx,
+//                     (R + r cos v) sin u + cy,
+//                      z_c + r sin v),
+//   du x dv = (R + r cos v) . r . n_out
+//
+// with n_out the tube's OUTER radial (cos v cos u, cos v sin u,
+// sin v) — verified pointwise over the flank's window by the m3
+// tests. The fillet's flank is the QUARTER patch v in [pi/2, pi]
+// (v = pi/2 the tube's top — the plane contact; v = pi the inner
+// equator — the wall contact), u the full revolution: the periodic
+// seam rides the trimming loop TWICE (the wall's own pattern,
+// ADR-0023). A future carried torus with a flipped material side
+// reopens the u_sign knob question — not v1's, and registered
+// (ADR-0039 D1.2's own clause).
+class TorusZSurface : public SurfaceGeometry {
+public:
+    TorusZSurface(math::Vec2d axis_center, double R, double r,
+                  double z_center)
+        : center_(axis_center), R_(R), r_(r), z_c_(z_center) {}
+
+    math::Vec3d evaluate(double u, double v) const override {
+        const double w = R_ + r_ * std::cos(v);
+        return {center_.x + w * std::cos(u),
+                center_.y + w * std::sin(u),
+                z_c_ + r_ * std::sin(v)};
+    }
+
+    math::Vec3d normal(double u, double v) const override {
+        // The tube's OUTER radial: the outward of the fillet's flank
+        // (the material inside the tube, the removed wedge beyond) —
+        // the SAME sign as du x dv, the frame rule's own pin.
+        const double cv = std::cos(v), sv = std::sin(v);
+        return {cv * std::cos(u), cv * std::sin(u), sv};
+    }
+
+    SurfaceFamily family() const override { return SurfaceFamily::Torus; }
+    void accept(SurfaceVisitor& v) const override { v.visit(*this); }
+    math::Bboxd bounds() const override {
+        const double e = R_ + r_;
+        return {{-e + center_.x, -e + center_.y, z_c_ - r_},
+                { e + center_.x,  e + center_.y, z_c_ + r_}};
+    }
+
+    math::Vec2d axis_center() const noexcept { return center_; }
+    double major_radius() const noexcept { return R_; }
+    double minor_radius() const noexcept { return r_; }
+    double z_center() const noexcept { return z_c_; }
+
+private:
+    math::Vec2d center_;
+    double R_;
+    double r_;
+    double z_c_;
 };
 
 } // namespace CAD_0::brep

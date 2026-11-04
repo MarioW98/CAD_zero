@@ -261,6 +261,7 @@ class CylinderZSurface;
 class SphereSurface;
 class ConeSurface;
 class TorusSurface;
+class TorusZSurface;
 
 // The surface visitor: typed overloads, one per concrete class. A
 // handler that implements the wrong class name does not compile;
@@ -275,6 +276,9 @@ public:
     virtual void visit(const SphereSurface&) { unhandled(); }
     virtual void visit(const ConeSurface&) { unhandled(); }
     virtual void visit(const TorusSurface&) { unhandled(); }
+    // The Z-axis torus writer (G2-u3 m3, ADR-0039 D1.2): the flank's
+    // own class, right-handed from birth like every analytic frame.
+    virtual void visit(const TorusZSurface&) { unhandled(); }
 protected:
     virtual void unhandled() {}
 };

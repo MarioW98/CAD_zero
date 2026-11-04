@@ -439,6 +439,161 @@ Contrib planar_contrib(const PlaneSurface& pl, const Face& f, double tol,
     return c;
 }
 
+// ---------------------------------------------------------------------------
+// The toroidal patch family (G2-u3 m3, ADR-0039 D1.2): the (u, v)
+// rectangle integrals on T(u, v) = C + (R + r cos v)(cos u·e1 + sin u·e2)
+// + r sin v·a-hat, with n = cos v·radial + sin v·a-hat and
+// dA = (R + r cos v)·r du dv — the same divergence
+// kernels the cylindrical patches already pay, one family over. The
+// integrand is a product of powers of trig functions in u AND in v:
+// the forms below carry FOUR indices (uc, us, vc, vs) and the
+// definite integrals come from ONE exact recurrence (integration by
+// parts, descending a by 2; the a = 1 base closed by the sin
+// substitution), so every power the products reach is closed —
+// never a quadrature, never a table typed by hand.
+// ---------------------------------------------------------------------------
+
+// The exact definite integral of cos^a sin^b over [x0, x1], by the
+// parts recurrence: I(a, 0) = [cos^(a-1) sin]/a| + ((a-1)/a) I(a-2, 0);
+// I(0, b) = -[sin^(b-1) cos]/b| + ((b-1)/b) I(0, b-2); the mixed case
+// descends a by 2 while b rises by 2, and the a = 1 base closes by
+// the sin substitution: I(1, b) = [sin^(b+1)]/(b+1)|.
+double integ_cs(int a, int b, double x0, double x1) {
+    const double s0 = std::sin(x0), s1 = std::sin(x1);
+    const double c0 = std::cos(x0), c1 = std::cos(x1);
+    if (a == 0 && b == 0) return x1 - x0;
+    if (b == 0) {
+        if (a == 1) return s1 - s0;
+        double am1 = 1.0;
+        for (int i = 0; i < a - 1; ++i) am1 *= c1;
+        double am0 = 1.0;
+        for (int i = 0; i < a - 1; ++i) am0 *= c0;
+        return (am1 * s1 - am0 * s0) / a +
+               ((a - 1.0) / a) * integ_cs(a - 2, 0, x0, x1);
+    }
+    if (a == 0) {
+        if (b == 1) return -c1 + c0;
+        double bm1 = 1.0;
+        for (int i = 0; i < b - 1; ++i) bm1 *= s1;
+        double bm0 = 1.0;
+        for (int i = 0; i < b - 1; ++i) bm0 *= s0;
+        return -(bm1 * c1 - bm0 * c0) / b +
+               ((b - 1.0) / b) * integ_cs(0, b - 2, x0, x1);
+    }
+    if (a == 1)
+        return (std::pow(s1, b + 1) - std::pow(s0, b + 1)) / (b + 1);
+    double am1 = 1.0;
+    for (int i = 0; i < a - 1; ++i) am1 *= c1;
+    double am0 = 1.0;
+    for (int i = 0; i < a - 1; ++i) am0 *= c0;
+    const double s1b = std::pow(s1, b + 1);
+    const double s0b = std::pow(s0, b + 1);
+    return (am1 * s1b - am0 * s0b) / (b + 1) +
+           ((a - 1.0) / (b + 1)) * integ_cs(a - 2, b + 2, x0, x1);
+}
+
+// A term of the two-variable trig forms: coef * cos^uc sin^us (u)
+// * cos^vc sin^vs (v).
+struct BTerm {
+    double coef;
+    int uc, us, vc, vs;
+};
+
+struct BForm {
+    std::vector<BTerm> terms;
+
+    void add(double coef, int uc, int us, int vc, int vs) {
+        if (coef == 0.0) return;
+        for (auto& t : terms)
+            if (t.uc == uc && t.us == us && t.vc == vc && t.vs == vs) {
+                t.coef += coef;
+                return;
+            }
+        terms.push_back({coef, uc, us, vc, vs});
+    }
+};
+
+inline BForm operator*(const BForm& a, const BForm& b) {
+    BForm r;
+    r.terms.reserve(a.terms.size() * b.terms.size());
+    for (const BTerm& x : a.terms)
+        for (const BTerm& y : b.terms)
+            r.add(x.coef * y.coef, x.uc + y.uc, x.us + y.us,
+                  x.vc + y.vc, x.vs + y.vs);
+    return r;
+}
+
+// The definite rectangle integral: every term separates into its u
+// factor and its v factor, each closed by the recurrence above.
+double b_integrate(const BForm& f, double u0, double u1,
+                   double v0, double v1) {
+    double sum = 0.0;
+    for (const BTerm& t : f.terms)
+        sum += t.coef * integ_cs(t.uc, t.us, u0, u1) *
+               integ_cs(t.vc, t.vs, v0, v1);
+    return sum;
+}
+
+// The torus frame: the tube's center circle C around the axis a-hat,
+// the azimuth frame (e1, e2) — the SAME mathematics for both
+// placements (the fillet's Z-axis TorusZSurface and the analytic
+// family's Y-axis TorusSurface, the mass machinery unifying like it
+// already does for the cylinders).
+struct TorusFrame {
+    double C[3], a[3], e1[3], e2[3];
+    double R, r;
+};
+
+Contrib torus_contrib(const TorusFrame& fr, double u0, double u1,
+                       double v0, double v1) {
+    // x_i = C_i + (R + r cos v)(cos u e1_i + sin u e2_i) + r sin v a_i
+    BForm x[3], n[3], W;
+    for (int i = 0; i < 3; ++i) {
+        x[i].add(fr.C[i], 0, 0, 0, 0);
+        x[i].add(fr.R * fr.e1[i], 1, 0, 0, 0);
+        x[i].add(fr.R * fr.e2[i], 0, 1, 0, 0);
+        x[i].add(fr.r * fr.e1[i], 1, 0, 1, 0);
+        x[i].add(fr.r * fr.e2[i], 0, 1, 1, 0);
+        x[i].add(fr.r * fr.a[i], 0, 0, 0, 1);
+        n[i].add(fr.e1[i], 1, 0, 1, 0);
+        n[i].add(fr.e2[i], 0, 1, 1, 0);
+        n[i].add(fr.a[i], 0, 0, 0, 1);
+    }
+    W.add(fr.R, 0, 0, 0, 0);
+    W.add(fr.r, 0, 0, 1, 0);
+
+    // x·n, as a form (the sum over i of x_i * n_i).
+    BForm xn;
+    for (int i = 0; i < 3; ++i) {
+        const BForm p = x[i] * n[i];
+        for (const BTerm& t : p.terms) xn.add(t.coef, t.uc, t.us, t.vc, t.vs);
+    }
+
+    Contrib c;
+    // F0 = r * Int[ (x·n) W ],  Fi = r * Int[ x_i^2 n_i W ],
+    // Fij = r * Int[ x_i x_j (x·n) W ] — the measure
+    // (R + r cos v) r du dv is split: the (R + r cos v) rides W, the r
+    // rides the prefactor, du dv is the rectangle.
+    {
+        const BForm g = xn * W;
+        c.F0 = fr.r * b_integrate(g, u0, u1, v0, v1);
+    }
+    for (int i = 0; i < 3; ++i) {
+        const BForm xi2 = x[i] * x[i];
+        const BForm g = xi2 * n[i] * W;
+        c.Fi[i] = fr.r * b_integrate(g, u0, u1, v0, v1);
+    }
+    for (int i = 0; i < 3; ++i)
+        for (int j = i; j < 3; ++j) {
+            const BForm xixj = x[i] * x[j];
+            const BForm g = xixj * xn * W;
+            const double v =
+                fr.r * b_integrate(g, u0, u1, v0, v1);
+            c.Fij[i][j] = c.Fij[j][i] = v;
+        }
+    return c;
+}
+
 // The unified cylinder frame: x = P0 + v·a + r·radial(φ), with
 // radial(φ) = cosφ·e1 + sinφ·e2, n = s·radial, dA = r dφ dv, and the
 // parameter relation φ = s·u (du = s·dφ — the one substitution
@@ -575,11 +730,18 @@ namespace {
 struct MassSurfaceReader : SurfaceVisitor {
     const PlaneSurface* plane{nullptr};
     const SphereSurface* sphere{nullptr};
+    const TorusZSurface* torus_z{nullptr};
+    const TorusSurface* torus_y{nullptr};
     bool cyl_found{false};
     CylFrame cyl{};
 
     void visit(const PlaneSurface& p) override { plane = &p; }
     void visit(const SphereSurface& s) override { sphere = &s; }
+    // The two torus placements (G2-u3 m3): the fillet's Z-axis
+    // writer and the analytic family's Y-axis class — one
+    // frame, the cylinders' own unification.
+    void visit(const TorusZSurface& z) override { torus_z = &z; }
+    void visit(const TorusSurface& y) override { torus_y = &y; }
     void visit(const CylinderZSurface& z) override {
         cyl_found = true;
         cyl.P0[0] = z.axis_center().x;
@@ -769,15 +931,119 @@ MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
                                             reader.sphere->origin().y,
                                             reader.sphere->origin().z,
                                             reader.sphere->radius()));
+        } else if (family == SurfaceFamily::Torus) {
+            // THE TOROIDAL PATCH (G2-u3 m3, ADR-0039 D1.2): the
+            // (u, v) rectangle integrals — the family that landed
+            // with its first consumer (the fillet's flank). The frame
+            // unifies both placements (the cylinders' own discipline).
+            TorusFrame fr{};
+            if (reader.torus_z != nullptr) {
+                fr.C[0] = reader.torus_z->axis_center().x;
+                fr.C[1] = reader.torus_z->axis_center().y;
+                fr.C[2] = reader.torus_z->z_center();
+                fr.a[0] = 0.0; fr.a[1] = 0.0; fr.a[2] = 1.0;
+                fr.e1[0] = 1.0; fr.e1[1] = 0.0; fr.e1[2] = 0.0;
+                fr.e2[0] = 0.0; fr.e2[1] = 1.0; fr.e2[2] = 0.0;
+                fr.R = reader.torus_z->major_radius();
+                fr.r = reader.torus_z->minor_radius();
+            } else if (reader.torus_y != nullptr) {
+                fr.C[0] = reader.torus_y->origin().x;
+                fr.C[1] = reader.torus_y->origin().y;
+                fr.C[2] = reader.torus_y->origin().z;
+                fr.a[0] = 0.0; fr.a[1] = 1.0; fr.a[2] = 0.0;
+                fr.e1[0] = 1.0; fr.e1[1] = 0.0; fr.e1[2] = 0.0;
+                // e2 = (0, 0, -1): the m3 flip's own frame —
+                // u = -azimuth around the Y axis, right-handed.
+                fr.e2[0] = 0.0; fr.e2[1] = 0.0; fr.e2[2] = -1.0;
+                fr.R = reader.torus_y->major_radius();
+                fr.r = reader.torus_y->minor_radius();
+            } else {
+                throw std::invalid_argument(
+                    "mass_properties: face " + std::to_string(fi) +
+                    " carries an unknown 'torus' subtype - the mass "
+                    "machinery covers TorusZSurface and TorusSurface. "
+                    "Remedy: report the body's construction.");
+            }
+
+            // The window: the bounding box of the loop's Line2
+            // endpoints (the cylinder patch's own discipline —
+            // the seam-wired walks SPLIT edges, never move the window),
+            // verified on the boundary (the patch class IS the
+            // rectangle).
+            double u0 = std::numeric_limits<double>::infinity();
+            double u1 = -std::numeric_limits<double>::infinity();
+            double v0 = std::numeric_limits<double>::infinity();
+            double v1 = -std::numeric_limits<double>::infinity();
+            std::vector<std::pair<double, double>> endpoints;
+            for (const auto& loop : f.loops())
+                for (const auto& ce : loop.coedges()) {
+                    const auto* pc = ce.p_curve();
+                    if (pc == nullptr)
+                        throw std::invalid_argument(
+                            "mass_properties: face " + std::to_string(fi) +
+                            " is exact but a co-edge carries no p-curve - "
+                            "the exact world's invariant is violated. "
+                            "Remedy: report the body's construction.");
+                    if (pc->kind != PCurve::Kind::Segment)
+                        throw std::invalid_argument(
+                            "mass_properties: face " + std::to_string(fi) +
+                            "'s toroidal loop carries a non-Line2 "
+                            "p-curve - outside the rectangle-window class "
+                            "(the toroidal patches are u-interval x "
+                            "v-interval rectangles, ADR-0039 D1.2). "
+                            "Remedy: report the body's construction.");
+                    endpoints.push_back({pc->segment.a.x, pc->segment.a.y});
+                    endpoints.push_back({pc->segment.b.x, pc->segment.b.y});
+                }
+            for (const auto& e : endpoints) {
+                u0 = std::min(u0, e.first);
+                u1 = std::max(u1, e.first);
+                v0 = std::min(v0, e.second);
+                v1 = std::max(v1, e.second);
+            }
+            if (u1 - u0 <= tol.value || v1 - v0 <= tol.value)
+                throw std::invalid_argument(
+                    "mass_properties: face " + std::to_string(fi) +
+                    "'s toroidal window is degenerate ([" +
+                    std::to_string(u0) + ", " + std::to_string(u1) +
+                    "] x [" + std::to_string(v0) + ", " +
+                    std::to_string(v1) +
+                    "]) - a zero-area patch. Remedy: report the body's "
+                    "construction.");
+            if (u1 - u0 > 2.0 * M_PI + tol.value)
+                throw std::invalid_argument(
+                    "mass_properties: face " + std::to_string(fi) +
+                    "'s toroidal window spans " + std::to_string(u1 - u0) +
+                    " > 2pi - the patch would double-cover the torus. "
+                    "Remedy: report the body's construction.");
+            for (const auto& e : endpoints) {
+                const bool on_u =
+                    std::abs(e.first - u0) <= tol.value ||
+                    std::abs(e.first - u1) <= tol.value;
+                const bool on_v =
+                    std::abs(e.second - v0) <= tol.value ||
+                    std::abs(e.second - v1) <= tol.value;
+                if (!(on_u || on_v))
+                    throw std::invalid_argument(
+                        "mass_properties: face " + std::to_string(fi) +
+                        "'s toroidal loop leaves the window boundary "
+                        "(the point (" + std::to_string(e.first) + ", " +
+                        std::to_string(e.second) +
+                        ") is strictly inside) - a non-rectangular patch "
+                        "is outside the family. Remedy: report the "
+                        "body's construction.");
+            }
+            total.accumulate(torus_contrib(fr, u0, u1, v0, v1));
         } else {
             throw std::invalid_argument(
                 "mass_properties: face " + std::to_string(fi) + " carries a "
                 "'" + std::string(family_name(family)) +
-                "' surface - outside the supported G1 "
-                "families (plane with line/arc loops, cylindrical patch, "
-                "full sphere; the cone and torus closed forms arrive with "
-                "the G2 table). Remedy: check the body's faces, or accept "
-                "the faceted path (the SDF materialization's bridge "
+                "' surface - outside the supported families (plane with "
+                "line/arc loops, cylindrical patch, full sphere, toroidal "
+                "patch - landed G2-u3 m3 with the fillet's flank; the cone "
+                "closed form arrives with its own first writer, registered, "
+                "none designed today). Remedy: check the body's faces, or "
+                "accept the faceted path (the SDF materialization's bridge "
                 "extract answers the polyhedral value).");
         }
     }

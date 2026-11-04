@@ -501,3 +501,88 @@ TEST_CASE("Topology: BRepBody bounds from vertices") {
     CHECK(b.min.y == doctest::Approx(-2.0f));
     CHECK(b.max.y == doctest::Approx(2.0f));
 }
+
+// ---------------------------------------------------------------------------
+// THE CHIRAL PINS (G2-u3 m3, ADR-0039 D1.2 — the flip's discriminating
+// guards): the registered left-handed pair turned right-handed in the
+// act that authors the torus's first trimming loop (the fillet's
+// toroidal flank). Every guard asserts (du x dv) . n_out > 0
+// POINTWISE — the test that FAILS on the left-handed frame:
+// the missing flip would read the cross product NEGATED at every
+// sample (the winding of any body carrying the face would change
+// sign with it — the m3 golden's volume is the body-level pin).
+// The surviving evaluate pins above sit on the seam meridian u = 0 or
+// on u-symmetric quantities: the flip leaves them untouched, the
+// re-pin EMPTY (0035 D5's cleanest case).
+// ---------------------------------------------------------------------------
+TEST_CASE("The frame rule pointwise: TorusSurface, ConeSurface and "
+          "the TorusZ writer — the chiral pins (G2-u3 m3)") {
+    const auto frame_rule =
+        [](const auto& surf, double u0, double u1, double v0,
+           double v1) {
+            for (int i = 0; i <= 12; ++i) {
+                const double u = u0 + (u1 - u0) * i / 12.0;
+                for (int j = 0; j <= 12; ++j) {
+                    const double v = v0 + (v1 - v0) * j / 12.0;
+                    const double h = 1e-7;
+                    const Vec3d pu = surf.evaluate(u, v);
+                    const Vec3d du = (surf.evaluate(u + h, v) - pu) / h;
+                    const Vec3d dv = (surf.evaluate(u, v + h) - pu) / h;
+                    CHECK(du.cross(dv).dot(surf.normal(u, v)) > 0.0);
+                }
+            }
+        };
+
+    SUBCASE("TorusSurface: the one-line flip, right-handed now") {
+        TorusSurface tor(3.0, 0.5);  // the surviving pins' own body
+        frame_rule(tor, 0.0, 2.0 * 3.14159265358979, 0.0,
+                   2.0 * 3.14159265358979);
+        // The surviving pins re-asserted VERBATIM (the seam meridian
+        // u = 0: the flip's one-liner leaves them untouched).
+        auto p = tor.evaluate(0.0f, 0.0f);
+        CHECK(std::sqrt(p.x * p.x + p.z * p.z) ==
+              doctest::Approx(3.5f));
+        p = tor.evaluate(0.0f, 3.14159f);
+        CHECK(std::sqrt(p.x * p.x + p.z * p.z) ==
+              doctest::Approx(2.5f).epsilon(0.01f));
+        p = tor.evaluate(0.0f, 3.14159f * 0.5f);
+        CHECK(p.x == doctest::Approx(3.0f).epsilon(0.01f));
+        CHECK(p.y == doctest::Approx(0.5f));
+    }
+
+    SUBCASE("ConeSurface: riding with the family, right-handed") {
+        ConeSurface cone(2.0, 4.0);
+        // The sample stays off the APEX (v = h: du vanishes there —
+        // the cone's own degenerate point, not a frame question).
+        frame_rule(cone, 0.0, 2.0 * 3.14159265358979, 0.1, 3.9);
+        // The surviving pins re-asserted VERBATIM (u = 0 again).
+        auto p = cone.evaluate(0.0f, 0.0f);
+        CHECK(p.x == doctest::Approx(2.0f));
+        CHECK(p.z == doctest::Approx(0.0f));
+        p = cone.evaluate(0.0f, 4.0f);
+        CHECK(p.x == doctest::Approx(0.0f).epsilon(0.01f));
+        CHECK(p.y == doctest::Approx(4.0f));
+    }
+
+    SUBCASE("TorusZSurface: the writer, born right-handed") {
+        TorusZSurface tor(CAD_0::math::Vec2d{0.0, 0.0}, 0.75,
+                     0.25, 0.75);
+        frame_rule(tor, 0.0, 2.0 * 3.14159265358979,
+                   3.14159265358979 / 2.0, 3.14159265358979);
+        // The flank's own geometry pins: the contact circles' radii
+        // and quotas (the plane contact at v = pi/2: the a+r circle
+        // at the rim quota; the wall contact at v = pi: the a circle
+        // at depth r), the seam meridian u = 0 at +X.
+        auto p = tor.evaluate(0.0, 3.14159265358979 / 2.0);
+        CHECK(p.x == doctest::Approx(0.75).epsilon(0.0001));
+        CHECK(p.y == doctest::Approx(0.0).epsilon(0.0001));
+        CHECK(p.z == doctest::Approx(1.0).epsilon(0.0001));
+        p = tor.evaluate(0.0, 3.14159265358979);
+        CHECK(p.x == doctest::Approx(0.5).epsilon(0.0001));
+        CHECK(p.z == doctest::Approx(0.75).epsilon(0.0001));
+        CHECK(tor.family() == SurfaceFamily::Torus);
+        CHECK(tor.major_radius() == doctest::Approx(0.75));
+        CHECK(tor.minor_radius() == doctest::Approx(0.25));
+        CHECK(tor.z_center() == doctest::Approx(0.75));
+    }
+}
