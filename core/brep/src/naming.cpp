@@ -23,6 +23,7 @@ const char* kind_token(FeatureKind k) noexcept {
     case FeatureKind::Sketch:   return "sk";
     case FeatureKind::Extrude:  return "ext";
     case FeatureKind::Subtract: return "sub";
+    case FeatureKind::Fillet:   return "fil";
     }
     return "box";  // unreachable — all enum cases handled above
 }

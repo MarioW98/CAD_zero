@@ -111,6 +111,11 @@
 #include "CAD_0/brep/ssi.hpp"
 #include "CAD_0/brep/subtract.hpp"
 #include "CAD_0/brep/extrude.hpp"
+// THE FILLET, class 1 (G2-u3 m2, ADR-0039 D1.1): the rolling ball
+// on the box's edge — the binding the ladder's m2 asks for (the
+// flank reachable from Python; the m6 click-test is the phase's
+// exit, declared and deferred).
+#include "CAD_0/brep/fillet.hpp"
 #include "CAD_0/sdf/sketch_profile.hpp"
 
 namespace nb = nanobind;
@@ -409,13 +414,15 @@ const CAD_0::brep::naming::OperationNaming* naming_table_of(
     case n::FeatureKind::Extrude:  return &n::kExtNaming;
     case n::FeatureKind::Sketch:
     case n::FeatureKind::Subtract:
+    case n::FeatureKind::Fillet:
         throw std::invalid_argument(
-            "exact_subtract: the operand kind has no naming table - the "
-            "sketch's roots are authored data (named by the root "
-            "reference, never a role table) and the subtract is the "
-            "consumer, not an operand; remedy: pass the CREATING "
-            "operation's kind (Box, Sphere, Cylinder or Extrude) - the "
-            "one that built the operand body.");
+            "the naming-table selector: the operand kind has no "
+            "naming table - the sketch's roots are authored data "
+            "(named by the root reference, never a role table) and "
+            "the subtract and the fillet are CONSUMERS, not "
+            "operands; remedy: pass the CREATING operation's kind "
+            "(Box, Sphere, Cylinder or Extrude) - the one that "
+            "built the operand body.");
     }
     return nullptr;  // unreachable — all enum cases handled above
 }
@@ -621,8 +628,55 @@ void bind_brep(nb::module_& m) {
         "and RuntimeError for the output gate's honest refusals\n"
         "(the assembled result that is none of the honest classes).");
 
+    // THE FILLET, CLASS 1 — LO SPIGOLO D'ANGOLO DEL BOX (G2-u3 m2,
+    // ADR-0039 D1.1): the rolling ball on the box's convex 90°
+    // vertical edge, the cylindrical flank born in the edge's place
+    // — the first feature that SUBSTITUTES instead of subtracting.
+    // The naming context's two facts (the exact_subtract precedent):
+    // the fillet's own DAG id (the born names' creator part, 'fil#2')
+    // and the filleted body's creating kind (its role tables — the
+    // flank's operands render through them). With the context the
+    // flank carries 'fil#F:flank[box#1:back × box#1:right]' and the
+    // tangent wires 'fil#F:isect[<the landing face> × <the flank>]'
+    // (the level ABSENT — the tangency IS the level); without it
+    // (the default, the unnamed mode) the born entities read
+    // honestly empty — the shrink faces' inheritance flows in both
+    // modes (a stamp copy, no table involved).
+    brep_mod.def(
+        "fillet_edge",
+        [](const BRepBody& body,
+           const CAD_0::geometry::ShapeId& edge, double radius,
+           std::uint64_t feature,
+           std::optional<CAD_0::brep::naming::FeatureKind> body_kind,
+           double tol) {
+            CAD_0::brep::FilletNaming naming{};
+            if (body_kind.has_value()) {
+                naming = CAD_0::brep::FilletNaming{
+                    CAD_0::geometry::FeatureId{feature},
+                    naming_table_of(*body_kind)};
+            }
+            return CAD_0::brep::fillet_edge(body, edge, radius, naming,
+                                           tol);
+        },
+        nb::arg("body"), nb::arg("edge"), nb::arg("radius"),
+        nb::arg("feature") = 0, nb::arg("body_kind") = std::nullopt,
+        nb::arg("tol") = 1e-6,
+        "The constant-radius fillet on a box's vertical edge (ADR-0039\n"
+        "D1.1, class 1: plane x plane, the convex 90 corner - the\n"
+        "guide case box#1:vertical2 at r=0.5 answers 10/15/7,\n"
+        "chi=2, volume 7.5 + pi/8). The `edge` is the structural\n"
+        "ShapeId (the by-name reference, never an address); the\n"
+        "radius must sit strictly inside the faces' reach (the typed\n"
+        "Linear band, tol the declared epsilon). With the naming\n"
+        "context (feature + body_kind=Box) the born face and the two\n"
+        "tangent wires carry the relational names; the shrink faces\n"
+        "KEEP theirs (box#1:top ...) — the mark rides the tavola's\n"
+        "absorbed rows. Raises ValueError for every refusal the C++\n"
+        "kernel makes (the band's bound carried, the class families\n"
+        "by name - diagnosis + remedy verbatim).");
+
     // The feature kinds the naming grammar speaks (ADR-0036 D1) —\n"
-    // the operand-table selector of exact_subtract's naming context.\n"
+    // the operand-table selector of exact_subtract's naming context.\n""
     nb::enum_<CAD_0::brep::naming::FeatureKind>(brep_mod, "FeatureKind")
         .value("Box", CAD_0::brep::naming::FeatureKind::Box,
                "the box factory's kind")
@@ -635,7 +689,11 @@ void bind_brep(nb::module_& m) {
         .value("Extrude", CAD_0::brep::naming::FeatureKind::Extrude,
                "the extrude operation's kind")
         .value("Subtract", CAD_0::brep::naming::FeatureKind::Subtract,
-               "the exact subtract operation's kind");
+               "the exact subtract operation's kind")
+        .value("Fillet", CAD_0::brep::naming::FeatureKind::Fillet,
+               "the fillet operation's kind (ADR-0039, G2-u3: the "
+               "rolling ball - the first feature that substitutes "
+               "instead of subtracting)");
 
     // The mass properties (G1 unit 5, ADR-0032 D4): the divergence
     // theorem over the exact faces — the numbers as plain values, the

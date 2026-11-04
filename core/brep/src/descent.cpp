@@ -1733,4 +1733,255 @@ DescentTable subtract_descent(const BRepBody& result, const BRepBody& A,
     return table;
 }
 
+// ---------------------------------------------------------------------------
+// fillet_descent — THE FILLET'S TAVOLA (ADR-0039 D3, G2-u3 m2): the
+// box class's 35 rows, the closure both sides. The correspondence is
+// STRUCTURAL, the same discipline the crossed corner practices (the
+// result's own renumbering forces the stamps): the named kinds match
+// by ShapeId (the survivors keep their stamps — the identity is
+// where a thing was born, not where it currently sits), the vertices
+// by exact position equality (the copies carry the doubles
+// bit-identical; the born tangent points are strictly inside the
+// faces, never on a surviving corner). The kept/absorbed split reads
+// the records' own content: an edge whose stored pair moved is
+// re-spanned (absorbed), a face whose walk's vertex sequence changed
+// is re-authored (absorbed) — the operation's mark IS this table, the
+// vanished tail's cause the feature's own act ("replaced by the
+// flank" — the edge's death names a BIRTH, not a cut).
+// ---------------------------------------------------------------------------
+DescentTable fillet_descent(const BRepBody& result,
+                            const BRepBody& operand) {
+    DescentTable table;
+    table.rows.reserve(result.vertices.size() +
+                       result.edges.size() +
+                       result.face_count() +
+                       operand.vertices.size() +
+                       operand.edges.size() +
+                       operand.face_count());
+
+    // The operand's vertex positions — the exact-match index (the
+    // kept corners are bit-identical copies).
+    const auto pos_eq = [](const math::Vec3d& a,
+                           const math::Vec3d& b) {
+        return a.x == b.x && a.y == b.y && a.z == b.z;
+    };
+    const auto operand_vertex_of = [&](const math::Vec3d& p) {
+        for (std::size_t i = 0; i < operand.vertices.size(); ++i)
+            if (pos_eq(p, operand.vertices[i].position()))
+                return static_cast<std::int64_t>(i);
+        return static_cast<std::int64_t>(-1);
+    };
+    // The operand's edge by stamp (the survivors keep their stamps).
+    const auto operand_edge_of = [&](const Edge& e) {
+        if (e.shape_id().subshape.depth == 0)
+            return static_cast<std::int64_t>(-1);
+        for (std::size_t i = 0; i < operand.edges.size(); ++i) {
+            const auto& id = operand.edges[i].shape_id();
+            if (id.subshape.depth > 0 &&
+                id.feature == e.shape_id().feature &&
+                id.subshape == e.shape_id().subshape)
+                return static_cast<std::int64_t>(i);
+        }
+        return static_cast<std::int64_t>(-1);
+    };
+    // The operand's face by stamp.
+    const auto operand_face_of = [&](const Face& f) {
+        if (f.shape_id().subshape.depth == 0)
+            return static_cast<std::int64_t>(-1);
+        const auto& faces = operand.solid.shell().faces();
+        for (std::size_t i = 0; i < faces.size(); ++i) {
+            const auto& id = faces[i].shape_id();
+            if (id.subshape.depth > 0 &&
+                id.feature == f.shape_id().feature &&
+                id.subshape == f.shape_id().subshape)
+                return static_cast<std::int64_t>(i);
+        }
+        return static_cast<std::int64_t>(-1);
+    };
+    // A face's walk as a vertex-position sequence (the loop's own
+    // chain — the read the kept/absorbed split makes).
+    const auto walk_positions =
+        [&](const BRepBody& body, const Face& face) {
+            std::vector<math::Vec3d> out;
+            for (const auto& ce : face.loops()[0].coedges())
+                out.push_back(
+                    body.vertices[static_cast<std::size_t>(
+                                      ce.start_vertex(body.edges))]
+                        .position());
+            return out;
+        };
+    const auto walks_equal =
+        [&pos_eq](const std::vector<math::Vec3d>& a,
+                  const std::vector<math::Vec3d>& b) {
+        if (a.size() != b.size()) return false;
+        for (std::size_t i = 0; i < a.size(); ++i)
+            if (!pos_eq(a[i], b[i])) return false;
+        return true;
+    };
+    // An edge's stored pair as a position multiset (the re-spanning
+    // read: the pair moved iff the positions differ).
+    const auto pair_moved = [&pos_eq](const BRepBody& ra,
+                                      const Edge& re,
+                                      const BRepBody& oa,
+                                      const Edge& oe) {
+        const math::Vec3d rp[2] = {
+            ra.vertices[static_cast<std::size_t>(re.vertex(0))]
+                .position(),
+            ra.vertices[static_cast<std::size_t>(re.vertex(1))]
+                .position()};
+        const math::Vec3d op[2] = {
+            oa.vertices[static_cast<std::size_t>(oe.vertex(0))]
+                .position(),
+            oa.vertices[static_cast<std::size_t>(oe.vertex(1))]
+                .position()};
+        const bool same_dir =
+            pos_eq(rp[0], op[0]) && pos_eq(rp[1], op[1]);
+        const bool flipped =
+            pos_eq(rp[0], op[1]) && pos_eq(rp[1], op[0]);
+        return !(same_dir || flipped);
+    };
+
+    // ---- The result's rows, the body's own walk (vertices, edges,
+    // faces) — the bookkeeping the assembly already holds, read
+    // back (no new geometry, no new decisions).
+    for (std::size_t i = 0; i < result.vertices.size(); ++i) {
+        const std::int64_t parent = operand_vertex_of(
+            result.vertices[i].position());
+        if (parent >= 0) {
+            table.rows.push_back(
+                {Descent::Kept, EntityKind::Vertex,
+                 static_cast<std::uint64_t>(i),
+                 {{0, EntityKind::Vertex,
+                   static_cast<std::uint64_t>(parent)}},
+                 "", {}, ""});
+        } else {
+            table.rows.push_back(
+                {Descent::Born, EntityKind::Vertex,
+                 static_cast<std::uint64_t>(i), {}, "", {}, ""});
+        }
+    }
+    for (std::size_t i = 0; i < result.edges.size(); ++i) {
+        const std::int64_t parent =
+            operand_edge_of(result.edges[i]);
+        if (parent >= 0) {
+            const bool absorbed = pair_moved(
+                result, result.edges[i], operand,
+                operand.edges[static_cast<std::size_t>(parent)]);
+            table.rows.push_back(
+                {absorbed ? Descent::Absorbed : Descent::Kept,
+                 EntityKind::Edge, static_cast<std::uint64_t>(i),
+                 {{0, EntityKind::Edge,
+                   static_cast<std::uint64_t>(parent)}},
+                 result.edges[i].name(), {}, ""});
+        } else {
+            table.rows.push_back(
+                {Descent::Born, EntityKind::Edge,
+                 static_cast<std::uint64_t>(i), {},
+                 result.edges[i].name(), {}, ""});
+        }
+    }
+    {
+        const auto& rfaces = result.solid.shell().faces();
+        for (std::size_t i = 0; i < rfaces.size(); ++i) {
+            const std::int64_t parent = operand_face_of(rfaces[i]);
+            if (parent >= 0) {
+                const bool absorbed = !walks_equal(
+                    walk_positions(result, rfaces[i]),
+                    walk_positions(
+                        operand,
+                        operand.solid.shell().faces()[
+                            static_cast<std::size_t>(parent)]));
+                table.rows.push_back(
+                    {absorbed ? Descent::Absorbed : Descent::Kept,
+                     EntityKind::Face, static_cast<std::uint64_t>(i),
+                     {{0, EntityKind::Face,
+                       static_cast<std::uint64_t>(parent)}},
+                     rfaces[i].name(), {}, ""});
+            } else {
+                table.rows.push_back(
+                    {Descent::Born, EntityKind::Face,
+                     static_cast<std::uint64_t>(i), {},
+                     rfaces[i].name(), {}, ""});
+            }
+        }
+    }
+
+    // ---- The VANISHED tail: the operand's entities no result row
+    // booked — the dead vertical and its two corner vertices, the
+    // cause the feature's own act: "replaced by the flank".
+    {
+        std::vector<bool> booked_v(operand.vertices.size(), false);
+        std::vector<bool> booked_e(operand.edges.size(), false);
+        std::vector<bool> booked_f(operand.face_count(), false);
+        for (const auto& row : table.rows) {
+            if (row.operands.empty()) continue;
+            const auto& ref = row.operands[0];
+            if (ref.operand != 0) continue;
+            if (ref.kind == EntityKind::Vertex)
+                booked_v[static_cast<std::size_t>(ref.address)] = true;
+            else if (ref.kind == EntityKind::Edge)
+                booked_e[static_cast<std::size_t>(ref.address)] = true;
+            else
+                booked_f[static_cast<std::size_t>(ref.address)] = true;
+        }
+        const char* cause = "replaced by the flank";
+        for (std::size_t i = 0; i < operand.vertices.size(); ++i)
+            if (!booked_v[i])
+                table.rows.push_back(
+                    {Descent::Vanished, EntityKind::Vertex,
+                     static_cast<std::uint64_t>(i),
+                     {{0, EntityKind::Vertex,
+                       static_cast<std::uint64_t>(i)}},
+                     "", {}, cause});
+        for (std::size_t i = 0; i < operand.edges.size(); ++i)
+            if (!booked_e[i])
+                table.rows.push_back(
+                    {Descent::Vanished, EntityKind::Edge,
+                     static_cast<std::uint64_t>(i),
+                     {{0, EntityKind::Edge,
+                       static_cast<std::uint64_t>(i)}},
+                     operand.edges[i].name(), {}, cause});
+        const auto& ofaces = operand.solid.shell().faces();
+        for (std::size_t i = 0; i < ofaces.size(); ++i)
+            if (!booked_f[i])
+                table.rows.push_back(
+                    {Descent::Vanished, EntityKind::Face,
+                     static_cast<std::uint64_t>(i),
+                     {{0, EntityKind::Face,
+                       static_cast<std::uint64_t>(i)}},
+                     ofaces[i].name(), {}, cause});
+    }
+
+#ifndef NDEBUG
+    // The debug-build activation (the factory precedent): BOTH sides
+    // of the closure, inside — a tavola that loses or double-books
+    // an entity, on either generation, cannot pass silent. The old
+    // side takes the operand as A and an EMPTY B (the fillet has one
+    // operand; the empty body books nothing).
+    {
+        const BRepBody no_second{};
+        std::string why;
+        if (!descent_closed(result, table, &why)) {
+            throw std::logic_error(
+                "fillet_descent: the tavola broke its own closure "
+                "(the result side) — " + why);
+        }
+        if (!old_generation_closed(operand, no_second, table,
+                                   &why)) {
+            throw std::logic_error(
+                "fillet_descent: the tavola broke its own closure "
+                "(the old generation) — " + why);
+        }
+    }
+#endif
+
+    // The rows' identities: the RESULT rows read the result's own
+    // stamps; the VANISHED tail reads the dying operand's (the
+    // subtract's own discipline, verbatim).
+    stamp_rows(table, result, /*vanished_rows=*/false);
+    stamp_rows(table, operand, /*vanished_rows=*/true);
+
+    return table;
+}
+
 } // namespace CAD_0::brep

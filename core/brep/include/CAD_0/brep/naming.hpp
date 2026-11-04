@@ -125,7 +125,10 @@ enum class FeatureKind : std::uint8_t {
     Cylinder,  // "cyl" — the seam-wired cylinder factory (ADR-0023 §1)
     Sketch,    // "sk"  — the sketch document (the roots' own feature)
     Extrude,   // "ext" — the extrude operation
-    Subtract   // "sub" — the exact subtract operation
+    Subtract,  // "sub" — the exact subtract operation
+    Fillet     // "fil" — the fillet operation (ADR-0039, G2-u3: the
+               //         rolling ball — the first feature that
+               //         substitutes instead of subtracting)
 };
 
 // kind -> token, one switch, the single authority (the family_name
@@ -541,6 +544,89 @@ inline constexpr std::uint32_t kSubIsectIntraRole = 4;  // edges: isect
 // (the INTRA-BODY row — the carried cap × the wall of the same
 // body, the blind hole's floor rim, the level absent: the cap's
 // plane IS the level; G2-u2 m4)
+
+// ---------------------------------------------------------------------------
+// THE NORMATIVE FILLET ROLE TABLES — ADR-0039 D3 (G2-u3 m2, the
+// cylindrical flank's landing; the grammar's `fil` kind)
+// ---------------------------------------------------------------------------
+//
+// NORMATIVE — ADR-0039 D3; the born layout is frozen by the m2
+// goldens (fillet.hpp's NUMBERING block, the unit tests' pins) read
+// through the grammar the mothers declared (ADR-0036 D1, amended by
+// the same-feature sentence at 0039's acceptance):
+//
+//   the flank        'fil#F:flank[<face-A> × <face-B>]'
+//                     — the ONE born face: the swept envelope's
+//                     patch. The operands are the referenced edge's
+//                     two adjacent faces IN THE EDGE'S OWN DECLARED
+//                     CO-EDGE ORDER (the shell's face order at the
+//                     edge — deterministic, input-order-independent;
+//                     the guide case: fil#2:flank[box#1:back ×
+//                     box#1:right], the edge 10's first co-edge
+//                     sitting on face 3).
+//   the tangent
+//   wires           'fil#F:isect[<the landing face> × <the flank>]'
+//                     — the SSI isect grammar, THE LEVEL ABSENT:
+//                     the tangency IS the level (the m3/m4 elisions'
+//                     own form — "the pair's planes ARE the line",
+//                     "the cap's plane IS the level"). The landing
+//                     face is the adjacent face the tangent line
+//                     retires (the guide case: fil#2:isect[box#1:back
+//                     × fil#2:flank[box#1:back × box#1:right]] and
+//                     the right-face twin).
+//
+// THE SAME-FEATURE EXTENSION (ADR-0036 D1's amendment, landed with
+// this table): the isect's SECOND operand is the flank — a row of
+// the SAME feature, born EARLIER in the construction's own walk
+// (the surface before its trimming curves). The reference is
+// acyclic (the construction is a DAG: the flank renders through the
+// BODY's binding alone, never back through the isect); the rule's
+// purpose (finiteness, acyclicity) is preserved; the stamping site
+// builds the self-binding in the pass that builds.
+//
+// THE SEAT LEFT EMPTY, honestly (the m2 vocabulary's boundary): the
+// box class's flank is a BOUNDED QUARTER PATCH — no seam (a periodic
+// closure the rim class's torus will carry, m3's row); the two
+// quarter arcs (the end faces' trimming curves) read honestly
+// UNNAMED (the extrude's walk edges' own precedent) — the isect
+// grammar names the CONTACT curves (the tangent lines), and the
+// arcs are the flank's boundary at the caps' planes, not ball
+// contacts.
+//
+// THE SLOT FORMS are advisory to the renderer (the operand's own
+// table drives its leg's render): Bare covers the m2 body (the
+// factory box's faces); the orthogonal prism joints — the class's
+// registered next instance (ADR-0039 D1.1's formula) — will bind
+// ArgIndex legs (lat(i)) when their first consumer lands.
+inline constexpr OperandSlot kFilFlankSlots[2] = {
+    {0, false, RoleForm::Bare},  // the edge's first-co-edge face
+    {0, false, RoleForm::Bare},  // the second (the shell's order)
+};
+inline constexpr OperandSlot kFilIsectSlots[2] = {
+    {0, false, RoleForm::Bare},  // the landing face (the adjacent)
+    {1, false, RoleForm::Bare},  // the flank — the SAME feature's
+                                 // born face (the same-feature
+                                 // extension, born earlier)
+};
+inline constexpr RoleEntry kFilletFaceRoles[1] = {
+    {"flank", RoleForm::Relational, nullptr, nullptr, kFilFlankSlots},
+};
+inline constexpr RoleEntry kFilletEdgeRoles[1] = {
+    {"isect", RoleForm::Relational, nullptr, nullptr, kFilIsectSlots},
+};
+
+// The fillet's TYPE-level declaration: the operand bindings are
+// INSTANCE data (the body's feature id and table flow from the
+// caller's naming context; the flank's self-binding is built by the
+// stamping site), so the static declaration binds NONE — the
+// subtract's own pattern.
+inline constexpr OperationNaming kFilletNaming{
+    FeatureKind::Fillet, kFilletFaceRoles, kFilletEdgeRoles, {}};
+
+// The fillet's own role-table indices, named for the stamping site.
+inline constexpr std::uint32_t kFilFlankRole = 0;  // faces: flank
+inline constexpr std::uint32_t kFilIsectRole = 0;  // edges: isect (the
+// tangent wires, the level absent — the tangency IS the level)
 
 // ---------------------------------------------------------------------------
 // THE ROOT REFERENCE — the authored roots the tavola's FROM names

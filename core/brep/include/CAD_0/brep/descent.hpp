@@ -317,4 +317,42 @@ bool extrude_froms_resolve(const DescentTable& table,
 DescentTable subtract_descent(const BRepBody& result, const BRepBody& A,
                               const BRepBody& B);
 
+// fillet_descent — THE FILLET'S TAVOLA (ADR-0039 D3, G2-u3 m2: the
+// box class's 35 rows, the closure both sides). DERIVED from the
+// result's own topology and the operand's own records, never stored
+// — the same discipline as the subtract's:
+//
+//   * the KEPT rows — the operand's entities that survive 1:1
+//     untouched (the front and left faces, the seven untouched
+//     edges, the six surviving corners), found by the structural
+//     correspondence (the stamps for the named kinds, the exact
+//     position equality for the vertices — the copies carry them
+//     bit-identical);
+//   * the ABSORBED rows — the four shrink faces (the two adjacent
+//     laterals, the two end caps: their loops re-authored) and the
+//     four re-spanned ring edges (their stored pairs moved): the
+//     survivors whose records the operation marked, the mark this
+//     table IS (the Layer-2 register's own discipline: the loop
+//     changes where it trims, the name stays);
+//   * the BORN rows — the flank (the one face), the two tangent
+//     lines and the two quarter arcs (the four edges), the four
+//     tangent junctions (the vertices); the flank and the tangent
+//     wires carry their names (the isect grammar), the arcs and the
+//     vertices read honestly unnamed;
+//   * the VANISHED rows — the dead vertical and its two corner
+//     vertices, the cause recorded VERBATIM: "replaced by the
+//     flank" (the edge's death IS the feature's act — the first
+//     operation in the tree whose vanished row names a BIRTH, not a
+//     cut).
+//
+// The guide case's count (the closure's own arithmetic): faces out
+// 7 = 2 kept + 4 absorbed + 1 born, vanished 0; edges out 15 = 7
+// kept + 4 absorbed + 4 born, vanished 1; vertices out 10 = 6 kept
+// + 4 born, vanished 2 — 35 rows, out + vanished both ways. In
+// debug builds BOTH closure checks run INSIDE (the factory
+// precedent): the result side and the old side, each violation
+// throwing with its own diagnosis.
+DescentTable fillet_descent(const BRepBody& result,
+                            const BRepBody& operand);
+
 } // namespace CAD_0::brep
