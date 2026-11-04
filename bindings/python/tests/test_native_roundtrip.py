@@ -308,6 +308,73 @@ def test_kernel_param_edit_survives_resave():
     assert node.body.value(p) == expected.value(p)
 
 
+def test_constraints_ride_the_payload_v0_5():
+    # G4 m4 (ADR-0040 D3.1): the sketch's constraint list rides the
+    # payload beside the chains — named fields (kind, the operands as
+    # canonical indices chain -> entity -> field, the value, the
+    # tangent's case bit, the pin with its parameter index), never a
+    # raw struct. The binding surface round-trips it exactly; the
+    # re-save is byte-identical (the digest proof at the Python door).
+    er = scene_mod.SketchEntityRef
+    pr = scene_mod.SketchPointRef
+    scene = scene_mod.Scene()
+    chains = [scene_mod.SketchChain([
+        scene_mod.sketch_segment((0.0, 0.0), (4.0, 0.0), True),
+        scene_mod.sketch_segment((4.0, 0.0), (4.0, 3.0), True),
+        scene_mod.sketch_segment((4.0, 3.0), (0.0, 0.0), True),
+    ])]
+    constraints = [
+        scene_mod.constraint_coincidence(
+            pr(er(0, 0), True), pr(er(0, 1), False)),
+        scene_mod.constraint_coincidence(
+            pr(er(0, 1), True), pr(er(0, 2), False)),
+        scene_mod.constraint_length(er(0, 0), 4.0),
+        scene_mod.constraint_length(er(0, 1), 3.0),
+        scene_mod.constraint_perpendicular(er(0, 0), er(0, 1)),
+        scene_mod.constraint_pin(
+            scene_mod.SketchParamRef(er(0, 0), 0), 0.0),
+    ]
+    sid = scene.add_sketch_node("S", chains, constraints)
+    assert sid == 1
+
+    path = Path(tempfile.mkdtemp(prefix="cad0_cstr_")) / "proj.CAD_0"
+    CAD_0.io.save(path, scene, _camera())
+
+    loaded = scene_mod.Scene()
+    cam = CAD_0.io.load(path, loaded)
+    back = loaded.sketch_constraints(1)
+    assert len(back) == 6
+    kinds = [str(c.kind) for c in back]
+    assert kinds == ["coincidence", "coincidence", "length", "length",
+                     "perpendicular", "pin"]
+    # Field for field: the operands as canonical indices, the values
+    # exact, the pin's parameter index stable (the circle-free segment
+    # x0 — the same field before and after the round-trip).
+    assert back[0].a.entity.chain == 0 and back[0].a.entity.entity == 0
+    assert back[0].a.end is True
+    assert back[0].b.entity.entity == 1
+    assert back[2].value == 4.0
+    assert back[3].value == 3.0
+    assert back[5].pin.entity.entity == 0
+    assert back[5].pin.field == 0
+    assert back[5].value == 0.0
+
+    # The session-level surface hydrates from the payload (the m4
+    # workbench's own construction route). The bill is the honest one
+    # for this mix: 12 DoF (three segments), 8 consumed (two
+    # coincidences 4 + two lengths 2 + the perpendicular 1 + the pin
+    # 1) — 4 free, reported, never hidden.
+    from CAD_0.ui.sketch_workbench import SketchSolverSession
+    session = SketchSolverSession(loaded, 1)
+    assert session.constraint_count() == 6
+    assert session.bill_text() == "12 - 8 = 4 free"
+
+    # THE RE-SAVE: byte-identical (the digest proof).
+    path2 = path.parent / "proj_rt.CAD_0"
+    CAD_0.io.save(path2, loaded, cam)
+    assert path2.read_bytes() == path.read_bytes()
+
+
 def test_ui_path_param_edit_after_load():
     # The exact API sequence main_window._rebuild_node() uses — the UI
     # compensation path. Must keep working alongside the kernel fix.

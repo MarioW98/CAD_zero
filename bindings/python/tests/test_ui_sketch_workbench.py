@@ -772,3 +772,83 @@ def test_the_golden_8_live_the_edit_through_the_solve(workbench_app):
     assert _chains_value_identical(win._scene.sketch_chains(sid),
                                    dump_redo)
     assert canvas.bill_text() == "12 - 12 = 0 (FULL)"
+
+
+# ===========================================================================
+# 7. THE PERSISTENCE (G4 m4, ADR-0040 D3.1) — the constraints ride the
+#    PAYLOAD: the session's list lands in the NODE, the file carries it
+#    as named fields (v0.5), a loaded session HYDRATES it back — the
+#    m3 "closing the project drops them" declaration retired by the
+#    very act that lands it.
+# ===========================================================================
+
+def test_the_constraints_ride_the_payload_and_survive_the_file(
+        workbench_app, tmp_path):
+    """THE WHOLE CHAIN, through the wiring: the macro's nine records
+    are the NODE's payload (flushed inside the command), the file
+    saves them as v0.5 named fields, a fresh document loads them back
+    field for field, a fresh session hydrates — the same bill, the
+    same renders — and the re-save is byte-identical."""
+    import CAD_0
+
+    win = workbench_app
+    sid, canvas = _open_canvas(win)
+    win._tool_actions["rectangle"].trigger()
+    _draw_segment(canvas, (1.0, 1.0), (5.0, 4.0), tool="rectangle")
+    assert canvas.bill_text() == "16 - 13 = 3 free"
+
+    # THE PAYLOAD: the session's authored list IS the node's own data
+    # (nine records — the macro's writes, flushed inside the command;
+    # 4 coincidences + 2 parallels + 1 perpendicular + 2 lengths,
+    # D1's own table).
+    payload = win._scene.sketch_constraints(sid)
+    assert len(payload) == 9
+    kinds = [str(c.kind) for c in payload]
+    assert kinds.count("coincidence") == 4
+    assert kinds.count("parallel") == 2
+    assert kinds.count("perpendicular") == 1
+    assert kinds.count("length") == 2
+
+    # THE FILE (v0.5): the constraints ride named fields beside the
+    # chains — the bytes carry the vocabulary the kernel owns.
+    path = tmp_path / "constraints_v0_5.CAD_0"
+    CAD_0.io.save(path, win._scene)
+    text = path.read_text(errors="replace")
+    assert "\"version\": \"0.5.0\"" in text
+    assert "\"constraints\"" in text
+    assert "\"kind\": \"coincidence\"" in text
+    assert "\"kind\": \"length\"" in text
+    assert "\"end\": \"start\"" in text
+
+    # A FRESH DOCUMENT: load → the payload back, field for field (the
+    # load never solves — the recipe is the truth; the bill at rest is
+    # the next cold act's own answer).
+    scene2 = CAD_0.scene.Scene()
+    cam = CAD_0.io.load(path, scene2)
+    loaded = scene2.sketch_constraints(1)
+    assert len(loaded) == 9
+    assert [str(c.kind) for c in loaded] == kinds
+    # The values back: the gesture's w = 4, h = 3.
+    lengths = sorted(c.value for c in loaded if str(c.kind) == "length")
+    assert lengths == pytest.approx([3.0, 4.0])
+    # The operands back as canonical indices: the macro's first
+    # coincidence binds s0.end to s1.start (chain 0, entities 0/1).
+    first = loaded[0]
+    assert first.a.entity.chain == 0 and first.a.entity.entity == 0
+    assert first.a.end is True
+    assert first.b.entity.chain == 0 and first.b.entity.entity == 1
+
+    # A SESSION HYDRATES: the m3 "closing the project drops them"
+    # declaration retired — the loaded list is the editing surface's
+    # own state, and the bill reads exactly the same.
+    from CAD_0.ui.sketch_workbench import SketchSolverSession
+    session2 = SketchSolverSession(scene2, 1)
+    assert session2.constraint_count() == 9
+    assert session2.bill_text() == canvas.bill_text()
+    assert session2.describe_all() == win._sketch_sessions[sid].describe_all()
+
+    # THE RE-SAVE: byte-identical to the first save (the round-trip
+    # loses nothing — the digest proof, at the Python door too).
+    path2 = tmp_path / "constraints_v0_5_rt.CAD_0"
+    CAD_0.io.save(path2, scene2, cam)
+    assert path2.read_bytes() == path.read_bytes()

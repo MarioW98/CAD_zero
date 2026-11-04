@@ -888,12 +888,23 @@ TEST_CASE("sketch: v0.5 round-trip is byte-identical (parametric hole, constrain
     const std::filesystem::path b =
         std::filesystem::temp_directory_path() / "cad0_sketch_rt_b.CAD_0";
 
+    // N CYCLES (the digest proof): every re-save is byte-identical to
+    // the FIRST save — the constraints, the solved fields, the
+    // recipes, the whole payload; the cycle feeds itself (the re-saved
+    // file is the next load's input), so a drift anywhere would
+    // compound and surface. Both compilers run this suite; the
+    // cross-compiler byte-stability is the golden's own pin.
     native::save_file(a, s, cam);
-    const native::ParsedDocument doc = native::load_file(a);
+    const std::string first_save = read_file(a);
     scene::Scene s2;
-    native::install_document(s2, native::ParsedDocument(doc));
-    native::save_file(b, s2, doc.camera);
-    CHECK(read_file(a) == read_file(b));
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        const native::ParsedDocument doc = native::load_file(a);
+        native::install_document(s2, native::ParsedDocument(doc));
+        native::save_file(b, s2, doc.camera);
+        CHECK(read_file(b) == first_save);
+        std::filesystem::copy_file(
+            b, a, std::filesystem::copy_options::overwrite_existing);
+    }
 
     std::filesystem::remove(a);
     std::filesystem::remove(b);
@@ -948,6 +959,530 @@ TEST_CASE("sketch: v0.5 round-trip is byte-identical (parametric hole, constrain
           sample_grid(s.get_node(4)->body, 7));
     CHECK(sample_grid(s2.get_node(2)->body, 7) ==
           sample_grid(s.get_node(2)->body, 7));
+}
+
+// ---------------------------------------------------------------------------
+// G4 m4 — THE PADDING COUNTERPROOF, THE ALL-KINDS ROUND-TRIP, THE
+// DOORS, THE RE-SOLVE AFTER THE LOAD (ADR-0040 D2.3/D3.1)
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// FNV-1a, the test's own digest: a number over bytes, nothing more —
+// the point is the EQUALITY, never the cryptography.
+std::string fnv1a_hex(const unsigned char* data, std::size_t n) {
+    std::uint64_t h = 1469598103934665603ull;
+    for (std::size_t i = 0; i < n; ++i) {
+        h ^= data[i];
+        h *= 1099511628211ull;
+    }
+    char buf[17];
+    std::snprintf(buf, sizeof(buf), "%016llx",
+                  static_cast<unsigned long long>(h));
+    return std::string(buf);
+}
+
+// The m2's comparator discipline, verbatim in spirit: the VALUES the
+// recipe serializes are compared FIELD for FIELD, never as raw bytes —
+// the padding is not part of any contract.
+bool constraint_value_identical(const sdf::SketchConstraint& a,
+                                const sdf::SketchConstraint& b) {
+    if (a.kind != b.kind) return false;
+    const auto same_f = [](double x, double y) {
+        return std::memcmp(&x, &y, sizeof(double)) == 0;
+    };
+    if (!same_f(a.value, b.value)) return false;
+    if (a.case_bit != b.case_bit) return false;
+    if (a.a.entity.chain != b.a.entity.chain ||
+        a.a.entity.entity != b.a.entity.entity || a.a.end != b.a.end)
+        return false;
+    if (a.b.entity.chain != b.b.entity.chain ||
+        a.b.entity.entity != b.b.entity.entity || a.b.end != b.b.end)
+        return false;
+    if (a.ea.chain != b.ea.chain || a.ea.entity != b.ea.entity)
+        return false;
+    if (a.eb.chain != b.eb.chain || a.eb.entity != b.eb.entity)
+        return false;
+    if (a.pin.entity.chain != b.pin.entity.chain ||
+        a.pin.entity.entity != b.pin.entity.entity ||
+        a.pin.field != b.pin.field)
+        return false;
+    return true;
+}
+
+bool entity_value_identical(const sdf::SketchEntity& a,
+                            const sdf::SketchEntity& b) {
+    if (a.kind != b.kind) return false;
+    const auto f32_same = [](float x, float y) {
+        return std::memcmp(&x, &y, 4) == 0;
+    };
+    switch (a.kind) {
+    case sdf::SketchEntity::Kind::Segment:
+        return f32_same(a.segment.a.x, b.segment.a.x) &&
+               f32_same(a.segment.a.y, b.segment.a.y) &&
+               f32_same(a.segment.b.x, b.segment.b.x) &&
+               f32_same(a.segment.b.y, b.segment.b.y) &&
+               a.segment.interior_left == b.segment.interior_left;
+    case sdf::SketchEntity::Kind::Circle:
+        return f32_same(a.circle.center.x, b.circle.center.x) &&
+               f32_same(a.circle.center.y, b.circle.center.y) &&
+               f32_same(a.circle.radius, b.circle.radius) &&
+               a.circle.hole == b.circle.hole;
+    case sdf::SketchEntity::Kind::Arc:
+        return f32_same(a.arc.center.x, b.arc.center.x) &&
+               f32_same(a.arc.center.y, b.arc.center.y) &&
+               f32_same(a.arc.radius, b.arc.radius) &&
+               f32_same(a.arc.start_angle, b.arc.start_angle) &&
+               f32_same(a.arc.sweep, b.arc.sweep) &&
+               a.arc.hole == b.arc.hole;
+    }
+    return false;
+}
+
+bool chains_value_identical(const std::vector<sdf::SketchChain>& a,
+                            const std::vector<sdf::SketchChain>& b) {
+    if (a.size() != b.size()) return false;
+    for (std::size_t c = 0; c < a.size(); ++c) {
+        if (a[c].entities.size() != b[c].entities.size()) return false;
+        for (std::size_t e = 0; e < a[c].entities.size(); ++e)
+            if (!entity_value_identical(a[c].entities[e], b[c].entities[e]))
+                return false;
+    }
+    return true;
+}
+
+} // namespace
+
+TEST_CASE("G4 m4 — the padding counterproof: the naive raw-struct write dies, the named fields live") {
+    // THE HEART OF THE MORSO. The m2's discovery, demonstrated as the
+    // discrimination that justifies it: a raw-struct image carries the
+    // TAIL PADDING the language leaves unspecified (the m2 observed it
+    // across compilers — GCC's stack reuse masked it, CLANG's did
+    // not), so two instances with IDENTICAL field content can differ
+    // as bytes: two saves of the same sketch, two digests — the silent
+    // death of ADR-0014's determinism. The naive writer here is built
+    // for the occasion (the "version ingenua": memcpy the whole
+    // struct, digest the image) and is PROVEN DEAD; the fields writer
+    // (the landed one) is proven stable on the very same poisoned
+    // objects.
+    using sdf::SketchConstraint;
+
+    // (a) THE HOLES EXIST: the struct's byte count strictly exceeds
+    // the sum of its members' own byte counts — the language's own
+    // arithmetic, the space where the garbage lives.
+    const std::size_t member_bytes =
+        sizeof(SketchConstraint::Kind) + sizeof(sdf::SketchPointRef) +
+        sizeof(sdf::SketchPointRef) + sizeof(sdf::SketchEntityRef) +
+        sizeof(sdf::SketchEntityRef) + sizeof(double) + sizeof(int) +
+        sizeof(sdf::SketchParamRef);
+    CHECK(sizeof(SketchConstraint) > member_bytes);
+
+    // (b) TWO INSTANCES, SAME CONTENT: the second is a copy of the
+    // first through the factory-built object; its TAIL padding is
+    // then scribbled differently (the last bytes of the struct are
+    // padding — the m2's own observation, simulated deterministically
+    // so both compilers demonstrate it, not just the one that
+    // happened to expose it).
+    SketchConstraint c1 = sdf::constraint_length(
+        sdf::SketchEntityRef{0, 2}, 4.0);
+    SketchConstraint c2 = c1;
+    unsigned char* raw2 = reinterpret_cast<unsigned char*>(&c2);
+    for (std::size_t i = sizeof(c2) - 7; i < sizeof(c2); ++i)
+        raw2[i] = static_cast<unsigned char>(0xAA ^ i);
+
+    // (c) THE NAIVE DIES: the raw-struct digests DIFFER for the same
+    // content — the assertion the naive's own determinism contract
+    // would write, and the red it would run: this is WHERE it dies.
+    const std::string naive1 = fnv1a_hex(
+        reinterpret_cast<const unsigned char*>(&c1), sizeof(c1));
+    const std::string naive2 = fnv1a_hex(
+        reinterpret_cast<const unsigned char*>(&c2), sizeof(c2));
+    CHECK(naive1 != naive2);
+
+    // (d) THE FIELDS LIVE: the same two objects — one clean, one with
+    // poisoned padding — serialize through the landed writer to
+    // IDENTICAL file bytes. The padding does not exist in the file:
+    // every field read and written BY NAME.
+    const auto scene_with = [](const SketchConstraint& c) {
+        scene::Scene s;
+        std::vector<sdf::SketchChain> chains;
+        chains.push_back({{sdf::sketch_segment(
+            math::Vec2f{0.0f, 0.0f}, math::Vec2f{4.0f, 0.0f}, true),
+            sdf::sketch_segment(math::Vec2f{4.0f, 0.0f},
+                                math::Vec2f{4.0f, 3.0f}, true),
+            sdf::sketch_segment(math::Vec2f{4.0f, 3.0f},
+                                math::Vec2f{0.0f, 0.0f}, true)}});
+        s.add_sketch_node("S", std::move(chains), {c});
+        return s;
+    };
+    const std::filesystem::path pa =
+        std::filesystem::temp_directory_path() / "cad0_pad_fields_a.CAD_0";
+    const std::filesystem::path pb =
+        std::filesystem::temp_directory_path() / "cad0_pad_fields_b.CAD_0";
+    native::save_file(pa, scene_with(c1), make_canonical_camera());
+    native::save_file(pb, scene_with(c2), make_canonical_camera());
+    CHECK(read_file(pa) == read_file(pb));
+
+    // And the digest over the FILES: one hash for the same content —
+    // the contract the naive broke, held by the fields.
+    const std::string file1 = read_file(pa);
+    const std::string file2 = read_file(pb);
+    CHECK(fnv1a_hex(reinterpret_cast<const unsigned char*>(file1.data()),
+                    file1.size()) ==
+          fnv1a_hex(reinterpret_cast<const unsigned char*>(file2.data()),
+                    file2.size()));
+    std::filesystem::remove(pa);
+    std::filesystem::remove(pb);
+}
+
+TEST_CASE("G4 m4 — the all-eight-kinds round-trip: N cycles, byte-identical, the authored list back field for field") {
+    // One sketch carrying EVERY constraint kind v1 has — the
+    // coincidence, the parallel, the perpendicular, the tangent (with
+    // its case bit), the length, the radius, the distance, the pin
+    // (with its parameter index) — round-tripped N times. The save
+    // bytes never move; the loaded list is the authored list, field
+    // for field; the pin that pointed at the circle's cx BEFORE the
+    // save points at the same field AFTER the load (the canonical
+    // indices are stable BY CONSTRUCTION: chain → entity → field is
+    // the serialization's own order).
+    scene::Scene s;
+    {
+        std::vector<sdf::SketchChain> chains;
+        // chain 0: three segments (the triangle's shape).
+        chains.push_back({{sdf::sketch_segment(
+                               math::Vec2f{0.10f, 0.05f},
+                               math::Vec2f{4.15f, -0.05f}, true),
+                           sdf::sketch_segment(math::Vec2f{4.10f, 0.02f},
+                                               math::Vec2f{0.05f, 3.10f},
+                                               true),
+                           sdf::sketch_segment(math::Vec2f{0.08f, 3.15f},
+                                               math::Vec2f{0.12f, -0.02f},
+                                               true)}});
+        // chain 1: one circle (the tangent's and the radius's target).
+        chains.push_back({{sdf::sketch_circle(
+            math::Vec2f{-3.0f, 1.0f}, 2.0f, false)}});
+        std::vector<sdf::SketchConstraint> authored;
+        authored.push_back(sdf::constraint_coincidence(
+            sdf::SketchPointRef{sdf::SketchEntityRef{0, 0},
+                                sdf::SketchEnd::End},
+            sdf::SketchPointRef{sdf::SketchEntityRef{0, 1},
+                                sdf::SketchEnd::Start}));
+        authored.push_back(sdf::constraint_parallel(
+            sdf::SketchEntityRef{0, 0}, sdf::SketchEntityRef{0, 2}));
+        authored.push_back(sdf::constraint_perpendicular(
+            sdf::SketchEntityRef{0, 1}, sdf::SketchEntityRef{0, 2}));
+        authored.push_back(sdf::constraint_tangent(
+            sdf::SketchEntityRef{0, 0}, sdf::SketchEntityRef{1, 0}, -1));
+        authored.push_back(
+            sdf::constraint_length(sdf::SketchEntityRef{0, 0}, 4.0));
+        authored.push_back(
+            sdf::constraint_radius(sdf::SketchEntityRef{1, 0}, 2.0));
+        authored.push_back(sdf::constraint_distance(
+            sdf::SketchPointRef{sdf::SketchEntityRef{0, 0},
+                                sdf::SketchEnd::Start},
+            sdf::SketchPointRef{sdf::SketchEntityRef{0, 2},
+                                sdf::SketchEnd::End},
+            5.0));
+        // THE PIN: the circle's cx (chain 1, entity 0, field 0).
+        authored.push_back(sdf::constraint_pin(
+            sdf::SketchParamRef{sdf::SketchEntityRef{1, 0}, 0}, 0.5));
+        REQUIRE(s.add_sketch_node("AllKinds", std::move(chains),
+                                  std::move(authored)) == 1);
+    }
+
+    const std::filesystem::path a =
+        std::filesystem::temp_directory_path() / "cad0_kinds_rt_a.CAD_0";
+    const std::filesystem::path b =
+        std::filesystem::temp_directory_path() / "cad0_kinds_rt_b.CAD_0";
+    native::save_file(a, s, make_canonical_camera());
+    const std::string first_save = read_file(a);
+
+    scene::Scene s2;
+    for (int cycle = 0; cycle < 4; ++cycle) {
+        const native::ParsedDocument doc = native::load_file(a);
+        native::install_document(s2, native::ParsedDocument(doc));
+        native::save_file(b, s2, doc.camera);
+        CHECK(read_file(b) == first_save);
+        std::filesystem::copy_file(
+            b, a, std::filesystem::copy_options::overwrite_existing);
+    }
+    std::filesystem::remove(a);
+    std::filesystem::remove(b);
+
+    // The loaded list IS the authored list: eight constraints, every
+    // kind in authored order, every field identical — the operands as
+    // canonical indices, the tangent's case bit, the pin's parameter
+    // index, the values exact.
+    const scene::SceneNode* sk = s2.get_node(1);
+    REQUIRE(sk != nullptr);
+    REQUIRE(sk->kind == scene::NodeKind::Sketch);
+    REQUIRE(sk->sketch_constraints.size() == 8);
+    using K = sdf::SketchConstraint::Kind;
+    const sdf::SketchConstraint* cs = sk->sketch_constraints.data();
+    CHECK(cs[0].kind == K::Coincidence);
+    CHECK(cs[1].kind == K::Parallel);
+    CHECK(cs[2].kind == K::Perpendicular);
+    CHECK(cs[3].kind == K::Tangent);
+    CHECK(cs[4].kind == K::Length);
+    CHECK(cs[5].kind == K::Radius);
+    CHECK(cs[6].kind == K::Distance);
+    CHECK(cs[7].kind == K::Pin);
+    // The point operands: (entity, end) — the coincidence's pair.
+    CHECK(cs[0].a.entity.chain == 0);
+    CHECK(cs[0].a.entity.entity == 0);
+    CHECK(cs[0].a.end == sdf::SketchEnd::End);
+    CHECK(cs[0].b.entity.chain == 0);
+    CHECK(cs[0].b.entity.entity == 1);
+    CHECK(cs[0].b.end == sdf::SketchEnd::Start);
+    // The tangent's case bit: DATA, round-tripped as written (−1).
+    CHECK(cs[3].case_bit == -1);
+    CHECK(cs[3].ea.entity == 0);
+    CHECK(cs[3].eb.chain == 1);
+    CHECK(cs[3].eb.entity == 0);
+    // The values: exact decimals, quantizer-transparent.
+    CHECK(cs[4].value == 4.0);
+    CHECK(cs[5].value == 2.0);
+    CHECK(cs[6].value == 5.0);
+    CHECK(cs[7].value == 0.5);
+    // THE PIN'S STABLE ADDRESS: chain 1, entity 0, field 0 — the
+    // circle's cx, the same field before and after the round-trip.
+    CHECK(cs[7].pin.entity.chain == 1);
+    CHECK(cs[7].pin.entity.entity == 0);
+    CHECK(cs[7].pin.field == 0);
+    // And the field-wise identity against a FRESH authored build (the
+    // m2's comparator discipline: values, never raw bytes).
+    sdf::SketchConstraint fresh[8] = {
+        sdf::constraint_coincidence(
+            sdf::SketchPointRef{sdf::SketchEntityRef{0, 0},
+                                sdf::SketchEnd::End},
+            sdf::SketchPointRef{sdf::SketchEntityRef{0, 1},
+                                sdf::SketchEnd::Start}),
+        sdf::constraint_parallel(sdf::SketchEntityRef{0, 0},
+                                 sdf::SketchEntityRef{0, 2}),
+        sdf::constraint_perpendicular(sdf::SketchEntityRef{0, 1},
+                                      sdf::SketchEntityRef{0, 2}),
+        sdf::constraint_tangent(sdf::SketchEntityRef{0, 0},
+                                sdf::SketchEntityRef{1, 0}, -1),
+        sdf::constraint_length(sdf::SketchEntityRef{0, 0}, 4.0),
+        sdf::constraint_radius(sdf::SketchEntityRef{1, 0}, 2.0),
+        sdf::constraint_distance(
+            sdf::SketchPointRef{sdf::SketchEntityRef{0, 0},
+                                sdf::SketchEnd::Start},
+            sdf::SketchPointRef{sdf::SketchEntityRef{0, 2},
+                                sdf::SketchEnd::End},
+            5.0),
+        sdf::constraint_pin(
+            sdf::SketchParamRef{sdf::SketchEntityRef{1, 0}, 0}, 0.5),
+    };
+    for (int i = 0; i < 8; ++i)
+        CHECK(constraint_value_identical(cs[i], fresh[i]));
+    CHECK(chains_value_identical(sk->sketch, s.get_node(1)->sketch));
+}
+
+TEST_CASE("G4 m4 — the doors: the NEWER file refused by name; the hand-edited file is the NEXT solve's (D2.3/D3.1)") {
+    // (a) THE NEWER DOOR, by name: a file declaring a MINOR beyond
+    // this build's is refused naming both versions and the direction
+    // — migrators run upgrade-only, a downgrade is never guessed.
+    const std::string newer_minor =
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.6.0\","
+        " \"scene\": { \"next_id\": 1, \"nodes\": [] }}";
+    CHECK_THROWS_WITH_AS(native::parse_document(newer_minor),
+        doctest::Contains("0.6.0"), std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(newer_minor),
+        doctest::Contains("NEWER CAD_0"), std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(newer_minor),
+        doctest::Contains("upgrade-only"), std::runtime_error);
+
+    // (b) THE VALUE CLASS IS THE LOADER'S: a tangent with a case bit
+    // that is not ±1, a length at 0 — the FACTORIES' own rules,
+    // enforced at load exactly as the entities' parameter class is.
+    const std::string bad_case_bit =
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.5.0\","
+        " \"scene\": { \"next_id\": 2, \"nodes\": ["
+        "  { \"id\": 1, \"kind\": \"sketch\","
+        "    \"sketch\": { \"chains\": ["
+        "      { \"entities\": ["
+        "        { \"type\": \"segment\", \"a\": [0.0, 0.0],"
+        "          \"b\": [4.0, 0.0], \"interior_left\": true },"
+        "        { \"type\": \"circle\", \"center\": [0.0, 2.0],"
+        "          \"radius\": 2.0, \"hole\": false } ] } ],"
+        "      \"constraints\": ["
+        "        { \"kind\": \"tangent\","
+        "          \"ea\": { \"chain\": 0, \"entity\": 0 },"
+        "          \"eb\": { \"chain\": 0, \"entity\": 1 },"
+        "          \"case_bit\": 0 } ] } } ] } }";
+    CHECK_THROWS_WITH_AS(native::parse_document(bad_case_bit),
+        doctest::Contains("the case bit must be +1 (ESTERNO) or -1 "
+                          "(INTERNO)"), std::invalid_argument);
+
+    // (c) THE UNKNOWN KIND: refused by name, with the newer/hand-edited
+    // hint (the queued families — symmetry, axes, equations — are NOT
+    // kind names a file may invent).
+    const std::string queued_family =
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.5.0\","
+        " \"scene\": { \"next_id\": 2, \"nodes\": ["
+        "  { \"id\": 1, \"kind\": \"sketch\","
+        "    \"sketch\": { \"chains\": ["
+        "      { \"entities\": ["
+        "        { \"type\": \"segment\", \"a\": [0.0, 0.0],"
+        "          \"b\": [4.0, 0.0], \"interior_left\": true } ] } ],"
+        "      \"constraints\": ["
+        "        { \"kind\": \"symmetry\" } ] } } ] } }";
+    CHECK_THROWS_WITH_AS(native::parse_document(queued_family),
+        doctest::Contains("unknown constraint kind \"symmetry\""),
+        std::runtime_error);
+
+    // (d) THE HAND-EDITED FILE IS THE NEXT SOLVE'S (D3.1, inchiodate):
+    // a constraint addressing an entity that does not exist LOADS —
+    // the loader never validates the structure against the chains
+    // (D2.3: the recipe is the truth; the load never solves) — and
+    // the very next SOLVE (the model's admission, against the real
+    // chains) refuses it with the kernel's own words. The
+    // inconsistency belongs to the solve, never to the loader.
+    const std::string hand_edited =
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.5.0\","
+        " \"scene\": { \"next_id\": 2, \"nodes\": ["
+        "  { \"id\": 1, \"kind\": \"sketch\","
+        "    \"sketch\": { \"chains\": ["
+        "      { \"entities\": ["
+        "        { \"type\": \"segment\", \"a\": [0.0, 0.0],"
+        "          \"b\": [4.0, 0.0], \"interior_left\": true } ] } ],"
+        "      \"constraints\": ["
+        "        { \"kind\": \"length\","
+        "          \"ea\": { \"chain\": 0, \"entity\": 99 },"
+        "          \"value\": 4.0 } ] } } ] } }";
+    const native::ParsedDocument doc = native::parse_document(hand_edited);
+    REQUIRE(doc.nodes.size() == 1);
+    REQUIRE(doc.nodes[0].sketch_constraints.size() == 1);
+    // The NEXT solve catches it: the model's structural rule, the
+    // kernel's own message (the workbench's rebuild route is this
+    // very add — the words the interface would say).
+    sdf::SketchSolveModel model(doc.nodes[0].sketch);
+    CHECK_THROWS_WITH_AS(model.add_constraint(doc.nodes[0].sketch_constraints[0]),
+        doctest::Contains("out of range"), std::invalid_argument);
+}
+
+TEST_CASE("G4 m4 — the re-solve after the load: the golden-1 triangle and the golden-8 edit, bit-identical through the round-trip") {
+    // THE PROOF THE ROUND-TRIP LOSES NOTHING OF THE GRAPH: the
+    // triangle (12 − 12 = 0 FULL, D5.1's own numbers) solved, saved,
+    // loaded — and the loaded state solves to ITSELF; then the
+    // golden-8 edit (|BC| 5 → 5.5) applied on BOTH sides — the
+    // pre-save scene and the loaded one — and the two solves agree,
+    // bit for bit, with the ADR's derived C' = (−0.65625,
+    // 2.927342811749249) (x = (9+16−30.25)/8, y = √(9−x²)).
+    const auto triangle_scene = [] {
+        scene::Scene s;
+        std::vector<sdf::SketchChain> chains;
+        chains.push_back({{sdf::sketch_segment(
+                               math::Vec2f{0.10f, 0.05f},
+                               math::Vec2f{4.15f, -0.05f}, true),
+                           sdf::sketch_segment(math::Vec2f{4.10f, 0.02f},
+                                               math::Vec2f{0.05f, 3.10f},
+                                               true),
+                           sdf::sketch_segment(math::Vec2f{0.08f, 3.15f},
+                                               math::Vec2f{0.12f, -0.02f},
+                                               true)}});
+        std::vector<sdf::SketchConstraint> cs;
+        cs.push_back(sdf::constraint_coincidence(
+            sdf::SketchPointRef{sdf::SketchEntityRef{0, 0},
+                                sdf::SketchEnd::End},
+            sdf::SketchPointRef{sdf::SketchEntityRef{0, 1},
+                                sdf::SketchEnd::Start}));
+        cs.push_back(sdf::constraint_coincidence(
+            sdf::SketchPointRef{sdf::SketchEntityRef{0, 1},
+                                sdf::SketchEnd::End},
+            sdf::SketchPointRef{sdf::SketchEntityRef{0, 2},
+                                sdf::SketchEnd::Start}));
+        cs.push_back(sdf::constraint_coincidence(
+            sdf::SketchPointRef{sdf::SketchEntityRef{0, 2},
+                                sdf::SketchEnd::End},
+            sdf::SketchPointRef{sdf::SketchEntityRef{0, 0},
+                                sdf::SketchEnd::Start}));
+        cs.push_back(
+            sdf::constraint_length(sdf::SketchEntityRef{0, 0}, 4.0));
+        cs.push_back(
+            sdf::constraint_length(sdf::SketchEntityRef{0, 1}, 5.0));
+        cs.push_back(
+            sdf::constraint_length(sdf::SketchEntityRef{0, 2}, 3.0));
+        cs.push_back(sdf::constraint_pin(
+            sdf::SketchParamRef{sdf::SketchEntityRef{0, 0}, 0}, 0.0));
+        cs.push_back(sdf::constraint_pin(
+            sdf::SketchParamRef{sdf::SketchEntityRef{0, 0}, 1}, 0.0));
+        cs.push_back(sdf::constraint_pin(
+            sdf::SketchParamRef{sdf::SketchEntityRef{0, 0}, 3}, 0.0));
+        s.add_sketch_node("Triangle", std::move(chains), std::move(cs));
+        return s;
+    };
+    const auto solve_of = [](const scene::Scene& s) {
+        sdf::SketchSolveModel model(s.get_node(1)->sketch);
+        for (const auto& c : s.get_node(1)->sketch_constraints) {
+            const auto rec = model.add_constraint(c);
+            REQUIRE(rec.admitted);
+        }
+        return model.solve();
+    };
+
+    // (a) PRE-SAVE: the golden-1 solve — 12 − 12 = 0 FULL, solved,
+    // the identity 3-4-5 landed (the derived coordinates).
+    scene::Scene pre = triangle_scene();
+    sdf::SketchSolveResult r_pre = solve_of(pre);
+    REQUIRE(r_pre.status == sdf::SketchSolveStatus::Solved);
+    CHECK(r_pre.bill.describe() == "12 - 12 = 0 (FULL)");
+    // The store-back (the workbench's own route): the solved chains
+    // become the recipe, THEN the file is written.
+    {
+        scene::SceneNode* n = pre.get_node_mut(1);
+        n->sketch = r_pre.chains;
+    }
+
+    // (b) SAVE → LOAD (the round-trip): the file carries BOTH the
+    // solved fields and the constraint list (D3.1: both are the
+    // recipe, the load trusts both, never re-solved).
+    const std::filesystem::path a =
+        std::filesystem::temp_directory_path() / "cad0_resolve_rt.CAD_0";
+    native::save_file(a, pre, make_canonical_camera());
+    const native::ParsedDocument doc = native::load_file(a);
+    scene::Scene post;
+    native::install_document(post, native::ParsedDocument(doc));
+    std::filesystem::remove(a);
+
+    // (c) THE LOADED STATE SOLVES TO ITSELF: bit-identical chains —
+    // the graph survived the round-trip whole.
+    sdf::SketchSolveResult r_post = solve_of(post);
+    REQUIRE(r_post.status == sdf::SketchSolveStatus::Solved);
+    CHECK(r_post.bill.describe() == "12 - 12 = 0 (FULL)");
+    CHECK(chains_value_identical(r_post.chains, r_pre.chains));
+
+    // (d) THE GOLDEN-8 EDIT ON BOTH SIDES: |BC| (s1's length) 5 →
+    // 5.5 — the re-value through the factory (index 4 in the
+    // authored list), the re-solve from the pre-edit solved geometry.
+    // Both sides agree, bit for bit, with the ADR's closed form.
+    const auto edit_and_solve = [&solve_of](scene::Scene& s) {
+        scene::SceneNode* n = s.get_node_mut(1);
+        n->sketch_constraints[4] = sdf::constraint_length(
+            sdf::SketchEntityRef{0, 1}, 5.5);
+        return solve_of(s);
+    };
+    sdf::SketchSolveResult r_edit_pre = edit_and_solve(pre);
+    sdf::SketchSolveResult r_edit_post = edit_and_solve(post);
+    REQUIRE(r_edit_pre.status == sdf::SketchSolveStatus::Solved);
+    REQUIRE(r_edit_post.status == sdf::SketchSolveStatus::Solved);
+    CHECK(chains_value_identical(r_edit_pre.chains, r_edit_post.chains));
+    // The derived C' — the golden-8 closed form, on BOTH sides. The
+    // solved values are the STORED float32 (the store IS the
+    // quantizer, ADR-0014): the closed form holds at the store's own
+    // resolution (~2.4e-7 at scale 3), and the two SIDES agree
+    // exactly, bit for bit.
+    const sdf::SketchSegment& c_pre =
+        r_edit_pre.chains[0].entities[2].segment;
+    const sdf::SketchSegment& c_post =
+        r_edit_post.chains[0].entities[2].segment;
+    CHECK(c_pre.a.x == doctest::Approx(-0.65625).epsilon(1e-6));
+    CHECK(c_pre.a.y == doctest::Approx(2.927342811749249).epsilon(1e-6));
+    CHECK(c_post.a.x == c_pre.a.x);
+    CHECK(c_post.a.y == c_pre.a.y);
+    CHECK(c_pre.b.x == c_post.b.x);
+    CHECK(c_pre.b.y == c_post.b.y);
 }
 
 TEST_CASE("sketch: parameter-class corruption is a loud load error (ADR-0029 family)") {
