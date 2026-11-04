@@ -2,13 +2,29 @@
 
 ## Status
 
-**Proposed (2026-11-04) — delivered as morso 1 of G4 (the sketch line,
-LINEA C), docs-only: the derivation pinned, NO code moves.** The
-implementation is morsi 2+, and **morso 2 starts only on the
-maintainer's review — and the revisore's — of THIS document**: the
-STOP the order pins, the same gate ADR-0039 waits at. Until
-acceptance, every amendment this ADR declares (D6) stays a proposal:
-the mothers stand as written.
+**Accepted (2026-11-04) — the maintainer's review and the revisore's
+passed; the register surgery applied in this SAME act (D6's protocol,
+the ADR-0035/0036 precedent).** Morso 1 delivered this contract as
+**Proposed** (docs-only: the derivation pinned, no code moved); the
+review lifted the STOP it pins — the same gate ADR-0038 passed before
+it — and m2 (IL SOLVER) starts on this acceptance. The surgery,
+applied herewith, exactly as D6 declares it: **ADR-0035** amended in
+place, dated — the D2 table gains the SOLVE row (ε_solve^lin re-homed
+from `kJointCoincidenceTol`, ε_solve^ang from `kParallelAngleTol`,
+the vocabulary's own one-value-per-world law); **ADR-0030** amended
+in place, dated — the deferral REDEEMED (the entry criterion recorded
+as MET, D5.2's value-coincidence and D5.3's definition state gaining
+the solver's layer); the **error taxonomy's register** notes the
+`sketch_*` family beside `fillet_*` and `reference_*` (ADR-0033 D4's
+corpus, one line, nothing rewritten underneath); **ADR-0036 NOT
+amended** (D6's own derivation: the grammar unextended — the solve is
+value-level, the no-shift declaration covers every constraint edit);
+**ADR-0014 NOT amended** (the quantizer rule already covers the
+store-back); **ADR-0007/0027's MINOR bump stays REGISTERED and
+UNARBITRATED** — the parallel discipline's contact point (a): the
+register decides at the landing morso which line takes the next
+number, never two bumps the same day. Until the next act of this
+line, the mothers stand as amended here and nothing else moves.
 
 **LA DISCIPLINA DEL PARALLELO, declared here, in the head, before
 anything else.** Two lines are now open on main — the fillet (G2-u3,

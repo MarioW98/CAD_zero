@@ -19,6 +19,7 @@
 #include "CAD_0/sdf/transforms.hpp"
 #include "CAD_0/sdf/sketch_entities.hpp"
 #include "CAD_0/sdf/sketch_profile.hpp"
+#include "CAD_0/sdf/sketch_solver.hpp"
 #include "CAD_0/brep/topology.hpp"
 #include "CAD_0/math/vec.hpp"
 #include "CAD_0/math/quat.hpp"
@@ -344,6 +345,243 @@ void bind_scene(nb::module_& m) {
         "string when the entity is in class (ADR-0030 D5.5: "
         "the gesture/text validation calls the kernel, never "
         "a UI-side rulebook).");
+
+    // ---- The constraint solver (ADR-0040 D2, G4 m2) --------------------
+    //
+    // THE BINDINGS' SURFACE — queryable from Python before the UI
+    // consumes it (the H2-u6 discipline: the SSI table's own
+    // precedent). The three instruments of D2.1 are all here: the
+    // BILL (the counting), the ADMISSION (the rank test — the
+    // returned record, never an exception), the SOLVE (the damped
+    // min-norm Newton with the three honest classes). The bands are
+    // the vocabulary's own row (ADR-0035 D2's SOLVE members,
+    // re-homed from the sketch kernel's constants — one value per
+    // world, two consumers, zero drift) and are exposed READ-ONLY:
+    // eps_solve_lin / eps_solve_ang.
+    nb::class_<sdf::SketchEntityRef>(scene_mod, "SketchEntityRef")
+        .def(nb::init<std::size_t, std::size_t>(), nb::arg("chain"),
+             nb::arg("entity"))
+        .def_ro("chain", &sdf::SketchEntityRef::chain)
+        .def_ro("entity", &sdf::SketchEntityRef::entity);
+
+    nb::class_<sdf::SketchPointRef>(scene_mod, "SketchPointRef")
+        .def(nb::init<sdf::SketchEntityRef, bool>(), nb::arg("entity"),
+             nb::arg("end"))
+        .def_ro("entity", &sdf::SketchPointRef::entity)
+        .def_prop_ro("end", [](const sdf::SketchPointRef& p) {
+            return p.end == sdf::SketchEnd::End;
+        });
+
+    nb::class_<sdf::SketchParamRef>(scene_mod, "SketchParamRef")
+        .def(nb::init<sdf::SketchEntityRef, std::uint8_t>(), nb::arg("entity"),
+             nb::arg("field"))
+        .def_ro("entity", &sdf::SketchParamRef::entity)
+        .def_ro("field", &sdf::SketchParamRef::field);
+
+    nb::class_<sdf::SketchConstraint>(scene_mod, "SketchConstraint")
+        .def_prop_ro("kind", [](const sdf::SketchConstraint& c) {
+            switch (c.kind) {
+            case sdf::SketchConstraint::Kind::Coincidence:   return "coincidence";
+            case sdf::SketchConstraint::Kind::Parallel:      return "parallel";
+            case sdf::SketchConstraint::Kind::Perpendicular: return "perpendicular";
+            case sdf::SketchConstraint::Kind::Tangent:       return "tangent";
+            case sdf::SketchConstraint::Kind::Length:        return "length";
+            case sdf::SketchConstraint::Kind::Radius:        return "radius";
+            case sdf::SketchConstraint::Kind::Distance:      return "distance";
+            case sdf::SketchConstraint::Kind::Pin:           return "pin";
+            }
+            return "?";
+        })
+        .def_prop_ro("value", [](const sdf::SketchConstraint& c) {
+            return c.value;
+        });
+
+    scene_mod.def("constraint_coincidence",
+        [](sdf::SketchPointRef a, sdf::SketchPointRef b) {
+            return sdf::constraint_coincidence(a, b);
+        },
+        nb::arg("a"), nb::arg("b"),
+        "The coincidence: two endpoints equal (consumes 2). Any two "
+        "endpoints of any two entities — a chain joint or not; the "
+        "graph is sketch-wide (ADR-0040 D2.1).");
+    scene_mod.def("constraint_parallel",
+        [](sdf::SketchEntityRef a, sdf::SketchEntityRef b) {
+            return sdf::constraint_parallel(a, b);
+        },
+        nb::arg("a"), nb::arg("b"),
+        "The parallel: the unit directions' cross = 0 (consumes 1, "
+        "the Angular world).");
+    scene_mod.def("constraint_perpendicular",
+        [](sdf::SketchEntityRef a, sdf::SketchEntityRef b) {
+            return sdf::constraint_perpendicular(a, b);
+        },
+        nb::arg("a"), nb::arg("b"),
+        "The perpendicular: the unit directions' dot = 0 (consumes 1, "
+        "the Angular world).");
+    scene_mod.def("constraint_tangent",
+        [](sdf::SketchEntityRef segment, sdf::SketchEntityRef circle,
+           int case_bit) {
+            return sdf::constraint_tangent(segment, circle, case_bit);
+        },
+        nb::arg("segment"), nb::arg("circle"), nb::arg("case_bit"),
+        "The tangent: the signed distance from the circle's center "
+        "to the segment's line = case_bit * r (consumes 1). The case "
+        "bit is DATA — +1 ESTERNO / -1 INTERNO — derived at creation "
+        "by derive_tangent_case_bit, never chosen by the solver.");
+    scene_mod.def("constraint_length",
+        [](sdf::SketchEntityRef segment, double v) {
+            return sdf::constraint_length(segment, v);
+        },
+        nb::arg("segment"), nb::arg("v"),
+        "The length dimension: |AB| = v, v > 0 (consumes 1).");
+    scene_mod.def("constraint_radius",
+        [](sdf::SketchEntityRef circle_or_arc, double v) {
+            return sdf::constraint_radius(circle_or_arc, v);
+        },
+        nb::arg("circle_or_arc"), nb::arg("v"),
+        "The radius dimension: r = v, v > 0 (consumes 1).");
+    scene_mod.def("constraint_distance",
+        [](sdf::SketchPointRef a, sdf::SketchPointRef b, double v) {
+            return sdf::constraint_distance(a, b, v);
+        },
+        nb::arg("a"), nb::arg("b"), nb::arg("v"),
+        "The distance dimension: |PQ| = v, v > 0 (consumes 1). v = 0 "
+        "is the coincidence's question — refused with the remedy.");
+    scene_mod.def("constraint_pin",
+        [](sdf::SketchParamRef p, double v) {
+            return sdf::constraint_pin(p, v);
+        },
+        nb::arg("param"), nb::arg("v"),
+        "The pin — D4's raw-parameter dimension: x_i = v, any v "
+        "(consumes 1, Linear on coordinate fields, Angular on the "
+        "arc's angle fields). The atom the named dimensions measure "
+        "with; the under-constrained becomes FULL without the queued "
+        "families.");
+    scene_mod.def("derive_tangent_case_bit",
+        [](const std::vector<sdf::SketchChain>& chains,
+           sdf::SketchEntityRef segment, sdf::SketchEntityRef circle) {
+            return sdf::derive_tangent_case_bit(chains, segment, circle);
+        },
+        nb::arg("chains"), nb::arg("segment"), nb::arg("circle"),
+        "The tangent's case bit derived from the CURRENT geometry "
+        "(the side the center is on): +1 ESTERNO / -1 INTERNO. "
+        "Derived at creation, pinned in the recipe, consumed by the "
+        "solver, never chosen.");
+
+    nb::class_<sdf::SketchBill>(scene_mod, "SketchBill")
+        .def_ro("dof", &sdf::SketchBill::dof)
+        .def_ro("consumed", &sdf::SketchBill::consumed)
+        .def("free", &sdf::SketchBill::free)
+        .def("full", &sdf::SketchBill::full)
+        .def("describe", &sdf::SketchBill::describe);
+
+    nb::class_<sdf::SketchAdmission>(scene_mod, "SketchAdmission")
+        .def_ro("admitted", &sdf::SketchAdmission::admitted)
+        .def_ro("rank_before", &sdf::SketchAdmission::rank_before)
+        .def_ro("rank_after", &sdf::SketchAdmission::rank_after)
+        .def_ro("consumption", &sdf::SketchAdmission::consumption)
+        .def_ro("tail0", &sdf::SketchAdmission::tail0)
+        .def_ro("tail1", &sdf::SketchAdmission::tail1)
+        .def_ro("bill", &sdf::SketchAdmission::bill)
+        .def_ro("message", &sdf::SketchAdmission::message);
+
+    nb::enum_<sdf::SketchSolveStatus>(scene_mod, "SketchSolveStatus")
+        .value("solved", sdf::SketchSolveStatus::Solved)
+        .value("not_solvable", sdf::SketchSolveStatus::NotSolvable)
+        .value("degenerate", sdf::SketchSolveStatus::Degenerate);
+
+    nb::class_<sdf::SketchViolation>(scene_mod, "SketchViolation")
+        .def_ro("constraint", &sdf::SketchViolation::constraint)
+        .def_ro("label", &sdf::SketchViolation::label)
+        .def_ro("value", &sdf::SketchViolation::value)
+        .def_prop_ro("angular", [](const sdf::SketchViolation& v) {
+            return v.angular;
+        });
+
+    nb::class_<sdf::SketchSolveResult>(scene_mod, "SketchSolveResult")
+        .def_ro("status", &sdf::SketchSolveResult::status)
+        .def_ro("iterations", &sdf::SketchSolveResult::iterations)
+        .def_ro("bill", &sdf::SketchSolveResult::bill)
+        .def_ro("chains", &sdf::SketchSolveResult::chains)
+        .def_ro("violations", &sdf::SketchSolveResult::violations)
+        .def_ro("largest", &sdf::SketchSolveResult::largest)
+        .def_ro("residual_norm", &sdf::SketchSolveResult::residual_norm)
+        .def_ro("exit_params", &sdf::SketchSolveResult::exit_params)
+        .def_ro("diagnosis", &sdf::SketchSolveResult::diagnosis)
+        .def_ro("degenerate_entity", &sdf::SketchSolveResult::degenerate_entity)
+        .def_ro("degenerate_message", &sdf::SketchSolveResult::degenerate_message);
+
+    nb::class_<sdf::SketchSolveModel>(scene_mod, "SketchSolveModel")
+        .def(nb::init<std::vector<sdf::SketchChain>>(), nb::arg("chains"),
+             "The constraint problem as recipe data: the chains and "
+             "the admitted constraints in AUTHORED ORDER (append-only "
+             "in v1). The entities are validated on construction — "
+             "the canonical initial point must be in-class geometry.")
+        .def("chains", &sdf::SketchSolveModel::chains)
+        .def("constraints", &sdf::SketchSolveModel::constraints)
+        .def("bill", &sdf::SketchSolveModel::bill)
+        .def("add_constraint", &sdf::SketchSolveModel::add_constraint,
+             nb::arg("constraint"),
+             "THE ADMISSION (the rank test at the current geometry). "
+             "Returns the record: admitted=True, or the class "
+             "sketch_over_constrained with the culprit, the bill and "
+             "the remedy — never an exception, never a silence.")
+        .def("remove_constraint", &sdf::SketchSolveModel::remove_constraint,
+             nb::arg("index"),
+             "D3.3's remove (the v1 edit family: add, remove, "
+             "re-value). False on an out-of-range index.")
+        .def("revalue_constraint", &sdf::SketchSolveModel::revalue_constraint,
+             nb::arg("index"), nb::arg("v"),
+             "D3.3's re-value — the dimension edit (length/radius/"
+             "distance/pin). The value rules are the factories' own.")
+        .def("solve", &sdf::SketchSolveModel::solve,
+             "THE SOLVE: the damped min-norm Newton from the CANONICAL "
+             "initial point (the recipe's current values — never a "
+             "random restart; same input, same output, bit for bit). "
+             "On solved: the stored recipe (float32, verified on the "
+             "stored bytes) and the bill. On the honest failures: the "
+             "recipe untouched, the payload the answer.")
+        .def("chains_dump",
+             [](const sdf::SketchSolveModel& m) -> nb::list {
+                 nb::list chains;
+                 for (const auto& c : m.chains()) {
+                     nb::list ents;
+                     for (const auto& e : c.entities) {
+                         nb::dict d;
+                         switch (e.kind) {
+                         case sdf::SketchEntity::Kind::Segment:
+                             d["kind"] = "segment";
+                             d["a"] = vec2_to_tuple(e.segment.a);
+                             d["b"] = vec2_to_tuple(e.segment.b);
+                             d["interior_left"] = e.segment.interior_left;
+                             break;
+                         case sdf::SketchEntity::Kind::Circle:
+                             d["kind"] = "circle";
+                             d["center"] = vec2_to_tuple(e.circle.center);
+                             d["radius"] = e.circle.radius;
+                             d["hole"] = e.circle.hole;
+                             break;
+                         case sdf::SketchEntity::Kind::Arc:
+                             d["kind"] = "arc";
+                             d["center"] = vec2_to_tuple(e.arc.center);
+                             d["radius"] = e.arc.radius;
+                             d["hole"] = e.arc.hole;
+                             d["start_angle"] = e.arc.start_angle;
+                             d["sweep"] = e.arc.sweep;
+                             break;
+                         }
+                         ents.append(d);
+                     }
+                     chains.append(ents);
+                 }
+                 return chains;
+             },
+             "The model's chains as plain dicts (the sketch_chains "
+             "shape — the same reader the canvas consumes): the "
+             "recipe's own values, the solved state included.");
+
+    scene_mod.attr("eps_solve_lin") = sdf::kSolveEpsLin;
+    scene_mod.attr("eps_solve_ang") = sdf::kSolveEpsAng;
 
     // Scene
     nb::class_<scene::Scene>(scene_mod, "Scene")

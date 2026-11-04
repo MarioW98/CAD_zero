@@ -192,7 +192,25 @@ the circle's radius re-materializes the extrude, which re-materializes
 the subtract that consumes it — the whole chain, deterministically,
 with the same FeatureIds. The constraint solver (coincidence,
 parallelism, tangency between entities) is **explicitly out and
-deferred to its own ADR**. The thesis, argued:
+deferred to its own ADR**.
+
+> **Amended 2026-11-04 — the deferral REDEEMED (ADR-0040, accepted the
+> same day; G4 m1).** The solver now EXISTS: ADR-0040 "the sketch: the
+> root system, the constraint solver, the bands it declares" — the
+> entry criterion this thesis pinned is recorded as MET (the MVP
+> delivered 2026-10-24, the parametric hole running end-to-end, the
+> propagation demonstrated), and the solver lands ON TOP of the real
+> data model exactly as the order argued: the sketch is not a planet
+> that arrived late but the ROOT SYSTEM ADR-0036 already governs. The
+> deferral's own thesis stands above as history — honored to the
+> letter. The solver's contract is ADR-0040 D2's (the graph, the bill,
+the admission's rank test, the damped min-norm Newton, the bands
+> ε_solve re-homed from this kernel's own constants, the three honest
+> classes); the under-constrained sketch still SOLVES (the propagation
+> world survives the solver's landing day — ADR-0040 D2.1's own
+> derivation).
+
+The thesis, argued:
 
 1. **First the value, then the research.** A parametric profile that
    extrudes and subtracts is shippable, testable geometry with a
@@ -689,6 +707,17 @@ handles and routes its parameters to the panel. Then, editing:
   coordinates are equal, D5.4), so dragging either endpoint can break
   the coincidence — the no-solver cost, paid visibly as the definition
   state re-opens (D5.3), never papered over.
+
+  > **Amended 2026-11-04 (the solver's layer — ADR-0040 D3.1, accepted
+  > the same day):** under the solver the coincidence becomes the
+  > CONSTRAINT's business — the coincidence row holds the joints within
+  > ε_solve^lin (ADR-0035 D2's SOLVE row), the solve is an EDIT-TIME
+  > act (the load never re-solves, ADR-0040 D2.3), and the by-VALUE
+  > sharing above remains the SERIALIZED truth (the entity's fields and
+  > the constraint list are both the recipe; the round-trip preserves
+  > both). D5.3's definition state gains the DoF counter (ADR-0040 D4):
+  > the under-constrained state is REPORTED ("N gradi liberi"), never
+  > hidden — the same honesty this rule practices visibly.
 
 **Rejected alternatives:**
 

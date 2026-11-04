@@ -491,6 +491,13 @@ every family above → a golden or a named error, by name —
 The corpus is the phase's robustness data for the *next*
 checkpoint, exactly as G1's dispositions fed this one.
 
+*(Amended 2026-11-04: the culture's third province joins the corpus
+beside the fillet's and the resolver's — the `sketch_*` family of
+ADR-0040 D2.2, the sketch line's own refusals: `sketch_over_constrained`
+at the admission, `sketch_not_solvable` at the solve, `sketch_degenerate`
+at the verification — each actionable with its payload, never a
+silence. One note, nothing rewritten underneath.)*
+
 ### D5. The unit ladder — the starting proposal (the review can move it)
 
 1. **The table** — the SSI entries as a kernel surface and through
