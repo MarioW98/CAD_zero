@@ -490,3 +490,134 @@ def test_legitimate_deep_tree_loads_and_evaluates_bit_exact():
     for p in (CAD_0.math.Vec3f(0, 0, 0), CAD_0.math.Vec3f(0.9, -0.2, 0.4)):
         assert node.body.value(p) == body.value(p)
 
+
+
+# ===========================================================================
+# G2-u3 m4 (ADR-0039 D6 rung 4, the REBASED bump v0.6.0): the fillet
+# recipe on the file — the BINDING's own proof. The reference survives
+# the round-trip CHARACTER FOR CHARACTER; the door's refusal is
+# readable from the binding; the radius edit after the load answers
+# reference_resolved (the class-1 silent edit, one scene mutation).
+# ===========================================================================
+RIM_V0_6 = "sub#8:isect[box#7:top \u00d7 ext#6:lat(0)]@hi"
+
+
+def _blind_chain_scene():
+    """The m3 guide body on the scene (ids 1-5): the box [-1,1]^3, the
+    circle r=0.5 at the origin, the prism [0,2] offset (0,0,-0.5) - the
+    BLIND hole (the floor at -0.5, the rim at z=1), then the rim fillet
+    discovered by the find (never typed by hand)."""
+    from CAD_0 import math as math_mod
+    from CAD_0 import brep as brep_mod
+
+    sc = scene_mod.Scene()
+    chains = [scene_mod.SketchChain(
+        [scene_mod.sketch_circle((0.0, 0.0), 0.5, False)])]
+    sk = sc.add_sketch_node("Blind_Sketch", chains, [])
+    ex = sc.add_extrude_node("Blind_Extrude", sketch=sk,
+                             distance=2.0, direction=1)
+    bx = sc.add_node("Blind_Box", sdf_mod.box(math_mod.Vec3f(1.0, 1.0, 1.0)))
+    node = sc.get_node(bx)
+    node.builder = "box"
+    node.set_params({"extent_x": 1.0, "extent_y": 1.0, "extent_z": 1.0})
+    sub = sc.add_operation_node("Blind_Subtract", target=bx, tool=ex,
+                                 offset_z=-0.5)
+    for nid in (sk, ex, bx):
+        sc.set_visible(nid, False)
+    blind = sc.get_node(sub)
+    assert blind.exact_brep is not None
+    rim = None
+    for i in range(brep_mod.edge_count(blind.exact_brep)):
+        e = brep_mod.edge_query(blind.exact_brep, i)
+        if "@hi" in e["name"] and "isect" in e["name"]:
+            rim = e["name"]
+            break
+    # The grammar's own derivation, checked (the DAG ids are the node
+    # ids - the morse-5 rule): never typed by hand.
+    expected = f"sub#{sub}:isect[box#{bx}:top \u00d7 ext#{ex}:lat(0)]@hi"
+    assert rim == expected, (rim, expected)
+    fid = sc.add_fillet_node("Rim_Fillet", rim, 0.25)
+    assert fid == 5
+    return sc, fid, rim
+
+
+def test_fillet_recipe_rides_the_payload_v0_6(tmp_path):
+    # The save/load of a filleted body from Python: the round-trip
+    # reachable, the recipe's fields back exactly, the numbers unmoved
+    # by the trip, the re-save byte-identical.
+    import CAD_0
+    from CAD_0 import brep as brep_mod
+
+    sc, fid, rim = _blind_chain_scene()
+    path = tmp_path / "fillet.CAD_0"
+    CAD_0.io.save(path, sc)
+    first = path.read_bytes()
+
+    sc2 = scene_mod.Scene()
+    cam = CAD_0.io.load(path, sc2)
+    f = sc2.get_node(fid)
+    # THE REFERENCE, character for character; the radius its own field.
+    assert f.fillet_edge == rim
+    assert f.fillet_edge.encode("utf-8").decode("utf-8") == rim
+    assert f.fillet_radius == 0.25
+    assert f.fillet_refusal == ""
+    assert f.fillet_brep is not None
+    q = brep_mod.body_query(f.fillet_brep)
+    assert (q["V"], q["E"], q["F"], q["H"], q["chi"]) == (14, 20, 9, 1, 2)
+    mp = brep_mod.mass_properties(f.fillet_brep, 1e-9)
+    assert mp["all_exact"] is True
+    vol = (8.0 - 0.375 * 3.141592653589793) - 2.0 * 3.141592653589793 * (
+        0.5 * 0.25 * 0.25 * (1.0 - 3.141592653589793 / 4.0) +
+        0.25 ** 3 * (5.0 / 6.0 - 3.141592653589793 / 4.0))
+    assert abs(mp["volume"] - vol) < 1e-12
+
+    # The re-save is byte-identical (the digests' own floor).
+    CAD_0.io.save(path, sc2, cam)
+    assert path.read_bytes() == first
+
+
+def test_fillet_v0_5_door_readable_from_the_binding():
+    # The door's refusal readable from the binding: the v0.5 golden
+    # (frozen history) is refused BY NAME with the remedy - never a
+    # best-effort load.
+    import CAD_0
+
+    from pathlib import Path as _P
+    sc = scene_mod.Scene()
+    with pytest.raises(RuntimeError) as ei:
+        CAD_0.io.load(
+            _P(__file__).resolve().parents[3]
+            / "tests" / "golden" / "native_v0_5_0.CAD_0",
+            sc)
+    msg = str(ei.value)
+    assert "the format moved to v0.6: re-apply the fillets" in msg
+    assert "0.5.0" in msg and "0.6.0" in msg
+    # The scene untouched (the load is transactional).
+    assert sc.node_count() == 0
+
+
+def test_fillet_radius_edit_after_the_load(tmp_path):
+    # The class-1 SILENT edit after the load: ONE scene mutation, the
+    # answer reference_resolved, the counts fixed, the volume the
+    # closed form's own value at the new r.
+    import CAD_0
+    from CAD_0 import brep as brep_mod
+
+    sc, fid, rim = _blind_chain_scene()
+    path = tmp_path / "fillet.CAD_0"
+    CAD_0.io.save(path, sc)
+    sc2 = scene_mod.Scene()
+    CAD_0.io.load(path, sc2)
+
+    ans = sc2.set_fillet_radius(fid, 0.125)
+    assert ans == "reference_resolved"
+    f = sc2.get_node(fid)
+    assert f.fillet_refusal == ""
+    q = brep_mod.body_query(f.fillet_brep)
+    assert (q["V"], q["E"], q["F"], q["H"], q["chi"]) == (14, 20, 9, 1, 2)
+    mp = brep_mod.mass_properties(f.fillet_brep, 1e-9)
+    r = 0.125
+    vol = (8.0 - 0.375 * 3.141592653589793) - 2.0 * 3.141592653589793 * (
+        0.5 * r * r * (1.0 - 3.141592653589793 / 4.0) +
+        r ** 3 * (5.0 / 6.0 - 3.141592653589793 / 4.0))
+    assert abs(mp["volume"] - vol) < 1e-12

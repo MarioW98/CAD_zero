@@ -1128,6 +1128,405 @@ std::string fnv1a_hex(const unsigned char* data, std::size_t n) {
     return std::string(buf);
 }
 
+// The digests (the H2-u6 oracle's own shape, extended to the feature
+// plane — G2-u3 m4): every face's and edge's NAME, the co-edge leg
+// (every co-edge's edge name), and the full-structure digest (the
+// counts, the positions, the pairs, the co-edge sequences).
+std::string m4_name_digest(const brep::BRepBody& body) {
+    std::string out;
+    for (brep::FaceId i = 0; i < body.face_count(); ++i) {
+        out += std::to_string(i);
+        out += '|';
+        out += brep::query_face(body, i).name;
+        out += '\n';
+    }
+    for (brep::EdgeId i = 0; i < body.edge_count(); ++i) {
+        out += std::to_string(i);
+        out += '|';
+        out += brep::query_edge(body, i).name;
+        out += '\n';
+    }
+    return out;
+}
+
+std::string m4_coedge_digest(const brep::BRepBody& body) {
+    std::string out;
+    for (brep::FaceId i = 0; i < body.face_count(); ++i) {
+        const brep::FaceInfo info = brep::query_face(body, i);
+        for (const auto& loop : info.loops)
+            for (const auto& pc : loop.coedges) {
+                out += std::to_string(i);
+                out += '|';
+                out += std::to_string(pc.edge);
+                out += '|';
+                out += brep::query_edge(body, pc.edge).name;
+                out += '\n';
+            }
+    }
+    return out;
+}
+
+std::uint64_t m4_structure_digest(const brep::BRepBody& body) {
+    std::uint64_t h = 1469598103934665603ull;
+    const auto mix = [&h](const std::string& str) {
+        for (const char c : str) {
+            h ^= static_cast<std::uint8_t>(c);
+            h *= 1099511628211ull;
+        }
+    };
+    mix(std::to_string(body.vertex_count()));
+    mix(std::to_string(body.edge_count()));
+    mix(std::to_string(body.face_count()));
+    for (const auto& v : body.vertices) {
+        mix(std::to_string(v.position().x));
+        mix(std::to_string(v.position().y));
+        mix(std::to_string(v.position().z));
+    }
+    for (brep::EdgeId i = 0; i < body.edge_count(); ++i)
+        mix(brep::query_edge(body, i).name);
+    return h;
+}
+
+// ===========================================================================
+// THE FOUR PROOFS (the G4 m4 pattern, adapted one line over — G2-u3 m4):
+// the padding counterproof red on the naive, the round-trip's digests,
+// the doors, the re-run after the load.
+// ===========================================================================
+
+TEST_CASE("G2-u3 m4 - the padding counterproof: the naive raw-struct write dies, the named fields live") {
+    // THE HEART OF THE MORSO, the fillet's own subject: THE ABI, not
+    // the tail padding — the G4 m4's discovery one feature over. The
+    // recipe's edge-reference is a LONG STRING (the guide case's is 40
+    // characters): it lives on the HEAP, and the struct's image carries
+    // only its ADDRESS — a raw dump would store the pointer (8 bytes
+    // that vary between two equal-content instances, the allocator
+    // cannot hand one address to two live objects), NOT the
+    // characters. The named-fields writer stores the CHARACTERS: two
+    // same-content recipes produce identical file bytes.
+    using brep::FilletRecipe;
+    const std::string reference =
+        "sub#8:isect[box#7:top \xc3\x97 ext#6:lat(0)]@hi";
+
+    // (a) THE HOLE EXISTS: the struct's image is SMALLER than the
+    // content it must carry — a naive dump is structurally INCAPABLE
+    // of carrying the payload (the m2's arithmetic was the TAIL
+    // PADDING; the m4's is the POINTER).
+    // Portable relations, never hardcoded sizes (libstdc++'s string is
+    // 32 bytes, libc++'s 24 — both carry the pointer); no tail padding.
+    CHECK(sizeof(FilletRecipe) == sizeof(std::string) + sizeof(double));
+    CHECK(sizeof(FilletRecipe) < reference.size() + sizeof(double));
+    CHECK(sizeof(std::string) >= 8u);    // the pointer field is real
+
+    // (b) TWO INSTANCES, SAME CONTENT: c2 is a copy of c1 — both
+    // strings LIVE at different addresses (the allocator's own
+    // invariant, deterministic on every platform that can host two
+    // simultaneous objects).
+    FilletRecipe c1{reference, 0.25};
+    FilletRecipe c2 = c1;
+    CHECK(c2.edge_reference == c1.edge_reference);
+    CHECK(c2.radius == c1.radius);
+    CHECK(&c1.edge_reference != &c2.edge_reference);
+
+    // (c) THE NAIVE DIES: the raw-struct digests DIFFER for the same
+    // content — the images carry the two different heap addresses.
+    const std::string naive1 = fnv1a_hex(
+        reinterpret_cast<const unsigned char*>(&c1), sizeof(c1));
+    const std::string naive2 = fnv1a_hex(
+        reinterpret_cast<const unsigned char*>(&c2), sizeof(c2));
+    CHECK(naive1 != naive2);
+
+    // (d) THE FIELDS LIVE: the same two recipes — one clean, one a
+    // copy at another address — ride the LANDED writer (the v0.6
+    // golden's own document, the fillet node's payload replaced by
+    // the given recipe) to IDENTICAL file bytes. The pointer does not
+    // exist in the file: the reference written as its CHARACTERS, the
+    // radius as its own typed field.
+    const auto scene_with = [&](const FilletRecipe& c) {
+        scene::Scene s = make_v0_6_scene();
+        scene::SceneNode* fil = s.get_node_mut(9);
+        REQUIRE(fil != nullptr);
+        fil->fillet->edge_reference = c.edge_reference;
+        fil->fillet->radius = c.radius;
+        return s;
+    };
+    const std::filesystem::path pa =
+        std::filesystem::temp_directory_path() / "cad0_m4_pad_a.CAD_0";
+    const std::filesystem::path pb =
+        std::filesystem::temp_directory_path() / "cad0_m4_pad_b.CAD_0";
+    native::save_file(pa, scene_with(c1), make_canonical_camera());
+    native::save_file(pb, scene_with(c2), make_canonical_camera());
+    CHECK(read_file(pa) == read_file(pb));
+    // And the digest over the FILES: one hash for the same content.
+    const std::string fa = read_file(pa), fb = read_file(pb);
+    CHECK(fnv1a_hex(reinterpret_cast<const unsigned char*>(fa.data()),
+                    fa.size()) ==
+          fnv1a_hex(reinterpret_cast<const unsigned char*>(fb.data()),
+                    fb.size()));
+    std::filesystem::remove(pa);
+    std::filesystem::remove(pb);
+}
+
+TEST_CASE("G2-u3 m4 - the round-trip's digests: N cycles bit-identical, the reference character for character") {
+    // N = 10 cycles: load -> read the digests -> save -> load again.
+    // Every cycle's digests equal the first's (the H2-u6 oracle
+    // EXTENDED TO THE FEATURE plane: the name digest, the co-edge leg,
+    // the full-structure digest — the fillet's body through the FILE,
+    // both compilers by the suite's own matrix); every re-save is
+    // byte-identical to the golden (the writer is the current one);
+    // the reference comes back CHARACTER FOR CHARACTER every time.
+    std::string first_names, first_coedges;
+    std::uint64_t first_struct = 0;
+    std::string first_file;
+    std::filesystem::path prev = golden_v6_path();
+    for (int cycle = 0; cycle < 10; ++cycle) {
+        const native::ParsedDocument doc = native::load_file(prev);
+        REQUIRE(doc.nodes.size() == 9);
+        const scene::SceneNode* fil = &doc.nodes[8];
+        REQUIRE(fil->fillet.has_value());
+        // THE REFERENCE, character for character (the pinned string
+        // ADR-0038 D3 wrote — the string equality IS the byte-for-byte
+        // comparison, the length included).
+        // 41 BYTES (40 characters: the multiplication sign is two
+        // bytes in UTF-8) — the length is part of the char-for-char.
+        CHECK(fil->fillet->edge_reference.size() == 41u);
+        CHECK(fil->fillet->edge_reference ==
+              "sub#8:isect[box#7:top \xc3\x97 ext#6:lat(0)]@hi");
+        CHECK(fil->fillet->radius == 0.25);
+        REQUIRE(fil->fillet_body != nullptr);
+        const std::string names = m4_name_digest(*fil->fillet_body);
+        const std::string coedges = m4_coedge_digest(*fil->fillet_body);
+        const std::uint64_t structure =
+            m4_structure_digest(*fil->fillet_body);
+        if (cycle == 0) {
+            first_names = names;
+            first_coedges = coedges;
+            first_struct = structure;
+        } else {
+            INFO("cycle ", cycle);
+            CHECK(names == first_names);
+            CHECK(coedges == first_coedges);
+            CHECK(structure == first_struct);
+        }
+        // Re-save the loaded document (the camera travels with it).
+        scene::Scene sc;
+        native::install_document(sc, native::ParsedDocument(doc));
+        const std::filesystem::path next =
+            std::filesystem::temp_directory_path() /
+            ("cad0_m4_cycle_" + std::to_string(cycle) + ".CAD_0");
+        native::save_file(next, sc, doc.camera);
+        const std::string file_bytes = read_file(next);
+        if (cycle == 0) {
+            first_file = file_bytes;
+            // The first re-save IS the golden bytes (no bump between).
+            CHECK(file_bytes == read_file(golden_v6_path()));
+        } else {
+            CHECK(file_bytes == first_file);
+        }
+        if (cycle > 0) std::filesystem::remove(prev);
+        prev = next;
+    }
+    std::filesystem::remove(prev);
+}
+
+TEST_CASE("G2-u3 m4 - the doors: the fillet's value class, the anachronism, the leftovers, the truncated file by name") {
+    // (a) THE VALUE CLASS at the fillet's fields (the same doctrine as
+    // the constraints'): the radius finite and > 0, the edge a
+    // non-empty string — corruption of the class is a LOUD load error,
+    // never a default, never a best-effort parse.
+    const auto fillet_doc = [](const char* recipe, const char* version) {
+        std::string body =
+            "{\"format\": \"CAD_0 native\", \"version\": \"";
+        body += version;
+        body += "\", \"scene\": { \"next_id\": 2, \"nodes\": ["
+                "  { \"id\": 1, \"name\": \"F\", \"kind\": \"fillet\","
+                "    \"fillet\": ";
+        body += recipe;
+        body += " } ] } }";
+        return body;
+    };
+    CHECK_THROWS_WITH_AS(native::parse_document(fillet_doc(
+        "{ \"edge\": \"sub#8:isect[box#7:top \xc3\x97 ext#6:lat(0)]@hi\","
+        " \"radius\": 0.0 }", "0.6.0")),
+        doctest::Contains("radius\" must be finite and > 0"), std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(fillet_doc(
+        "{ \"edge\": \"sub#8:isect[box#7:top \xc3\x97 ext#6:lat(0)]@hi\","
+        " \"radius\": -0.25 }", "0.6.0")),
+        doctest::Contains("finite and > 0"), std::runtime_error);
+    // A huge-but-FINITE radius (1e300) is the loader's to PASS (the
+    // value class is finite and > 0 — exactly the constraints'
+    // doctrine): the out-of-band refusal is the KERNEL's at
+    // materialization (the m2/m3 band pins), the visible state.
+    CHECK(native::parse_document(fillet_doc(
+        "{ \"edge\": \"sub#8:isect[box#7:top \xc3\x97 ext#6:lat(0)]@hi\","
+        " \"radius\": 1e300 }", "0.6.0")).nodes.size() == 1);
+    CHECK_THROWS_WITH_AS(native::parse_document(fillet_doc(
+        "{ \"edge\": \"\", \"radius\": 0.25 }", "0.6.0")),
+        doctest::Contains("\"edge\" is empty"), std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(fillet_doc(
+        "{ \"edge\": 7, \"radius\": 0.25 }", "0.6.0")),
+        doctest::Contains("string for fillet \"edge\""), std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(fillet_doc(
+        "{ \"radius\": 0.25 }", "0.6.0")),
+        doctest::Contains("missing required field \"edge\""), std::runtime_error);
+
+    // (b) THE LEFTOVERS: a fillet node carrying an SDF-only field is
+    // the never-mix corruption, refused by name.
+    CHECK_THROWS_WITH_AS(native::parse_document(
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.6.0\","
+        " \"scene\": { \"next_id\": 2, \"nodes\": ["
+        "  { \"id\": 1, \"name\": \"F\", \"kind\": \"fillet\","
+        "    \"body\": { \"op\": \"box\", \"extent\": [1, 1, 1] },"
+        "    \"fillet\": { \"edge\": \"x\", \"radius\": 0.25 } } ] } }"),
+        doctest::Contains("carries a non-fillet field \"body\""),
+        std::runtime_error);
+
+    // (c) THE ANACHRONISM: a fillet node in a file whose ORIGINAL
+    // version predates 0.6.0 — no legitimate writer ever emitted one;
+    // the file is not what its version claims.
+    CHECK_THROWS_WITH_AS(native::parse_document(fillet_doc(
+        "{ \"edge\": \"x\", \"radius\": 0.25 }", "0.2.0")),
+        doctest::Contains("fillet nodes are the v0.6.0 payload"),
+        std::runtime_error);
+
+    // (d) THE TRUNCATED FILE, refused by name — never a parse that
+    // "makes it": the container's own arithmetic, the golden's bytes
+    // cut in half.
+    {
+        const std::string golden = read_file(golden_v6_path());
+        const std::filesystem::path half =
+            std::filesystem::temp_directory_path() / "cad0_m4_half.CAD_0";
+        {
+            std::ofstream out(half, std::ios::binary);
+            out.write(golden.data(), golden.size() / 2);
+        }
+        CHECK_THROWS_WITH_AS(native::load_file(half),
+            doctest::Contains("truncated or corrupt"), std::runtime_error);
+        std::filesystem::remove(half);
+    }
+
+    // (e) THE NEWER FILE, refused by name (upgrade-only, never a
+    // guessed downgrade) — one check on the fillet-era door.
+    CHECK_THROWS_WITH_AS(native::parse_document(
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.7.0\","
+        " \"scene\": { \"next_id\": 1, \"nodes\": [] }}"),
+        doctest::Contains("NEWER CAD_0"), std::runtime_error);
+}
+
+TEST_CASE("G2-u3 m4 - the re-run after the load: class 1 silent with reference_resolved; the dead reference class 4 by name") {
+    // (a) THE CLASS-1 EDIT after the load: the radius edit is ONE
+    // scene mutation (set_fillet_radius), the reference taken ONCE
+    // (the find — never re-picked), the re-run's answer
+    // reference_resolved, the counts fixed for every in-band r, the
+    // volume the closed form's own value. ONE undo voice: the single
+    // mutation the app wraps in ONE command (m5's wiring; the m2
+    // golden's own note — the kernel's contract pinned there, the
+    // scene's here).
+    scene::Scene s = make_v0_6_scene();
+    const std::string ans = s.set_fillet_radius(9, 0.125);
+    CHECK(ans == "reference_resolved");
+    const scene::SceneNode* fil = s.get_node(9);
+    CHECK(fil->fillet_refusal.empty());  // class 1 is SILENT
+    REQUIRE(fil->fillet_body != nullptr);
+    CHECK(fil->fillet_body->vertex_count() == 14);
+    CHECK(fil->fillet_body->edge_count() == 20);
+    CHECK(fil->fillet_body->face_count() == 9);
+    {
+        const double r = 0.125;
+        const brep::MassProperties mp = brep::mass_properties(
+            *fil->fillet_body, CAD_0::math::Tolerance::linear(1e-9));
+        CHECK(mp.all_exact);
+        CHECK(std::abs(mp.volume -
+                       ((8.0 - 0.375 * 3.14159265358979323846) -
+                        2.0 * 3.14159265358979323846 *
+                            (0.5 * r * r * (1.0 - 3.14159265358979323846 / 4.0) +
+                             r * r * r * (5.0 / 6.0 -
+                                          3.14159265358979323846 / 4.0)))) <
+              1e-12);
+    }
+
+    // (b) THE BIT-IDENTICAL RE-RUN at the same r: the digests pure of
+    // the recipe (zero floating-point content in the name legs).
+    {
+        const std::string names_a = m4_name_digest(*fil->fillet_body);
+        const std::string coedges_a = m4_coedge_digest(*fil->fillet_body);
+        const std::uint64_t struct_a = m4_structure_digest(*fil->fillet_body);
+        for (int i = 0; i < 9; ++i) {
+            scene::Scene s2 = make_v0_6_scene();
+            s2.set_fillet_radius(9, 0.125);
+            const scene::SceneNode* f2 = s2.get_node(9);
+            CHECK(m4_name_digest(*f2->fillet_body) == names_a);
+            CHECK(m4_coedge_digest(*f2->fillet_body) == coedges_a);
+            CHECK(m4_structure_digest(*f2->fillet_body) == struct_a);
+        }
+    }
+
+    // (c) THE COUNTERPROOF — the re-run on a body whose referenced
+    // face is dead: the quartet's own scenario (the tool's circle
+    // REPLACED by the square chain — the rim dies with the authored
+    // entity), constructed at the KERNEL level (the scene's own class
+    // refuses the square wall BY NAME — the upstream protection IS
+    // the design), lodged into the operand node, and answered by
+    // attach_fillet with the captured old tavola: the RESOLVER's
+    // class 4 — WHAT died (the old tavola's row), WHY (the authored
+    // entity was replaced), the remedy. Never a mute "not found".
+    {
+        scene::Scene s3 = make_v0_6_scene();
+        // The old tavola: the operand's LODGED table (the rim's row
+        // in it — the golden test pins the lodging).
+        std::map<std::uint32_t, brep::DescentTable> old_tavole;
+        old_tavole[8] = s3.get_node(8)->tavola;
+        bool rim_row = false;
+        for (const brep::DescentRow& row : old_tavole[8].rows)
+            if (!row.name.empty() &&
+                row.name == "sub#8:isect[box#7:top \xc3\x97 ext#6:lat(0)]@hi")
+                rim_row = true;
+        REQUIRE(rim_row);
+        // The dead body: the square THROUGH hole, the quartet's own
+        // pins (10/24, chi = 0) — the circle rim has no descendant.
+        std::vector<sdf::SketchChain> square;
+        square.push_back({{sdf::sketch_segment(math::Vec2f{-0.5f, -0.5f}, math::Vec2f{0.5f, -0.5f}, true),
+                           sdf::sketch_segment(math::Vec2f{0.5f, -0.5f}, math::Vec2f{0.5f, 0.5f}, true),
+                           sdf::sketch_segment(math::Vec2f{0.5f, 0.5f}, math::Vec2f{-0.5f, 0.5f}, true),
+                           sdf::sketch_segment(math::Vec2f{-0.5f, 0.5f}, math::Vec2f{-0.5f, -0.5f}, true)}});
+        auto box = brep::make_box(math::Vec3d{1.0, 1.0, 1.0}, geometry::FeatureId{7});
+        auto tool = brep::make_prism(square, 3.0, +1, geometry::FeatureId{6});
+        auto dead = brep::exact_subtract(
+            *box, *tool, math::Vec3d{0.0, 0.0, -1.5}, brep::kSubtractTolerance,
+            brep::SubtractNaming{geometry::FeatureId{8},
+                                 &brep::naming::kBoxNaming,
+                                 &brep::naming::kExtNaming});
+        REQUIRE(dead != nullptr);
+        REQUIRE(dead->face_count() == 10);
+        REQUIRE(dead->edge_count() == 24);
+        REQUIRE(brep::euler_characteristic(*dead) == 0);
+        // Lodge the dead body into the operand node (the quartet's
+        // synthetic-scenario gesture), and re-run the fillet against
+        // it through the m4 surface.
+        scene::SceneNode* n8 = s3.get_node_mut(8);
+        REQUIRE(n8 != nullptr);
+        n8->hybrid = std::make_unique<geometry::HybridBody>(
+            std::make_unique<sdf::SDFBody>(n8->body), std::move(dead),
+            geometry::HybridRole::BRepWithSDFShell, math::ToleranceAccumulator{});
+        std::vector<scene::SceneNode*> live;
+        for (std::size_t k = 0; k < s3.node_count(); ++k)
+            live.push_back(s3.node_at(k));
+        const bool ok = scene::attach_fillet(*s3.get_node_mut(9), live, &old_tavole);
+        CHECK_FALSE(ok);
+        const scene::SceneNode* f3 = s3.get_node(9);
+        const std::string& why = f3->fillet_refusal;
+        CHECK(why.rfind("reference_vanished", 0) == 0);
+        CHECK(why.find("sub#8:isect[box#7:top \xc3\x97 ext#6:lat(0)]@hi") !=
+              std::string::npos);
+        CHECK(why.find("the authored entity was replaced") != std::string::npos);
+        CHECK(why.find("reselect") != std::string::npos);
+        CHECK(why.find("revert") != std::string::npos);
+        // The last good body KEPT (the visible state): the counts
+        // still the last good re-run's.
+        REQUIRE(f3->fillet_body != nullptr);
+        CHECK(f3->fillet_body->vertex_count() == 14);
+    }
+}
+
 // The m2's comparator discipline, verbatim in spirit: the VALUES the
 // recipe serializes are compared FIELD for FIELD, never as raw bytes —
 // the padding is not part of any contract.
