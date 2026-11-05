@@ -147,6 +147,7 @@
 #include "CAD_0/brep/analytic.hpp"
 #include "CAD_0/brep/pcurve.hpp"
 #include "CAD_0/brep/naming.hpp"
+#include "CAD_0/brep/query.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -197,6 +198,53 @@ struct FilletNaming {
     geometry::FeatureId far_feature{};
     const naming::OperationNaming* far_body{};
 };
+
+// ---------------------------------------------------------------------------
+// THE RECIPE — G2-u3 m4 (ADR-0039 D6 rung 4, the m4 rung's own words:
+// "the FilletRecipe (the edge-name field, the radius)"): the record the
+// FILE carries, named fields, never a raw struct — exactly two, nothing
+// else: the edge-reference as the STRING (the grammar's own form,
+// VERBATIM — "sub#4:isect[box#1:top × ext#3:lat(0)]@hi", the pinned
+// string ADR-0038 D3 wrote and ADR-0039 D3 registered as the recipe's
+// field: never an address, never a dump; the m2/m3 kernel surfaces take
+// the structural ShapeId, the recipe's string field lands HERE), and
+// the radius as its own TYPED field (the constant ball radius r — the
+// value class is the loader's, through the kernel factories, the same
+// discipline the sketch constraints pay at their door). MAI un
+// indirizzo, MAI un dump di struct: the padding does not exist in the
+// file, and neither does the pointer — a raw image of this record
+// would carry the string's heap address (the ABI), not its characters
+// (the m4 padding counterproof's own subject).
+// ---------------------------------------------------------------------------
+struct FilletRecipe {
+    std::string edge_reference{};  // the grammar's form, character for character
+    double radius{0.0};            // the ball radius r (> 0, finite)
+};
+
+// fillet_reference_find — THE STRING'S OWN DOOR (G2-u3 m4): the
+// recipe's edge-reference resolved against a body's stamps by RENDER
+// equality — the whole string matched against the entity's own name,
+// never parsed, never an address. The seam-wired pair (ADR-0023) is
+// ONE logical name: the find returns the shared structural id, the
+// pair taken whole (the m3 register's own rule). LOUD on the miss,
+// with the remedy: the string named by name, the body's own edges
+// offered as the candidates (never a mute "not found" — the m4
+// re-run's class-4 answer is the RESOLVER's, above this door).
+inline geometry::ShapeId fillet_reference_find(
+    const BRepBody& body, const std::string& edge_reference) {
+    for (EdgeId i = 0; i < body.edge_count(); ++i) {
+        const EdgeInfo info = query_edge(body, i);
+        if (!info.name.empty() && info.name == edge_reference)
+            return info.id;
+    }
+    throw std::invalid_argument(
+        "fillet_reference_find: the edge-reference '" + edge_reference +
+        "' names no edge of this body - the reference is the grammar's "
+        "own form, matched whole against the entity names (never "
+        "parsed, never an address). Remedy: pick the edge from the "
+        "body's own query (the by-name surface), or re-run against "
+        "the body the reference was authored on.");
+}
 
 namespace fillet_detail {
 

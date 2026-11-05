@@ -46,6 +46,13 @@
 #include "CAD_0/io/native.hpp"
 #include "CAD_0/io/native_blob.hpp"
 #include "CAD_0/bridge/sdf_to_brep.hpp"
+#include "CAD_0/brep/fillet.hpp"
+#include "CAD_0/brep/query.hpp"
+#include "CAD_0/brep/mass_properties.hpp"
+#include "CAD_0/brep/topology.hpp"
+#include "CAD_0/brep/factory.hpp"
+#include "CAD_0/brep/extrude.hpp"
+#include "CAD_0/brep/subtract.hpp"
 #include "CAD_0/sdf/operators.hpp"
 #include "CAD_0/sdf/primitives.hpp"
 #include "CAD_0/sdf/transforms.hpp"
@@ -175,6 +182,22 @@ std::filesystem::path golden_v4_path() {
            "native_v0_4_0.CAD_0";
 }
 
+std::filesystem::path golden_v6_path() {
+    // The v0.6.0 golden (ADR-0039 D6 rung 4, G2-u3 m4 — the REBASED
+    // bump): the parametric hole (the v0.5 golden's own document,
+    // ids 1-4, unchanged — so the G1 consumers re-point here with the
+    // same nodes and the same numbers) + the blind chain (ids 5-8:
+    // the m3 guide body on the scene) + THE RIM FILLET (id 9): the
+    // recipe's edge-reference the STRING verbatim, the radius its
+    // typed field, the named fields never a raw struct. Regenerable
+    // via CAD_0_GENERATE_GOLDEN=1 after an INTENTIONAL format change
+    // (the companion declaration required per ADR-0007 — the reason
+    // rides the landing commit's body: "v0.6: the fillet recipe rides
+    // named fields").
+    return std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
+           "native_v0_6_0.CAD_0";
+}
+
 std::filesystem::path golden_v5_path() {
     // The v0.5.0 golden (ADR-0040 D3.1, G4 m4): the parametric hole
     // WITH its constraint — the radius dimension rides the sketch
@@ -290,6 +313,83 @@ scene::Scene make_parametric_hole_scene() {
     return s;
 }
 
+// The v0.6.0 golden's scene (G2-u3 m4): the parametric hole (the
+// v0.5 golden's own document, ids 1-4) + the blind chain (ids 5-8,
+// the m3 guide body now on the scene: the box [-1,1]^3 the fitted
+// box, the circle r=0.5 at the origin, the prism [0,2] offset
+// (0,0,-0.5) — the tool spans z in [-0.5,1.5]: the BLIND hole, the
+// floor at -0.5, the rim at z=1; 12/17/8, H=1, chi=2) + the rim
+// fillet (id 9) — the reference DISCOVERED by the find (the subtract
+// node's exact body queried for the top rim, the naming's own
+// answer, never typed by hand), the radius 0.25 (14/20/9, H=1,
+// chi=2, the volume (8 - 0.375*pi) - V_r).
+scene::Scene make_v0_6_scene() {
+    // The parametric hole (ids 1-4) arrives with its own visibility
+    // state already frozen (make_parametric_hole_scene's own tail:
+    // the operands hidden, the subtract the display) and next_id 5.
+    scene::Scene s = make_parametric_hole_scene();
+    {
+        std::vector<sdf::SketchChain> chains;
+        chains.push_back({{sdf::sketch_circle(
+            math::Vec2f{0.0f, 0.0f}, 0.5f, false)}});
+        const std::uint32_t id = s.add_sketch_node(
+            "Blind_Sketch", std::move(chains), {});
+        REQUIRE(id == 5);
+    }
+    {
+        scene::OperationRecipe r;
+        r.type = scene::OperationType::Extrude;
+        r.sketch = 5;
+        r.distance = 2.0f;
+        r.direction = 1;
+        const std::uint32_t id = s.add_operation_node("Blind_Extrude", r);
+        REQUIRE(id == 6);
+    }
+    {
+        scene::SceneNode n;
+        n.id = 7;
+        n.name = "Blind_Box";
+        n.builder = "box";
+        n.params = {{"extent_x", 1.0f}, {"extent_y", 1.0f},
+                    {"extent_z", 1.0f}};
+        n.body = sdf::make_box(math::Vec3f{1.0f, 1.0f, 1.0f});
+        s.restore_node(std::move(n));
+    }
+    {
+        scene::OperationRecipe r;
+        r.type = scene::OperationType::Subtract;
+        r.target = 7;
+        r.tool = 6;
+        r.offset_z = -0.5f;
+        const std::uint32_t id = s.add_operation_node("Blind_Subtract", r);
+        REQUIRE(id == 8);
+    }
+    s.set_visible(5, false);
+    s.set_visible(6, false);
+    s.set_visible(7, false);
+    // THE REFERENCE, discovered by the find: the top rim of the blind
+    // hole — the seam-wired pair, ONE logical name (the m3 register's
+    // own rule), the pair taken whole.
+    const scene::SceneNode* blind = s.get_node(8);
+    REQUIRE(blind != nullptr);
+    REQUIRE(blind->hybrid != nullptr);
+    std::string rim;
+    for (brep::EdgeId i = 0; i < blind->hybrid->brep->edge_count();
+         ++i) {
+        const brep::EdgeInfo e = brep::query_edge(*blind->hybrid->brep, i);
+        if (!e.name.empty() && e.name.find("@hi") != std::string::npos &&
+            e.name.find("isect") != std::string::npos) {
+            rim = e.name;
+            break;
+        }
+    }
+    REQUIRE(rim == "sub#8:isect[box#7:top \xc3\x97 ext#6:lat(0)]@hi");
+    const std::uint32_t id = s.add_fillet_node(
+        "Rim_Fillet", brep::FilletRecipe{rim, 0.25});
+    REQUIRE(id == 9);
+    return s;
+}
+
 // The embedded mesh of the v0.2.0 golden: a regular octahedron — 6
 // vertices, 8 triangles, deterministic to the last bit. Normals are the
 // positions themselves (every vertex is a unit vector).
@@ -327,19 +427,23 @@ std::string read_file(const std::filesystem::path& p) {
 
 TEST_SUITE("io native format") {
 
-TEST_CASE("version constant + migrator chain (ADR-0007/0007a/0027/0030/0040)") {
+TEST_CASE("version constant + migrator chain (ADR-0007/0007a/0027/0030/0040/0039)") {
     CHECK(native::kNativeVersion.major == 0);
-    CHECK(native::kNativeVersion.minor == 5);
+    CHECK(native::kNativeVersion.minor == 6);
     CHECK(native::kNativeVersion.patch == 0);
     // The registered chain: 0.1.0 -> 0.2.0 (ADR-0007a, no-op),
     // 0.2.0 -> 0.3.0 (ADR-0027 D4, content no-op), 0.3.0 -> 0.4.0
-    // (ADR-0030 D4, content no-op) and 0.4.0 -> 0.5.0 (ADR-0040 D6,
+    // (ADR-0030 D4, content no-op), 0.4.0 -> 0.5.0 (ADR-0040 D6,
     // content no-op — the step the pre-sketch goldens walk THROUGH;
     // a file DECLARING 0.4.x never reaches it: the version door
-    // refuses it with the remedy, see the gate test below).
-    CHECK(native::migrator_count() == 4);
+    // refuses it with the remedy, see the gate test below) and
+    // 0.5.0 -> 0.6.0 (ADR-0039 D6, the REBASED bump — content no-op,
+    // the step the v0.1-v0.3 goldens walk through on their way to the
+    // current number; a file DECLARING 0.5.x never reaches it: the
+    // v0.6 door refuses it with the remedy, see the gate test below).
+    CHECK(native::migrator_count() == 5);
 
-    const auto v = native::parse_version("0.5.0");
+    const auto v = native::parse_version("0.6.0");
     CHECK(v == native::kNativeVersion);
 
     CHECK_THROWS_WITH_AS(native::parse_version("0.1"),
@@ -508,7 +612,7 @@ TEST_CASE("golden v0.2.0: loads through the 0.2→0.3 migrator; migrated save ==
     native::save_file(tmp, make_canonical_scene(),
                       make_canonical_camera(), make_golden_meshes());
     const std::string fresh_save = read_file(tmp);
-    CHECK(fresh_save.find("\"version\": \"0.5.0\"") != std::string::npos);
+    CHECK(fresh_save.find("\"version\": \"0.6.0\"") != std::string::npos);
     std::filesystem::remove(tmp);
 
     // (b) Load the golden: the 0.2.0 → 0.3.0 migrator runs, framing,
@@ -629,7 +733,7 @@ TEST_CASE("golden v0.3.0: pierced box with recipe - migrates, extraction chi=0 g
     // drift detector survives the bump.
     native::save_file(tmp, make_pierced_scene(), make_canonical_camera());
     const std::string fresh_save = read_file(tmp);
-    CHECK(fresh_save.find("\"version\": \"0.5.0\"") != std::string::npos);
+    CHECK(fresh_save.find("\"version\": \"0.6.0\"") != std::string::npos);
     std::filesystem::remove(tmp);
 
     const native::ParsedDocument doc = native::load_file(gp);
@@ -733,151 +837,193 @@ TEST_CASE("version door: a v0.4-declaring file is refused WITH THE REMEDY (G4 m4
     CHECK(read_file(gp) == golden);
 }
 
-TEST_CASE("golden v0.5.0: the parametric hole with its radius dimension - named fields, chi=0 genus=1") {
-    // Regeneration mode (maintainer-only, never active in CI):
-    //   CAD_0_GENERATE_GOLDEN=1 ./CAD_0_tests
-    // rewrites the v0.5.0 golden after an INTENTIONAL format change
-    // (companion declaration required per ADR-0007; the v0.5 landing's
-    // own reason: "v0.5: the constraints ride named fields").
-    if (const char* env = std::getenv("CAD_0_GENERATE_GOLDEN");
-        env && std::string_view(env) == "1") {
-        std::filesystem::create_directories(golden_v5_path().parent_path());
-        native::save_file(golden_v5_path(), make_parametric_hole_scene(),
-                          make_canonical_camera());
-        MESSAGE("golden file (re)written: ", golden_v5_path().string());
-        return;
-    }
-
+TEST_CASE("golden v0.5.0: frozen history, the v0.6 door's own fixture (G2-u3 m4)") {
+    // The v0.5.0 golden is FROZEN HISTORY — and since the v0.6 bump
+    // (G2-u3 m4, the REBASED bump) it is the version door's own
+    // fixture: the bytes a v0.5.0 writer produced, declaring 0.5.0,
+    // refused by this 0.6.0 build with the remedy. The gate's reason
+    // is the bump's reason: the v0.5 writer never wrote a fillet
+    // recipe (the fillet lived in the kernel alone in that era — m2/m3
+    // landed it on the bodies, never in the file), so a v0.5-era
+    // model's fillets are exactly what the file cannot carry — opening
+    // it as v0.6 would present the model as if nothing were lost.
+    // KIND and payload pinned: the exception is std::runtime_error,
+    // the message carries the remedy verbatim.
     const std::filesystem::path gp = golden_v5_path();
     const std::string missing = "golden file missing: " + gp.string();
     REQUIRE_MESSAGE(std::filesystem::exists(gp), missing);
     const std::string golden = read_file(gp);
-    CHECK(golden.find("\"version\": \"0.5.0\"") != std::string::npos);
 
-    // (a) The fresh save of the parametric-hole scene IS the golden
-    // bytes (the writer is the current one — no bump in between).
+    // The fixture still declares its own era (frozen bytes, verbatim).
+    CHECK(golden.find("\"version\": \"0.5.0\"") != std::string::npos);
+    // ... and it carries the v0.5 payload shape (the constraints'
+    // named fields) — the document the remedy speaks of.
+    CHECK(golden.find("\"kind\": \"sketch\"") != std::string::npos);
+    CHECK(golden.find("\"constraints\"") != std::string::npos);
+
+    // THE DOOR: load_file refuses, naming both versions, with the
+    // remedy the register practices ("the format moved to v0.6:
+    // re-apply the fillets").
+    CHECK_THROWS_WITH_AS(native::load_file(gp),
+        doctest::Contains("the format moved to v0.6: re-apply the "
+                          "fillets"), std::runtime_error);
+    // The same door on the TEXT entry point (parse_document): a
+    // minimal 0.5-declaring document — the gate is the VERSION's own,
+    // before any payload is even looked at, and the refusal names
+    // both ends. PATCH does not save a 0.5 file: the door is the
+    // MINOR's (0.5.7 is the same era, the same lossy writer).
+    const std::string decl_v5 =
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.5.0\","
+        " \"scene\": { \"next_id\": 1, \"nodes\": [] }}";
+    CHECK_THROWS_WITH_AS(native::parse_document(decl_v5),
+        doctest::Contains("the format moved to v0.6: re-apply the "
+                          "fillets"), std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(decl_v5),
+        doctest::Contains("0.5.0"), std::runtime_error);
+    const std::string decl_v5_patch =
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.5.7\","
+        " \"scene\": { \"next_id\": 1, \"nodes\": [] }}";
+    CHECK_THROWS_WITH_AS(native::parse_document(decl_v5_patch),
+        doctest::Contains("the format moved to v0.6"), std::runtime_error);
+
+    // The remedy is not a silent rewrite: the file on disk is
+    // untouched by the refusal (nothing "migrated" behind the user).
+    CHECK(read_file(gp) == golden);
+}
+
+TEST_CASE("golden v0.6.0: the fillet recipe rides named fields - the blind chain and the rim fillet, 14/20/9") {
+    // Regeneration mode (maintainer-only, never active in CI):
+    //   CAD_0_GENERATE_GOLDEN=1 ./CAD_0_tests
+    // rewrites the v0.6.0 golden after an INTENTIONAL format change
+    // (companion declaration required per ADR-0007; the v0.6 landing's
+    // own reason: "v0.6: the fillet recipe rides named fields").
+    if (const char* env = std::getenv("CAD_0_GENERATE_GOLDEN");
+        env && std::string_view(env) == "1") {
+        std::filesystem::create_directories(golden_v6_path().parent_path());
+        native::save_file(golden_v6_path(), make_v0_6_scene(),
+                          make_canonical_camera());
+        MESSAGE("golden file (re)written: ", golden_v6_path().string());
+        return;
+    }
+
+    const std::filesystem::path gp = golden_v6_path();
+    const std::string missing = "golden file missing: " + gp.string();
+    REQUIRE_MESSAGE(std::filesystem::exists(gp), missing);
+    const std::string golden = read_file(gp);
+    CHECK(golden.find("\"version\": \"0.6.0\"") != std::string::npos);
+
+    // (a) The fresh save of the v0.6 scene IS the golden bytes (the
+    // writer is the current one — no bump in between).
     const std::filesystem::path tmp =
-        std::filesystem::temp_directory_path() / "cad0_golden_v5_check.CAD_0";
-    native::save_file(tmp, make_parametric_hole_scene(), make_canonical_camera());
+        std::filesystem::temp_directory_path() / "cad0_golden_v6_check.CAD_0";
+    native::save_file(tmp, make_v0_6_scene(), make_canonical_camera());
     CHECK(read_file(tmp) == golden);
     std::filesystem::remove(tmp);
 
-    // (b) The golden carries the v0.5 payload: the sketch node, the
-    // extrude recipe, the subtract recipe — and the CONSTRAINTS array
-    // beside the chains, in NAMED FIELDS (the radius dimension on the
-    // hole circle: the guide case's own parameter, D3.1). The fields
-    // are pinned as text — the m2's padding lesson's mirror: the file
-    // says the FIELD's name, never a struct's byte.
+    // (b) The golden carries the v0.6 payload: the FILLET node in
+    // NAMED FIELDS — the edge-reference as the STRING verbatim (the
+    // grammar's own form, never an address, never a dump), the radius
+    // its own typed field. The fields are pinned as text — the m2's
+    // padding lesson's mirror: the file says the FIELD's name, never a
+    // struct's byte.
+    CHECK(golden.find("\"kind\": \"fillet\"") != std::string::npos);
+    CHECK(golden.find("\"edge\": \"sub#8:isect[box#7:top "
+                      "\xc3\x97 ext#6:lat(0)]@hi\"") != std::string::npos);
+    CHECK(golden.find("\"radius\": 0.25") != std::string::npos);
+    // The parametric hole (ids 1-4) is carried whole — the G1
+    // consumers' own document, unchanged.
     CHECK(golden.find("\"kind\": \"sketch\"") != std::string::npos);
-    CHECK(golden.find("\"type\": \"circle\"") != std::string::npos);
     CHECK(golden.find("\"type\": \"extrude\"") != std::string::npos);
     CHECK(golden.find("\"type\": \"subtract\"") != std::string::npos);
-    CHECK(golden.find("\"constraints\"") != std::string::npos);
-    CHECK(golden.find("\"kind\": \"radius\"") != std::string::npos);
-    CHECK(golden.find("\"value\": 0.25") != std::string::npos);
-    CHECK(golden.find("\"chain\"") != std::string::npos);
-    CHECK(golden.find("\"entity\"") != std::string::npos);
 
-    // (c) Load: four nodes, every recipe intact, nothing dangling or
-    // pending. The sketch's entity data is bit-exact; the CONSTRAINT
-    // rides the payload exactly as authored (the load never solves —
-    // D2.3: the recipe is the truth, the bill at rest 3 − 1 = 2 free
-    // is the NEXT cold act's own answer, never the loader's).
+    // (c) Load: nine nodes in construction order, every recipe intact,
+    // nothing dangling or pending — the chain's first four EXACTLY the
+    // v0.5 golden's own (the G1 consumers re-point here), the blind
+    // chain 5-8 the m3 guide body, the fillet 9 re-materialized by the
+    // loader's pass 2 from the recipe alone (the derived body never
+    // serialized — the recipe is the source of truth).
     const native::ParsedDocument doc = native::load_file(gp);
-    REQUIRE(doc.nodes.size() == 4);
+    REQUIRE(doc.nodes.size() == 9);
+    REQUIRE(doc.next_id == 10);
 
-    const scene::SceneNode* sk = &doc.nodes[0];
-    REQUIRE(sk->id == 1);
-    REQUIRE(sk->kind == scene::NodeKind::Sketch);
-    REQUIRE(sk->sketch.size() == 1);
-    REQUIRE(sk->sketch[0].entities.size() == 1);
-    REQUIRE(sk->sketch[0].entities[0].kind ==
-            sdf::SketchEntity::Kind::Circle);
-    CHECK(sk->sketch[0].entities[0].circle.center ==
-          math::Vec2f{0.0f, 0.0f});
-    CHECK(sk->sketch[0].entities[0].circle.radius == 0.25f);
-    CHECK(sk->sketch[0].entities[0].circle.hole == false);
-    CHECK(sdf::chain_is_closed(sk->sketch[0]));
+    const scene::SceneNode* fil = &doc.nodes[8];
+    REQUIRE(fil->id == 9);
+    REQUIRE(fil->kind == scene::NodeKind::Fillet);
+    REQUIRE(fil->fillet.has_value());
+    // THE REFERENCE, character for character (the pinned string
+    // ADR-0038 D3 wrote, one feature over): the round-trip's own
+    // first proof, pinned here at the format's own test.
+    CHECK(fil->fillet->edge_reference ==
+          "sub#8:isect[box#7:top \xc3\x97 ext#6:lat(0)]@hi");
+    CHECK(fil->fillet->radius == 0.25);
+    CHECK(fil->fillet_refusal.empty());
+    REQUIRE(fil->fillet_body != nullptr);
+    // The m3 golden's own pins, now on the scene's node: 14/20/9,
+    // H = 1, chi = 2 — the counts unmoved by the trip.
+    CHECK(fil->fillet_body->vertex_count() == 14);
+    CHECK(fil->fillet_body->edge_count() == 20);
+    CHECK(fil->fillet_body->face_count() == 9);
+    CHECK(brep::inner_loop_count(*fil->fillet_body) == 1);
+    CHECK(brep::euler_characteristic(*fil->fillet_body) == 2);
+    CHECK(brep::is_closed_orientable(*fil->fillet_body));
+    // THE LODGING (the morse-5 register's item 7, redeemed): the
+    // fillet's own tavola rides the node, the load's pass 2 derived
+    // it beside the body.
+    CHECK_FALSE(fil->tavola.rows.empty());
+    // The blind chain's subtract (node 8): its tavola LODGED too, the
+    // rim's row in it (the reference's old side, the value the class-4
+    // answer would read).
+    const scene::SceneNode* blind = &doc.nodes[7];
+    REQUIRE(blind->id == 8);
+    CHECK_FALSE(blind->tavola.rows.empty());
+    bool rim_row = false;
+    for (const brep::DescentRow& row : blind->tavola.rows)
+        if (!row.name.empty() &&
+            row.name == "sub#8:isect[box#7:top \xc3\x97 ext#6:lat(0)]@hi")
+            rim_row = true;
+    CHECK(rim_row);
 
-    // THE CONSTRAINT, field for field: kind, operand (the canonical
-    // index chain 0 → entity 0), value — the authored dimension.
-    REQUIRE(sk->sketch_constraints.size() == 1);
-    const sdf::SketchConstraint& rc = sk->sketch_constraints[0];
-    CHECK(rc.kind == sdf::SketchConstraint::Kind::Radius);
-    CHECK(rc.ea.chain == 0);
-    CHECK(rc.ea.entity == 0);
-    CHECK(rc.value == 0.25);
+    // (d) The blind body and the fillet's numbers through the mass
+    // (the exact side's own closed forms): the blind 8 - 0.375*pi,
+    // the fillet (8 - 0.375*pi) - V_r.
+    {
+        const brep::MassProperties mp = brep::mass_properties(
+            *fil->fillet_body, CAD_0::math::Tolerance::linear(1e-9));
+        CHECK(mp.all_exact);
+        CHECK(std::abs(mp.volume -
+                       ((8.0 - 0.375 * 3.14159265358979323846) -
+                        2.0 * 3.14159265358979323846 *
+                            (0.5 * 0.25 * 0.25 *
+                                 (1.0 - 3.14159265358979323846 / 4.0) +
+                             0.25 * 0.25 * 0.25 *
+                                 (5.0 / 6.0 -
+                                  3.14159265358979323846 / 4.0)))) <
+              1e-12);
+        CHECK(std::abs(mp.centroid.x) < 1e-12);
+        CHECK(std::abs(mp.centroid.y) < 1e-12);
+    }
 
-    const scene::SceneNode* ex = &doc.nodes[1];
-    REQUIRE(ex->id == 2);
-    REQUIRE(ex->kind == scene::NodeKind::Sdf);
-    REQUIRE(ex->operation.has_value());
-    CHECK(ex->operation->type == scene::OperationType::Extrude);
-    CHECK(ex->operation->sketch == 1);
-    CHECK(ex->operation->distance == 3.0f);
-    CHECK(ex->operation->direction == 1);
-    CHECK_FALSE(ex->operand_missing);
-    CHECK_FALSE(ex->operation_pending);
-    // The extrude's body IS the prism (re-materialized by pass 2 from
-    // the recipe, deterministically — a stale cache would not survive).
-    CHECK(std::string(ex->body.root()->describe())
-              .rfind("extrude(", 0) == 0);
-
-    const scene::SceneNode* box = &doc.nodes[2];
-    REQUIRE(box->id == 3);
-    CHECK(box->builder == "box");
-
-    const scene::SceneNode* sub = &doc.nodes[3];
-    REQUIRE(sub->id == 4);
-    REQUIRE(sub->operation.has_value());
-    CHECK(sub->operation->type == scene::OperationType::Subtract);
-    CHECK(sub->operation->target == 3);
-    CHECK(sub->operation->tool == 2);
-    CHECK(sub->operation->offset_z == -1.5f);
-    CHECK_FALSE(sub->operand_missing);
-
-    // next_id and the operand visibility round-trip exactly.
-    CHECK(doc.next_id == 5);
-    CHECK_FALSE(sk->visible);
-    CHECK_FALSE(ex->visible);
-    CHECK_FALSE(box->visible);
-
-    // (d) The extraction report on the final body: the parametric hole
-    // is genus 1 — the SAME topological contract as the v0.3 pierced
-    // box, now reached through the sketcher's path (D6's clause). The
-    // constraint rides the payload WITHOUT touching the geometry: the
-    // pins are EXACTLY the v0.4 golden's own pins (the load never
-    // solves — the solved values are the authored values).
-    bridge::SdfToBrepOptions opts;
-    opts.march_resolution = 48;
-    const bridge::SdfToBrepReport rep =
-        bridge::sdf_to_brep_report(sub->body, opts);
-    CHECK(rep.fit == "faceted");
-    CHECK(rep.chi == 0);
-    CHECK(rep.orientable);
-    CHECK(rep.genus_derived);
-    CHECK(rep.genus == 1);
-    CHECK(rep.loops);
-    // The pins (frozen on the golden, re-run bit-identical — the T13
-    // discipline). They are EXACTLY the v0.3 golden's own pins: the
-    // extrude-prism field (max of disc and slab) has the same
-    // isosurface as the builder cylinder's, so the parametric path
-    // and the primitive path extract the SAME manifold — the
-    // strongest possible statement that the sketcher changes nothing
-    // about the geometry it reproduces.
-    CHECK(rep.vertex_count == 15104);
-    CHECK(rep.edge_count == 45312);
-    CHECK(rep.face_count == 30208);
-
-    // (e) Bit-stability: the same body, re-extracted, is identical
-    // (the T13b discipline).
-    const bridge::SdfToBrepReport rep2 =
-        bridge::sdf_to_brep_report(sub->body, opts);
-    CHECK(rep2.vertex_count == rep.vertex_count);
-    CHECK(rep2.edge_count == rep.edge_count);
-    CHECK(rep2.face_count == rep.face_count);
-    CHECK(rep2.chi == rep.chi);
+    // (e) The names: the flank and its seam, the born face's own
+    // grammar — the DAG ids are the NODE ids (the morse-5 rule).
+    {
+        bool flank = false, seam = false;
+        for (brep::FaceId i = 0; i < fil->fillet_body->face_count();
+             ++i) {
+            const std::string n = brep::query_face(*fil->fillet_body, i).name;
+            if (n == "fil#9:flank[box#7:top \xc3\x97 ext#6:lat(0)]")
+                flank = true;
+        }
+        for (brep::EdgeId i = 0; i < fil->fillet_body->edge_count();
+             ++i) {
+            const std::string n = brep::query_edge(*fil->fillet_body, i).name;
+            if (n.find("fil#9:seam[") == 0)
+                seam = true;
+        }
+        CHECK(flank);
+        CHECK(seam);
+    }
 }
+
 
 TEST_CASE("sketch: v0.5 round-trip is byte-identical (parametric hole, constraints and all)") {
     scene::Scene s = make_parametric_hole_scene();
@@ -1284,10 +1430,10 @@ TEST_CASE("G4 m4 — the doors: the NEWER file refused by name; the hand-edited 
     // this build's is refused naming both versions and the direction
     // — migrators run upgrade-only, a downgrade is never guessed.
     const std::string newer_minor =
-        "{\"format\": \"CAD_0 native\", \"version\": \"0.6.0\","
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.7.0\","
         " \"scene\": { \"next_id\": 1, \"nodes\": [] }}";
     CHECK_THROWS_WITH_AS(native::parse_document(newer_minor),
-        doctest::Contains("0.6.0"), std::runtime_error);
+        doctest::Contains("0.7.0"), std::runtime_error);
     CHECK_THROWS_WITH_AS(native::parse_document(newer_minor),
         doctest::Contains("NEWER CAD_0"), std::runtime_error);
     CHECK_THROWS_WITH_AS(native::parse_document(newer_minor),
@@ -1297,7 +1443,7 @@ TEST_CASE("G4 m4 — the doors: the NEWER file refused by name; the hand-edited 
     // that is not ±1, a length at 0 — the FACTORIES' own rules,
     // enforced at load exactly as the entities' parameter class is.
     const std::string bad_case_bit =
-        "{\"format\": \"CAD_0 native\", \"version\": \"0.5.0\","
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.6.0\","
         " \"scene\": { \"next_id\": 2, \"nodes\": ["
         "  { \"id\": 1, \"kind\": \"sketch\","
         "    \"sketch\": { \"chains\": ["
@@ -1319,7 +1465,7 @@ TEST_CASE("G4 m4 — the doors: the NEWER file refused by name; the hand-edited 
     // hint (the queued families — symmetry, axes, equations — are NOT
     // kind names a file may invent).
     const std::string queued_family =
-        "{\"format\": \"CAD_0 native\", \"version\": \"0.5.0\","
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.6.0\","
         " \"scene\": { \"next_id\": 2, \"nodes\": ["
         "  { \"id\": 1, \"kind\": \"sketch\","
         "    \"sketch\": { \"chains\": ["
@@ -1340,7 +1486,7 @@ TEST_CASE("G4 m4 — the doors: the NEWER file refused by name; the hand-edited 
     // chains) refuses it with the kernel's own words. The
     // inconsistency belongs to the solve, never to the loader.
     const std::string hand_edited =
-        "{\"format\": \"CAD_0 native\", \"version\": \"0.5.0\","
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.6.0\","
         " \"scene\": { \"next_id\": 2, \"nodes\": ["
         "  { \"id\": 1, \"kind\": \"sketch\","
         "    \"sketch\": { \"chains\": ["
@@ -1487,7 +1633,7 @@ TEST_CASE("G4 m4 — the re-solve after the load: the golden-1 triangle and the 
 
 TEST_CASE("sketch: parameter-class corruption is a loud load error (ADR-0029 family)") {
     const auto sketch_doc =
-        [](const char* entities, const char* version = "0.5.0") {
+        [](const char* entities, const char* version = "0.6.0") {
             return std::string("{\"format\": \"CAD_0 native\", \"version\": \"") +
                    version +
                    "\", \"scene\": { \"next_id\": 2, \"nodes\": ["
@@ -1546,7 +1692,7 @@ TEST_CASE("sketch: parameter-class corruption is a loud load error (ADR-0029 fam
         doctest::Contains("unknown entity type"), std::runtime_error);
     // A sketch node never carries the other representations' fields.
     CHECK_THROWS_WITH_AS(native::parse_document(
-        "{\"format\": \"CAD_0 native\", \"version\": \"0.5.0\","
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.6.0\","
         " \"scene\": { \"next_id\": 2, \"nodes\": ["
         "  { \"id\": 1, \"name\": \"S\", \"kind\": \"sketch\","
         "    \"body\": { \"op\": \"box\", \"extent\": [1.0, 1.0, 1.0] },"
@@ -1567,7 +1713,7 @@ TEST_CASE("sketch: an open chain loads as the legal editing state; its extrude i
     // chain) away.
     const std::string text = R"JSON({
       "format": "CAD_0 native",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "scene": {
         "next_id": 3,
         "nodes": [
@@ -1624,7 +1770,7 @@ TEST_CASE("sketch: a missing sketch operand loads with the visible dangling stat
     // the visible dangling state — never a load error, never a rebind.
     const std::string text = R"JSON({
       "format": "CAD_0 native",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "scene": {
         "next_id": 3,
         "nodes": [
@@ -1651,7 +1797,7 @@ TEST_CASE("sketch: extrude self-reference and operand-kind mismatch are explicit
     // Self-reference: the extrude is its own sketch.
     const std::string selfref = R"JSON({
       "format": "CAD_0 native",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "scene": { "next_id": 2, "nodes": [
         { "id": 1, "name": "Ouroboros",
           "body": { "op": "box", "extent": [1.0, 1.0, 1.0] },
@@ -1670,7 +1816,7 @@ TEST_CASE("sketch: extrude self-reference and operand-kind mismatch are explicit
     // body). Explicit, by role.
     const std::string ex_of_sdf = R"JSON({
       "format": "CAD_0 native",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "scene": { "next_id": 3, "nodes": [
         { "id": 1, "name": "Box",
           "body": { "op": "box", "extent": [1.0, 1.0, 1.0] } },
@@ -1685,7 +1831,7 @@ TEST_CASE("sketch: extrude self-reference and operand-kind mismatch are explicit
 
     const std::string sub_of_sketch = R"JSON({
       "format": "CAD_0 native",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "scene": { "next_id": 3, "nodes": [
         { "id": 1, "name": "S", "kind": "sketch",
           "sketch": { "chains": [ { "entities": [
@@ -1703,7 +1849,7 @@ TEST_CASE("sketch: extrude self-reference and operand-kind mismatch are explicit
 TEST_CASE("sketch: extrude recipe parameter-class corruption is a loud load error") {
     const auto extrude_doc = [](const char* params) {
         return std::string(R"JSON({
-          "format": "CAD_0 native", "version": "0.5.0",
+          "format": "CAD_0 native", "version": "0.6.0",
           "scene": { "next_id": 3, "nodes": [
             { "id": 1, "name": "S", "kind": "sketch",
               "sketch": { "chains": [ { "entities": [
@@ -1776,7 +1922,7 @@ TEST_CASE("sketch: a stale cached extrude body is caught by the pass-2 rebuild")
     // extrude prism, not the stale box cache.
     const std::string stale = R"JSON({
       "format": "CAD_0 native",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "scene": {
         "next_id": 3,
         "nodes": [

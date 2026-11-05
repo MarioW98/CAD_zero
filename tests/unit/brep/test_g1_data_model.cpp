@@ -705,11 +705,14 @@ TEST_CASE("G1-U1 D3: backward compatibility — every GOLDEN body is disk-faced,
     // reaching the SAME topological contract as v0.3: χ = 0, genus 1,
     // H = 0.
     {
-        const auto gp = golden_file("native_v0_5_0.CAD_0");
+        const auto gp = golden_file("native_v0_6_0.CAD_0");
         const std::string missing = "golden file missing: " + gp.string();
         REQUIRE_MESSAGE(std::filesystem::exists(gp), missing);
         const auto doc = CAD_0::io::native::load_file(gp);
-        REQUIRE(doc.nodes.size() == 4);
+        // The v0.6 golden (G2-u3 m4): the G1 chain rides whole (ids
+        // 1-4, the v0.5 golden's own document) beside the blind chain
+        // and the rim fillet — the same numbers, one document more.
+        REQUIRE(doc.nodes.size() == 9);
         REQUIRE(doc.nodes[3].operation.has_value());
         check(doc.nodes[3].body, 48, 0, "v0.5.0 parametric hole (subtract)");
     }

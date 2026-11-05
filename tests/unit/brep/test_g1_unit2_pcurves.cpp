@@ -658,7 +658,7 @@ TEST_CASE("G1-U2 compat: the faceted world still writes no p-curves — bridge e
     // new content must not leak into the faceted world's serialization
     // or its bridge path.
     const char* goldens[] = {"native_v0_1_0.CAD_0", "native_v0_2_0.CAD_0",
-                             "native_v0_3_0.CAD_0", "native_v0_5_0.CAD_0"};
+                             "native_v0_3_0.CAD_0", "native_v0_6_0.CAD_0"};
     for (const char* name : goldens) {
         CAPTURE(name);
         const auto path = golden_file(name);

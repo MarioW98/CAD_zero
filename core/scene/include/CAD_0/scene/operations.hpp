@@ -80,7 +80,9 @@ inline OperationRebuildResult rebuild_operations_core(
     std::vector<std::uint32_t> ops;
     for (const SceneNode* n : nodes)
         if (n->operation) ops.push_back(n->id);
-    if (ops.empty()) return result;
+    // No early return on an empty operation set (G2-u3 m4): the
+    // FILLET nodes at the tail of this core re-run regardless — their
+    // operands may be factory nodes, outside this subgraph.
 
     // Topological order over the operation subgraph (Kahn). Edges run
     // operand-operation -> dependent-operation over the RECIPE'S OWN
@@ -89,6 +91,17 @@ inline OperationRebuildResult rebuild_operations_core(
     // instances of recipe_roles); a self-reference (an operand id ==
     // own id) contributes a self-loop and is caught by the same cycle
     // check.
+    //
+    // THE LODGINGS' CAPTURE (G2-u3 m4, the morse-5 register's item 7
+    // redeemed): every operation's OLD tavola — the generation the
+    // downstream fillet's reference was made against — is COPIED
+    // into `old_tavole` BEFORE the re-materialization replaces it.
+    // A COPY, never a move: a refused re-materialization keeps the
+    // LODGED tavola with the last good body (the bookkeeping the
+    // reference was made against), exactly as the body itself is
+    // kept. The value semantics: the tavola ALONE suffices for the
+    // old side (the resolution never needs the old body).
+    std::map<std::uint32_t, brep::DescentTable> old_tavole;
     std::map<std::uint32_t, std::size_t> index;  // op id -> ops index
     for (std::size_t i = 0; i < ops.size(); ++i) index.emplace(ops[i], i);
 
@@ -175,6 +188,8 @@ inline OperationRebuildResult rebuild_operations_core(
         // same philosophy as dangling, extended to the extrude's
         // precondition).
         try {
+            if (!n->tavola.rows.empty())
+                old_tavole[id] = n->tavola;  // the COPY (see above)
             n->body = materialize_operation(r, operands);
             n->mesh_dirty = true;
             n->operand_missing = false;
@@ -199,6 +214,21 @@ inline OperationRebuildResult rebuild_operations_core(
             n->operation_pending_error = e.what();
             result.pending.push_back(id);
         }
+    }
+
+    // THE FILLET NODES (G2-u3 m4, ADR-0039 D6 rung 4): re-run AFTER
+    // the operations — the operands' exact sides are current, and the
+    // captured lodgings serve the class-4 answer (the generation the
+    // reference was made against, the value the resolution reads).
+    // Document order (the array IS the construction order: each
+    // recipe reads only what precedes it — a forward reference finds
+    // nothing and the refusal names it). One node's refusal never
+    // kills the pass (the Phase F philosophy): the last good body is
+    // KEPT and the actionable reason rides `fillet_refusal`.
+    for (SceneNode* n : nodes) {
+        if (!n->fillet.has_value()) continue;
+        attach_fillet(*n, nodes, &old_tavole);
+        if (notify) notify(n->id);
     }
     return result;
 }

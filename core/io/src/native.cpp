@@ -126,6 +126,26 @@ const bool kMigrator0405Registered [[maybe_unused]] = [] {
     return true;
 }();
 
+// The 0.5.0 -> 0.6.0 migrator (ADR-0039 D6, the REBASED bump — G2-u3
+// m4): the same deliberate CONTENT no-op, the same reason as the step
+// above, one era over. A v0.1–v0.3 document walks the whole chain to
+// the current number THROUGH this step; a v0.4-declaring file still
+// meets the v0.5 door's own gate first (unchanged); a file DECLARING
+// 0.5.x never reaches this step: the v0.6 version door refuses it
+// first, with the remedy — the v0.5 writer never wrote a fillet
+// recipe (the fillet lived in the kernel alone in that era — m2/m3
+// landed it on the bodies, never in the file), and this build refuses
+// to open a fillet-era model as if nothing were lost. The entry
+// exists so the chain 0.1.0 → … → 0.6.0 is explicit, registered, and
+// exercised by the frozen goldens on every CI run.
+const bool kMigrator0506Registered [[maybe_unused]] = [] {
+    register_migrator(NativeVersion{0, 5, 0}, NativeVersion{0, 6, 0},
+                      [](json::JsonValue&) {
+                          // no-op by design — see ADR-0039 D6.
+                      });
+    return true;
+}();
+
 std::string version_to_string(const NativeVersion& v) {
     return std::to_string(v.major) + "." + std::to_string(v.minor) + "." +
            std::to_string(v.patch);
@@ -1213,6 +1233,28 @@ std::string serialize_document(const scene::Scene& s, const NativeCamera& cam,
                     .set("chains", JsonValue(std::move(chains)))
                     .set("constraints",
                          sketch_constraints_to_json(node.sketch_constraints)));
+        } else if (node.kind == scene::NodeKind::Fillet) {
+            // v0.6.0 (ADR-0039 D6, G2-u3 m4): the fillet feature — the
+            // exact side's first scene-side payload. The recipe rides
+            // NAMED FIELDS: the edge-reference as the STRING verbatim
+            // (the grammar's own form, 'sub#4:isect[box#1:top ×
+            // ext#3:lat(0)]@hi' — never an address, never a dump: a
+            // raw image would carry the string's heap address, the
+            // ABI hole the m4 counterproof pins), the radius its own
+            // typed field. The materialized exact body is DERIVED
+            // state, never serialized — the recipe is the source of
+            // truth (the v0.3 discipline carried to the exact side);
+            // the loader's pass 2 re-materializes deterministically.
+            // The kind is guaranteed to carry the payload (the scene
+            // sets them together, add_fillet_node's own invariant).
+            n.emplace_back("kind", JsonValue("fillet"));
+            n.emplace_back(
+                "fillet",
+                JsonValue(JsonObject{})
+                    .set("edge", JsonValue(node.fillet->edge_reference))
+                    .set("radius",
+                         JsonValue(static_cast<double>(
+                             node.fillet->radius))));
         } else {
             if (!node.builder.empty())
                 n.emplace_back("builder", JsonValue(node.builder));
@@ -1382,6 +1424,34 @@ ParsedDocument parse_document(std::string_view text,
                 "as if nothing were lost. Remedy: re-author the "
                 "constraints from the sketch in this build and save — "
                 "they ride named fields from v0.5 on.");
+        // THE v0.5 DOOR, with the remedy (G2-u3 m4, ADR-0039 D6 —
+        // the REBASED bump): the fillet recipe is the v0.6 payload,
+        // and the v0.5 writer never wrote one (the fillet lived in
+        // the kernel alone in that era — m2/m3 landed it on the
+        // bodies, never in the file). A v0.5-era model's fillets are
+        // exactly the thing the file cannot carry; opening it as v0.6
+        // would present the model as if nothing were lost — the
+        // silent loss ADR-0007's culture refuses. The gate is the
+        // anachronism discipline the reader already practices at the
+        // payload (a v0.3 file cannot carry a sketch; a v0.4 file
+        // cannot carry a constraint), lifted to the version door,
+        // exactly as the v0.5 bump lifted it before.
+        if (file_version.major == 0 && file_version.minor == 5)
+            throw std::runtime_error(
+                "native format: file version " +
+                version_to_string(file_version) +
+                " cannot be read by this build (expects " +
+                version_to_string(kNativeVersion) +
+                "): the format moved to v0.6: re-apply the fillets. "
+                "The recipes ride named fields since v0.6 "
+                "(ADR-0039 D6, the edge-reference string verbatim + "
+                "the radius its typed field) and the v0.5 writer "
+                "never wrote one (the fillet lived in the kernel "
+                "alone in that era) — a v0.5-era model's fillets are "
+                "exactly what the file cannot carry, and this build "
+                "refuses to open it as if nothing were lost. Remedy: "
+                "re-apply the fillets in this build and save — the "
+                "recipes ride named fields from v0.6 on.");
         // MAJOR or MINOR mismatch → the migrator CHAIN, walked one
         // MINOR step at a time (ADR-0007): 0.1.0 → 0.2.0 → 0.3.0 → …
         // Each step's lookup key normalizes the file's PATCH to zero:
@@ -1498,12 +1568,30 @@ ParsedDocument parse_document(std::string_view text,
                         "D4) and no " + version_to_string(file_version) +
                         " writer ever emitted one: the file is not what "
                         "its version claims");
+            } else if (kind == "fillet") {
+                node.kind = scene::NodeKind::Fillet;
+                // The v0.6.0 payload (ADR-0039 D6, G2-u3 m4). The same
+                // anachronism discipline as the sketch's: a file whose
+                // ORIGINAL version predates 0.6.0 cannot carry a fillet
+                // node — the v0.5 writer refused them loudly, so no
+                // legitimate file carries one: the file is not what its
+                // version claims.
+                if (file_version.major == 0 && file_version.minor < 6)
+                    throw std::runtime_error(
+                        "native format: node " + std::to_string(node.id) +
+                        " is a \"fillet\" node but the file declares " +
+                        version_to_string(file_version) +
+                        " — fillet nodes are the v0.6.0 payload (ADR-0039 "
+                        "D6, G2-u3 m4) and no " +
+                        version_to_string(file_version) +
+                        " writer ever emitted one: the file is not what "
+                        "its version claims");
             } else {
                 throw std::runtime_error(
                     "native format: unknown node \"kind\" \"" + kind +
-                    "\" (this build reads Sdf, \"mesh\" and \"sketch\" "
-                    "nodes; the file was likely written by a newer "
-                    "CAD_0 version)");
+                    "\" (this build reads Sdf, \"mesh\", \"sketch\" and "
+                    "\"fillet\" nodes; the file was likely written by a "
+                    "newer CAD_0 version)");
             }
         }
 
@@ -1524,6 +1612,8 @@ ParsedDocument parse_document(std::string_view text,
                 node.name = "Mesh_" + std::to_string(node.id); break;
             case scene::NodeKind::Sketch:
                 node.name = "Sketch_" + std::to_string(node.id); break;
+            case scene::NodeKind::Fillet:
+                node.name = "Fillet_" + std::to_string(node.id); break;
             default:
                 node.name = "Shape_" + std::to_string(node.id); break;
             }
@@ -1600,6 +1690,68 @@ ParsedDocument parse_document(std::string_view text,
                 node.sketch = parse_sketch_chains(
                     sk.at("chains"), "sketch node " + std::to_string(node.id));
                 node.sketch_constraints = parse_sketch_constraints(sk, node.id);
+            }
+            doc.nodes.push_back(std::move(node));
+            continue;
+        }
+
+        if (node.kind == scene::NodeKind::Fillet) {
+            // v0.6.0 (ADR-0039 D6, G2-u3 m4): the fillet payload. The
+            // recipe rides NAMED FIELDS — the edge-reference as the
+            // STRING verbatim (the grammar's own form, never an
+            // address, never a dump), the radius its own TYPED field.
+            // No builder, no params, no body, no operation, no mesh:
+            // the representations never mix (the same corruption a
+            // mesh node with SDF fields is). The VALUE class is the
+            // loader's (the same doctrine as the constraints'): the
+            // edge non-empty, the radius finite and > 0 — corruption
+            // of this class is a loud load error, never a default,
+            // never a best-effort guess. The REFERENCE's own class
+            // (dead or alive) is NOT the loader's to judge: the
+            // recipe is the truth, the pass-2 re-materialization
+            // answers it (the visible refusal state, the class-4
+            // payload when the old tavola can speak).
+            for (const char* leftover :
+                 {"builder", "params", "body", "operation", "mesh"})
+                if (node_v.find(leftover))
+                    throw std::runtime_error(
+                        std::string("native format: node ") +
+                        std::to_string(node.id) + " is a \"fillet\" node "
+                        "but carries a non-fillet field \"" + leftover +
+                        "\" — the representations never mix (ADR-0002 "
+                        "honest dispatch; a fillet is an exact-side "
+                        "feature, its payload is the recipe alone)");
+            {
+                const JsonValue& fl = node_v.at("fillet");
+                if (!fl.is_object())
+                    type_error("object for node \"fillet\"", fl);
+                brep::FilletRecipe recipe{};
+                const JsonValue& edge = fl.at("edge");
+                if (!edge.is_string())
+                    type_error("string for fillet \"edge\"", edge);
+                recipe.edge_reference = edge.as_string();
+                if (recipe.edge_reference.empty())
+                    throw std::runtime_error(
+                        "native format: node " + std::to_string(node.id) +
+                        " fillet \"edge\" is empty — the reference is the "
+                        "grammar's own form (the pick's own answer, never "
+                        "an address); an empty string names no edge. "
+                        "Remedy: fix the value in the file.");
+                const JsonValue& rad = fl.at("radius");
+                if (!rad.is_number())
+                    type_error("number for fillet \"radius\"", rad);
+                const double r = rad.as_number();
+                if (!std::isfinite(r) || !(r > 0.0))
+                    throw std::runtime_error(
+                        "native format: node " + std::to_string(node.id) +
+                        " fillet \"radius\" must be finite and > 0, got " +
+                        std::to_string(r) +
+                        " — a non-positive or non-finite ball radius "
+                        "degenerates the rolling ball (the ADR-0029 "
+                        "family, the typed value class). Remedy: fix the "
+                        "value in the file.");
+                recipe.radius = r;
+                node.fillet = std::move(recipe);
             }
             doc.nodes.push_back(std::move(node));
             continue;
@@ -1758,7 +1910,7 @@ ParsedDocument parse_document(std::string_view text,
     {
         bool has_ops = false;
         for (const auto& n : doc.nodes)
-            if (n.operation) { has_ops = true; break; }
+            if (n.operation || n.fillet) { has_ops = true; break; }
         if (has_ops) {
             for (const auto& n : doc.nodes) {
                 if (!n.operation) continue;

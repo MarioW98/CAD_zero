@@ -31,6 +31,9 @@
 #include "CAD_0/sdf/sketch_extrude.hpp"
 #include "CAD_0/brep/extrude.hpp"
 #include "CAD_0/brep/subtract.hpp"
+#include "CAD_0/brep/fillet.hpp"
+#include "CAD_0/brep/descent.hpp"
+#include "CAD_0/brep/resolve.hpp"
 #include "CAD_0/bridge/sdf_to_brep.hpp"
 #include "CAD_0/geometry/shape_bodies.hpp"
 #include "CAD_0/math/vec.hpp"
@@ -196,6 +199,14 @@ enum class NodeKind : std::uint8_t {
     Sdf,    // body-evaluating parametric/analytic shape
     Mesh,   // imported TriangleMesh payload — no SDF semantics
     Sketch, // 2D entity chains on the world XY plane — no body, no mesh
+    Fillet, // an exact-side feature (G2-u3 m4, ADR-0039 D6 rung 4): the
+            // payload is the RECIPE (the edge-reference string + the
+            // radius, named fields), the materialization is the exact
+            // body ALONE — no SDF twin, no display mesh (nothing to
+            // tessellate: update_meshes() skips it by kind, the
+            // Sketch precedent). FeatureKind `fil` in the naming plane
+            // (the grammar's three-letter token); "fillet" here in
+            // the scene's own dispatch vocabulary.
 };
 
 // The kind's name, for error messages ("must be a sketch-kind node").
@@ -204,6 +215,7 @@ inline std::string node_kind_name(NodeKind k) {
     case NodeKind::Sdf:    return "sdf";
     case NodeKind::Mesh:   return "mesh";
     case NodeKind::Sketch: return "sketch";
+    case NodeKind::Fillet: return "fillet";
     }
     return "?";
 }
@@ -314,6 +326,35 @@ struct SceneNode {
     std::unique_ptr<geometry::HybridBody> hybrid;
     std::string hybrid_refusal;
 
+    // ---- The fillet feature (G2-u3 m4, ADR-0039 D6 rung 4) ------
+    // The first SCENE-SIDE FEATURE on the exact side alone: the
+    // payload is the RECIPE (brep::FilletRecipe — the edge-reference
+    // STRING verbatim + the radius its typed field; named fields,
+    // never a raw struct — the genealogy implicit in the chain, the
+    // reference's own feature part is the operand's identity, never
+    // a stored address). The materialized exact body is DERIVED
+    // state, rebuilt by the same pass from the recipe, never
+    // serialized — the v0.3 recipe-is-the-truth discipline carried
+    // to the exact side. A refusal (the dead reference among them)
+    // is the VISIBLE state: the last good body kept, the actionable
+    // reason in `fillet_refusal` (the class-4 payload verbatim).
+    std::optional<brep::FilletRecipe> fillet;
+    std::unique_ptr<brep::BRepBody> fillet_body;
+    std::string fillet_refusal;
+
+    // ---- THE TAVOLA'S LODGING (the morse-5 register's item 7, the
+    // deferred item ADR-0036 D6 registered for "the first scene-side
+    // consumer, the fillet's unit" — redeemed here, G2-u3 m4): the
+    // node's OWN descent table, derived at the same sites that
+    // materialize the exact side (attach_operation_hybrid for the
+    // operations, the fillet's own materialization for the fillet)
+    // and LODGED on the node. The resolution needs the old side's
+    // tavola only as a VALUE (the click-test's old body may be gone
+    // with the rebuild); the DAG pass captures the LODGED value
+    // before re-materializing, so the downstream fillet's class-4
+    // answer reads the generation the reference was made against.
+    brep::DescentTable tavola;
+
     // ---- The visible PENDING state (ADR-0030 D2 revision 1) ----
     // The sketch operand EXISTS but its profile does not certify (an
     // edit opened the chain, or crossed entities): the same
@@ -369,8 +410,14 @@ struct SceneNode {
           operation(other.operation),
           operand_missing(other.operand_missing),
           hybrid_refusal(other.hybrid_refusal),
+          fillet(other.fillet), fillet_refusal(other.fillet_refusal),
+          tavola(other.tavola),
           operation_pending(other.operation_pending),
           operation_pending_error(other.operation_pending_error) {
+        if (other.fillet_body) {
+            fillet_body = std::make_unique<brep::BRepBody>(*other.fillet_body);
+            brep::link_radial_edges(*fillet_body);
+        }
         if (other.hybrid) {
             auto sdf_clone =
                 std::make_unique<sdf::SDFBody>(*other.hybrid->sdf);
@@ -403,6 +450,15 @@ struct SceneNode {
         hybrid_refusal = other.hybrid_refusal;
         operation_pending = other.operation_pending;
         operation_pending_error = other.operation_pending_error;
+        fillet = other.fillet;
+        fillet_refusal = other.fillet_refusal;
+        tavola = other.tavola;
+        if (other.fillet_body) {
+            fillet_body = std::make_unique<brep::BRepBody>(*other.fillet_body);
+            brep::link_radial_edges(*fillet_body);
+        } else {
+            fillet_body.reset();
+        }
         if (other.hybrid) {
             auto sdf_clone =
                 std::make_unique<sdf::SDFBody>(*other.hybrid->sdf);
@@ -506,32 +562,50 @@ inline const brep::naming::OperationNaming* operand_naming_of(
 // unnamed mode) leaves the born edges honestly EMPTY — never a
 // guess — and the class checks refuse the out-of-class operand
 // anyway.
+
+// operand_exact_brep — THE OPERAND'S EXACT BODY, the subtract's own
+// door since G1 unit 4, hoisted HERE (G2-u3 m4) so the exact side and
+// the tavola's lodging derive through ONE door: the node's own hybrid
+// if it has one (an exact operation — an extrude, an in-class
+// subtract), else the bridge's primitive path (a factory body — the
+// fitted box); anything else refuses with the actionable reason.
+// Deterministic: the bridge's verdict is a pure function of the body,
+// so the derivation sees the same operand every call.
+inline std::unique_ptr<brep::BRepBody> operand_exact_brep(
+    const SceneNode& n, const char* what) {
+    if (n.hybrid != nullptr && n.hybrid->brep != nullptr) {
+        // The copy's radial edges are RELINKED into the copy (the
+        // one shallow hazard of copying a BRepBody: the copied
+        // Edge::coedges_ pointers point into the SOURCE's loops —
+        // link_radial_edges rebuilds them, closing it). G2-u3 m4: the
+        // fillet's operand reads the rim's ADJACENT FACES through
+        // these pointers; an unlinked copy dangles and the class
+        // admission reads garbage.
+        auto c = std::make_unique<brep::BRepBody>(*n.hybrid->brep);
+        brep::link_radial_edges(*c);
+        return c;
+    }
+    auto prim = bridge::sdf_to_brep_primitive(
+        n.body, geometry::FeatureId{n.id});
+    if (prim != nullptr) return prim;
+    throw std::invalid_argument(
+        std::string("operand_exact_brep: the ") + what +
+        "'s exact B-Rep is not available - the operand node is "
+        "neither an exact operation (an extrude, an in-class "
+        "subtract) nor a recognizable primitive (the bridge's "
+        "primitive path serves the sphere, the box and the "
+        "cylinder). Remedy: model the operand as one of those, or "
+        "accept the faceted path (the SDF materialization stands).");
+}
+
 inline std::unique_ptr<geometry::HybridBody>
 materialize_subtract_hybrid(const OperationRecipe& r,
                             const SceneNode& target,
                             const SceneNode& tool,
                             const sdf::SDFBody& sdf_twin,
                             geometry::FeatureId feature = {}) {
-    const auto resolve = [](const SceneNode& n,
-                            const char* what,
-                            geometry::FeatureId n_id) {
-        if (n.hybrid != nullptr && n.hybrid->brep != nullptr)
-            return std::make_unique<brep::BRepBody>(*n.hybrid->brep);
-        auto prim = bridge::sdf_to_brep_primitive(n.body, n_id);
-        if (prim != nullptr) return prim;
-        throw std::invalid_argument(
-            std::string("materialize_subtract_hybrid: the ") + what +
-            "'s exact B-Rep is not available - the operand node is "
-            "neither an exact operation (an extrude, an in-class "
-            "subtract) nor a recognizable primitive (the bridge's "
-            "primitive path serves the sphere, the box and the "
-            "cylinder). Remedy: model the operand as one of those, or "
-            "accept the faceted path (the SDF materialization "
-            "stands).");
-    };
-    auto a = resolve(target, "target",
-                     geometry::FeatureId{target.id});
-    auto b = resolve(tool, "tool", geometry::FeatureId{tool.id});
+    auto a = operand_exact_brep(target, "target");
+    auto b = operand_exact_brep(tool, "tool");
     const brep::SubtractNaming naming{
         feature, operand_naming_of(target), operand_naming_of(tool)};
     auto brep_body = brep::exact_subtract(
@@ -577,13 +651,276 @@ inline void attach_operation_hybrid(
             break;
         }
         n.hybrid_refusal.clear();
+        // THE LODGING (G2-u3 m4, the morse-5 register's item 7
+        // redeemed): the exact side materialized — the node's OWN
+        // tavola derived beside it, ONE definition for creation, the
+        // DAG pass and the loader's pass 2 (the Phase F rule). The
+        // drift guards run INSIDE the derivations (every derived name
+        // verified against the body's own stamps); the operands are
+        // re-resolved through the same door (operand_exact_brep —
+        // deterministic, the bridge's verdict a pure function).
+        if (n.hybrid != nullptr) {
+            switch (r.type) {
+            case OperationType::Extrude:
+                n.tavola = brep::extrude_descent(
+                    *n.hybrid->brep, operands.at(0)->sketch,
+                    geometry::FeatureId{n.id},
+                    geometry::FeatureId{operands.at(0)->id});
+                break;
+            case OperationType::Subtract: {
+                auto a = operand_exact_brep(*operands.at(0), "target");
+                auto b = operand_exact_brep(*operands.at(1), "tool");
+                n.tavola = brep::subtract_descent(
+                    *n.hybrid->brep, *a, *b);
+                break;
+            }
+            }
+        }
     } catch (const std::invalid_argument& e) {
         // The exact-B-Rep class boundary: the SDF materialization
         // stands (display continues, unchanged); the refusal is
         // recorded for the query surfaces — loud on demand, never
-        // silent, never thrown at the document level.
+        // silent, never thrown at the document level. The LODGED
+        // tavola stays with the last good body: a refused
+        // re-materialization keeps the bookkeeping the reference
+        // was made against.
         n.hybrid.reset();
         n.hybrid_refusal = e.what();
+    }
+}
+
+// ===========================================================================
+// THE FILLET ON THE SCENE (G2-u3 m4, ADR-0039 D6 rung 4 + the m4 rung's
+// own deferred item): the first exact-side feature that rides the
+// document. The recipe is the truth (the edge-reference STRING + the
+// radius); the body is derived state. THE GENEALOGY IS IMPLICIT IN THE
+// CHAIN: the reference's own feature part is the operand's identity —
+// discovered by the find, never stored, never an address; each recipe
+// reads only what precedes it (the DAG in file: the construction
+// order IS the walk, the loader enforces it at the door below).
+// ===========================================================================
+
+// find_node — the id lookup over a node list (the pass's vectors;
+// the Scene class uses its own get_node below).
+inline const SceneNode* find_node(
+    const std::vector<SceneNode*>& nodes, std::uint32_t id) {
+    for (const SceneNode* n : nodes)
+        if (n->id == id) return n;
+    return nullptr;
+}
+
+// operand_exact_brep_quiet — the non-throwing twin of the door above:
+// the node's own hybrid, else the bridge's primitive path, else null.
+// The DISCOVERY's instrument (a non-candidate is skipped, never a
+// best-effort guess: the find answers only for bodies that exist).
+inline std::unique_ptr<brep::BRepBody> operand_exact_brep_quiet(
+    const SceneNode& n) {
+    if (n.hybrid != nullptr && n.hybrid->brep != nullptr)
+        return operand_exact_brep(n, "quiet");  // linked, see above
+    if (n.kind != NodeKind::Sdf) return nullptr;
+    return bridge::sdf_to_brep_primitive(
+        n.body, geometry::FeatureId{n.id});
+}
+
+// discover_fillet_operand — THE FIND ACROSS THE FEATURES: which
+// node's exact body carries the reference's name. The candidates in
+// document order (the array IS the construction order — a healthy
+// DAG cannot duplicate the name: it embeds the creating feature's
+// id). Returns null when no body carries it; the loud door
+// (fillet_reference_find) is the creation path's own instrument.
+inline const SceneNode* discover_fillet_operand(
+    const std::vector<SceneNode*>& nodes,
+    const std::string& edge_reference,
+    geometry::ShapeId* found = nullptr,
+    std::size_t until = static_cast<std::size_t>(-1)) {
+    for (std::size_t k = 0; k < nodes.size() && k < until; ++k) {
+        const SceneNode* n = nodes[k];
+        std::unique_ptr<brep::BRepBody> owned =
+            operand_exact_brep_quiet(*n);
+        if (owned == nullptr) continue;  // no exact side on this path
+        for (brep::EdgeId i = 0; i < owned->edge_count(); ++i) {
+            const brep::EdgeInfo info = brep::query_edge(*owned, i);
+            if (!info.name.empty() && info.name == edge_reference) {
+                if (found != nullptr) *found = info.id;
+                return n;
+            }
+        }
+    }
+    return nullptr;
+}
+
+// attach_fillet — THE FILLET'S OWN attach_operation_hybrid: ONE
+// definition for creation, the DAG pass and the loader's pass 2. The
+// discovery, the class dispatch (the operand's own kind — a subtract
+// result the rim class, a fitted primitive the box class: the scene
+// fact decides, the kernel's own admission does the rest), the kernel
+// call, the tavola's lodging (fillet_descent). `old_tavole` is the DAG
+// pass's captured lodgings — the generation the reference was made
+// against: WITH it, a dead reference answers through the RESOLVER
+// (the class-4 payload, the cause and the remedy on the record);
+// WITHOUT it (creation, the loader's first materialization), a dead
+// reference is the door's own honest refusal. A kernel refusal is the
+// VISIBLE state: the last good body kept, the actionable reason in
+// `fillet_refusal` — never a throw at the document level (the Phase F
+// philosophy), and a THROWN invalid_argument only at CREATION (the
+// caller — add_fillet_node — refuses before installing anything).
+inline bool attach_fillet(
+    SceneNode& n, const std::vector<SceneNode*>& nodes,
+    const std::map<std::uint32_t, brep::DescentTable>* old_tavole) {
+    const brep::FilletRecipe& recipe = *n.fillet;
+    // THE DAG IN FILE (the m4 discipline, ADR-0036 D6's own chain):
+    // each recipe reads only what PRECEDES it — the discovery stops
+    // at the fillet's own position (the creation path, the fillet not
+    // yet installed, reads the whole list: the operand precedes by
+    // construction, the array IS the construction order).
+    std::size_t until = nodes.size();
+    for (std::size_t k = 0; k < nodes.size(); ++k)
+        if (nodes[k] == &n) { until = k; break; }
+    try {
+        // ---- The discovery: the find across the features.
+        geometry::ShapeId reference{};
+        const SceneNode* operand = discover_fillet_operand(
+            nodes, recipe.edge_reference, &reference, until);
+        if (operand == nullptr) {
+            // The dead reference. With the pass's captured lodgings,
+            // the class-4 answer: WHAT died (the old tavola's row),
+            // WHY (the tavola's own cause / the authored entity was
+            // replaced), the remedy — through the RESOLVER, never a
+            // mute "not found".
+            if (old_tavole != nullptr) {
+                for (const auto& [oid, tav] : *old_tavole) {
+                    for (const brep::DescentRow& row : tav.rows) {
+                        if (row.name.empty() ||
+                            row.name != recipe.edge_reference)
+                            continue;
+                        const SceneNode* op = find_node(nodes, oid);
+                        if (op == nullptr || !op->operation.has_value() ||
+                            op->hybrid == nullptr ||
+                            op->hybrid->brep == nullptr)
+                            continue;
+                        // The operand's declaration (the subtract's
+                        // instance registry — the same bindings the
+                        // stamps were rendered under).
+                        const brep::naming::OperandBinding bindings[2] = {
+                            {geometry::FeatureId{op->operation->target},
+                             operand_naming_of(
+                                 *find_node(nodes, op->operation->target)),
+                             false},
+                            {geometry::FeatureId{op->operation->tool},
+                             operand_naming_of(
+                                 *find_node(nodes, op->operation->tool)),
+                             false}};
+                        const brep::naming::OperationNaming decl{
+                            brep::naming::FeatureKind::Subtract, {},
+                            brep::naming::kSubEdgeRoles,
+                            {bindings, 2}};
+                        const brep::Generation old_gen{
+                            nullptr, &tav, &decl, false};
+                        const brep::Generation new_gen{
+                            op->hybrid->brep.get(), nullptr, &decl,
+                            false};
+                        const brep::EditContext ectx{};
+                        const brep::Resolution res =
+                            brep::resolve(row.shape_id, old_gen,
+                                          new_gen, ectx);
+                        n.fillet_refusal = brep::resolution_text(res);
+                        return false;
+                    }
+                }
+            }
+            throw std::invalid_argument(
+                "attach_fillet: the recipe's edge-reference '" +
+                recipe.edge_reference +
+                "' names no edge among the features' exact sides - "
+                "the reference is the grammar's own form, matched "
+                "whole against the entity names (never parsed, never "
+                "an address). Remedy: pick the edge from the operand "
+                "body's own query (the by-name surface) and re-run.");
+        }
+        // ---- The operand's exact body (the same door, deterministic).
+        std::unique_ptr<brep::BRepBody> owned =
+            operand_exact_brep_quiet(*operand);
+        if (owned == nullptr)
+            throw std::invalid_argument(
+                "attach_fillet: the operand's exact side is not "
+                "available (its materialization refused) - the fillet "
+                "consumes the exact body. Remedy: fix the operand's "
+                "own refusal first (its hybrid_refusal carries the "
+                "reason).");
+        const brep::BRepBody& operand_body = *owned;
+        // ---- The class dispatch + the naming context, derived from
+        // the operand node (the scene fact; the kernel's own
+        // admission does the rest, by name, with the remedy).
+        std::unique_ptr<brep::BRepBody> result;
+        if (operand->operation.has_value() &&
+            operand->operation->type == OperationType::Subtract) {
+            // THE RIM CLASS (fillet_rim_edge): the blind body's two
+            // creators — the naming from the operand's OWN recipe.
+            const SceneNode* target =
+                find_node(nodes, operand->operation->target);
+            const SceneNode* tool =
+                find_node(nodes, operand->operation->tool);
+            const brep::naming::OperationNaming* body_table =
+                target == nullptr ? nullptr : operand_naming_of(*target);
+            const brep::naming::OperationNaming* far_table =
+                tool == nullptr ? nullptr : operand_naming_of(*tool);
+            if (body_table == nullptr || far_table == nullptr) {
+                throw std::invalid_argument(
+                    "attach_fillet: the operand's naming context is "
+                    "incomplete - the rim class needs BOTH creators' "
+                    "tables (the box side and the extrude side, the "
+                    "m3 register's complete-or-absent rule); a half "
+                    "context would name one operand's side and leave "
+                    "the other silent. Remedy: model the operand's "
+                    "chain as the factory box and the extrude, or "
+                    "accept the unnamed kernel path (CAD_0.brep).");
+            }
+            const brep::FilletNaming naming{
+                geometry::FeatureId{n.id},
+                body_table,
+                geometry::FeatureId{tool->id},
+                far_table};
+            result = brep::fillet_rim_edge(
+                operand_body, reference, recipe.radius, naming);
+        } else if (operand->kind == NodeKind::Sdf) {
+            // THE BOX CLASS (fillet_edge): a fitted primitive — the
+            // m2 naming {feature, the body's own table}.
+            const brep::naming::OperationNaming* body_table =
+                operand_naming_of(*operand);
+            if (body_table == nullptr) {
+                throw std::invalid_argument(
+                    "attach_fillet: the operand carries no naming "
+                    "table (the unnamed mode) - the born entities "
+                    "would read honestly empty and the reference "
+                    "would not survive the file. Remedy: model the "
+                    "operand as a fitted primitive (the box) or an "
+                    "exact subtract, or accept the unnamed kernel "
+                    "path (CAD_0.brep).");
+            }
+            const brep::FilletNaming naming{
+                geometry::FeatureId{n.id}, body_table};
+            result = brep::fillet_edge(
+                operand_body, reference, recipe.radius, naming);
+        } else {
+            throw std::invalid_argument(
+                "attach_fillet: the operand is outside the fillet's "
+                "v1 classes (the factory box, the u2 blind body) - "
+                "the operand node is neither an exact subtract nor a "
+                "fitted primitive. Remedy: model the operand as one "
+                "of those, or accept the kernel path (CAD_0.brep) "
+                "which carries its own class refusals.");
+        }
+        n.fillet_body = std::move(result);
+        // THE LODGING: the fillet's own tavola (fillet_descent), the
+        // same site rule as the operations'.
+        n.tavola = brep::fillet_descent(*n.fillet_body, operand_body);
+        n.fillet_refusal.clear();
+        return true;
+    } catch (const std::invalid_argument& e) {
+        // The visible refusal state: the last good body KEPT (display
+        // and the numbers continue), the actionable reason carried.
+        n.fillet_refusal = e.what();
+        return false;
     }
 }
 
@@ -995,6 +1332,79 @@ public:
         if (next_id_ <= id) next_id_ = id + 1;
         notify(SceneChange::NodeAdded, id);
         return id;
+    }
+
+    // THE FILLET NODE (G2-u3 m4, ADR-0039 D6 rung 4): the first
+    // exact-side feature that rides the document. The recipe carries
+    // the edge-reference STRING verbatim + the radius its typed field
+    // — the operand is DISCOVERED by the find (the genealogy implicit
+    // in the chain, never a stored address). Creation refuses loudly
+    // on a dead reference or an out-of-class operand (no node, no id
+    // consumed); the body is DERIVED state, rebuilt by the same pass.
+    // The name defaults to "Fillet_<id>" (the operation rows' own
+    // pattern).
+    std::uint32_t add_fillet_node(const std::string& name,
+                                   brep::FilletRecipe recipe) {
+        if (recipe.edge_reference.empty())
+            throw std::invalid_argument(
+                "Scene::add_fillet_node: the recipe's edge-reference "
+                "is empty - the reference is the grammar's own form "
+                "(e.g. 'sub#4:isect[box#1:top "
+                "\xc3\x97 ext#3:lat(0)]@hi'), the pick's own answer.");
+        if (!(recipe.radius > 0.0) ||
+            !std::isfinite(recipe.radius))
+            throw std::invalid_argument(
+                "Scene::add_fillet_node: the recipe's radius must be "
+                "finite and > 0 (the typed value class, the loader's "
+                "own door).");
+        std::vector<SceneNode*> live;
+        live.reserve(nodes_.size());
+        for (SceneNode& n : nodes_) live.push_back(&n);
+        // Materialize FIRST, install after: a refused creation leaves
+        // the scene untouched — no node, no body, no id consumed.
+        SceneNode node;
+        node.id = next_id_;
+        node.kind = NodeKind::Fillet;
+        node.fillet = std::move(recipe);
+        if (!attach_fillet(node, live, nullptr))
+            throw std::invalid_argument(node.fillet_refusal);
+        node.id = next_id_++;
+        node.name = name.empty()
+                        ? ("Fillet_" + std::to_string(node.id))
+                        : name;
+        nodes_.push_back(std::move(node));
+        notify(SceneChange::NodeAdded, nodes_.back().id);
+        return nodes_.back().id;
+    }
+
+    // The radius edit AFTER the load or at any later time: ONE scene
+    // mutation, the recipe's own parameter (the class-1 SILENT edit —
+    // the reference taken once, the re-run answers through the find;
+    // ONE undo entry when the app wraps it in one command, the m5
+    // wiring). Returns the re-run's answer: "reference_resolved" when
+    // the feature re-ran (the counts fixed for every in-band r), the
+    // refusal text when it did not (the state is the visible one, the
+    // last good body kept).
+    std::string set_fillet_radius(std::uint32_t id, double radius) {
+        SceneNode* n = get_node_mut(id);
+        if (n == nullptr || !n->fillet.has_value())
+            throw std::invalid_argument(
+                "Scene::set_fillet_radius: node " + std::to_string(id) +
+                " is not a fillet feature");
+        if (!(radius > 0.0) || !std::isfinite(radius))
+            throw std::invalid_argument(
+                "Scene::set_fillet_radius: the radius must be finite "
+                "and > 0");
+        n->fillet->radius = radius;
+        std::vector<SceneNode*> live;
+        live.reserve(nodes_.size());
+        for (SceneNode& m : nodes_) live.push_back(&m);
+        if (attach_fillet(*n, live, nullptr)) {
+            mark_dirty(id);
+            return "reference_resolved";
+        }
+        mark_dirty(id);
+        return n->fillet_refusal;
     }
 
     // Next id that add_node() will hand out. Persisted by the native

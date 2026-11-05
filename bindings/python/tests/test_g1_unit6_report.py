@@ -239,7 +239,7 @@ def test_golden_v0_5_report_agrees_with_the_table():
     # geometry and every number are the document's own — a
     # v0.4-declaring file is the version door's fixture now, refused
     # with the remedy).
-    path = _ROOT / "tests" / "golden" / "native_v0_5_0.CAD_0"
+    path = _ROOT / "tests" / "golden" / "native_v0_6_0.CAD_0"
     assert path.exists()
     s = scene.Scene()
     CAD_0.io.load(path, s)

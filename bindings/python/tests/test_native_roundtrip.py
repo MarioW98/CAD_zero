@@ -63,7 +63,7 @@ def test_native_version():
     # sketcher's document layer — sketch nodes and extrude recipes
     # (ADR-0030 D4); 0.5.0 the constraints riding the sketch payload
     # as named fields (ADR-0040 D3.1, G4 m4).
-    assert CAD_0.io.NATIVE_VERSION == "0.5.0"
+    assert CAD_0.io.NATIVE_VERSION == "0.6.0"
 
 
 def test_roundtrip_scene_and_metadata(saved_path):
@@ -489,3 +489,4 @@ def test_legitimate_deep_tree_loads_and_evaluates_bit_exact():
 
     for p in (CAD_0.math.Vec3f(0, 0, 0), CAD_0.math.Vec3f(0.9, -0.2, 0.4)):
         assert node.body.value(p) == body.value(p)
+

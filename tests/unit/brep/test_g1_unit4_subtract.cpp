@@ -1253,7 +1253,7 @@ TEST_CASE("G1-U4 landing: the v0.5 golden materializes the EXACT subtract NOW (t
     // (they pin the node's body, which did not move).
     const std::filesystem::path golden =
         std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
-        "native_v0_5_0.CAD_0";
+        "native_v0_6_0.CAD_0";
     REQUIRE(std::filesystem::exists(golden));
 
     auto doc = CAD_0::io::native::load_file(golden);

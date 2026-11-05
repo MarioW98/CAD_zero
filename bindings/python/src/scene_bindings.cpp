@@ -202,7 +202,43 @@ void bind_scene(nb::module_& m) {
             },
             "The actionable reason the exact B-Rep refused to\n"
             "materialize (empty string when it did not): the honest\n"
-            "absence record — the SDF display path always stands.");
+            "absence record — the SDF display path always stands.")
+        // ---- The fillet feature (G2-u3 m4, ADR-0039 D6 rung 4) ------
+        // The exact side's first scene-side feature: the RECIPE rides
+        // the node (the edge-reference STRING verbatim + the radius
+        // its typed field, named fields, never a raw struct), the
+        // materialized body is DERIVED state (inspect it with
+        // CAD_0.brep.face_count / face_query — the m3 golden's own
+        // surface), the refusal is the honest absence record (the
+        // class-4 payload verbatim when the reference died).
+        .def_prop_ro("fillet_edge",
+            [](const scene::SceneNode& n) {
+                return n.fillet ? n.fillet->edge_reference : std::string{};
+            },
+            "The recipe's edge-reference, the STRING verbatim (the\n"
+            "grammar's own form, character for character) — empty for\n"
+            "non-fillet nodes.")
+        .def_prop_ro("fillet_radius",
+            [](const scene::SceneNode& n) {
+                return n.fillet ? n.fillet->radius : 0.0;
+            },
+            "The recipe's radius (the ball radius r, its own typed\n"
+            "field). 0.0 for non-fillet nodes.")
+        .def_prop_ro("fillet_brep",
+            [](const scene::SceneNode& n) -> const brep::BRepBody* {
+                return n.fillet_body.get();
+            },
+            nb::rv_policy::reference_internal,
+            "The fillet's materialized exact body (an opaque\n"
+            "CAD_0.bridge.BRepBody) or None — the last good body kept\n"
+            "when the re-run refused; inspect via CAD_0.brep.face_query.")
+        .def_prop_ro("fillet_refusal",
+            [](const scene::SceneNode& n) {
+                return n.fillet_refusal;
+            },
+            "The actionable reason the fillet's re-run refused (empty\n"
+            "string when it did not): the class-4 payload verbatim —\n"
+            "what died, why, the remedy — never a mute 'not found'.");
 
     // ---- Parametric builder registry (single source of truth) -----------
     //
@@ -903,6 +939,40 @@ void bind_scene(nb::module_& m) {
              "Re-create a subtract operation node with a PINNED id "
              "(command redo). Raises RuntimeError if the id is in use "
              "or an operand is missing — never a silent rebind.")
+        // ---- The fillet feature's scene surface (G2-u3 m4) ----------
+        // add_fillet_node creates the feature from the recipe (the
+        // edge-reference STRING + the radius, named fields): the
+        // operand is DISCOVERED by the find (the genealogy implicit
+        // in the chain, never a stored address). Creation refuses
+        // loudly (RuntimeError) on a dead reference or an
+        // out-of-class operand — no node, no id consumed.
+        // set_fillet_radius is the class-1 SILENT edit: ONE scene
+        // mutation, the re-run answers through the find; returns
+        // "reference_resolved" when the feature re-ran (the counts
+        // fixed for every in-band r), the refusal text when it did
+        // not (the last good body kept — the visible state).
+        .def("add_fillet_node",
+             [](scene::Scene& s, const std::string& name,
+                const std::string& edge, double radius) {
+                 brep::FilletRecipe r;
+                 r.edge_reference = edge;
+                 r.radius = radius;
+                 return s.add_fillet_node(name, std::move(r));
+             },
+             nb::arg("name"), nb::arg("edge"), nb::arg("radius"),
+             "Create a fillet feature node from the recipe (the "
+             "edge-reference string verbatim + the radius). The "
+             "operand is discovered by the find across the features' "
+             "exact sides. Returns the new node id; raises "
+             "RuntimeError for every refusal (diagnosis + remedy).")
+        .def("set_fillet_radius",
+             [](scene::Scene& s, std::uint32_t node_id, double radius) {
+                 return s.set_fillet_radius(node_id, radius);
+             },
+             nb::arg("node_id"), nb::arg("radius"),
+             "Edit the fillet's radius (the class-1 SILENT edit, one "
+             "scene mutation): returns 'reference_resolved' when the "
+             "feature re-ran, or the refusal text when it did not.")
         .def("restore_sdf_node",
              [](scene::Scene& s, std::uint32_t node_id,
                 const std::string& name, sdf::SDFBody body) {

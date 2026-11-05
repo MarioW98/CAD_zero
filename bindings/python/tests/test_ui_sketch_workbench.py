@@ -814,7 +814,7 @@ def test_the_constraints_ride_the_payload_and_survive_the_file(
     path = tmp_path / "constraints_v0_5.CAD_0"
     CAD_0.io.save(path, win._scene)
     text = path.read_text(errors="replace")
-    assert "\"version\": \"0.5.0\"" in text
+    assert "\"version\": \"0.6.0\"" in text
     assert "\"constraints\"" in text
     assert "\"kind\": \"coincidence\"" in text
     assert "\"kind\": \"length\"" in text

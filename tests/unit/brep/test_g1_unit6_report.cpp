@@ -315,7 +315,7 @@ TEST_CASE("G1-U6 query_body: the MULTI-SHELL body - genus n/d, the D6 rule") {
 TEST_CASE("G1-U6 golden v0.5: the guide body's report IS the D7.5 table (the same document since the bump)") {
     const std::filesystem::path golden =
         std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
-        "native_v0_5_0.CAD_0";
+        "native_v0_6_0.CAD_0";
     REQUIRE(std::filesystem::exists(golden));
 
     auto doc = CAD_0::io::native::load_file(golden);

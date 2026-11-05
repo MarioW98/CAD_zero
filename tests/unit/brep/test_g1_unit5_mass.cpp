@@ -446,7 +446,7 @@ TEST_CASE("G1-U5 guide: the PRISM TARGET — the extrude's own caps pierced") {
 TEST_CASE("G1-U5 golden: the v0.5 golden's exact subtract — the guide numbers on load (the same document since the bump)") {
     const std::filesystem::path golden =
         std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
-        "native_v0_5_0.CAD_0";
+        "native_v0_6_0.CAD_0";
     REQUIRE(std::filesystem::exists(golden));
 
     auto doc = CAD_0::io::native::load_file(golden);
