@@ -49,7 +49,22 @@ embellishment.** The units:
   the wall, both authored material-on-left, walked the shared rim
   edges in the same direction, breaking the orientation-XOR);
   ConeSurface and TorusSurface remain left-handed, registered for
-  the units that will first trim them.** The face query of D8's
+  the units that will first trim them.**
+
+  **REDEEMED (2026-11-04, G2-u3 m3, ADR-0039 D1.2 — the promise kept
+  on its own day, the registration above read as written): the torus's
+  first trimming loop is authored in that morso (the fillet's toroidal
+  flank, the born TorusZSurface writer), and the registered pair
+  turned right-handed in the same act — the same one-line u =
+  -azimuth flip the cylinder received, WITH THE DISCRIMINATING PINS
+  (the frame rule pointwise, test_analytic_surfaces.cpp's chiral
+  guards: the test that FAILS on the left-handed frame; the surviving
+  evaluate pins untouched on the seam meridian — the re-pin EMPTY,
+  0035 D5's cleanest case). The cone RIDES with the family (the
+  register's economy: the correction made ONCE, the pins on both; no
+  cone writer exists yet — its first trimming loop remains the gate
+  its own unit will pay). The record lives in the m3 register and in
+  analytic.hpp's header, pointing here.** The face query of D8's
   "a query, not an investigation" is exposed in C++
   (`brep/query.hpp`) and through the bindings
   (`CAD_0.brep.face_query`): family, loop counts, per-co-edge
@@ -268,7 +283,8 @@ embellishment.** The units:
   not the detour around it", honored twice: the analytic frames'
   one right-handed rule (unit 2: the cylinder was the lone
   left-handed parametrization; Cone and Torus stay registered for
-  the units that first trim them) and the surviving wall's
+  the units that first trim them — both flipped with their pins at
+  G2-u3 m3, see the REDEEMED note above) and the surviving wall's
   region-on-right walk (unit 4: one requirement seen from both
   sides of the radial XOR). Both are recorded in their units'
   landing entries above.

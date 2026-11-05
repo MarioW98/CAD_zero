@@ -176,16 +176,26 @@ inline constexpr double kFilletArcSpanDefectBand = 1e-9;
 
 // The fillet's naming context — the fillet's own DAG id (the born
 // names' creator part, 'fil#F') and the filleted body's own naming
-// declaration (its role tables — the flank's operands render through
+// declarations (its role tables — the flank's operands render through
 // them). The body's feature id flows from the body's own stamps (the
 // found edge's creator); the tables are the caller's context, the
 // exact_subtract precedent. The unnamed mode (body == nullptr, the
 // default) leaves the born entities honestly empty — the inheritance
 // (the shrink faces' names) flows in both modes (a stamp copy, no
 // table involved).
+//
+// THE SECOND CREATOR (G2-u3 m3, the rim class): the blind body has
+// TWO face creators — its box faces (box#1, the box tables) and its
+// hole wall (ext#3, the extrude tables) — so the context gains the
+// far pair: a leg whose creating feature id equals far_feature
+// renders through far_body, every other leg through body. The box
+// pure (m2) leaves far default{}: one table for every leg, the m2
+// semantics untouched (additive, the m2 call sites unchanged).
 struct FilletNaming {
     geometry::FeatureId feature{};
     const naming::OperationNaming* body{};
+    geometry::FeatureId far_feature{};
+    const naming::OperationNaming* far_body{};
 };
 
 namespace fillet_detail {
@@ -195,6 +205,12 @@ namespace fillet_detail {
 struct PlaneReader : SurfaceVisitor {
     const PlaneSurface* plane{nullptr};
     void visit(const PlaneSurface& p) override { plane = &p; }
+};
+
+// The Z-axis cylinder reader (the m3 rim class's wall).
+struct WallReader : SurfaceVisitor {
+    const CylinderZSurface* wall{nullptr};
+    void visit(const CylinderZSurface& w) override { wall = &w; }
 };
 
 // The plane's domain coordinates of a 3D point (the p-curve writers'
@@ -226,6 +242,62 @@ inline math::Vec2d dom_of(const PlaneSurface& s, math::Vec3d p) {
 // derivation (descent.hpp — the recipe is the source of truth, the
 // tavola is cache).
 inline std::unique_ptr<BRepBody> fillet_edge(
+    const BRepBody& body, const geometry::ShapeId& edge_reference,
+    double radius, const FilletNaming& naming = FilletNaming{},
+    double tol = kFilletTolerance);
+
+// fillet_rim_edge — THE FILLET, CLASS 2: IL RIM CIRCOLARE DEL FORO
+// (ADR-0039 D1.2, G2-u3 m3): the rolling ball on the blind hole's
+// top rim (plane x cylinder perpendicular, the CONVEX corner), the
+// toroidal flank born in the rim's place. The same discipline as
+// fillet_edge one class over: every quantity a CLOSED FORM of the
+// stored operands, ZERO intersection solves — the ball's center
+// rides the circle of radius a + r at depth r below the rim plane,
+// the swept envelope the TorusZ quarter patch v in [pi/2, pi], the
+// contact circles placed exactly (radius a + r at the rim quota on
+// the pierced face; radius a at depth r on the wall) — the G2-u1
+// table's toroidal rows (9/10: plane x torus, cylinder x torus
+// coaxial) consumed as the VOCABULARY the payloads read (the SSI
+// entries' own typing: Circle2/Line2 v = const), never run as
+// solves: the table's surface unchanged, the register's own words.
+// The epsilon_line sentinel stays asleep here too: nothing
+// transversal is solved, the Layer-2 bound is exact/0.
+//
+// THE ADMISSION BEFORE THE CONSTRUCTION (the u2 signature, never a
+// runtime geometry test): the body carries the BLIND DOOR's own —
+// 12/17/8 with H = 1, chi = 2, closed orientable, every entity
+// exact; the ONE pierced face (the inner loop) is a plane whose
+// outward reads +Z (the guide orientation; the mirror family is
+// registered for its first consumer); the ONE cylindrical face is
+// the hole's wall (CylinderZ, the cavity frame u_sign = -1). Within
+// that signature the referenced rim is CONVEX BY CONSTRUCTION; the
+// floor rim (the carried cap x the wall) is the CONCAVE family's
+// instance — refused by name with the queue's own entry, never
+// sedated. LE BANDE TIPIZZATE (the class's own, the Linear world's
+// epsilon_L): the tangent circle at a + r strictly inside the
+// pierced face (r < the face's reach from the axis, minus a, minus
+// epsilon_L; beyond: fillet_exits_annulus, the bound carried) and
+// the tangency on the wall above the floor (r < the wall's height
+// minus epsilon_L; beyond: fillet_eats_wall). The guide case
+// r = 0.25 < a = 0.5: wide margin, NO degenerate seated — the
+// r -> 0 and r -> a families stay MURO with their registered
+// dispositions (0033 D4), and the vertex blend keeps its refused
+// tail (never met, never named by this class's payload).
+//
+// THE ASSEMBLY IS THE DECOUPLING RULE'S (the m2 law, one family
+// over): the pierced face keeps its NATIVE frame and its name
+// (box#1:top) with the inner loop RE-AUTHORED at the contact circle
+// (the blind door's own convention, the region bits carried); the
+// wall keeps its NATIVE cavity frame and its name (ext#3:lat(0))
+// with the window RE-TIMED to [floor, rim - r] and the seam
+// RE-WIRED (the crossed corner's re-spanning); the flank is born
+// with its own right-handed frame, the periodic seam riding its
+// single loop TWICE (the wall's own pattern, ADR-0023). The counts:
+// 14/20/9 with H = 1, chi = 2; the census 9/22/16 out+vanished; the
+// co-edge census 20 x 2 = 40, every edge exactly two opposite
+// co-edges — the contact circles walked OPPOSITE by their landing
+// faces and the flank (the RACCOLTO's azimuth XOR).
+inline std::unique_ptr<BRepBody> fillet_rim_edge(
     const BRepBody& body, const geometry::ShapeId& edge_reference,
     double radius, const FilletNaming& naming = FilletNaming{},
     double tol = kFilletTolerance);
@@ -1074,6 +1146,796 @@ inline std::unique_ptr<BRepBody> fillet_edge(
             "fillet is chi-flat by construction, Delta-chi = "
             "+2 -3 +1 = 0; report this as a kernel bug)");
     return R;
+}
+
+
+// ---------------------------------------------------------------------------
+// fillet_rim_edge — the implementation (the m2 pattern, one family over)
+// ---------------------------------------------------------------------------
+inline std::unique_ptr<BRepBody> fillet_rim_edge(
+    const BRepBody& body, const geometry::ShapeId& edge_reference,
+    double radius, const FilletNaming& naming, double tol) {
+    const std::size_t V0 = body.vertices.size();
+    const std::size_t E0 = body.edges.size();
+    const std::size_t F0 = body.face_count();
+
+    const auto refuse = [](const std::string& what) {
+        throw std::invalid_argument("fillet_rim_edge: " + what);
+    };
+
+    // ---- The radius's own gate (a non-positive radius has no ball).
+    if (!(radius > 0.0) || !std::isfinite(radius))
+        refuse("the radius must be finite and > 0, got " +
+               std::to_string(radius) +
+               " - a non-positive ball has no envelope and no contact "
+               "circles. Remedy: author a positive radius within the "
+               "class's bands (the admission derives).");
+
+    // ---- The class signature: THE BLIND DOOR's own (the admission
+    // BEFORE the construction - the u2 counts, zero convexity signs,
+    // zero dihedral arithmetic).
+    {
+        bool all_exact = true;
+        for (const auto& v : body.vertices)
+            if (!v.provenance().is_exact()) all_exact = false;
+        for (const auto& e : body.edges)
+            if (!e.provenance().is_exact()) all_exact = false;
+        for (const auto& f : body.solid.shell().faces())
+            if (!f.provenance().is_exact()) all_exact = false;
+        if (!all_exact)
+            refuse("the body carries approximated entities (the "
+                   "Layer-2 record says so) - the exact fillet "
+                   "consumes EXACT bodies only (the booleans' own "
+                   "gate). Remedy: author the body on the exact path "
+                   "(the factories, the booleans), or accept the "
+                   "faceted path.");
+        if (V0 != 12 || E0 != 17 || F0 != 8 ||
+            inner_loop_count(body) != 1 ||
+            euler_characteristic(body) != 2 ||
+            !is_closed_orientable(body))
+            refuse("the body is outside the class signature (the "
+                   "blind door's own: 12 vertices, 17 edges, 8 faces, "
+                   "H = 1, chi = 2, closed orientable; found " +
+                   std::to_string(V0) + "/" + std::to_string(E0) + "/" +
+                   std::to_string(F0) +
+                   ") - the v1 admission is the blind hole's convex "
+                   "TOP rim (ADR-0039 D1.2, the u2 guide body). "
+                   "Remedy: fillet the blind body's top rim.");
+    }
+
+    // ---- The signature's own two: the pierced face (the inner loop,
+    // a +Z plane) and the wall (the single CylinderZ cavity frame).
+    std::size_t pierced = F0, wall = F0;
+    {
+        const auto& faces = body.solid.shell().faces();
+        for (std::size_t f = 0; f < F0; ++f) {
+            const auto* surf = faces[f].surface();
+            if (surf == nullptr)
+                refuse("a face carries no surface - report this as a "
+                       "kernel bug.");
+            if (faces[f].loops().size() > 1) {
+                if (pierced != F0)
+                    refuse("two faces carry inner loops - the class "
+                           "signature is the blind door's (exactly one "
+                           "pierced face). Remedy: report the body's "
+                           "construction.");
+                pierced = f;
+            }
+            fillet_detail::WallReader wr;
+            surf->accept(wr);
+            if (wr.wall != nullptr) {
+                if (wall != F0)
+                    refuse("two cylindrical faces - the class "
+                           "signature is the blind door's (exactly one "
+                           "hole wall). Remedy: report the body's "
+                           "construction.");
+                wall = f;
+            }
+        }
+        if (pierced == F0 || wall == F0)
+            refuse("the signature's own two were not found (the "
+                   "pierced face, the wall) - report this as a kernel "
+                   "bug.");
+        const auto& pf = body.solid.shell().faces()[pierced];
+        fillet_detail::PlaneReader pr;
+        pf.surface()->accept(pr);
+        if (pr.plane == nullptr)
+            refuse("the pierced face is not planar - the admission "
+                   "(a) takes it in the table's world. Remedy: report "
+                   "the body's construction.");
+        if (pr.plane->normal_vec().z < 0.9)
+            refuse("the pierced face's outward is not the guide "
+                   "orientation (+Z; it reads " +
+                   std::to_string(pr.plane->normal_vec().z) +
+                   ") - the MIRROR family is registered for its "
+                   "first consumer (ADR-0039 D1.2's own scope), never "
+                   "smuggled. Remedy: fillet the body in the guide "
+                   "orientation, or await the mirror morse.");
+        if (pf.loops().size() != 2)
+            refuse("the pierced face carries " +
+                   std::to_string(pf.loops().size()) +
+                   " loops - the blind door's own are two (the outer "
+                   "box rim, the inner hole rim). Remedy: report the "
+                   "body's construction.");
+    }
+    fillet_detail::WallReader wall_rd;
+    body.solid.shell().faces()[wall].surface()->accept(wall_rd);
+    if (wall_rd.wall == nullptr || wall_rd.wall->u_sign() != -1.0)
+        refuse("the wall is not the cavity frame (CylinderZ, "
+               "u_sign = -1) - the blind door's own authoring. "
+               "Remedy: report the body's construction.");
+    const CylinderZSurface& the_wall = *wall_rd.wall;
+    const double a = the_wall.radius();
+    const double cx = the_wall.axis_center().x;
+    const double cy = the_wall.axis_center().y;
+    const double z_floor = the_wall.z_base();
+
+    // ---- The reference's own find: the structural match against the
+    // body's stamps. The rim is the seam-wired ARC PAIR: ONE logical
+    // name, TWO materialized edges (the morse-5 register's own rule:
+    // the consumer that wants the rim takes the pair whole).
+    std::vector<std::size_t> found;
+    for (std::size_t i = 0; i < E0; ++i) {
+        const auto& id = body.edges[i].shape_id();
+        if (id.subshape.depth > 0 &&
+            id.feature == edge_reference.feature &&
+            id.subshape == edge_reference.subshape)
+            found.push_back(i);
+    }
+    if (found.empty())
+        refuse("the edge reference names no edge of this body (the "
+               "structural find against the stamps found no match) - a "
+               "reference that finds no row at all is a closure "
+               "violation, not a user error: resolve the reference "
+               "against the generation it was made on (the resolver's "
+               "own guard), or re-pick the rim on this body.");
+    if (found.size() == 1)
+        refuse("the edge reference names a SINGLE edge (" +
+               body.edges[found[0]].name() +
+               ") - a fillet asked on a seam is refused with the edge "
+               "named (ADR-0033 D3's own boundary). Remedy: reference "
+               "the RIM (the seam-wired arc pair, e.g. the pierced "
+               "rim's isect@hi), never the seam.");
+    if (found.size() != 2)
+        refuse("the edge reference materializes as " +
+               std::to_string(found.size()) +
+               " edges - the closure culture's own refusal. Remedy: "
+               "report this as a kernel bug.");
+    const std::size_t e_a = found[0], e_b = found[1];
+    // The pair's joint check: the two arcs share their two endpoints
+    // (the seam pair of the periodic circle). The joints carry the
+    // rim's quota (level, above the floor).
+    double z_rim = 0.0;
+    VertexId j0 = 0, j1 = 0;
+    {
+        const auto shares = [&](VertexId v) {
+            const bool in_a = body.edges[e_a].vertex(0) == v ||
+                              body.edges[e_a].vertex(1) == v;
+            const bool in_b = body.edges[e_b].vertex(0) == v ||
+                              body.edges[e_b].vertex(1) == v;
+            return in_a && in_b;
+        };
+        const VertexId cands[4] = {
+            body.edges[e_a].vertex(0), body.edges[e_a].vertex(1),
+            body.edges[e_b].vertex(0), body.edges[e_b].vertex(1)};
+        std::vector<VertexId> joints;
+        for (const VertexId v : cands) {
+            if (!shares(v)) continue;
+            bool seen = false;
+            for (const VertexId u : joints)
+                if (u == v) seen = true;
+            if (!seen) joints.push_back(v);
+        }
+        if (joints.size() != 2)
+            refuse("the two named edges do not share their joint "
+                   "pair - not a seam-wired arc pair. Remedy: report "
+                   "this as a kernel bug.");
+        const math::Vec3d& pj = body.vertices[static_cast<std::size_t>(
+                                     joints[0])]
+                                     .position();
+        const math::Vec3d& pk = body.vertices[static_cast<std::size_t>(
+                                     joints[1])]
+                                     .position();
+        if (std::abs(pj.z - pk.z) > tol)
+            refuse("the rim's joints are not level (the blind door's "
+                   "own authoring) - report this as a kernel bug.");
+        z_rim = pj.z;
+        j0 = joints[0];
+        j1 = joints[1];
+    }
+
+    // ---- The class's own gate: the two adjacent faces must be THE
+    // pierced face and the wall (the CONVEX rim). Anything else is
+    // the concave family's instance (the floor rim) - refused by
+    // name with the queue's entry, never sedated.
+    {
+        const auto face_of_coedge = [&](const CoEdge* ce) {
+            for (std::size_t f = 0; f < F0; ++f)
+                for (const auto& loop :
+                     body.solid.shell().faces()[f].loops())
+                    for (const auto& other : loop.coedges())
+                        if (&other == ce) return f;
+            return F0;
+        };
+        const auto& dead = body.edges[e_a].coedges();
+        if (dead.size() != 2)
+            refuse("the referenced rim carries " +
+                   std::to_string(dead.size()) +
+                   " co-edges - the manifold class admits exactly two. "
+                   "Remedy: report the body's construction.");
+        const std::size_t f0 = face_of_coedge(dead[0]);
+        const std::size_t f1 = face_of_coedge(dead[1]);
+        const bool is_convex = (f0 == pierced && f1 == wall) ||
+                                (f0 == wall && f1 == pierced);
+        if (!is_convex)
+            refuse("the referenced rim is not the convex top rim "
+                   "(its adjacent faces are " +
+                   body.solid.shell().faces()[f0].name() + " and " +
+                   body.solid.shell().faces()[f1].name() +
+                   ") - this is the CONCAVE family's instance "
+                   "(fillet_out_of_class_pair: the reentrant corner, "
+                   "the ball would roll on the void side and ADD "
+                   "material - the inverted flank, ADR-0039 D1.3 "
+                   "quoting ADR-0033 D4). The class waits in the queue "
+                   "with its own unit, no date, its near-band "
+                   "conditioning (r -> a) registered beside it. "
+                   "Remedy: fillet the TOP rim (the pierced face's "
+                   "own), or await the concave morse.");
+    }
+
+    // ---- LE BANDE TIPIZZATE (the class's own, the Linear world's
+    // epsilon_L, the bounds named in the refusals): the tangent
+    // circle at a + r strictly inside the pierced face (the reach
+    // read from the face's own outer loop - the minimum distance
+    // from the axis point, at the rim quota, to the loop's segments),
+    // and the tangency on the wall above the floor.
+    double reach = std::numeric_limits<double>::infinity();
+    {
+        const math::Vec3d P0{cx, cy, z_rim};
+        for (const auto& ce :
+             body.solid.shell().faces()[pierced].loops()[0].coedges()) {
+            const Edge& e = body.edges[ce.edge()];
+            const math::Vec3d& A = body.vertices[static_cast<std::size_t>(
+                                        e.vertex(0))]
+                                        .position();
+            const math::Vec3d& B = body.vertices[static_cast<std::size_t>(
+                                        e.vertex(1))]
+                                        .position();
+            const math::Vec3d AB = B - A;
+            const double L2 = AB.dot(AB);
+            double t = 0.0;
+            if (L2 > 0.0) t = (P0 - A).dot(AB) / L2;
+            t = std::max(0.0, std::min(1.0, t));
+            const math::Vec3d Q = A + AB * t;
+            reach = std::min(reach, std::sqrt((P0 - Q).dot(P0 - Q)));
+        }
+    }
+    {
+        const double bound_annulus = reach - a;
+        const double bound_wall = z_rim - z_floor;
+        const auto band_refusal = [](const char* what,
+                                     const char* member, double bound,
+                                     double the_radius, double the_tol) {
+            const bool annulus =
+                std::string(member) == "fillet_exits_annulus";
+            return std::string(what) + " (" + std::string(member) +
+                   "): the radius " + std::to_string(the_radius) +
+                   " against the typed band's bound " +
+                   std::to_string(bound) + " - " +
+                   std::to_string(the_tol) +
+                   " (the class's own reach minus the declared Linear "
+                   "tolerance): the tangency would sit outside the " +
+                   std::string(annulus ? "pierced face's annulus"
+                                       : "wall's span") +
+                   ", and the closed forms would place it outside the "
+                   "material. Remedy: shrink the radius below " +
+                   std::to_string(bound - the_tol) +
+                   ", or restructure the body (the band is the class's "
+                   "own, ADR-0039 D2's derived decision).";
+        };
+        if (radius >= bound_annulus - tol)
+            refuse(band_refusal("the tangent circle exits the pierced face",
+                                "fillet_exits_annulus", bound_annulus,
+                                radius, tol));
+        if (radius >= bound_wall - tol)
+            refuse(band_refusal("the tangency passes the far end of the wall",
+                                "fillet_eats_wall", bound_wall, radius, tol));
+    }
+
+    // ---- THE CONSTRUCTION - every quantity a closed form of the
+    // stored operands, ZERO solves (D2's contract, one family over).
+    const double R = a + radius;           // the tube's center radius
+    const double z_c = z_rim - radius;     // the tube's center quota
+    const double h_prime = z_c - z_floor;  // the wall's re-timed span
+    // The seam meridian's domain coordinate in the wall's cavity
+    // frame: f0 = -psi0, psi0 the +X joint's azimuth about the axis.
+    double f0 = -std::atan2(0.0, 1.0);
+    if (f0 == 0.0) f0 = 0.0;  // normalize -0.0
+    const auto line_rr = [](math::Vec2d p, math::Vec2d q) {
+        return pcurve_segment(p, q, /*interior_left=*/false);
+    };
+
+    // ---- The wall's structural pieces, read from its own loop: the
+    // seam (the edge carried TWICE - the periodic identification's
+    // signature, ADR-0023) and the floor pair (the two co-edges
+    // between the seam's descending copy and its ascending one - the
+    // blind door's own order).
+    std::size_t e_wseam = E0;       // the seam's OLD id
+    std::size_t e_floor_p = E0;     // the +Y floor half (bot1)
+    std::size_t e_floor_m = E0;     // the -Y floor half (bot0)
+    {
+        const auto& ces =
+            body.solid.shell().faces()[wall].loops()[0].coedges();
+        const std::size_t n = ces.size();
+        // The two indices of the seam's copies.
+        std::size_t i1 = n, i2 = n;
+        for (std::size_t k = 0; k < n; ++k) {
+            std::size_t count = 0;
+            for (std::size_t q = 0; q < n; ++q)
+                if (ces[q].edge() == ces[k].edge()) ++count;
+            if (count != 2) continue;  // not the seam
+            if (i1 == n) {
+                i1 = k;
+            } else if (ces[k].edge() == ces[i1].edge()) {
+                i2 = k;
+                break;
+            }
+        }
+        if (i2 == n) {
+            // No edge carried twice: not the seam-wired layout.
+        } else {
+            e_wseam = ces[i1].edge();
+            // From EACH seam copy, walk forward to the other copy:
+            // the two co-edges between them are the floor pair (after
+            // s_down, the blind door's order) or the dead rim pair
+            // (after s_up). The floor pair is the one with NEITHER
+            // dead edge, in walk order.
+            for (const std::size_t start : {i1, i2}) {
+                std::vector<const CoEdge*> between;
+                for (std::size_t step = 1; step < n; ++step) {
+                    const CoEdge& c = ces[(start + step) % n];
+                    if (c.edge() == e_wseam) break;
+                    between.push_back(&c);
+                }
+                if (between.size() == 2 &&
+                    between[0]->edge() != e_a &&
+                    between[0]->edge() != e_b &&
+                    between[1]->edge() != e_a &&
+                    between[1]->edge() != e_b) {
+                    e_floor_p = between[0]->edge();
+                    e_floor_m = between[1]->edge();
+                    break;
+                }
+            }
+        }
+        if (e_wseam == E0 || e_wseam == e_a || e_wseam == e_b ||
+            e_floor_p == E0 || e_floor_m == E0)
+            refuse("the wall's own pieces were not found (the seam, "
+                   "the floor pair) - report this as a kernel bug.");
+    }
+
+    // ---- The maps: the survivors compact (the dead pair dropped),
+    // the born append. The dead rim's two joints vanish; its two
+    // arcs are the dead columns.
+    std::vector<std::size_t> vmap(V0, V0), emap(E0, E0);
+    {
+        std::size_t next = 0;
+        for (std::size_t i = 0; i < V0; ++i)
+            if (i != j0 && i != j1) vmap[i] = next++;
+        next = 0;
+        for (std::size_t i = 0; i < E0; ++i)
+            if (i != e_a && i != e_b) emap[i] = next++;
+    }
+    // The born numbering (the construction's own tables, frozen by
+    // the tests): 2i/2i+1 = joint i at the contact-parete (low) / at
+    // the contact-piano (high) - the blind door's own layout.
+    const std::size_t v_base = V0 - 2;
+    const std::size_t v_S_lo = v_base + 0, v_S_hi = v_base + 1;
+    const std::size_t v_A_lo = v_base + 2, v_A_hi = v_base + 3;
+    const std::size_t e_base = E0 - 2;
+    const std::size_t e_cp0 = e_base + 0;   // the -Y half, piano
+    const std::size_t e_cp1 = e_base + 1;   // the +Y half, piano
+    const std::size_t e_cw0 = e_base + 2;   // the -Y half, parete
+    const std::size_t e_cw1 = e_base + 3;   // the +Y half, parete
+    const std::size_t e_fseam = e_base + 4; // the flank's seam
+    const std::size_t e_seam = emap[e_wseam];
+
+    auto Rr = std::make_unique<BRepBody>();
+    auto& shell = Rr->solid.shell_mut();
+    shell.set_closed(true);
+    const ProvenanceInfo prov = ProvenanceInfo::exact();
+
+    // ---- The vertices: the survivors (the copies carry the records),
+    // then the born joint pairs (S at the parete/piano, then A).
+    for (std::size_t i = 0; i < V0; ++i) {
+        if (vmap[i] == V0) continue;
+        Rr->vertices.push_back(body.vertices[i]);
+        Rr->vertices.back().set_id(static_cast<VertexId>(vmap[i]));
+    }
+    {
+        const math::Vec3d born[4] = {
+            {cx + a, cy, z_c}, {cx + R, cy, z_rim},
+            {cx - a, cy, z_c}, {cx - R, cy, z_rim}};
+        const std::size_t ids[4] = {v_S_lo, v_S_hi, v_A_lo, v_A_hi};
+        for (std::size_t i = 0; i < 4; ++i) {
+            Vertex v{born[i]};
+            v.set_id(static_cast<VertexId>(ids[i]));
+            v.set_provenance(prov);
+            Rr->vertices.push_back(v);
+        }
+    }
+
+    // ---- The edges: the survivors (the wall's seam RE-SPANNED to the
+    // new high joint), then the born five.
+    for (std::size_t i = 0; i < E0; ++i) {
+        if (emap[i] == E0) continue;
+        Rr->edges.push_back(body.edges[i]);
+        auto& e = Rr->edges.back();
+        e.set_id(static_cast<EdgeId>(emap[i]));
+        // The kept copies remap through the compaction (the m2
+        // discipline); the seam's HIGH endpoint is the dead rim's
+        // joint - it has no image, and re-points at the parete
+        // contact's joint (the LOW one, the floor's own, is kept).
+        for (const int side : {0, 1}) {
+            const std::size_t old_v = static_cast<std::size_t>(
+                e.vertex(side));
+            if (old_v == j0 || old_v == j1) continue;  // the seam's
+            e.set_vertex(side, static_cast<VertexId>(vmap[old_v]));
+        }
+        if (i == e_wseam) {
+            const VertexId lo = e.vertex(0), hi = e.vertex(1);
+            const bool lo_first =
+                body.vertices[static_cast<std::size_t>(lo)].position().z <
+                body.vertices[static_cast<std::size_t>(hi)].position().z;
+            if (lo_first)
+                e.set_vertex(1, static_cast<VertexId>(v_S_lo));
+            else
+                e.set_vertex(0, static_cast<VertexId>(v_S_lo));
+        }
+    }
+    {
+        const std::pair<std::size_t, std::size_t> born[5] = {
+            {v_A_hi, v_S_hi}, {v_S_hi, v_A_hi},
+            {v_A_lo, v_S_lo}, {v_S_lo, v_A_lo},
+            {v_S_hi, v_S_lo}};
+        for (const auto& [x, y] : born) {
+            Edge e{static_cast<VertexId>(x), static_cast<VertexId>(y)};
+            e.set_id(static_cast<EdgeId>(Rr->edges.size()));
+            e.set_provenance(prov);
+            Rr->edges.push_back(e);
+        }
+    }
+
+    // ---- THE WALL (absorbed, the window re-timed): its native cavity
+    // frame kept bit-identical, the walk the blind door's own with
+    // the contact-parete pair replacing the dead rim pair at v = h'.
+    {
+        auto surf = std::make_shared<CylinderZSurface>(
+            the_wall.axis_center(), the_wall.radius(),
+            the_wall.z_base(), -1);
+        Loop loop;
+        {
+            CoEdge s_down{static_cast<EdgeId>(e_seam), true};
+            s_down.set_p_curve(line_rr({f0, h_prime}, {f0, 0.0}));
+            loop.add_coedge(s_down);
+        }
+        {
+            CoEdge bot1{static_cast<EdgeId>(emap[e_floor_p]), false};
+            bot1.set_p_curve(line_rr({f0, 0.0}, {f0 - kPi, 0.0}));
+            loop.add_coedge(bot1);
+        }
+        {
+            CoEdge bot0{static_cast<EdgeId>(emap[e_floor_m]), false};
+            bot0.set_p_curve(
+                line_rr({f0 - kPi, 0.0}, {f0 - kTwoPi, 0.0}));
+            loop.add_coedge(bot0);
+        }
+        {
+            CoEdge s_up{static_cast<EdgeId>(e_seam), false};
+            s_up.set_p_curve(
+                line_rr({f0 - kTwoPi, 0.0}, {f0 - kTwoPi, h_prime}));
+            loop.add_coedge(s_up);
+        }
+        {
+            CoEdge t0{static_cast<EdgeId>(e_cw0), true};
+            t0.set_p_curve(line_rr({f0 - kTwoPi, h_prime},
+                                   {f0 - kPi, h_prime}));
+            loop.add_coedge(t0);
+        }
+        {
+            CoEdge t1{static_cast<EdgeId>(e_cw1), true};
+            t1.set_p_curve(
+                line_rr({f0 - kPi, h_prime}, {f0, h_prime}));
+            loop.add_coedge(t1);
+        }
+        const Face& src = body.solid.shell().faces()[wall];
+        Face face(std::move(surf));
+        face.add_loop(std::move(loop));
+        face.set_id(static_cast<FaceId>(wall));
+        face.set_shape_id(src.shape_id());
+        face.set_name(src.name());
+        face.set_provenance(src.provenance());
+        auto& faces_mut = shell.faces_mut();
+        if (faces_mut.size() <= wall) faces_mut.resize(wall + 1);
+        faces_mut[wall] = std::move(face);
+    }
+
+    // ---- THE PIERCED FACE (absorbed, the inner loop re-authored at
+    // the contact circle - the blind door's own convention: the arcs
+    // hole = true, the material outside the profile).
+    {
+        const Face& src = body.solid.shell().faces()[pierced];
+        fillet_detail::PlaneReader pr;
+        src.surface()->accept(pr);
+        const PlaneSurface& pl = *pr.plane;
+        const auto dom = [&pl](const math::Vec3d& P) {
+            return fillet_detail::dom_of(pl, P);
+        };
+        const math::Vec2d c2 = dom(math::Vec3d{cx, cy, z_rim});
+        Face face(std::make_shared<PlaneSurface>(pl));
+        {
+            Loop outer;
+            for (const auto& ce : src.loops()[0].coedges()) {
+                const std::size_t mapped = emap[ce.edge()];
+                if (mapped == E0)
+                    refuse("the dead column's edge appeared in the "
+                           "pierced face's outer loop - report this as "
+                           "a kernel bug.");
+                CoEdge nc{static_cast<EdgeId>(mapped), ce.reversed()};
+                if (ce.p_curve() != nullptr) nc.set_p_curve(*ce.p_curve());
+                outer.add_coedge(nc);
+            }
+            outer.set_outer(src.loops()[0].is_outer());
+            face.add_loop(std::move(outer));
+        }
+        {
+            Loop inner;
+            inner.set_outer(false);
+            const math::Vec3d S_hi{cx + R, cy, z_rim};
+            const math::Vec3d A_hi{cx - R, cy, z_rim};
+            {
+                // cp0: the -Y half, A_hi -> S_hi: a SEMICIRCLE, sweep
+                // pi (the blind door's own arcs), hole = true.
+                CoEdge ce{static_cast<EdgeId>(e_cp0), false};
+                const math::Vec2d s = dom(A_hi);
+                ce.set_p_curve(pcurve_arc(
+                    c2, R, /*hole=*/true,
+                    std::atan2(s.y - c2.y, s.x - c2.x), kPi));
+                inner.add_coedge(ce);
+            }
+            {
+                CoEdge ce{static_cast<EdgeId>(e_cp1), false};
+                const math::Vec2d s = dom(S_hi);
+                ce.set_p_curve(pcurve_arc(
+                    c2, R, /*hole=*/true,
+                    std::atan2(s.y - c2.y, s.x - c2.x), kPi));
+                inner.add_coedge(ce);
+            }
+            face.add_loop(std::move(inner));
+        }
+        face.set_id(static_cast<FaceId>(pierced));
+        face.set_shape_id(src.shape_id());
+        face.set_name(src.name());
+        face.set_provenance(src.provenance());
+        auto& faces_mut = shell.faces_mut();
+        if (faces_mut.size() <= pierced) faces_mut.resize(pierced + 1);
+        faces_mut[pierced] = std::move(face);
+    }
+
+    // ---- THE KEPT FACES: verbatim (the ids remapped through the
+    // compaction - the blind door copies its operand verbatim).
+    for (std::size_t f = 0; f < F0; ++f) {
+        if (f == pierced || f == wall) continue;
+        const Face& src = body.solid.shell().faces()[f];
+        fillet_detail::PlaneReader pr;
+        src.surface()->accept(pr);
+        if (pr.plane == nullptr)
+            refuse("a kept face is not planar - the class signature is "
+                   "the blind door's (six planes, one cylinder). "
+                   "Remedy: report the body's construction.");
+        Face face(std::make_shared<PlaneSurface>(*pr.plane));
+        for (const auto& loop : src.loops()) {
+            Loop nl;
+            nl.set_outer(loop.is_outer());
+            for (const auto& ce : loop.coedges()) {
+                const std::size_t mapped = emap[ce.edge()];
+                if (mapped == E0)
+                    refuse("the dead column's edge appeared in a kept "
+                           "face - report this as a kernel bug.");
+                CoEdge nc{static_cast<EdgeId>(mapped), ce.reversed()};
+                if (ce.p_curve() != nullptr) nc.set_p_curve(*ce.p_curve());
+                nl.add_coedge(nc);
+            }
+            face.add_loop(std::move(nl));
+        }
+        face.set_id(static_cast<FaceId>(f));
+        face.set_shape_id(src.shape_id());
+        face.set_name(src.name());
+        face.set_provenance(src.provenance());
+        auto& faces_mut = shell.faces_mut();
+        if (faces_mut.size() <= f) faces_mut.resize(f + 1);
+        faces_mut[f] = std::move(face);
+    }
+
+    // ---- THE FLANK IS BORN: the TorusZ quarter window, the walk CCW
+    // in the domain (the periodic seam riding the single loop TWICE -
+    // the wall's own pattern, ADR-0023).
+    {
+        auto surf = std::make_shared<TorusZSurface>(
+            math::Vec2d{cx, cy}, R, radius, z_c);
+        const double v_lo = kPi / 2.0, v_hi = kPi;
+        Loop loop;
+        // The walk is REGION-ON-RIGHT (interior_left = false), the
+        // wall's own authoring: the flank's material lies INSIDE the
+        // tube - BEHIND the surface, like the wall's own - so with the
+        // right-handed frame the region rides the RIGHT of the walk.
+        // The rectangle runs (0, pi/2) UP the seam's meridian to
+        // (0, pi), RIGHT along the wall contact to (2pi, pi), DOWN to
+        // (2pi, pi/2), and LEFT along the plane contact home: every
+        // contact co-edge thereby rides OPPOSITE its landing face's
+        // copy (the RACCOLTO's azimuth XOR), and the seam rides the
+        // single loop TWICE.
+        {
+            CoEdge ce{static_cast<EdgeId>(e_fseam), false};
+            ce.set_p_curve(line_rr({0.0, v_lo}, {0.0, v_hi}));
+            loop.add_coedge(ce);
+        }
+        {
+            CoEdge ce{static_cast<EdgeId>(e_cw1), false};
+            ce.set_p_curve(line_rr({0.0, v_hi}, {kPi, v_hi}));
+            loop.add_coedge(ce);
+        }
+        {
+            CoEdge ce{static_cast<EdgeId>(e_cw0), false};
+            ce.set_p_curve(line_rr({kPi, v_hi}, {kTwoPi, v_hi}));
+            loop.add_coedge(ce);
+        }
+        {
+            CoEdge ce{static_cast<EdgeId>(e_fseam), true};
+            ce.set_p_curve(line_rr({kTwoPi, v_hi}, {kTwoPi, v_lo}));
+            loop.add_coedge(ce);
+        }
+        {
+            CoEdge ce{static_cast<EdgeId>(e_cp0), true};
+            ce.set_p_curve(line_rr({kTwoPi, v_lo}, {kPi, v_lo}));
+            loop.add_coedge(ce);
+        }
+        {
+            CoEdge ce{static_cast<EdgeId>(e_cp1), true};
+            ce.set_p_curve(line_rr({kPi, v_lo}, {0.0, v_lo}));
+            loop.add_coedge(ce);
+        }
+        Face face(std::move(surf));
+        face.add_loop(std::move(loop));
+        face.set_id(static_cast<FaceId>(F0));
+        face.set_provenance(prov);
+        // ---- THE NAMES (ADR-0039 D3, the m2 stamping one class over).
+        if (naming.body != nullptr &&
+            body.solid.shell().faces()[pierced].shape_id()
+                    .subshape.depth > 0 &&
+            body.solid.shell().faces()[wall].shape_id()
+                    .subshape.depth > 0) {
+            const Face& op_plane =
+                body.solid.shell().faces()[pierced];
+            const Face& op_wall = body.solid.shell().faces()[wall];
+            // The second creator's rule: the leg whose feature equals
+            // far_feature renders through far_body (m3), the others
+            // through body (the m2 semantics).
+            const auto table_of = [&](const Face& operand) {
+                return (naming.far_body != nullptr &&
+                        operand.shape_id().feature == naming.far_feature)
+                           ? naming.far_body
+                           : naming.body;
+            };
+            // THREE bindings (the subtract's intra-body pattern):
+            // the pierced face (the box's tables), the wall (the
+            // extrude's tables), the fillet itself (the flank's own
+            // nested render) - the slots address them by index.
+            naming::OperandBinding fil_operands[3] = {
+                {op_plane.shape_id().feature, table_of(op_plane)},
+                {op_wall.shape_id().feature, table_of(op_wall)},
+                {naming.feature, nullptr}};
+            const naming::OperationNaming fil_decl{
+                naming::FeatureKind::Fillet,
+                naming::kFilletFaceRoles, naming::kFilletEdgeRoles,
+                fil_operands};
+            fil_operands[2].naming = &fil_decl;
+            const auto leg = [](geometry::SubshapeRef ref,
+                                const Face& operand) {
+                for (std::uint8_t k = 0;
+                     k < operand.shape_id().subshape.depth; ++k)
+                    ref = ref.push(
+                        operand.shape_id().subshape.path[k]);
+                return ref;
+            };
+            geometry::SubshapeRef ref =
+                geometry::SubshapeRef{}.push(naming::kFilFlankRimRole);
+            ref = leg(ref, op_plane);
+            ref = leg(ref, op_wall);
+            face.set_shape_id({naming.feature, ref, {}});
+            face.set_name(naming::render_name(
+                naming.feature, ref, fil_decl.faces()));
+            // The two contact circles (the tangent wires, the level
+            // ABSENT) and the flank's own seam.
+            const struct {
+                std::size_t edge0, edge1;
+                const Face* landing;
+            } wires[2] = {
+                {e_cp0, e_cp1, &op_plane},
+                {e_cw0, e_cw1, &op_wall}};
+            for (const auto& w : wires) {
+                const bool on_wall = (w.landing == &op_wall);
+                geometry::SubshapeRef wref =
+                    geometry::SubshapeRef{}.push(
+                        on_wall ? naming::kFilIsectWallRole
+                                : naming::kFilIsectPlaneRole);
+                wref = leg(wref, *w.landing);
+                wref = wref.push(naming::kFilFlankRimRole);
+                wref = leg(wref, op_plane);
+                wref = leg(wref, op_wall);
+                for (const std::size_t idx : {w.edge0, w.edge1}) {
+                    Rr->edges[idx].set_shape_id(
+                        {naming.feature, wref, {}});
+                    Rr->edges[idx].set_name(naming::render_name(
+                        naming.feature, wref, fil_decl.edges()));
+                }
+            }
+            {
+                geometry::SubshapeRef sref =
+                    geometry::SubshapeRef{}.push(
+                        naming::kFilSeamRole);
+                sref = sref.push(naming::kFilFlankRimRole);
+                sref = leg(sref, op_plane);
+                sref = leg(sref, op_wall);
+                Rr->edges[e_fseam].set_shape_id(
+                    {naming.feature, sref, {}});
+                Rr->edges[e_fseam].set_name(naming::render_name(
+                    naming.feature, sref, fil_decl.edges()));
+            }
+        }
+        shell.add_face(std::move(face));
+    }
+
+    // ---- THE OUTPUT GATE (the hard postconditions, the m2 set one
+    // family over: the counts, the XOR, the chi, the H).
+    link_radial_edges(*Rr);
+    if (!loops_are_closed(*Rr))
+        throw std::runtime_error(
+            "fillet_rim_edge: postcondition failed - a loop does not "
+            "chain (an assembly defect in the rim fillet's re-authored "
+            "walks; report this as a kernel bug)");
+    if (!is_closed_orientable(*Rr))
+        throw std::runtime_error(
+            "fillet_rim_edge: postcondition failed - the closed-"
+            "orientable contract broke (every edge exactly two "
+            "opposite co-edges; report this as a kernel bug)");
+    for (const auto& e : Rr->edges) {
+        if (e.coedges().size() != 2 ||
+            e.coedges()[0]->reversed() == e.coedges()[1]->reversed())
+            throw std::runtime_error(
+                "fillet_rim_edge: postcondition failed - edge " +
+                std::to_string(e.id()) +
+                " is not manifold-with-XOR (an assembly defect; "
+                "report this as a kernel bug)");
+    }
+    if (Rr->vertex_count() != V0 - 2 + 4 ||
+        Rr->edge_count() != E0 - 2 + 5 ||
+        Rr->face_count() != F0 + 1)
+        throw std::runtime_error(
+            "fillet_rim_edge: postcondition failed - the counts "
+            "moved (the class's own arithmetic is V-2+4 / E-2+5 / "
+            "F+1; report this as a kernel bug)");
+    if (inner_loop_count(*Rr) != 1)
+        throw std::runtime_error(
+            "fillet_rim_edge: postcondition failed - the pierced face "
+            "keeps exactly one inner loop (now the a+r circle; report "
+            "this as a kernel bug)");
+    if (euler_characteristic(*Rr) != euler_characteristic(body))
+        throw std::runtime_error(
+            "fillet_rim_edge: postcondition failed - chi moved (the "
+            "fillet is chi-flat by construction; report this as a "
+            "kernel bug)");
+    return Rr;
 }
 
 } // namespace CAD_0::brep

@@ -1771,16 +1771,54 @@ DescentTable fillet_descent(const BRepBody& result,
                 return static_cast<std::int64_t>(i);
         return static_cast<std::int64_t>(-1);
     };
-    // The operand's edge by stamp (the survivors keep their stamps).
-    const auto operand_edge_of = [&](const Edge& e) {
-        if (e.shape_id().subshape.depth == 0)
-            return static_cast<std::int64_t>(-1);
+    // The operand's edges by stamp (the survivors keep their stamps).
+    // A seam-wired arc PAIR answers to ONE logical name (the morse-5
+    // register's rule): when several operand edges carry the same
+    // stamp, the match disambiguates by the stored pair's POSITIONS
+    // (the pair's two halves share the joints) and never lets two
+    // result rows claim the same operand row (the closure's floor).
+    const auto operand_edge_candidates = [&](const Edge& e) {
+        std::vector<std::size_t> out;
+        if (e.shape_id().subshape.depth == 0) return out;
         for (std::size_t i = 0; i < operand.edges.size(); ++i) {
             const auto& id = operand.edges[i].shape_id();
             if (id.subshape.depth > 0 &&
                 id.feature == e.shape_id().feature &&
                 id.subshape == e.shape_id().subshape)
-                return static_cast<std::int64_t>(i);
+                out.push_back(i);
+        }
+        return out;
+    };
+    std::vector<bool> edge_taken(operand.edges.size(), false);
+    const auto operand_edge_of = [&](const Edge& e) {
+        const auto cands = operand_edge_candidates(e);
+        if (cands.empty()) return static_cast<std::int64_t>(-1);
+        const math::Vec3d rp[2] = {
+            result.vertices[static_cast<std::size_t>(e.vertex(0))]
+                .position(),
+            result.vertices[static_cast<std::size_t>(e.vertex(1))]
+                .position()};
+        for (const std::size_t c : cands) {
+            if (edge_taken[c]) continue;
+            const Edge& oe = operand.edges[c];
+            const math::Vec3d op[2] = {
+                operand.vertices[static_cast<std::size_t>(oe.vertex(0))]
+                    .position(),
+                operand.vertices[static_cast<std::size_t>(oe.vertex(1))]
+                    .position()};
+            const bool same = pos_eq(rp[0], op[0]) && pos_eq(rp[1], op[1]);
+            const bool flipped =
+                pos_eq(rp[0], op[1]) && pos_eq(rp[1], op[0]);
+            if (same || flipped) {
+                edge_taken[c] = true;
+                return static_cast<std::int64_t>(c);
+            }
+        }
+        for (const std::size_t c : cands) {
+            if (!edge_taken[c]) {
+                edge_taken[c] = true;
+                return static_cast<std::int64_t>(c);
+            }
         }
         return static_cast<std::int64_t>(-1);
     };
@@ -1798,16 +1836,21 @@ DescentTable fillet_descent(const BRepBody& result,
         }
         return static_cast<std::int64_t>(-1);
     };
-    // A face's walk as a vertex-position sequence (the loop's own
-    // chain — the read the kept/absorbed split makes).
+    // A face's walk as a vertex-position sequence over ALL its loops
+    // (the m3 fix: the m2 read took loops()[0] alone — the box faces
+    // carry one loop, so nothing moved; the pierced face carries an
+    // inner loop TOO, and the m3 fillet moves the INNER one (the
+    // contact circle) while the outer stays: the read must cover
+    // every loop or the absorbed mark would be lost).
     const auto walk_positions =
         [&](const BRepBody& body, const Face& face) {
             std::vector<math::Vec3d> out;
-            for (const auto& ce : face.loops()[0].coedges())
-                out.push_back(
-                    body.vertices[static_cast<std::size_t>(
-                                      ce.start_vertex(body.edges))]
-                        .position());
+            for (const auto& loop : face.loops())
+                for (const auto& ce : loop.coedges())
+                    out.push_back(
+                        body.vertices[static_cast<std::size_t>(
+                                          ce.start_vertex(body.edges))]
+                            .position());
             return out;
         };
     const auto walks_equal =

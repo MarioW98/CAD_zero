@@ -470,6 +470,14 @@ is authored") is REDEEMED — the day is m3 (ADR-0039 D1.2), the
 cone's riding-or-waiting the review's one named open point, its
 decision recorded in the m3 register.
 
+*(Amended 2026-11-04, G2-u3 m3's landing: the day CAME — the torus's
+first trimming loop authored (the fillet's toroidal flank, the born
+TorusZSurface writer), the pair flipped with its discriminating
+pins, and the review's named open point decided: the cone RIDES
+with the family, the register's economy — the correction made once,
+the pins on both, no cone writer yet. The m3 register verbalizes
+the verdict.)*
+
 ### D4. The degenerates of the fillet — each with a disposition, pinned
 
 - **Radius too large for the topology** — three named families,

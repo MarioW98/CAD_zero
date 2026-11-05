@@ -602,17 +602,59 @@ inline constexpr OperandSlot kFilFlankSlots[2] = {
     {0, false, RoleForm::Bare},  // the edge's first-co-edge face
     {0, false, RoleForm::Bare},  // the second (the shell's order)
 };
+// THE RIM FLANK'S SLOTS (G2-u3 m3, ADR-0039 D1.2): the blind body's
+// two face creators need TWO bindings - the pierced face (the box's
+// tables, bare: top) and the wall (the extrude's tables, indexed:
+// lat(i)) - the same row-per-class pattern the subtract's four
+// isect rows practice. The flank row APPENDS; the m2 row's index
+// stays frozen by the m2 goldens.
+inline constexpr OperandSlot kFilFlankRimSlots[2] = {
+    {0, false, RoleForm::Bare},      // the pierced face (bare: top)
+    {1, false, RoleForm::ArgIndex},  // the wall (indexed: lat(i))
+};
 inline constexpr OperandSlot kFilIsectSlots[2] = {
     {0, false, RoleForm::Bare},  // the landing face (the adjacent)
     {1, false, RoleForm::Bare},  // the flank — the SAME feature's
                                  // born face (the same-feature
                                  // extension, born earlier)
 };
-inline constexpr RoleEntry kFilletFaceRoles[1] = {
-    {"flank", RoleForm::Relational, nullptr, nullptr, kFilFlankSlots},
+// The rim class's two tangent wires (G2-u3 m3): the plane contact
+// lands on the pierced face (bare), the wall contact on the wall
+// (indexed) - one row each, the level ABSENT both times.
+inline constexpr OperandSlot kFilIsectPlaneSlots[2] = {
+    {0, false, RoleForm::Bare},      // the pierced landing (top)
+    {2, false, RoleForm::Bare},      // the flank (the same feature)
 };
-inline constexpr RoleEntry kFilletEdgeRoles[1] = {
+inline constexpr OperandSlot kFilIsectWallSlots[2] = {
+    {1, false, RoleForm::ArgIndex},  // the wall landing (lat(i))
+    {2, false, RoleForm::Bare},      // the flank (the same feature)
+};
+inline constexpr OperandSlot kFilSeamSlots[1] = {
+    {2, false, RoleForm::Bare},  // the flank itself — the seam
+                                 // is the flank's own (G2-u3 m3: the
+                                 // periodic closure the box class's
+                                 // bounded patch never carries)
+};
+inline constexpr RoleEntry kFilletFaceRoles[2] = {
+    {"flank", RoleForm::Relational, nullptr, nullptr, kFilFlankSlots},
+    // The rim flank (G2-u3 m3): the pierced face x the wall, the
+    // same token, its own slots - the row APPENDS, the m2 index
+    // frozen (the subtract's own four-isect pattern).
+    {"flank", RoleForm::Relational, nullptr, nullptr,
+     kFilFlankRimSlots},
+};
+inline constexpr RoleEntry kFilletEdgeRoles[4] = {
     {"isect", RoleForm::Relational, nullptr, nullptr, kFilIsectSlots},
+    {"seam", RoleForm::Relational, nullptr, nullptr,
+     kFilSeamSlots},  // the flank's own seam (G2-u3 m3, ADR-0039
+                      // D3: the sub's seam form, the same-feature
+                      // operand riding the same extension)
+    // The rim class's two tangent wires (G2-u3 m3): the level
+    // ABSENT both times (the tangency IS the level).
+    {"isect", RoleForm::Relational, nullptr, nullptr,
+     kFilIsectPlaneSlots},
+    {"isect", RoleForm::Relational, nullptr, nullptr,
+     kFilIsectWallSlots},
 };
 
 // The fillet's TYPE-level declaration: the operand bindings are
@@ -627,6 +669,16 @@ inline constexpr OperationNaming kFilletNaming{
 inline constexpr std::uint32_t kFilFlankRole = 0;  // faces: flank
 inline constexpr std::uint32_t kFilIsectRole = 0;  // edges: isect (the
 // tangent wires, the level absent — the tangency IS the level)
+inline constexpr std::uint32_t kFilSeamRole = 1;   // edges: the flank's
+// own seam (G2-u3 m3, ADR-0039 D3: 'fil#F:seam[<the flank>]' —
+// the level absent like every isect, the sub's seam form)
+inline constexpr std::uint32_t kFilFlankRimRole = 1;  // faces: the rim
+// flank (G2-u3 m3: the m2's flank row 0 stays frozen, the rim row
+// APPENDS - the subtract's own pattern)
+inline constexpr std::uint32_t kFilIsectPlaneRole = 2;  // edges: the
+// plane contact's wire (the pierced landing, bare)
+inline constexpr std::uint32_t kFilIsectWallRole = 3;   // edges: the
+// wall contact's wire (the wall landing, indexed)
 
 // ---------------------------------------------------------------------------
 // THE ROOT REFERENCE — the authored roots the tavola's FROM names

@@ -675,6 +675,62 @@ void bind_brep(nb::module_& m) {
         "kernel makes (the band's bound carried, the class families\n"
         "by name - diagnosis + remedy verbatim).");
 
+    // THE FILLET, CLASS 2 — IL RIM CIRCOLARE DEL FORO (G2-u3 m3,
+    // ADR-0039 D1.2): the rolling ball on the blind hole's convex
+    // top rim, the toroidal flank born in the rim's place. The
+    // naming context: the fillet's own DAG id (fil#5), the body's
+    // creating kind for its box faces, and — the m3 addition — the
+    // SECOND creator's pair (far_feature + far_body_kind) for the
+    // hole wall (the blind body's two creators, the leg whose
+    // feature matches far_feature rendering through the far table).
+    brep_mod.def(
+        "fillet_rim_edge",
+        [](const BRepBody& body,
+           const CAD_0::geometry::ShapeId& edge, double radius,
+           std::uint64_t feature,
+           std::optional<CAD_0::brep::naming::FeatureKind> body_kind,
+           std::uint64_t far_feature,
+           std::optional<CAD_0::brep::naming::FeatureKind> far_body_kind,
+           double tol) {
+            CAD_0::brep::FilletNaming naming{};
+            if (body_kind.has_value() && far_body_kind.has_value()) {
+                naming = CAD_0::brep::FilletNaming{
+                    CAD_0::geometry::FeatureId{feature},
+                    naming_table_of(*body_kind),
+                    CAD_0::geometry::FeatureId{far_feature},
+                    naming_table_of(*far_body_kind)};
+            } else if (body_kind.has_value() != far_body_kind.has_value()) {
+                throw std::invalid_argument(
+                    "fillet_rim_edge: the naming context is complete or "
+                    "absent - pass BOTH creators' kinds (body_kind=Box, "
+                    "far_feature=<the wall's DAG id>, far_body_kind="
+                    "Extrude) or neither (the unnamed mode); a half "
+                    "context would name one operand's side and leave "
+                    "the other silent.");
+            }
+            return CAD_0::brep::fillet_rim_edge(body, edge, radius,
+                                               naming, tol);
+        },
+        nb::arg("body"), nb::arg("edge"), nb::arg("radius"),
+        nb::arg("feature") = 0, nb::arg("body_kind") = std::nullopt,
+        nb::arg("far_feature") = 0,
+        nb::arg("far_body_kind") = std::nullopt,
+        nb::arg("tol") = 1e-6,
+        "The constant-radius fillet on a blind hole's convex top rim\n"
+        "(ADR-0039 D1.2, class 2: plane x cylinder, the convex corner\n"
+        "- the guide case, the u2 blind body with its pierced rim\n"
+        "filleted at r=0.25, answers 14/20/9, H=1, chi=2, volume\n"
+        "(8 - 0.375*pi) - 2*pi*[a*r^2*(1-pi/4) + r^3*(5/6-pi/4)]).\n"
+        "The `edge` is the structural ShapeId of the RIM (the by-name\n"
+        "reference, never an address; the rim is the seam-wired arc\n"
+        "PAIR - one logical name, two materialized edges, taken whole).\n"
+        "With the naming context (feature + body_kind + far_feature +\n"
+        "far_body_kind) the born face, the two contact circles and the\n"
+        "flank's own seam carry the relational names; the shrink faces\n"
+        "KEEP theirs. Raises ValueError for every refusal the C++\n"
+        "kernel makes (the bands' bounds carried, the concave family\n"
+        "named, the seam refused - diagnosis + remedy verbatim).\n");
+
     // The feature kinds the naming grammar speaks (ADR-0036 D1) —\n"
     // the operand-table selector of exact_subtract's naming context.\n""
     nb::enum_<CAD_0::brep::naming::FeatureKind>(brep_mod, "FeatureKind")
