@@ -2,8 +2,10 @@
 
 All notable changes to the **software axis** of CAD_0 are documented
 here — one entry per tagged release, content frozen as published.
-The **format axis** (the `.CAD_0` document format, today v0.5.0 — the
-constraints ride the sketch payload as named fields, ADR-0040 D3.1)
+The **format axis** (the `.CAD_0` document format, today v0.6.0 — the
+fillet recipe rides named fields: the edge-reference string verbatim
++ the radius its typed field, ADR-0039 D6; the constraints rode at
+v0.5.0, ADR-0040 D3.1)
 has its own changelog: the [ADR-0007](docs/adr/0007-native-format-versioning.md)
 series, where every bump has its ADR and its migrator. The two axes
 are independent — see *The two version axes* in
