@@ -973,6 +973,26 @@ void bind_scene(nb::module_& m) {
              "Edit the fillet's radius (the class-1 SILENT edit, one "
              "scene mutation): returns 'reference_resolved' when the "
              "feature re-ran, or the refusal text when it did not.")
+        .def("restore_fillet_node",
+             [](scene::Scene& s, std::uint32_t node_id,
+                const std::string& name,
+                const std::string& edge, double radius) {
+                 brep::FilletRecipe r;
+                 r.edge_reference = edge;
+                 r.radius = radius;
+                 return s.restore_fillet_node(node_id, name,
+                                              std::move(r));
+             },
+             nb::arg("node_id"), nb::arg("name"), nb::arg("edge"),
+             nb::arg("radius"),
+             "Re-create a fillet feature node with a PINNED id "
+             "(command redo of the application, the undo of a "
+             "deletion — the restore_operation_node pattern, G2-u3 "
+             "m5): the recipe re-materializes through the find, the "
+             "id the tree and the stacked commands know is the id "
+             "back. Raises RuntimeError if the id is in use (never a "
+             "silent rebind) and ValueError/RuntimeError for every "
+             "kernel refusal (diagnosis + remedy verbatim).")
         .def("restore_sdf_node",
              [](scene::Scene& s, std::uint32_t node_id,
                 const std::string& name, sdf::SDFBody body) {

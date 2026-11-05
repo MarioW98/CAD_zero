@@ -1377,6 +1377,51 @@ public:
         return nodes_.back().id;
     }
 
+    // Id-stable re-creation of a FILLET node (command redo and the
+    // delete-undo's other half, G2-u3 m5 — the rung's own prerequisite,
+    // the restore_sketch_node/restore_operation_node pattern): same
+    // contract as add_fillet_node but with a PINNED id, so the redo of
+    // the application and the undo of a deletion land on the SAME id
+    // the tree rows, the panel and the stacked commands already know —
+    // the LIFO discipline (ADR-0027 D2) holds for the fillet too: a
+    // later command's captured node id must find the node back.
+    std::uint32_t restore_fillet_node(std::uint32_t id,
+                                      const std::string& name,
+                                      brep::FilletRecipe recipe) {
+        if (recipe.edge_reference.empty())
+            throw std::invalid_argument(
+                "Scene::restore_fillet_node: the recipe's "
+                "edge-reference is empty - the reference is the "
+                "grammar's own form, the pick's own answer.");
+        if (!(recipe.radius > 0.0) || !std::isfinite(recipe.radius))
+            throw std::invalid_argument(
+                "Scene::restore_fillet_node: the recipe's radius must "
+                "be finite and > 0 (the typed value class).");
+        if (get_node(id) != nullptr)
+            throw std::runtime_error(
+                "Scene::restore_fillet_node: id " + std::to_string(id) +
+                " is already in use - restore-style insertion never "
+                "rebinds (ADR-0027 D2)");
+        std::vector<SceneNode*> live;
+        live.reserve(nodes_.size());
+        for (SceneNode& n : nodes_) live.push_back(&n);
+        // Materialize FIRST, install after (the add_fillet_node
+        // contract: a refused re-creation touches nothing).
+        SceneNode node;
+        node.id = id;
+        node.kind = NodeKind::Fillet;
+        node.fillet = std::move(recipe);
+        if (!attach_fillet(node, live, nullptr))
+            throw std::invalid_argument(node.fillet_refusal);
+        node.name = name.empty()
+                        ? ("Fillet_" + std::to_string(node.id))
+                        : name;
+        nodes_.push_back(std::move(node));
+        if (next_id_ <= id) next_id_ = id + 1;
+        notify(SceneChange::NodeAdded, id);
+        return id;
+    }
+
     // The radius edit AFTER the load or at any later time: ONE scene
     // mutation, the recipe's own parameter (the class-1 SILENT edit —
     // the reference taken once, the re-run answers through the find;

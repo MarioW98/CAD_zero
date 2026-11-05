@@ -286,11 +286,17 @@ class MainWindow(QMainWindow):
 
         # ----- Feature menu -----
         # The feature-creation commands: Extrude consumes a sketch and
-        # produces the prism operation node (ADR-0030 D5.5/D5.6).
+        # produces the prism operation node (ADR-0030 D5.5/D5.6);
+        # Fillet consumes an EDGE BY NAME and substitutes the flank in
+        # its place (ADR-0039 D6 rung 5 — the first exact-side feature
+        # reachable from the workbench).
         feature_menu = self.menuBar().addMenu("&Feature")
         self._extrude_action = QAction("&Extrude...", self)
         self._extrude_action.triggered.connect(self.on_extrude)
         feature_menu.addAction(self._extrude_action)
+        self._fillet_action = QAction("F&illet...", self)
+        self._fillet_action.triggered.connect(self.on_fillet)
+        feature_menu.addAction(self._fillet_action)
 
         # ----- Constraints menu (G4 m3, ADR-0040 D4) -----
         # THE SELECTION-DRIVEN MENU, the registry pattern: the actions
@@ -522,6 +528,76 @@ class MainWindow(QMainWindow):
         # re-reflects visibility, the checked action and the hint.
         self._tabs.currentChanged.connect(self._on_tab_changed)
 
+    def on_fillet(self) -> None:
+        """Feature → Fillet (ADR-0039 D6 rung 5, G2-u3 m5): the edge
+        picker — the operand's NAMED edges from the kernel's own
+        query, the reference shown CHARACTER FOR CHARACTER (the user
+        sees the name the kernel uses), the radius the authored
+        parameter. The application is ONE undo command; every refusal
+        is the kernel's own words with the bound carried (the dialog
+        quotes them, never a paraphrase)."""
+        if not self._has_kernel:
+            QMessageBox.warning(self, "No kernel",
+                                "C++ kernel not available.")
+            return
+        from .fillet_dialog import FilletDialog
+        dialog = FilletDialog(
+            self._scene, self._selected_node_id,
+            apply_route=self._apply_fillet, parent=self)
+        dialog.exec()
+
+    def _apply_fillet(self, edge_reference: str, radius: float) -> int:
+        """The dialog's Apply route: the fillet node created from the
+        recipe (the edge-reference STRING verbatim + the radius), ONE
+        undo command — id-stable on the redo (the
+        restore_fillet_node door, the sketch/subtract/extrude
+        pattern: the tree rows, the panel and the stacked commands
+        know the id back). A refusal raises THROUGH the command (the
+        stack's push destroys the un-executed command — nothing
+        pushed, nothing written, the scene untouched); the dialog
+        quotes the words.
+        """
+        state = {"node_id": None}
+
+        def execute():
+            if state["node_id"] is None:
+                nid = self._scene.add_fillet_node("", edge_reference,
+                                                  radius)
+            else:
+                # Redo: the feature returns with its ORIGINAL id
+                # (id-stable, ADR-0027 D2 — references never rebind).
+                nid = self._scene.restore_fillet_node(
+                    state["node_id"], "", edge_reference, radius)
+            state["node_id"] = nid
+            node = self._scene.get_node(nid)
+            name = node.name if node is not None else "Fillet"
+            self._node_params[nid] = {"radius": float(radius)}
+            self._node_types[nid] = "feat_fillet"
+            item = QTreeWidgetItem([name, "FIL"])
+            item.setData(0, Qt.UserRole, nid)
+            self._feature_tree.addTopLevelItem(item)
+            # The new feature is the selection (the panel shows the
+            # recipe's surface — the radius editor rides the row).
+            self._feature_tree.setCurrentItem(item)
+            self._refresh_viewport()
+            self._status.showMessage(f"Created {name}", 3000)
+
+        def undo():
+            nid = state["node_id"]
+            if nid is not None and self._scene.remove_node(nid):
+                self._node_params.pop(nid, None)
+                self._node_types.pop(nid, None)
+                self._remove_tree_row(nid)
+                self._property_panel.clear()
+                self._refresh_viewport()
+
+        if self._command_stack:
+            self._command_stack.push(
+                execute, undo, f"Fillet {edge_reference}")
+        else:
+            execute()
+        return state["node_id"]
+
     def _setup_statusbar(self) -> None:
         self._status = QStatusBar(self)
         self.setStatusBar(self._status)
@@ -704,6 +780,14 @@ class MainWindow(QMainWindow):
             elif node.kind == "sketch":
                 type_label = "Sketch"
                 type_key = None
+            elif node.kind == "fillet":
+                # The fillet's own row (G2-u3 m5): the naming plane's
+                # three-letter token `fil`, the tree's dispatch
+                # vocabulary beside CSG/FEAT. The recipe IS the editing
+                # surface (the radius), carried below.
+                type_label = "FIL" + (
+                    "!" if node.fillet_refusal else "")
+                type_key = "feat_fillet"
             else:
                 type_label = "Mesh" if node.kind == "mesh" else "SDF"
                 type_key = None
@@ -716,6 +800,14 @@ class MainWindow(QMainWindow):
                 continue
             if node.kind == "mesh":
                 # Imported geometry: no editing metadata, no defaults.
+                continue
+            if node.kind == "fillet":
+                # The recipe's own fields (m4): the radius the authored
+                # parameter, the reference read-only context (shown by
+                # the selection handler below).
+                self._node_types[node.id] = "feat_fillet"
+                self._node_params[node.id] = {
+                    "radius": float(node.fillet_radius)}
                 continue
             if op is not None:
                 self._node_types[node.id] = type_key
@@ -1587,9 +1679,19 @@ class MainWindow(QMainWindow):
         params = dict(self._node_params.get(node_id, {}))
         is_mesh = False
         is_sketch = False
+        is_fillet = False
         node = self._scene.get_node(node_id)
         if node is not None and node.kind == "mesh":
             is_mesh = True
+        if node is not None and node.kind == "fillet":
+            # The fillet's recipe is the whole node (G2-u3 m5): the
+            # edge-reference STRING and the radius — the body is
+            # derived state, re-materialized by the re-creation's own
+            # find. Snapshot both for the undo.
+            is_fillet = True
+            fillet_edge = node.fillet_edge
+            fillet_radius = float(node.fillet_radius)
+            fillet_name = node.name
         if node is not None and node.kind == "sketch":
             # A sketch's recipe is its entity payload AND its
             # constraint list (G4 m4): snapshot both for the
@@ -1638,6 +1740,30 @@ class MainWindow(QMainWindow):
                 # Imported meshes are not re-creatable parametrically
                 # (pre-existing gap, unchanged by Phase F: delete of a
                 # mesh node is not undoable today).
+                return
+            if is_fillet:
+                # The fillet returns WITH ITS ORIGINAL ID and its full
+                # recipe (the restore_fillet_node door, the
+                # sketch/subtract pattern): the re-materialization runs
+                # through the find, the id the tree and the stacked
+                # commands know is the id back.
+                try:
+                    new_fid = self._scene.restore_fillet_node(
+                        nid, fillet_name, fillet_edge, fillet_radius)
+                except (ValueError, RuntimeError):
+                    return  # the operand died meanwhile: honest, the
+                            # delete stands
+                self._node_params[new_fid] = {
+                    "radius": fillet_radius}
+                self._node_types[new_fid] = "feat_fillet"
+                new_item = QTreeWidgetItem([fillet_name, "FIL"])
+                new_item.setData(0, Qt.UserRole, new_fid)
+                idx = state.get("tree_item_idx")
+                if idx is not None and 0 <= idx <= self._feature_tree.topLevelItemCount():
+                    self._feature_tree.insertTopLevelItem(idx, new_item)
+                else:
+                    self._feature_tree.addTopLevelItem(new_item)
+                self._refresh_viewport()
                 return
             if is_sketch:
                 # The sketch returns WITH ITS ORIGINAL ID and its full
@@ -1921,7 +2047,11 @@ class MainWindow(QMainWindow):
         """Refresh the operation rows' Type column from the live DAG
         state: 'CSG'/'FEAT' when healthy, 'CSG!'/'FEAT!' when dangling
         (the visible error state — ADR-0027 D2: reported, never
-        silently re-picked)."""
+        silently re-picked). The fillet rows ride the same surface
+        (G2-u3 m5): 'FIL' when the re-run answered, 'FIL!' when it
+        refused (the reference dead, the radius out of band — the
+        refusal text the panel shows on selection, the last good body
+        kept)."""
         if not self._scene:
             return
         for i in range(self._feature_tree.topLevelItemCount()):
@@ -1930,11 +2060,14 @@ class MainWindow(QMainWindow):
             if nid is None:
                 continue
             node = self._scene.get_node(nid)
-            if node is None or not getattr(node, "operation", None):
+            if node is None:
                 continue
-            base = "FEAT" if node.operation.get("type") == "extrude" \
-                else "CSG"
-            it.setText(1, base + "!" if node.operand_missing else base)
+            if getattr(node, "operation", None):
+                base = "FEAT" if node.operation.get("type") == "extrude" \
+                    else "CSG"
+                it.setText(1, base + "!" if node.operand_missing else base)
+            elif node.kind == "fillet":
+                it.setText(1, "FIL!" if node.fillet_refusal else "FIL")
 
     def on_about(self) -> None:
         # License line: backed by the Apache-2.0 LICENSE at the repo
@@ -1981,6 +2114,18 @@ class MainWindow(QMainWindow):
             if not quiet:
                 QMessageBox.critical(self, "Body report", str(exc))
             return None, None, None
+
+        # The fillet's own materialization first (G2-u3 m5): the
+        # exact body the recipe's re-run built — read directly, never
+        # re-derived (the same rule the hybrid's own exact side
+        # follows). A kept-last-good body after a refusal is still THE
+        # body the report speaks about (the visible state).
+        fillet_body = getattr(node, "fillet_brep", None)
+        if fillet_body is not None:
+            return (fillet_body,
+                    "the fillet's materialized body (the recipe's "
+                    "re-run, the exact side alone)",
+                    None)
 
         # The exact materialization first (G1 units 3–4): instant,
         # exact, already built — the SDF twin is the display's own.
@@ -2042,8 +2187,18 @@ class MainWindow(QMainWindow):
         formula has had since unit 1) and genus, as always. A faceted
         body reports its polyhedral numbers under the approximated
         flag — never an exact in disguise.
+
+        G2-u3 m5 (ADR-0039 D6 rung 5 — "the report says everything"):
+        the FILLET node's report grows the two NAME-COLUMN tables
+        (CAD_0.report.face_table_text / edge_table_text — the m2/m3
+        surfaces, pure string building, bit-identical): the flank's
+        FAMILY beside its NAME, the tangent wires with the level
+        absent, the seam, the shrink faces' KEPT names, the honestly
+        unnamed rows beside the named — every value the queries' own
+        answers. The sdf-kind report does NOT move (its goldens
+        pinned); the tables ride the fillet's report alone.
         """
-        if node is None or node.kind != "sdf":
+        if node is None or node.kind not in ("sdf", "fillet"):
             return None
 
         body, label, extras = self._report_brep_for_node(node)
@@ -2065,6 +2220,15 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Body report", str(exc))
                 return None
         text = report_mod.body_report_text(body, label)
+        if node.kind == "fillet":
+            # THE REPORT SAYS EVERYTHING (the m5 rung's own clause):
+            # the counts with the H term, the provenance exact, the
+            # mass — and the NAME COLUMN (the tables the m2/m3
+            # landed for exactly this consumer: the flank's family in
+            # the face query, the born wires, the kept names, the
+            # honest "-" beside them).
+            text += "\n\n" + report_mod.face_table_text(body)
+            text += "\n\n" + report_mod.edge_table_text(body)
         if extras is not None:
             text += "\n" + extras
         return text
@@ -2104,11 +2268,13 @@ class MainWindow(QMainWindow):
                 "if the scene contains exactly one body, it is used "
                 "automatically.")
             return
-        if node.kind != "sdf":
+        if node.kind not in ("sdf", "fillet"):
+            kind_word = "a mesh node" if node.kind == "mesh" \
+                else f"a {node.kind} node"
             QMessageBox.warning(
                 self, "Body report",
-                f"The node \"{node.name}\" is a mesh node, not an SDF node: "
-                "there is no field to convert (ADR-0002).")
+                f"The node \"{node.name}\" is {kind_word}, not an SDF or "
+                "fillet node: there is no field to convert (ADR-0002).")
             return
 
         text = self._body_report_text(node)
@@ -2221,6 +2387,20 @@ class MainWindow(QMainWindow):
                 fields["Solver"] = words if words else "—"
             self._property_panel.set_readonly_fields(node.name, fields)
             return
+        if node.kind == "fillet":
+            # The fillet's own surface (G2-u3 m5, ADR-0039 D6 rung 5):
+            # the radius EDITABLE (the authored parameter — the class-1
+            # silent edit route), the reference read-only (the string
+            # verbatim, character for character), the born names beside
+            # the geometry (the kernel's own queries, the shape_id's
+            # feature the structural match — never a name parse), the
+            # counts and the volume from the report module, the refusal
+            # the visible state when the re-run refused.
+            params = {"radius": float(node.fillet_radius)}
+            self._property_panel.set_parameters_and_readonly(
+                node.name, params,
+                self._fillet_readonly_fields(node))
+            return
         # Operation node (ADR-0027 D5): the placement offsets are the
         # editable params; the operand summary (names + ids) and any
         # dangling error are read-only context below them. The
@@ -2307,6 +2487,88 @@ class MainWindow(QMainWindow):
                 f"{inertia[2][2]:.6g}"),
             "Mass provenance": flag,
         }
+
+    def _fillet_readonly_fields(self, node) -> dict:
+        """The fillet node's read-only panel rows (G2-u3 m5): the
+        reference verbatim, the born names beside the geometry, the
+        counts and the volume from the report module, the refusal the
+        visible state. Every value is a kernel answer — the reference
+        and the radius the recipe's own fields, the born names the
+        queries' own renders matched STRUCTURALLY (the shape_id's
+        feature part equals the fillet node's id — the born entities'
+        creator — never a name-string parse), the numbers the report
+        module's (the single consumer of the mass API and the body
+        query — the UI never recomputes a number).
+
+        The rows LOOK, they do not touch: QLabels rendered by
+        set_parameters_and_readonly, structurally incapable of
+        emitting parameter_changed (the mass rows' own discipline).
+        """
+        fields = {
+            "Kind": "Fillet (exact-side feature — the rolling ball)",
+            "Edge reference": node.fillet_edge or "—",
+        }
+        if node.fillet_refusal:
+            # The re-run's honest answer (the class-4 payload when the
+            # reference died, the band's bound when the radius left
+            # it): WHAT, WHY, the remedy — the kernel's own words.
+            fields["REFUSAL"] = node.fillet_refusal
+        body = getattr(node, "fillet_brep", None)
+        if body is None:
+            # The creation materializes before installing, and a
+            # refused re-run KEEPS the last good body: the only honest
+            # remainder is a creation-time state the scene never
+            # installs. Declared for the reader, never surfaced mute.
+            fields["Body"] = "n/d — no materialized body"
+            return fields
+        import CAD_0
+        brep_mod = getattr(CAD_0, "brep", None) or CAD_0._CAD_0.brep
+
+        # ---- I NOMI IN SCENA: the born entities, beside the geometry.
+        # The structural match: the born rows' creator IS this node
+        # (the naming context's FeatureId — the shape_id's feature
+        # part), the family/endpoints the query's own columns.
+        born_faces = []
+        for i in range(brep_mod.face_count(body)):
+            q = brep_mod.face_query(body, i)
+            if q["shape_id"]["feature"] == node.id:
+                name = q["name"] if q["name"] else "- (honestly unnamed)"
+                born_faces.append("{} [{}]".format(name, q["family"]))
+        if born_faces:
+            fields["Born face(s)"] = "; ".join(born_faces)
+        born_named = []
+        for i in range(brep_mod.edge_count(body)):
+            q = brep_mod.edge_query(body, i)
+            if q["shape_id"]["feature"] != node.id:
+                continue
+            # The seam-wired PAIRS answer ONE logical name each (both
+            # materialized halves — the morse-5 rule): the row lists
+            # the DISTINCT names, first-appearance order, never a
+            # duplicate for the halves. The honestly unnamed born
+            # edges (the box class's quarter arcs) read a DEFAULT
+            # shape_id — no structural match, never a guess here: the
+            # REPORT's edge table carries them (the "-" rows, the
+            # name column's own honesty).
+            if q["name"] and q["name"] not in born_named:
+                born_named.append(q["name"])
+        if born_named:
+            fields["Born edge names"] = ", ".join(born_named)
+
+        # ---- The counts and the mass, from the report module (the
+        # one consumer of the mass API and the body query).
+        report_mod = getattr(CAD_0, "report", None)
+        if report_mod is not None:
+            data = report_mod.body_report_data(body)
+            fields["Counts (V/E/F/H)"] = "{}/{}/{}/{}".format(
+                data["V"], data["E"], data["F"], data["H"])
+            fields["χ (V−E+F−H)"] = str(data["chi"])
+            if data["mass_error"] is not None:
+                fields["Volume"] = "n/d — {}".format(data["mass_error"])
+            else:
+                flag = "exact" if data["all_exact"] else "approximated"
+                fields["Volume"] = "{} ({})".format(
+                    format(data["volume"], ".9g"), flag)
+        return fields
 
     def _operation_info_fields(self, node_id: int, op: dict) -> dict:
         """Read-only property-panel fields for an operation node: the
@@ -2409,6 +2671,13 @@ class MainWindow(QMainWindow):
         if node_type == "feat_extrude" and name == "distance":
             self._push_extrude_distance_command(node_id, value)
             return
+        if node_type == "feat_fillet" and name == "radius":
+            # The fillet's authored parameter (G2-u3 m5, ADR-0039 D6
+            # rung 5): the class-1 SILENT edit — the SAME road the
+            # binding travels (the recipe, the find, ONE scene
+            # mutation), never a UI-side rebuild of the body.
+            self._push_fillet_radius_command(node_id, value)
+            return
 
         old_value = self._node_params[node_id].get(name, 0.0)
 
@@ -2428,6 +2697,85 @@ class MainWindow(QMainWindow):
         else:
             execute()
         self._status.showMessage(f"Set {name} = {value}", 2000)
+
+    def _push_fillet_radius_command(self, node_id: int,
+                                     radius: float) -> None:
+        """The radius edit as ONE undo command (the class-1 SILENT
+        contract, ADR-0036 D6 consumed by ADR-0039 D3): the scene's
+        set_fillet_radius — the recipe's own field, the reference
+        taken once (the find never re-picks), the re-run answering
+        reference_resolved (the counts fixed for every in-band r) or
+        the refusal text (the last good body KEPT — the visible
+        state). The panel re-routes from the recipe after; NO
+        selection change, NO dialog — the edit is a plain parameter
+        edit."""
+        node = self._scene.get_node(node_id)
+        if node is None or node.kind != "fillet":
+            return
+        if not (radius > 0.0) or radius != radius:  # <= 0 or NaN
+            self._status.showMessage(
+                f"radius must be finite and > 0, got {radius} — "
+                "the previous value stands", 4000)
+            return
+        old_value = float(node.fillet_radius)
+
+        def apply(v: float) -> None:
+            answer = self._scene.set_fillet_radius(node_id, v)
+            self._node_params[node_id]["radius"] = float(v)
+            # The visible state: the tree row's FIL! follows the
+            # re-run's answer, the status bar speaks it.
+            self._refresh_operation_rows()
+            self._refresh_viewport()
+            if answer == "reference_resolved":
+                self._mark_modified()
+                self._status.showMessage(
+                    f"Set radius = {v} — the feature re-ran on the "
+                    "new radius (the reference taken once)", 3000)
+            else:
+                # The refusal is the ANSWER (the band's bound, the
+                # class-4 payload): the last good body kept, the
+                # words shown, never a mute failure.
+                self._mark_modified()
+                self._status.showMessage(answer, 8000)
+            # The panel rows re-route from the recipe (the selected
+            # node IS the fillet when the edit came from its own
+            # editor): the editor's VALUE in place first (the
+            # committing editor must stay alive — the use-after-free
+            # lesson), then the read-only rows (the counts stay fixed
+            # but the VOLUME is the radius's own answer) rebuilt on
+            # the NEXT loop pass, when the editor's handler has
+            # returned — the deferred-refresh pattern
+            # (_deferred_entity_panel_refresh's own).
+            if self._selected_node_id == node_id:
+                node_now = self._scene.get_node(node_id)
+                if node_now is not None and \
+                        self._property_panel.current_label() == node_now.name:
+                    self._property_panel.update_values(
+                        {"radius": float(node_now.fillet_radius)})
+                    QTimer.singleShot(
+                        0, self._deferred_fillet_panel_refresh)
+
+        if self._command_stack:
+            self._command_stack.push(
+                lambda: apply(radius), lambda: apply(old_value),
+                f"Set radius = {radius}")
+        else:
+            apply(radius)
+
+    def _deferred_fillet_panel_refresh(self) -> None:
+        """The next-pass panel rebuild for the selected fillet node
+        (the radius edit's echo): by the time this runs the event loop
+        has re-entered and the committing editor's handler has
+        returned — the row rebuild can no longer delete a live editor
+        under its own stack. The refresh reads the CURRENT selection
+        at fire time, so it can never clobber a newer selection with
+        a stale snapshot."""
+        if self._selected_node_id is None or self._scene is None:
+            return
+        node = self._scene.get_node(self._selected_node_id)
+        if node is None or node.kind != "fillet":
+            return
+        self._on_tree_selection_changed()
 
     def _push_operation_offset_command(self, node_id: int,
                                         axis: str, value: float) -> None:
@@ -2509,8 +2857,14 @@ class MainWindow(QMainWindow):
         SDF nodes read the kernel's body bounds; mesh-kind nodes
         (imported STL/OBJ) have no SDF body, so their bounds come from
         the mesh's own vertex positions (cached tessellation first, the
-        raw payload as fallback).
+        raw payload as fallback). The fillet-kind node has NO display
+        geometry at all (the m4 design: the exact body alone, no SDF
+        twin, nothing to tessellate — update_meshes skips it by kind):
+        not pickable in the viewport, selected through the tree (its
+        surface is the recipe's rows and the report).
         """
+        if node.kind == "fillet":
+            return None
         if node.kind != "mesh":
             b = node.body.bounds()
             return ((b.min.x, b.min.y, b.min.z),

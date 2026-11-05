@@ -5,6 +5,9 @@
 //   * CAD_0.bridge.SdfToBrepOptions     — conversion options
 //   * CAD_0.bridge.BRepBody             — OPAQUE handle (see below)
 //   * CAD_0.bridge.sdf_to_brep_faceted  — faceted extraction (MC33)
+//   * CAD_0.bridge.sdf_to_brep          — dispatching conversion
+//   * CAD_0.bridge.sdf_to_brep_primitive — the feature-aware primitive
+//     fit alone (G2-u3 m5: the fillet picker's operand surface)
 //   * CAD_0.bridge.sdf_to_brep_report   — plain-values topology report
 //
 // BRepBody is deliberately registered as an OPAQUE handle: no methods,
@@ -100,6 +103,32 @@ void bind_bridge(nb::module_& m) {
         "every co-edge since G1 unit 2), MC33 faceted fallback. Returns\n"
         "the opaque BRepBody handle owned by Python; inspect it with\n"
         "CAD_0.brep.face_count / CAD_0.brep.face_query.");
+
+    // The primitive-fit conversion, the feature-aware entry (G2-u3 m5,
+    // ADR-0039 D6 rung 5 — the UI's own consumer surface, the G4 m3
+    // binding precedent): the SAME call the scene's operand door runs
+    // (operand_exact_brep_quiet — sdf_to_brep_primitive(body,
+    // FeatureId{node.id})), exposed so the workbench's edge picker can
+    // enumerate the operand's NAMED edges with the DAG identity the
+    // discovery will match (box#<id>:vertical2, never box#0:...).
+    // Returns None when the body fits no primitive — the quiet answer,
+    // never a guess; the faceted fallback is NOT taken here (a faceted
+    // body carries no names, the fillet's reference surface is the
+    // exact side alone).
+    bridge_mod.def("sdf_to_brep_primitive",
+        [](const SDFBody& body, std::uint64_t feature) {
+            auto out = CAD_0::bridge::sdf_to_brep_primitive(
+                body, CAD_0::geometry::FeatureId{feature});
+            if (out == nullptr) return nb::none();
+            return nb::cast(std::move(out));
+        },
+        nb::arg("body"), nb::arg("feature") = 0,
+        "The primitive fit alone (sphere/box/cylinder): the exact\n"
+        "factory body named under the given DAG feature id — the same\n"
+        "body the scene's operand door builds for the fillet's\n"
+        "discovery (the m5 edge picker's own surface), or None when\n"
+        "the body fits no primitive (the honest quiet answer: no\n"
+        "names, no reference surface).");
 
     // Topology report — the consumer-friendly entry point: runs the
     // same dispatch as the C++ sdf_to_brep() and returns plain values,
