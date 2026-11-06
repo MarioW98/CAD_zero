@@ -1595,8 +1595,13 @@ ParsedDocument parse_document(std::string_view text,
             }
         }
 
-        if (node.kind == scene::NodeKind::Sdf) {
-            node.mesh_dirty = true; // re-tessellate SDF caches after load
+        if (node.kind == scene::NodeKind::Sdf ||
+            node.kind == scene::NodeKind::Fillet) {
+            node.mesh_dirty = true; // re-tessellate SDF caches after load;
+                                    // the fillet's display mesh is the
+                                    // exact body's own tessellation
+                                    // (m6-correttiva) — a cache like any
+                                    // other, never serialized (D11).
         } else {
             node.mesh_dirty = false; // Mesh: the payload IS final — never
                                      // re-tessellated. Sketch: no mesh at

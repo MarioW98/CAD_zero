@@ -2857,11 +2857,13 @@ class MainWindow(QMainWindow):
         SDF nodes read the kernel's body bounds; mesh-kind nodes
         (imported STL/OBJ) have no SDF body, so their bounds come from
         the mesh's own vertex positions (cached tessellation first, the
-        raw payload as fallback). The fillet-kind node has NO display
-        geometry at all (the m4 design: the exact body alone, no SDF
-        twin, nothing to tessellate — update_meshes skips it by kind):
-        not pickable in the viewport, selected through the tree (its
-        surface is the recipe's rows and the report).
+        raw payload as fallback). The fillet-kind node HAS its display
+        mesh since m6-correttiva (the exact body's own tessellation —
+        update_meshes, brep::tessellate_body, never a special render),
+        but keeps its m5 selection surface: picked through the tree
+        (the recipe's rows and the report), while the viewport
+        highlight follows the tree selection through the node's own
+        triangles.
         """
         if node.kind == "fillet":
             return None

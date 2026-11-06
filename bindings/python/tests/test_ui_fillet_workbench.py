@@ -768,3 +768,91 @@ def test_the_same_sequence_twice_the_same_scene(workbench_app,
         win2.close()
         win2.deleteLater()
         gc.collect()
+
+
+# ===========================================================================
+# 7. THE FILLET VISO (m6-correttiva, MORSO A) — the click-test's
+#    defect 1: the fillet applied did not show in the viewport
+# ===========================================================================
+
+@pytest.mark.skipif(not _pyside6_available(), reason="PySide6 not installed")
+def test_the_fillet_is_visible_after_apply(workbench_app):
+    import numpy as np
+
+    win = workbench_app
+    assert win._has_kernel
+
+    # The guide case (the protocol's step 2-3): the box [-1,1]^3, the
+    # edge box#<id>:vertical2, r = 0.5 — the mesh rides the exact
+    # bodies' own road (the C++ test compares it bit-identical against
+    # brep::tessellate_body; this test pins the WORKBENCH's own act:
+    # after Apply the buffers the viewport walks CARRY the fillet).
+    box_id = _make_guide_box(win)
+    _select_row(win, box_id)
+    dlg = _open_fillet_dialog(win)
+    edge = "box#{}:vertical2".format(box_id)
+    assert _click_edge(dlg, edge)
+
+    # The operand's own cache first (the additivity's anchor) — an
+    # OWNED copy: the scene's node vector moves on the next push_back,
+    # a held reference into it would dangle (the C++ node owns the
+    # mesh; Python only borrows it).
+    box_verts_before = win._scene.get_node(box_id).cached_mesh. \
+        vertex_count()
+    box_tris_before = win._scene.get_node(box_id).cached_mesh. \
+        triangle_count()
+    box_pos_before = np.array(
+        win._scene.get_node(box_id).cached_mesh.positions,
+        dtype=np.float64)
+    assert box_verts_before > 0
+
+    _apply_dialog(dlg, 0.5)
+    fid = win._selected_node_id
+    node = win._scene.get_node(fid)
+    assert node.kind == "fillet"
+
+    # THE FILLET'S OWN MESH: non-empty, on the node the viewport reads.
+    cm = node.cached_mesh
+    assert cm is not None
+    assert cm.vertex_count() > 0
+    assert cm.triangle_count() > 0
+    assert len(cm.normals) == cm.vertex_count()
+
+    # THE COUNTERPROOF: the flank EXISTS in the displayed mesh —
+    # vertices on the corner cylinder (x-0.5)^2+(y-0.5)^2 = 0.25,
+    # strictly between the trimmed planes — while the flat box's mesh
+    # has no vertex off the box planes (the flat box is NOT the
+    # answer, never a special render either).
+    pos = np.asarray(cm.positions, dtype=float)
+    flank = ((np.abs(pos[:, 2]) < 0.9) &
+             (pos[:, 0] > 0.5) & (pos[:, 0] < 1.0) &
+             (pos[:, 1] > 0.5) & (pos[:, 1] < 1.0) &
+             (np.abs(np.hypot(pos[:, 0] - 0.5, pos[:, 1] - 0.5) - 0.5)
+              < 1e-3))
+    assert flank.any()
+    # The flat box's counterproof, same corner window: its vertices
+    # with |z|<0.9 sit on the side planes (|x|=1 or |y|=1) — none can
+    # be a flank point strictly BETWEEN the trimmed planes.
+    bpos = box_pos_before
+    bflank = ((np.abs(bpos[:, 2]) < 0.9) &
+              (bpos[:, 0] > 0.5) & (bpos[:, 0] < 1.0) &
+              (bpos[:, 1] > 0.5) & (bpos[:, 1] < 1.0) &
+              (np.abs(np.hypot(bpos[:, 0] - 0.5, bpos[:, 1] - 0.5) - 0.5)
+               < 1e-3))
+    assert not bflank.any()
+
+    # THE VIEWPORT'S BUFFERS CARRY IT: the concatenated indices include
+    # the fillet's own triangles (the render batch the frame walks).
+    assert win._viewport._mesh_indices is not None
+    assert len(win._viewport._mesh_indices) // 3 >= cm.triangle_count()
+    assert win._viewport._node_ranges.get(fid) is not None
+
+    # THE ADDITIVITY: the operand's mesh unmoved by the fillet's
+    # arrival (the same counts, the same content).
+    box_mesh_after = win._scene.get_node(box_id).cached_mesh
+    assert box_mesh_after.vertex_count() == box_verts_before
+    assert box_mesh_after.triangle_count() == box_tris_before
+    assert np.array_equal(
+        np.asarray(box_mesh_after.positions, dtype=np.float64),
+        box_pos_before)
+

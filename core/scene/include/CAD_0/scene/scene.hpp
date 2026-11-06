@@ -32,6 +32,7 @@
 #include "CAD_0/brep/extrude.hpp"
 #include "CAD_0/brep/subtract.hpp"
 #include "CAD_0/brep/fillet.hpp"
+#include "CAD_0/brep/tessellate.hpp"
 #include "CAD_0/brep/descent.hpp"
 #include "CAD_0/brep/resolve.hpp"
 #include "CAD_0/bridge/sdf_to_brep.hpp"
@@ -202,9 +203,11 @@ enum class NodeKind : std::uint8_t {
     Fillet, // an exact-side feature (G2-u3 m4, ADR-0039 D6 rung 4): the
             // payload is the RECIPE (the edge-reference string + the
             // radius, named fields), the materialization is the exact
-            // body ALONE — no SDF twin, no display mesh (nothing to
-            // tessellate: update_meshes() skips it by kind, the
-            // Sketch precedent). FeatureKind `fil` in the naming plane
+            // body ALONE — no SDF twin (m6-correttiva, the click-test's
+            // defect 1: the DISPLAY mesh now exists — the exact body's
+            // own tessellation in update_meshes(), brep::tessellate_body:
+            // the exact bodies' road, the CSG/bridge precedent, NEVER a
+            // special render of the fillet). FeatureKind `fil` in the naming plane
             // (the grammar's three-letter token); "fillet" here in
             // the scene's own dispatch vocabulary.
 };
@@ -1494,16 +1497,37 @@ public:
 
     void update_meshes(std::uint32_t resolution = 48) {
         for (auto& n : nodes_) {
-            // Only Sdf nodes tessellate. A Mesh node's "cached mesh"
+            // Only bodies tessellate. A Mesh node's "cached mesh"
             // IS the geometry — re-tessellating (or even touching) it
             // would corrupt the imported data. A Sketch node has
             // NOTHING 3D to tessellate — no body, no mesh; the extrude
             // downstream owns the 3D (ADR-0030 D2).
-            if (n.kind != NodeKind::Sdf) continue;
-            if (n.mesh_dirty && n.visible) {
-                n.cached_mesh = sdf::marching_cubes(n.body, resolution, true);
-                n.mesh_dirty = false;
+            if (n.kind == NodeKind::Mesh || n.kind == NodeKind::Sketch)
+                continue;
+            if (!n.mesh_dirty || !n.visible) continue;
+            if (n.kind == NodeKind::Fillet) {
+                // THE FILLET'S DISPLAY MESH (G2-u3 m6-correttiva, the
+                // click-test's defect 1 — "the fillet applied does
+                // not show in the viewport"): the exact body
+                // tessellated on the exact bodies' OWN road
+                // (brep::tessellate_body — the same tessellator the
+                // bridge and the CSG precedent walk), never a special
+                // render of the fillet. A refused re-run keeps the
+                // last good body — and its mesh keeps rendering (the
+                // visible state); a null body (never installed in
+                // practice — creation refuses before installing) is a
+                // clean skip, never a guess.
+                if (n.fillet_body != nullptr) {
+                    brep::TessellationOptions opts;
+                    opts.resolution = resolution;
+                    n.cached_mesh =
+                        brep::tessellate_body(*n.fillet_body, opts);
+                }
+            } else {
+                n.cached_mesh =
+                    sdf::marching_cubes(n.body, resolution, true);
             }
+            n.mesh_dirty = false;
         }
     }
 
