@@ -15,7 +15,8 @@ from __future__ import annotations
 
 from typing import Optional, Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtGui import QFontMetrics, QPainter
 from PySide6.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -28,6 +29,115 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+# The bound the panel's read-only VALUE column lives in (G2-u3
+# m6-correttiva, the click-test's defect 2): the longest golden name
+# — fil#5:isect[ext#3:lat(0) × fil#5:flank[box#1:top ×
+# ext#3:lat(0)]], 66 characters — renders inside it, elided with the
+# full string in the tooltip; a value NEVER widens the window.
+READONLY_VALUE_BOUND_PX = 280
+
+
+class _BoundValueLabel(QLabel):
+    """A read-only value label that LIVES INSIDE THE PANEL (G2-u3
+    m6-correttiva, the click-test's defect 2: the long born-name rows
+    did not wrap and the window widened, eating the work area).
+
+    The DATA is the full string — ``text()`` returns it whole (the m5
+    pins, "character for character", keep reading it); the RENDER
+    never demands more than the bound:
+
+      * a value that fits the bound renders as before (the counts, the
+        volume — the m5 rows' own shape);
+      * a value whose LONGEST WORD fits the bound WRAPS (multi-line,
+        everything readable — the refusal rows, the error rows, the
+        constraint renders: the m5 surfaces keep their readability);
+      * a value with a word longer than the bound (the born names, the
+        reference string — single tokens the wrapper cannot break)
+        renders ELIDED at the available width, the full string in the
+        tooltip.
+
+    ``sizeHint``/``minimumSizeHint`` are bounded: the QFormLayout's
+    minimum width never grows with the content, so the dock — and the
+    window — never widens for a value (the work area is never eaten).
+    """
+
+    def __init__(self, text, parent=None):
+        super().__init__(str(text), parent)
+        self._full_text = str(text)
+        self.setToolTip(self._full_text)
+        self.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        fm = self.fontMetrics()
+        full_px = fm.horizontalAdvance(self._full_text)
+        longest_word_px = max(
+            (fm.horizontalAdvance(w)
+             for w in self._full_text.split(" ")),
+            default=0)
+        if full_px <= READONLY_VALUE_BOUND_PX:
+            self._mode = "plain"
+        elif longest_word_px <= READONLY_VALUE_BOUND_PX:
+            self._mode = "wrap"
+            self.setWordWrap(True)
+        else:
+            # The token the wrapper cannot break: elide at the width
+            # the panel actually gives the row, tooltip whole.
+            self._mode = "elide"
+
+    # ---- The bounded geometry (the size policy that forbids the
+    # widening): the layout's demands are capped by the bound, the
+    # minimum lets the row shrink instead of pushing the window.
+    def sizeHint(self):
+        fm = self.fontMetrics()
+        if self._mode == "wrap":
+            lines = self._wrapped_lines(READONLY_VALUE_BOUND_PX)
+            return QSize(READONLY_VALUE_BOUND_PX,
+                         fm.lineSpacing() * len(lines) + 4)
+        if self._mode == "elide":
+            shown = fm.elidedText(self._full_text, Qt.ElideRight,
+                                  READONLY_VALUE_BOUND_PX)
+            return QSize(fm.horizontalAdvance(shown),
+                         fm.height() + 4)
+        return QLabel.sizeHint(self)
+
+    def minimumSizeHint(self):
+        fm = self.fontMetrics()
+        if self._mode == "wrap":
+            longest = max(
+                (fm.horizontalAdvance(w)
+                 for w in self._full_text.split(" ")),
+                default=0)
+            return QSize(min(longest, READONLY_VALUE_BOUND_PX),
+                         fm.lineSpacing() + 4)
+        # plain and elide: the row can shrink to nothing — the elide
+        # adapts on paint, the plain text clips like any label.
+        return QSize(0, fm.height() + 4)
+
+    def _wrapped_lines(self, bound):
+        fm = self.fontMetrics()
+        lines = []
+        current = ""
+        for word in self._full_text.split(" "):
+            trial = word if not current else current + " " + word
+            if fm.horizontalAdvance(trial) <= bound or not current:
+                current = trial
+            else:
+                lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+        return lines or [""]
+
+    def paintEvent(self, event):
+        if self._mode != "elide":
+            super().paintEvent(event)
+            return
+        painter = QPainter(self)
+        fm = self.fontMetrics()
+        shown = fm.elidedText(self._full_text, Qt.ElideRight,
+                              max(10, self.width()))
+        painter.drawText(self.rect(),
+                         int(self.alignment()) | int(Qt.AlignVCenter),
+                         shown)
 
 
 class PropertyPanel(QWidget):
@@ -131,8 +241,7 @@ class PropertyPanel(QWidget):
 
         for name, value in fields.items():
             label = QLabel(name)
-            text = QLabel(str(value))
-            text.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            text = _BoundValueLabel(str(value))
             self._form.addRow(label, text)
 
     def set_parameters_and_readonly(
@@ -147,8 +256,7 @@ class PropertyPanel(QWidget):
         self.set_parameters(node_name, parameters)
         for name, value in readonly_fields.items():
             label = QLabel(name)
-            text = QLabel(str(value))
-            text.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            text = _BoundValueLabel(str(value))
             self._form.addRow(label, text)
 
     def clear(self) -> None:

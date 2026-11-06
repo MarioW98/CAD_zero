@@ -856,3 +856,68 @@ def test_the_fillet_is_visible_after_apply(workbench_app):
         np.asarray(box_mesh_after.positions, dtype=np.float64),
         box_pos_before)
 
+
+# ===========================================================================
+# 8. THE PANEL THAT BREATHES (m6-correttiva, MORSO B) — the click-test's
+#    defect 2: the long rows widened the window and ate the work area
+# ===========================================================================
+
+@pytest.mark.skipif(not _pyside6_available(), reason="PySide6 not installed")
+def test_the_panel_that_breathes_fixed_width(workbench_app):
+    from PySide6.QtWidgets import QFormLayout, QLabel
+
+    win = workbench_app
+    assert win._has_kernel
+
+    # The longest golden names ride the panel (the m6 protocol's own
+    # step 6): the rim fillet's born rows on the blind chain.
+    sk, ex, bx, sub, rim = _blind_chain(win)
+    _select_row(win, sub)
+    dlg = _open_fillet_dialog(win)
+    assert _click_edge(dlg, rim)
+    _apply_dialog(dlg, 0.25)
+    fid = win._selected_node_id
+
+    # The anchor: the SHORT rows (the CSG panel — counts and numbers)
+    # measure the window first.
+    _select_row(win, sub)
+    _flush()
+    from CAD_0.ui.property_panel import READONLY_VALUE_BOUND_PX
+    width_short = win.width()
+    min_short = win.minimumSizeHint().width()
+
+    # THE LONG ROWS: the fillet's panel — the reference string verbatim
+    # (66 characters), the born face, the born wires.
+    _select_row(win, fid)
+    _flush()
+    rows = dict(_panel_rows(win))
+    assert rim in rows.get("Edge reference", "")
+    assert "flank" in rows.get("Born face(s)", "")
+
+    # The DATA stays whole (the m5 pin, character for character).
+    assert _row_value(win, "Edge reference") == rim
+
+    # THE BOUND: every read-only VALUE widget's demanded width lives
+    # inside the declared bound — the row can never push the window.
+    form = win._property_panel._form
+    for row in range(form.rowCount()):
+        field_item = form.itemAt(row, QFormLayout.FieldRole)
+        if field_item is None:
+            continue
+        field = field_item.widget()
+        if isinstance(field, QLabel) and hasattr(field, "sizeHint"):
+            assert field.sizeHint().width() <= READONLY_VALUE_BOUND_PX, \
+                field.text()[:50]
+
+    # THE FULL STRING travels with the row: the tooltip carries it
+    # whole (elide col tooltip completo — the morse's own words).
+    ref_field = _panel_field(win, "Edge reference")
+    assert ref_field is not None
+    assert ref_field.toolTip() == rim
+
+    # THE WINDOW NEVER WIDENS: neither by itself (no automatic resize
+    # on a selection change) nor structurally (the minimum the layout
+    # could demand is the same with the long rows as with the short).
+    assert win.width() == width_short
+    assert win.minimumSizeHint().width() <= min_short
+
