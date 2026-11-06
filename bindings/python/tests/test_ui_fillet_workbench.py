@@ -921,3 +921,70 @@ def test_the_panel_that_breathes_fixed_width(workbench_app):
     assert win.width() == width_short
     assert win.minimumSizeHint().width() <= min_short
 
+
+# ===========================================================================
+# 9. THE FRAME AT BATCH (m6-correttiva, MORSO C) — the click-test's
+#    defect 3: the interaction lags. The profile named the cause: the
+#    immediate-mode walk made one Python->GL call PER VERTEX (529,817
+#    per frame on the m6 scene). This pin holds the cure: the meshes
+#    draw in BATCHES — one glDrawElements per range, zero per-vertex
+#    calls, whatever the triangle count.
+# ===========================================================================
+
+@pytest.mark.skipif(not _pyside6_available(), reason="PySide6 not installed")
+def test_the_frame_draws_in_batches(monkeypatch):
+    pytest.importorskip("numpy")
+    import numpy as np
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    import CAD_0.ui.viewport_widget as vw
+
+    # The m6 scene's own scale (the profile's number): 84,080
+    # triangles, 42,046 vertices — the count that made the frame.
+    n_tris = 84080
+    n_verts = 42046
+    pos = np.zeros((n_verts, 3), dtype=np.float32)
+    nor = np.zeros((n_verts, 3), dtype=np.float32)
+    idx = np.zeros(n_tris * 3, dtype=np.uint32)
+
+    calls = {"glVertex3f": 0, "glNormal3f": 0, "glBegin": 0,
+             "glEnd": 0, "glDrawElements": 0,
+             "glEnableClientState": 0, "glDisableClientState": 0,
+             "glVertexPointer": 0, "glNormalPointer": 0}
+    saved = {}
+
+    def _counting(name):
+        def f(*a, **k):
+            calls[name] += 1
+        return f
+
+    for name in calls:
+        saved[name] = getattr(vw, name, None)
+        setattr(vw, name, _counting(name))
+    try:
+        # The whole buffer in ONE range, then a selection highlight's
+        # subrange: the two calls a frame makes at the m6 scale.
+        vw._ViewportWindow._draw_tri_range(pos, nor, idx, True,
+                                           0, n_tris)
+        vw._ViewportWindow._draw_tri_range(pos, nor, idx, True,
+                                           0, n_tris // 2)
+    finally:
+        for name, fn in saved.items():
+            if fn is not None:
+                setattr(vw, name, fn)
+
+    # THE BOUND (the register's own words): one draw call per range,
+    # zero per-vertex calls — the per-vertex walk cannot return. The
+    # array plumbing (pointers, client states) is the batch's own
+    # handful of O(1) calls per range — counted, never per vertex.
+    assert calls["glDrawElements"] == 2
+    assert calls["glVertex3f"] == 0
+    assert calls["glNormal3f"] == 0
+    assert calls["glBegin"] == 0
+    assert calls["glEnd"] == 0
+    assert calls["glVertexPointer"] == 2
+    assert calls["glNormalPointer"] == 2
+    assert calls["glEnableClientState"] == 4
+    assert calls["glDisableClientState"] == 4
+

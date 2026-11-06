@@ -31,6 +31,10 @@ from OpenGL.GL import (
     GL_LINES, GL_TRIANGLES,
     GL_POSITION, GL_DIFFUSE, GL_AMBIENT,
     glDepthFunc,
+    GL_FLOAT, GL_UNSIGNED_INT,
+    GL_VERTEX_ARRAY, GL_NORMAL_ARRAY,
+    glEnableClientState, glDisableClientState,
+    glVertexPointer, glNormalPointer, glDrawElements,
 )
 
 
@@ -193,9 +197,16 @@ class ViewportWidget(QWidget):
             offset += len(pos)
         self._node_ranges = node_ranges
         if positions:
-            self._mesh_positions = np.concatenate(positions)
-            self._mesh_normals = np.concatenate(normals)
-            self._mesh_indices = np.concatenate(indices)
+            # The display buffers, typed and contiguous for the batch
+            # draw (m6-correttiva): float32 positions/normals, uint32
+            # indices — the dtypes glDrawElements reads in place, never
+            # a per-call conversion.
+            self._mesh_positions = np.ascontiguousarray(
+                np.concatenate(positions), dtype=np.float32)
+            self._mesh_normals = np.ascontiguousarray(
+                np.concatenate(normals), dtype=np.float32)
+            self._mesh_indices = np.ascontiguousarray(
+                np.concatenate(indices), dtype=np.uint32)
         else:
             self._mesh_positions = None
             self._mesh_indices = None
@@ -606,27 +617,35 @@ class _ViewportWindow(QOpenGLWindow):
     @staticmethod
     def _draw_tri_range(positions, normals, indices, has_normals,
                         tri_start: int, tri_end: int) -> None:
+        """ONE draw call per range (G2-u3 m6-correttiva, the
+        click-test's defect 3 — "the interaction lags"): the range's
+        triangles submitted through client-side vertex arrays and a
+        single glDrawElements. The profile that named the cause (the
+        register's m6-correttiva row): the immediate-mode walk made
+        one Python->GL call PER VERTEX — 529,817 calls and ~338 ms of
+        pure Python per frame on the m6 scene (607.97 ms measured per
+        frame on software GL, 1.64 fps) — before the GPU drew
+        anything. The geometry is the very buffer that walk read:
+        exports, the bridge and the golden digests never touch this
+        path (display pipeline only, the normals' own discipline).
+        """
         n_tris = tri_end - tri_start
         if n_tris <= 0:
             return
-        batch_size = min(4096, n_tris)
-        for batch_start in range(tri_start, tri_end, batch_size):
-            batch_end = min(batch_start + batch_size, tri_end)
-            glBegin(GL_TRIANGLES)
-            for t in range(batch_start, batch_end):
-                i0 = int(indices[t * 3 + 0])
-                i1 = int(indices[t * 3 + 1])
-                i2 = int(indices[t * 3 + 2])
-                if has_normals:
-                    glNormal3f(float(normals[i0][0]), float(normals[i0][1]), float(normals[i0][2]))
-                glVertex3f(float(positions[i0][0]), float(positions[i0][1]), float(positions[i0][2]))
-                if has_normals:
-                    glNormal3f(float(normals[i1][0]), float(normals[i1][1]), float(normals[i1][2]))
-                glVertex3f(float(positions[i1][0]), float(positions[i1][1]), float(positions[i1][2]))
-                if has_normals:
-                    glNormal3f(float(normals[i2][0]), float(normals[i2][1]), float(normals[i2][2]))
-                glVertex3f(float(positions[i2][0]), float(positions[i2][1]), float(positions[i2][2]))
-            glEnd()
+        idx = np.ascontiguousarray(
+            indices[tri_start * 3:tri_end * 3], dtype=np.uint32)
+        glEnableClientState(GL_VERTEX_ARRAY)
+        if has_normals:
+            glEnableClientState(GL_NORMAL_ARRAY)
+            glNormalPointer(GL_FLOAT, 0, normals)
+        else:
+            glDisableClientState(GL_NORMAL_ARRAY)
+        glVertexPointer(3, GL_FLOAT, 0, positions)
+        glDrawElements(GL_TRIANGLES, int(n_tris * 3),
+                       GL_UNSIGNED_INT, idx)
+        glDisableClientState(GL_VERTEX_ARRAY)
+        if has_normals:
+            glDisableClientState(GL_NORMAL_ARRAY)
 
 
 # Need GLfloat for the matrix array
