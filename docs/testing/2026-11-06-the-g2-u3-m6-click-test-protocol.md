@@ -41,8 +41,8 @@ found by the click-test is a correction with its own bite.
 
 ## Step 1 — The launch
 
-From a fresh clone (or a clean tree at `027efd6`), the build the CI
-judges:
+**The cold road, ONCE per clone.** From a fresh clone, the build the
+CI judges:
 
 ```bash
 cmake -B build -G Ninja \
@@ -52,6 +52,90 @@ cmake -B build -G Ninja \
     -DPython3_EXECUTABLE=$(which python3)
 cmake --build build
 ```
+
+**The warm road, every click-test after that — the m7 cure
+(2026-11-08).** The maintainer's tax, by name and by his own words
+(the complaint verbalized 2026-11-07): a FULL build, "~10+ min" on
+his Windows box, paid at every click-test. The diagnosis, measured
+on the tip in the sandbox (2 CPU, Linux-side — the sandbox has no
+Windows, the numbers say what they measured): the pull is INNOCENT
+(a fetch with nothing new: 0.64 s); the tax is the from-zero build
+alone — **326.54 s** (configure 11.66 s + build 314.88 s, 127 ninja
+steps) — while the incremental after a typical bite
+(`core/brep/src/tessellate.cpp` and
+`bindings/python/src/scene_bindings.cpp` touched — the -bis bites'
+own files) is **13.64 s, 4.2% of the tax** (two translation units,
+the relinks, the copy step). The cure, three moves — documented
+here, no wrapper scripts:
+
+1. **The build directory is never deleted between pulls** — the
+   incremental build is the road, always (`cmake --build build`
+   alone; a changed `CMakeLists.txt` re-configures by itself,
+   ninja's own rule);
+2. **ccache as the compiler launcher** (`CMAKE_C_COMPILER_LAUNCHER`
+   and `CMAKE_CXX_COMPILER_LAUNCHER = ccache`): even a wiped build
+   tree or a reconfigure finds the cache — measured, a full rebuild
+   after wiping the build directory: **7.97 s, 2.4% of the tax**
+   (reconfigure 0.85 s + build 7.12 s, 112/112 direct hits); on
+   MSYS2/MINGW64: `pacman -S mingw-w64-x86_64-ccache`;
+3. **The Ninja generator** (`cmake -G Ninja`): exact dependencies,
+   no over-recompilation; on MSYS2/MINGW64:
+   `pacman -S mingw-w64-x86_64-ninja`.
+
+The commands, the maintainer's environment verbatim — MSYS2/MINGW64
+for the shell, PowerShell for the desktop side:
+
+```bash
+# MSYS2 MINGW64 — ONCE (the tools):
+pacman -S mingw-w64-x86_64-ccache mingw-w64-x86_64-ninja
+
+# MSYS2 MINGW64 — ONCE per clone (the cold road, configured WITH the
+# cure so every later build walks warm):
+cmake -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+    -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+    -DCAD_0_BUILD_PYTHON=ON \
+    -DCAD_0_BUILD_TESTING=ON \
+    -DPython3_EXECUTABLE=$(which python3)
+cmake --build build
+
+# MSYS2 MINGW64 — an EXISTING build directory gains the cure with one
+# reconfigure (measured: 0.85 s — the build dir is kept, never wiped):
+cmake -B build -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+    -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+# MSYS2 MINGW64 — EVERY click-test (the warm road):
+git pull
+cmake --build build
+```
+
+```powershell
+# PowerShell, repo root — the workbench's own entry:
+$env:PYTHONPATH = "build\python"
+python -m CAD_0.ui
+```
+
+**ADR-0014, declared — the cache must not be able to change one bit
+of output** ([ADR-0014](../adr/0014-floating-point-determinism.md)).
+ccache is transparent, and this is verified, not assumed: at the
+same build path with the same flags, the digests of every built
+artifact (30 files across `bin/`, `lib/` and `python/`) are
+**bit-identical** across the no-ccache build, the cache-cold build
+and the cache-warm build, and this protocol's own execution
+goldens — every expected value of the eight steps probed through
+the scene/report doors, no GL — print byte-identical under each
+(the suite green on the built tree: the C++ runner, the Python
+suite under Xvfb). The limits, declared: the FIRST build always
+pays its minutes — the cache makes the following ones fast (the
+cache-cold full build costs the tax, 99.3% of it); the numbers
+above are Linux-side, and the Windows verification is the
+maintainer's own next pull, declared here as his; the structural
+cure — a Windows CI column with downloadable artifacts, zero local
+compilation — stays pinned where it is (P1, Phase 1; the registered
+unit and its seen price:
+[the CI runner audit](../audits/2026-11-01-ci-runner-asan-and-attestations.md),
+B3): this bite does not touch it.
 
 The workbench (the app's own entry, `python -m CAD_0.ui` — the
 `__main__` docstring's command, run from the repo root):
