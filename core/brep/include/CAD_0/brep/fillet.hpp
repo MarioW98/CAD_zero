@@ -31,24 +31,30 @@
 // stored-vs-nominal is exact/0.
 //
 // THE ADMISSION, BEFORE THE CONSTRUCTION (the class's own, never a
-// runtime geometry test): the body carries the FACTORY BOX's
-// structural signature — 8 vertices, 12 edges, 6 planar single-loop
-// faces, closed, orientable, χ = 2, every entity exact (the
-// Layer-2 gate: an approximated body never enters) — and the
-// reference resolves to one of its VERTICAL edges (the endpoints'
-// (x,y) equal within the Linear band). Within that signature the
-// edge is CONVEX 90° BY CONSTRUCTION (the admission (b) of ADR-0033
-// D3: the ball rolls on the material side, inscribed): no runtime
-// dihedral test runs, no convexity sign is computed — the class's
-// guarantee IS the admission, and the tree's producers (the
-// factories, the extrude's certificate, the union's convex
-// fragments) cannot produce a non-convex carrier of the signature.
-// The two adjacent faces must be PLANAR (the admission (a): both in
-// the table's world) and perpendicular — their stored outward
-// normals' dot reads exactly 0 (the axis-aligned signature's own
-// arithmetic, not a tolerance decision; a skewed pair is the GENERAL
-// DIHEDRAL family, registered for its first consumer — ADR-0039
-// D1.1's "never smuggled").
+// runtime geometry test): the body carries THE BOX FAMILY CHAIN's
+// structural signature — the factory box (k = 0) or a box carrying
+// k previous VERTICAL fillets (V = 8+2k, E = 12+3k, F = 6+k, the
+// F-6 non-planar faces CylinderZ flanks, the rest the box's six
+// planes possibly shrunk), every face single-loop, closed,
+// orientable, χ = 2, every entity exact (the Layer-2 gate: an
+// approximated body never enters) — and the reference resolves to
+// one of its VERTICAL edges (the endpoints' (x,y) equal within the
+// Linear band; the previous links' KEPT STAMPS answer here — the
+// chain consumes the current state, m6-correttiva-ter). Within
+// that signature the edge is CONVEX 90° BY CONSTRUCTION (the
+// admission (b) of ADR-0033 D3: the ball rolls on the material
+// side, inscribed): no runtime dihedral test runs, no convexity
+// sign is computed — the class's guarantee IS the admission, and
+// the tree's producers (the factory and this function's own gated
+// output) cannot produce a non-convex carrier of the signature.
+// The two adjacent faces must be PLANAR (the admission (a): both
+// in the table's world — the previous fillets' tangent wires,
+// vertical but plane × cylinder, refuse here BY FAMILY) and
+// perpendicular — their stored outward normals' dot reads exactly
+// 0 (the axis-aligned signature's own arithmetic, not a tolerance
+// decision; a skewed pair is the GENERAL DIHEDRAL family,
+// registered for its first consumer — ADR-0039 D1.1's "never
+// smuggled").
 //
 // THE ORTHOGONAL PRISM JOINTS — the class's registered next
 // instance (ADR-0039 D1.1's formula V = 2n+2, E = 3n+3, F = n+3):
@@ -373,9 +379,27 @@ inline std::unique_ptr<BRepBody> fillet_edge(
                "lines. Remedy: author a positive radius within the "
                "faces' reach (the band the admission derives).");
 
-    // ---- The class signature: the FACTORY BOX's own (the admission
-    // BEFORE the construction — the counts and the families, zero
-    // dihedral arithmetic, zero convexity signs).
+    // ---- The class signature: THE BOX FAMILY CHAIN's own (the
+    // admission BEFORE the construction — the counts and the
+    // families, zero dihedral arithmetic, zero convexity signs).
+    // The m6-correttiva-ter widening: the carrier is the FACTORY
+    // BOX (k = 0) or a box carrying k PREVIOUS VERTICAL FILLETS —
+    // each link of this same walk added 2 vertices, 3 edges and 1
+    // CylinderZ flank, so V = 8+2k, E = 12+3k, F = 6+k with the
+    // SAME chi = 2, closed orientable, every entity exact, every
+    // face single-loop; the F - 6 NON-planar faces must be
+    // CylinderZ (the born flanks' own family — the only curved
+    // faces the chain can produce; the counts' k and the flanks'
+    // count must AGREE, the agreement itself the wall against the
+    // counts-matching impostors: the orthogonal prism (all planes,
+    // 0 flanks where k says 1) and the pierced carriers (inner
+    // loops) refuse here). The convexity trust is the m2
+    // admission's own: the producers of the signature are the
+    // factory and THIS FUNCTION (its output gate re-verifies the
+    // closure), and their planar-planar verticals are convex by
+    // construction — the orthogonal prism joints stay REGISTERED
+    // for their own carrier (ADR-0039 D1.1), never smuggled.
+    std::size_t chain_k = 0;  // the previous vertical fillets
     {
         bool all_exact = true;
         for (const auto& v : body.vertices)
@@ -390,34 +414,63 @@ inline std::unique_ptr<BRepBody> fillet_edge(
                    "consumes EXACT bodies only (the booleans' own "
                    "gate). Remedy: author the body on the exact path "
                    "(the factories), or accept the faceted path.");
-        if (V0 != 8 || E0 != 12 || F0 != 6 ||
+        const std::size_t kcand = F0 >= 6 ? F0 - 6
+                                        : static_cast<std::size_t>(-1);
+        const bool counts_match =
+            kcand != static_cast<std::size_t>(-1) &&
+            V0 == 8 + 2 * kcand && E0 == 12 + 3 * kcand;
+        if (!counts_match ||
             euler_characteristic(body) != 2 || !is_closed_orientable(body))
             refuse("the body is outside the class signature (the "
-                   "factory box's own: 8 vertices, 12 edges, 6 faces, "
-                   "chi = 2, closed orientable; found " +
+                   "box family chain's own: 8+2k vertices, 12+3k "
+                   "edges, 6+k faces for k previous vertical "
+                   "fillets, chi = 2, closed orientable; found " +
                    std::to_string(V0) + "/" + std::to_string(E0) +
                    "/" + std::to_string(F0) +
                    ") - the v1 admission is the box family's convex "
-                   "90-degree corners (ADR-0039 D1.1). Remedy: fillet "
-                   "a factory box's vertical edge.");
+                   "90-degree corners (ADR-0039 D1.1). Remedy: "
+                   "fillet a factory box's vertical edge, or a "
+                   "chain of them (the current state a previous "
+                   "fillet left).");
+        chain_k = kcand;
+        std::size_t flanks = 0;
         for (const auto& f : body.solid.shell().faces()) {
             if (f.loops().size() != 1)
                 refuse("a face carries " +
                        std::to_string(f.loops().size()) +
-                       " loops - the class signature is the factory "
-                       "box's single-loop faces (a pierced or notched "
-                       "face is a later family's carrier). Remedy: "
-                       "fillet a factory box's vertical edge.");
+                       " loops - the class signature is the box "
+                       "family's single-loop faces (a pierced or "
+                       "notched face is a later family's carrier). "
+                       "Remedy: fillet a factory box's vertical "
+                       "edge.");
             const auto* surf = f.surface();
             fillet_detail::PlaneReader rd;
-            if (surf == nullptr ||
-                (surf->accept(rd), rd.plane == nullptr))
-                refuse("a face carries a non-planar surface - the "
-                       "class signature is the factory box's six "
-                       "planes (the admission (a): both adjacent "
-                       "faces in the table's world). Remedy: fillet "
-                       "a factory box's vertical edge.");
+            const bool planar =
+                surf != nullptr &&
+                (surf->accept(rd), rd.plane != nullptr);
+            if (!planar) {
+                fillet_detail::WallReader wr;
+                if (surf == nullptr ||
+                    (surf->accept(wr), wr.wall == nullptr))
+                    refuse("a face carries a surface outside the "
+                           "class families (neither the box's plane "
+                           "nor a previous fillet's CylinderZ "
+                           "flank) - the chain's only curved faces "
+                           "are the flanks this walk itself born. "
+                           "Remedy: fillet a factory box's vertical "
+                           "edge.");
+                ++flanks;
+            }
         }
+        if (flanks != chain_k)
+            refuse("the body carries " + std::to_string(flanks) +
+                   " cylindrical faces where the chain's counts "
+                   "declare " + std::to_string(chain_k) +
+                   " - the signature's own arithmetic (the flanks "
+                   "and the counts must agree; the orthogonal "
+                   "prisms are REGISTERED for their own carrier, "
+                   "ADR-0039 D1.1). Remedy: fillet a factory box's "
+                   "vertical edge.");
     }
 
     // ---- The reference's own find: the structural match against the
@@ -1030,9 +1083,31 @@ inline std::unique_ptr<BRepBody> fillet_edge(
             f == cap_hi)
             continue;
         const Face& src = body.solid.shell().faces()[f];
-        fillet_detail::PlaneReader rd;
-        src.surface()->accept(rd);
-        Face face(std::make_shared<PlaneSurface>(*rd.plane));
+        // The kept faces copy verbatim — the surface carried in its
+        // OWN family (the m6-correttiva-ter chain: a previous
+        // fillet's CylinderZ flank rides through here as its
+        // native wall, value-copied exactly as the planes are —
+        // never re-read through a plane reader). The admission
+        // above already verified every face is a plane or a
+        // CylinderZ flank, so the fallback is a kernel bug.
+        std::shared_ptr<SurfaceGeometry> kept_surf;
+        {
+            fillet_detail::PlaneReader rd;
+            src.surface()->accept(rd);
+            if (rd.plane != nullptr)
+                kept_surf = std::make_shared<PlaneSurface>(*rd.plane);
+            else {
+                fillet_detail::WallReader wr;
+                src.surface()->accept(wr);
+                if (wr.wall == nullptr)
+                    refuse("a kept face's surface is outside the "
+                           "admission's families - report this as a "
+                           "kernel bug.");
+                kept_surf =
+                    std::make_shared<CylinderZSurface>(*wr.wall);
+            }
+        }
+        Face face(std::move(kept_surf));
         for (const auto& loop : src.loops()) {
             Loop nl;
             nl.set_outer(loop.is_outer());

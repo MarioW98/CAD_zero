@@ -1792,12 +1792,48 @@ DescentTable fillet_descent(const BRepBody& result,
     std::vector<bool> edge_taken(operand.edges.size(), false);
     const auto operand_edge_of = [&](const Edge& e) {
         const auto cands = operand_edge_candidates(e);
-        if (cands.empty()) return static_cast<std::int64_t>(-1);
         const math::Vec3d rp[2] = {
             result.vertices[static_cast<std::size_t>(e.vertex(0))]
                 .position(),
             result.vertices[static_cast<std::size_t>(e.vertex(1))]
                 .position()};
+        if (cands.empty()) {
+            // THE UNNAMED WORLD'S OWN CORRESPONDENCE (m6-correttiva-
+            // ter, the chain's first case: the previous fillet's
+            // quarter arcs survive 1:1 with NO stamps to match —
+            // the stamped kinds' rule would book them born/vanished,
+            // a lie about edges that never moved). The stored pair's
+            // exact position equality against the operand's own
+            // stamp-less edges — the VERTICES' own discipline, one
+            // kind over. Guarded by the empty stamp on BOTH sides:
+            // a stamped result edge with no candidate stays born
+            // (the isect wires), and the stamped operand rows stay
+            // outside the walk (the seam-wired pairs never enter —
+            // their halves carry the shared stamp).
+            if (e.shape_id().subshape.depth > 0)
+                return static_cast<std::int64_t>(-1);
+            for (std::size_t i = 0; i < operand.edges.size(); ++i) {
+                if (edge_taken[i]) continue;
+                const Edge& oe = operand.edges[i];
+                if (oe.shape_id().subshape.depth > 0) continue;
+                const math::Vec3d op[2] = {
+                    operand.vertices[static_cast<std::size_t>(
+                                          oe.vertex(0))]
+                        .position(),
+                    operand.vertices[static_cast<std::size_t>(
+                                          oe.vertex(1))]
+                        .position()};
+                const bool same =
+                    pos_eq(rp[0], op[0]) && pos_eq(rp[1], op[1]);
+                const bool flipped =
+                    pos_eq(rp[0], op[1]) && pos_eq(rp[1], op[0]);
+                if (same || flipped) {
+                    edge_taken[i] = true;
+                    return static_cast<std::int64_t>(i);
+                }
+            }
+            return static_cast<std::int64_t>(-1);
+        }
         for (const std::size_t c : cands) {
             if (edge_taken[c]) continue;
             const Edge& oe = operand.edges[c];

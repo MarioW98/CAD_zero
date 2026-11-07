@@ -51,6 +51,7 @@ set(CAD_0_TEST_SOURCES
     unit/brep/test_g2_u3_m2_fillet.cpp
     unit/brep/test_g2_u3_m3_toroidal.cpp
     unit/brep/test_g2_u3_m6bis_the_trim.cpp
+    unit/brep/test_g2_u3_m6ter_the_chain.cpp
     unit/brep/test_h2_u3_pcurve_double.cpp
     unit/brep/test_h2_u6_m2_factory_names.cpp
     unit/brep/test_h2_u6_m3_extrude_names.cpp
