@@ -2525,6 +2525,21 @@ class MainWindow(QMainWindow):
             "Kind": "Fillet (exact-side feature — the rolling ball)",
             "Edge reference": node.fillet_edge or "—",
         }
+        # THE CHAIN DECLARED (m6-correttiva-ter, the report's own
+        # row): the operand the discovery answered — WHICH body this
+        # fillet consumes. The root for the chain's first link, the
+        # PREVIOUS FILLET for every later one (the current state, one
+        # body in the viewport always) — named, never implied.
+        if getattr(node, "fillet_operand_id", 0):
+            operand = self._scene.get_node(node.fillet_operand_id) \
+                if self._scene is not None else None
+            if operand is not None:
+                if getattr(operand, "kind", "") == "fillet":
+                    fields["Consumes"] = (
+                        "{} (the chain's current state — the previous "
+                        "fillet's body)".format(operand.name))
+                else:
+                    fields["Consumes"] = operand.name
         if node.fillet_refusal:
             # The re-run's honest answer (the class-4 payload when the
             # reference died, the band's bound when the radius left

@@ -44,6 +44,13 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+# The row's own data roles: the reference (the recipe's field, the
+# m5 contract) and the base text (the name + the endpoints aid) the
+# verdict annotation APPENDS to — never replaces (m6-correttiva-ter).
+_ROLE_REFERENCE = Qt.UserRole
+_ROLE_VERDICT = Qt.UserRole + 1
+_ROLE_BASE = Qt.UserRole + 2
+
 # The radius editor's starting value — DECLARED, not magic: the radius
 # is the user's authored parameter (the recipe's own typed field); the
 # editor must start somewhere, and the honest somewhere is a small
@@ -89,6 +96,21 @@ def operand_candidates(scene):
         if _operand_body(scene, node) is not None:
             out.append(node)
     return out
+
+
+def _verdict_text(verdict: dict) -> str:
+    """The row's own short verdict — the kernel's words, the first
+    clause (the full text rides the row's verdict data and the
+    status area on selection). The wall NAMED, never paraphrased
+    into vagueness: the family the kernel refused with is the family
+    the row says (m6-correttiva-ter, defect A's declaration)."""
+    if verdict.get("admitted"):
+        op = verdict.get("operand_name") or "?"
+        return ("v1: IN CLASS — the rolling ball takes this edge "
+                "(resolves on {})".format(op))
+    reason = verdict.get("reason") or ""
+    first = reason.split(" - ")[0]
+    return "v1: OUT — {}".format(first)
 
 
 class FilletDialog(QDialog):
@@ -145,6 +167,11 @@ class FilletDialog(QDialog):
         self._radius.setSingleStep(0.1)
         self._radius.setKeyboardTracking(False)
         self._radius.setValue(FILLET_RADIUS_DEFAULT)
+        # The bands speak with the radius (the typed bounds are
+        # dynamic): every committed edit re-annotates the rows — the
+        # verdict on the row is always the CURRENT radius's own
+        # (m6-correttiva-ter, the wall never stale).
+        self._radius.valueChanged.connect(self._annotate_rows)
         layout.addWidget(QLabel("Radius (the rolling ball's r):", self))
         layout.addWidget(self._radius)
 
@@ -236,14 +263,47 @@ class FilletDialog(QDialog):
             # query's honest answer; the reference is the NAME, never
             # the geometry).
             ends = "{} - {}".format(info["v0"], info["v1"])
-            item = QListWidgetItem("{}   [{}]".format(info["name"], ends))
-            item.setData(Qt.UserRole, info["name"])
+            base = "{}   [{}]".format(info["name"], ends)
+            item = QListWidgetItem(base)
+            item.setData(_ROLE_REFERENCE, info["name"])
+            item.setData(_ROLE_BASE, base)
             self._edges.addItem(item)
         if unnamed:
             self._unnamed.setText(
                 "{} edge(s) honestly unnamed — not referenceable (the "
                 "fillet references the edge BY NAME)".format(unnamed))
+        self._annotate_rows()
         self._on_edge_selected()
+
+    # ----- the wall said on the row (m6-correttiva-ter, defect A) ----
+
+    def _annotate_rows(self) -> None:
+        """Every row carries the kernel's own verdict — the admission
+        DRY RUN, the Apply's own path without the install (the same
+        discovery, the same dispatch, the same admission the Apply
+        walks). The class wall is DECLARED at the pick surface,
+        never silent until the Apply: the verticals say IN CLASS, the
+        ring edges say OUT with the family named (the derivation is
+        tied to the vertical axis — the CylinderZ flank's own world),
+        the dead references say VANISHED with the killer, the bands
+        speak with their bounds at the CURRENT radius. The operand
+        the reference resolves on is named too — the chain's current
+        state (defect B declared at the same surface)."""
+        if self._scene is None or not hasattr(
+                self._scene, "fillet_admission"):
+            return
+        radius = self.selected_radius()
+        for i in range(self._edges.count()):
+            item = self._edges.item(i)
+            name = item.data(_ROLE_REFERENCE)
+            base = item.data(_ROLE_BASE) or name
+            try:
+                verdict = self._scene.fillet_admission(name, radius)
+            except (ValueError, RuntimeError):
+                item.setText(base)
+                continue
+            item.setData(_ROLE_VERDICT, verdict)
+            item.setText("{}   {}".format(base, _verdict_text(verdict)))
 
     # ----- the selection and the application --------------------------
 
@@ -255,13 +315,24 @@ class FilletDialog(QDialog):
         # The NAME, character for character — the same string the
         # recipe will store and the kernel will resolve.
         self._reference.setText(
-            "Reference: {}".format(items[0].data(Qt.UserRole)))
+            "Reference: {}".format(items[0].data(_ROLE_REFERENCE)))
+        # The verdict's own words in the status area (the row carries
+        # the short form; the selection carries the kernel's FULL
+        # text — the bound, the remedy — m6-correttiva-ter).
+        verdict = items[0].data(_ROLE_VERDICT)
+        if isinstance(verdict, dict):
+            if verdict.get("admitted"):
+                self._status.setText(
+                    "In class — resolves on {!r} (the chain's current "
+                    "state).".format(verdict.get("operand_name")))
+            else:
+                self._status.setText(verdict.get("reason") or "")
 
     def selected_reference(self) -> Optional[str]:
         items = self._edges.selectedItems()
         if not items:
             return None
-        return items[0].data(Qt.UserRole)
+        return items[0].data(_ROLE_REFERENCE)
 
     def selected_radius(self) -> float:
         return float(self._radius.value())
