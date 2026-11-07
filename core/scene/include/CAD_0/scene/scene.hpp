@@ -725,27 +725,124 @@ inline const SceneNode* find_node(
 // the node's own hybrid, else the bridge's primitive path, else null.
 // The DISCOVERY's instrument (a non-candidate is skipped, never a
 // best-effort guess: the find answers only for bodies that exist).
+// m6-correttiva-ter: a FILLET node answers its own materialized
+// body — the chain's CURRENT STATE (a refused re-run keeps the
+// last good body, the visible state; the copy relinks its radial
+// edges, the body copy's own hazard closed at the source).
 inline std::unique_ptr<brep::BRepBody> operand_exact_brep_quiet(
     const SceneNode& n) {
     if (n.hybrid != nullptr && n.hybrid->brep != nullptr)
         return operand_exact_brep(n, "quiet");  // linked, see above
+    if (n.kind == NodeKind::Fillet && n.fillet_body != nullptr) {
+        auto c = std::make_unique<brep::BRepBody>(*n.fillet_body);
+        brep::link_radial_edges(*c);
+        return c;
+    }
     if (n.kind != NodeKind::Sdf) return nullptr;
     return bridge::sdf_to_brep_primitive(
         n.body, geometry::FeatureId{n.id});
 }
 
-// discover_fillet_operand — THE FIND ACROSS THE FEATURES: which
-// node's exact body carries the reference's name. The candidates in
-// document order (the array IS the construction order — a healthy
-// DAG cannot duplicate the name: it embeds the creating feature's
-// id). Returns null when no body carries it; the loud door
-// (fillet_reference_find) is the creation path's own instrument.
-inline const SceneNode* discover_fillet_operand(
+// fillet_chain_root — the chain's ROOT operand node: walking the
+// fillet_operand_id links back (each operand precedes its consumer
+// by construction, so the walk terminates; the guard is the
+// corrupt-file belt). The root is where the NAMING comes from: the
+// chain's bodies carry the ROOT's stamps (the kept stamp copies
+// ride every link), so the fillet's naming context binds the ROOT's
+// table — the m2 rule one link over.
+inline const SceneNode* fillet_chain_root(
+    const std::vector<SceneNode*>& nodes, const SceneNode* n) {
+    std::size_t guard = 0;
+    while (n != nullptr && n->kind == NodeKind::Fillet &&
+           n->fillet_operand_id != 0 &&
+           guard++ <= nodes.size()) {
+        const SceneNode* up = find_node(nodes, n->fillet_operand_id);
+        if (up == nullptr || up == n) break;
+        n = up;
+    }
+    return n;
+}
+
+// FilletDiscovery — the chain-aware find's own answer: the operand
+// is the NEWEST body carrying the reference's name (the chain's
+// CURRENT STATE), `reference` its structural id there. When the
+// newest carrier is itself an OLD state — some later fillet
+// consumed it — the name is VANISHED in the current chain:
+// `superseded` names the stale carrier and `killer` the fillet that
+// ate it (the tavola's own cause rides the refusal, ADR-0036 D3's
+// class-4 payload in substance).
+struct FilletDiscovery {
+    const SceneNode* operand{nullptr};
+    geometry::ShapeId reference{};
+    const SceneNode* superseded{nullptr};
+    const SceneNode* killer{nullptr};
+};
+
+// fillet_vanished_words — the VANISHED refusal's own text: WHAT
+// died, WHERE (the superseded state, named), WHY (the killer
+// fillet's tavola carries the cause verbatim — "replaced by the
+// flank"), and the remedy. Never a mute "not found" (D3's own
+// floor).
+inline std::string fillet_vanished_words(
+    const FilletDiscovery& disc,
+    const std::string& edge_reference) {
+    std::string cause;
+    if (disc.killer != nullptr) {
+        for (const brep::DescentRow& row : disc.killer->tavola.rows) {
+            if (row.relation == brep::Descent::Vanished &&
+                row.entity == brep::EntityKind::Edge &&
+                row.name == edge_reference) {
+                cause = row.cause;
+                break;
+            }
+        }
+    }
+    std::string out =
+        "the recipe's edge-reference '" + edge_reference +
+        "' names an edge of a SUPERSEDED state (node " +
+        std::to_string(disc.superseded == nullptr
+                           ? 0
+                           : disc.superseded->id) +
+        ", '" +
+        (disc.superseded == nullptr ? std::string("?")
+                                    : disc.superseded->name) +
+        "') — the edge is VANISHED in the current chain: it died in "
+        "the fillet '" +
+        (disc.killer == nullptr ? std::string("?")
+                                : disc.killer->name) +
+        "'";
+    if (!cause.empty()) out += " (" + cause + ")";
+    out +=
+        ". The parametric chain consumes the CURRENT state — the "
+        "newest body — and the dead edge has no descendant there. "
+        "Remedy: pick the edge from the newest body's own list (the "
+        "dialog's operand pre-selects it), or remove the fillet "
+        "that consumed the edge.";
+    return out;
+}
+
+// discover_fillet_operand — THE FIND ACROSS THE FEATURES, chain-
+// aware (m6-correttiva-ter): the NEWEST body carrying the reference
+// wins — the reverse document order, the current state first. The
+// same name CAN live in several bodies (the kept stamp copies ride
+// every link of a fillet chain): consuming an OLD state would
+// generate a SIBLING body — the maintainer's two overlapping cubes
+// — so the find answers the newest carrier, and when that carrier
+// is itself superseded (a later fillet consumed it, and the name
+// did not survive into THAT body) the answer is the VANISHED
+// refusal's material, never a silent fall-back to the stale body.
+// A name no body carries at all is the closure violation (the
+// caller's own loud door).
+inline FilletDiscovery discover_fillet_operand(
     const std::vector<SceneNode*>& nodes,
     const std::string& edge_reference,
-    geometry::ShapeId* found = nullptr,
     std::size_t until = static_cast<std::size_t>(-1)) {
-    for (std::size_t k = 0; k < nodes.size() && k < until; ++k) {
+    FilletDiscovery out;
+    const std::size_t bound =
+        until > nodes.size() ? nodes.size() : until;
+    // The newest carrier first (the reverse walk, the chain's own
+    // direction).
+    for (std::size_t k = bound; k-- > 0;) {
         const SceneNode* n = nodes[k];
         std::unique_ptr<brep::BRepBody> owned =
             operand_exact_brep_quiet(*n);
@@ -753,12 +850,27 @@ inline const SceneNode* discover_fillet_operand(
         for (brep::EdgeId i = 0; i < owned->edge_count(); ++i) {
             const brep::EdgeInfo info = brep::query_edge(*owned, i);
             if (!info.name.empty() && info.name == edge_reference) {
-                if (found != nullptr) *found = info.id;
-                return n;
+                out.reference = info.id;
+                // THE SUPERSEDED CHECK: is this carrier itself the
+                // operand of a later fillet? Then the name's chain
+                // moved past it — and since the reverse walk found
+                // THIS body first, no newer body carries the name:
+                // it is VANISHED in the current state.
+                for (std::size_t j = k + 1; j < bound; ++j) {
+                    const SceneNode* m = nodes[j];
+                    if (m->fillet.has_value() &&
+                        m->fillet_operand_id == n->id) {
+                        out.superseded = n;
+                        out.killer = m;
+                        return out;
+                    }
+                }
+                out.operand = n;
+                return out;
             }
         }
     }
-    return nullptr;
+    return out;
 }
 
 // attach_fillet — THE FILLET'S OWN attach_operation_hybrid: ONE
@@ -789,10 +901,25 @@ inline bool attach_fillet(
     for (std::size_t k = 0; k < nodes.size(); ++k)
         if (nodes[k] == &n) { until = k; break; }
     try {
-        // ---- The discovery: the find across the features.
-        geometry::ShapeId reference{};
-        const SceneNode* operand = discover_fillet_operand(
-            nodes, recipe.edge_reference, &reference, until);
+        // ---- The discovery: the chain-aware find across the
+        // features (the NEWEST carrier — the current state — wins;
+        // a superseded carrier answers as VANISHED with the killer
+        // and the cause, m6-correttiva-ter).
+        const FilletDiscovery disc = discover_fillet_operand(
+            nodes, recipe.edge_reference, until);
+        const SceneNode* operand = disc.operand;
+        if (disc.superseded != nullptr) {
+            // THE VANISHED REFUSAL — by name, never a silent sibling
+            // on the stale body: what died, where, why (the killer's
+            // tavola carries the cause), the remedy. At the DAG pass
+            // the captured lodgings get their say first (the
+            // subtract-side resolver leg below); the chain's own
+            // words are the floor either way.
+            n.fillet_refusal =
+                "attach_fillet: " +
+                fillet_vanished_words(disc, recipe.edge_reference);
+            return false;
+        }
         if (operand == nullptr) {
             // The dead reference. With the pass's captured lodgings,
             // the class-4 answer: WHAT died (the old tavola's row),
@@ -860,11 +987,39 @@ inline bool attach_fillet(
                 "own refusal first (its hybrid_refusal carries the "
                 "reason).");
         const brep::BRepBody& operand_body = *owned;
+        const geometry::ShapeId reference = disc.reference;
         // ---- The class dispatch + the naming context, derived from
         // the operand node (the scene fact; the kernel's own
         // admission does the rest, by name, with the remedy).
         std::unique_ptr<brep::BRepBody> result;
-        if (operand->operation.has_value() &&
+        if (operand->kind == NodeKind::Fillet) {
+            // THE CHAIN (m6-correttiva-ter): the operand is a
+            // previous fillet's body — the box class ONE LINK OVER
+            // (the chain's current state, the discovery's newest
+            // carrier). The naming context binds the chain's ROOT
+            // table: the adjacent faces' stamps are the root's (the
+            // kept stamp copies ride every link), so the flank's
+            // operands render through the root's own vocabulary.
+            const SceneNode* root =
+                fillet_chain_root(nodes, operand);
+            const brep::naming::OperationNaming* body_table =
+                root == nullptr ? nullptr
+                                : operand_naming_of(*root);
+            if (body_table == nullptr) {
+                throw std::invalid_argument(
+                    "attach_fillet: the chain's root operand carries "
+                    "no naming table (the unnamed mode) - the born "
+                    "entities would read honestly empty and the "
+                    "reference would not survive the file. Remedy: "
+                    "model the chain's root as a fitted primitive "
+                    "(the box), or accept the unnamed kernel path "
+                    "(CAD_0.brep).");
+            }
+            const brep::FilletNaming naming{
+                geometry::FeatureId{n.id}, body_table};
+            result = brep::fillet_edge(
+                operand_body, reference, recipe.radius, naming);
+        } else if (operand->operation.has_value() &&
             operand->operation->type == OperationType::Subtract) {
             // THE RIM CLASS (fillet_rim_edge): the blind body's two
             // creators — the naming from the operand's OWN recipe.
@@ -1462,10 +1617,95 @@ public:
         for (SceneNode& m : nodes_) live.push_back(&m);
         if (attach_fillet(*n, live, nullptr)) {
             mark_dirty(id);
+            // THE DOWNSTREAM CHAIN (m6-correttiva-ter): every LATER
+            // fillet whose operand chain reaches the edited node
+            // re-runs — the DAG discipline, one definition with the
+            // rebuild pass's fillet leg (the edited body changed; a
+            // downstream body left stale would be the silent
+            // wrongness this bite exists to kill). A downstream
+            // refusal (the new radius ate the face the downstream
+            // reference needs) is its own node's VISIBLE state: the
+            // last good body kept, the reason on its own row.
+            for (SceneNode& m : nodes_) {
+                if (!m.fillet.has_value() || &m == n) continue;
+                bool reaches = false;
+                std::size_t guard = 0;
+                const SceneNode* cur = &m;
+                while (cur != nullptr &&
+                       cur->fillet.has_value() &&
+                       cur->fillet_operand_id != 0 &&
+                       guard++ <= nodes_.size()) {
+                    if (cur->fillet_operand_id == id) {
+                        reaches = true;
+                        break;
+                    }
+                    cur = find_node(live, cur->fillet_operand_id);
+                }
+                if (!reaches) continue;
+                attach_fillet(m, live, nullptr);
+                mark_dirty(m.id);
+            }
             return "reference_resolved";
         }
         mark_dirty(id);
         return n->fillet_refusal;
+    }
+
+    // fillet_admission — THE APPLY'S OWN PATH AS A DRY RUN
+    // (m6-correttiva-ter, the picker's declaration door): the same
+    // chain-aware discovery, the same class dispatch, the same
+    // kernel admission the Apply walks — WITHOUT the install (a
+    // scratch node, nothing written, no id consumed, no notify).
+    // The wall SAID at the pick surface, never silent: the verdict
+    // is the kernel's own words verbatim (the class families, the
+    // typed bands with their bounds, the VANISHED death with the
+    // killer and the cause), and the operand the reference resolves
+    // on is NAMED (the chain's current state) — the two defects of
+    // the third click-test declared BEFORE any Apply.
+    struct FilletAdmission {
+        bool admitted{false};
+        std::string reason{};
+        std::uint32_t operand_id{0};
+        std::string operand_name{};
+    };
+
+    FilletAdmission fillet_admission(const std::string& edge_reference,
+                                     double radius) {
+        if (edge_reference.empty() || !(radius > 0.0) ||
+            !std::isfinite(radius))
+            return {false,
+                    "the admission needs a non-empty reference and a "
+                    "finite positive radius (the dialog's own fields).",
+                    0, ""};
+        std::vector<SceneNode*> live;
+        live.reserve(nodes_.size());
+        for (SceneNode& m : nodes_) live.push_back(&m);
+        const FilletDiscovery disc =
+            discover_fillet_operand(live, edge_reference);
+        if (disc.superseded != nullptr)
+            return {false,
+                    "attach_fillet: " + fillet_vanished_words(
+                                            disc, edge_reference),
+                    disc.superseded->id, disc.superseded->name};
+        if (disc.operand == nullptr)
+            return {false,
+                    "attach_fillet: the recipe's edge-reference '" +
+                        edge_reference +
+                        "' names no edge among the features' exact "
+                        "sides - the reference is the grammar's own "
+                        "form, matched whole against the entity names "
+                        "(never parsed, never an address). Remedy: "
+                        "pick the edge from the operand body's own "
+                        "query (the by-name surface) and re-run.",
+                    0, ""};
+        SceneNode probe;  // the scratch — never installed
+        probe.id = next_id_;
+        probe.kind = NodeKind::Fillet;
+        probe.fillet = brep::FilletRecipe{edge_reference, radius};
+        if (attach_fillet(probe, live, nullptr))
+            return {true, "", disc.operand->id, disc.operand->name};
+        return {false, probe.fillet_refusal, disc.operand->id,
+                disc.operand->name};
     }
 
     // Next id that add_node() will hand out. Persisted by the native

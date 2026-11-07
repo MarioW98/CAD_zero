@@ -190,12 +190,17 @@ void bind_scene(nb::module_& m) {
         // prism's faces, loops and p-curves end-to-end from Python.
         .def_prop_ro("exact_brep",
             [](const scene::SceneNode& n) -> const brep::BRepBody* {
+                if (n.fillet_body != nullptr)
+                    return n.fillet_body.get();
                 return n.hybrid ? n.hybrid->brep.get() : nullptr;
             },
             nb::rv_policy::reference_internal,
-            "The node's exact B-Rep (an opaque CAD_0.bridge.BRepBody)\n"
-            "or None. Present for extrude operations whose profile is\n"
-            "inside the exact class; inspect via CAD_0.brep.face_query.")
+            "The node's exact B-Rep (an opaque CAD_0.bridge.BRepBody) "
+            "or None. Present for extrude operations whose profile "
+            "is inside the exact class AND for fillet features "
+            "(their materialized body — the chain's current state, "
+            "m6-correttiva-ter; a refused re-run keeps the last "
+            "good body); inspect via CAD_0.brep.face_query.")
         .def_prop_ro("hybrid_refusal",
             [](const scene::SceneNode& n) {
                 return n.hybrid_refusal;
@@ -980,7 +985,31 @@ void bind_scene(nb::module_& m) {
              nb::arg("node_id"), nb::arg("radius"),
              "Edit the fillet's radius (the class-1 SILENT edit, one "
              "scene mutation): returns 'reference_resolved' when the "
-             "feature re-ran, or the refusal text when it did not.")
+             "feature re-ran, or the refusal text when it did not. "
+             "The DOWNSTREAM chain re-runs with it (every later "
+             "fillet consuming this body — m6-correttiva-ter).")
+        .def("fillet_admission",
+             [](scene::Scene& s, const std::string& edge_reference,
+                double radius) {
+                 const auto a = s.fillet_admission(edge_reference,
+                                                   radius);
+                 nb::dict out;
+                 out["admitted"] = a.admitted;
+                 out["reason"] = a.reason;
+                 out["operand_id"] = a.operand_id;
+                 out["operand_name"] = a.operand_name;
+                 return out;
+             },
+             nb::arg("edge_reference"), nb::arg("radius"),
+             "The Apply's own path as a DRY RUN (the picker's "
+             "declaration door, m6-correttiva-ter): the same "
+             "chain-aware discovery, the same class dispatch, the "
+             "same kernel admission — nothing installed. Returns "
+             "{admitted, reason, operand_id, operand_name}: the "
+             "kernel's own words verbatim when refused (the class "
+             "families, the typed bands, the VANISHED death with "
+             "the killer named), the operand the reference resolves "
+             "on (the chain's CURRENT STATE) either way.")
         .def("restore_fillet_node",
              [](scene::Scene& s, std::uint32_t node_id,
                 const std::string& name,
