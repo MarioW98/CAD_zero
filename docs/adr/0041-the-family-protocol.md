@@ -2,13 +2,16 @@
 
 ## Status
 
-**Proposed (2026-11-06) — docs-only, born as K1 m1: the contracts pinned,
-NO code moves, the STOP holds until the maintainer's review accepts.** The
-instruction this ADR translates is the maintainer's own (2026-11-06,
-recorded in the register's K row that lands with this act, as the line
-received it): the unit of account changes — progress is no longer
-counted by feature count; it is counted by families CORRECTLY
-supported, by intersection and
+**Accepted (2026-11-07) — the maintainer's review returned and the
+contracts are taken WHOLE: the five metrics, the six-row family
+protocol, the torus baseline, the probe pin, the benchmark suite —
+every D accepted as registered, zero amendments, zero refusals.** Born
+Proposed (2026-11-06) as K1 m1, docs-only: the contracts pinned, NO
+code moved, the STOP held until this review. The instruction this ADR
+translates is the maintainer's own (2026-11-06, recorded in the
+register's K row, as the line received it): the unit of account
+changes — progress is no longer counted by feature count; it is
+counted by families CORRECTLY supported, by intersection and
 degenerate robustness, by topological correctness after operation
 SEQUENCES, by feature stability after parameter edits, and by precision
 verified by INDEPENDENT tests. The declaration that rides it, plain: no
@@ -16,7 +19,24 @@ new family is to be taken down by per-case special algorithms — the
 protocol or the wall, never the trick. Nothing in this document moves a
 byte of code, a test, or a golden: every D below is a contract the review
 may accept, amend or refuse; the morsi that land under it come after,
-each with its own bite, each judged by the rite on both compilers.
+each with its own bite, each judged by the rite on both compilers —
+and the review has now accepted them all.
+
+**The act of acceptance, declared on the record:** the reviewer's
+fetch stopped at its cap before the document's tail — the end of D5,
+D6, the closing — and the maintainer read that tail with his own eyes
+and accepted (2026-11-07). D6 declares no register surgery on the
+daughters for this act: where ADR-0039's acceptance applied the
+amendments its own D6 listed (the ADR-0035 D6 protocol's form), this
+D6 lists NONE — its own sentence governs, zero code, zero tests, zero
+goldens, zero census rows land on acceptance's authority alone, the
+morsi come after, each its own commit, each judged by the rite. The
+flip is the whole act: this Status block, and nothing else in the
+tree. The morsi that follow — the census table's backfill with its
+seat, the zoo's corpus, the chain gates, the survival ledgers, the
+oracle suite, the benchmark suite with the lag profile as row zero,
+the probe measured against the torus baseline — each lands standalone,
+each with its discriminating proof, each counted in the K row.
 
 Daughter of **ADR-0033** (D2's precision law — option (i) the wall,
 option (ii) registered, priced, with its entry criterion; the decision
