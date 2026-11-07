@@ -556,8 +556,15 @@ class MainWindow(QMainWindow):
         stack's push destroys the un-executed command — nothing
         pushed, nothing written, the scene untouched); the dialog
         quotes the words.
+
+        The operand's mesh steps aside (the subtract's own pattern,
+        m6-correttiva-bis): the fillet body REPLACES the operand's
+        in the viewport — the operand's sharper mesh would otherwise
+        occlude the raccordo it consumed (the fillet body cuts INTO
+        the operand's corner). The hidden flag is serialized state
+        (round-trips); undo restores it, redo hides again.
         """
-        state = {"node_id": None}
+        state = {"node_id": None, "operand_id": None}
 
         def execute():
             if state["node_id"] is None:
@@ -571,6 +578,13 @@ class MainWindow(QMainWindow):
             state["node_id"] = nid
             node = self._scene.get_node(nid)
             name = node.name if node is not None else "Fillet"
+            # The operand steps aside — the fillet's own body shown
+            # (the subtract's hiding pattern; the discovery's own
+            # answer, never a parse of the reference string).
+            operand_id = node.fillet_operand_id if node is not None else 0
+            if operand_id:
+                state["operand_id"] = operand_id
+                self._scene.set_visible(operand_id, False)
             self._node_params[nid] = {"radius": float(radius)}
             self._node_types[nid] = "feat_fillet"
             item = QTreeWidgetItem([name, "FIL"])
@@ -588,6 +602,9 @@ class MainWindow(QMainWindow):
                 self._node_params.pop(nid, None)
                 self._node_types.pop(nid, None)
                 self._remove_tree_row(nid)
+                # The operand returns (the subtract's undo pattern).
+                if state["operand_id"] is not None:
+                    self._scene.set_visible(state["operand_id"], True)
                 self._property_panel.clear()
                 self._refresh_viewport()
 

@@ -224,6 +224,14 @@ void bind_scene(nb::module_& m) {
             },
             "The recipe's radius (the ball radius r, its own typed\n"
             "field). 0.0 for non-fillet nodes.")
+        .def_prop_ro("fillet_operand_id",
+            [](const scene::SceneNode& n) {
+                return n.fillet_operand_id;
+            },
+            "The scene id of the operand node the recipe consumed —\n"
+            "the discovery's own answer, lodged beside the body\n"
+            "(derived state: re-discovered at load, never serialized).\n"
+            "0 for non-fillet nodes and refusals before the find.")
         .def_prop_ro("fillet_brep",
             [](const scene::SceneNode& n) -> const brep::BRepBody* {
                 return n.fillet_body.get();

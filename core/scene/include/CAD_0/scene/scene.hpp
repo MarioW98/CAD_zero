@@ -344,6 +344,13 @@ struct SceneNode {
     std::optional<brep::FilletRecipe> fillet;
     std::unique_ptr<brep::BRepBody> fillet_body;
     std::string fillet_refusal;
+    // The operand the recipe consumed, the discovery's own answer
+    // (attach_fillet writes it beside the body it materializes).
+    // DERIVED state, never serialized: the loader's pass
+    // re-discovers it from the recipe exactly as it re-materializes
+    // the body — the display selection (the subtract's own hiding
+    // pattern) and the panel read it, never a file.
+    std::uint32_t fillet_operand_id{0};
 
     // ---- THE TAVOLA'S LODGING (the morse-5 register's item 7, the
     // deferred item ADR-0036 D6 registered for "the first scene-side
@@ -414,6 +421,7 @@ struct SceneNode {
           operand_missing(other.operand_missing),
           hybrid_refusal(other.hybrid_refusal),
           fillet(other.fillet), fillet_refusal(other.fillet_refusal),
+          fillet_operand_id(other.fillet_operand_id),
           tavola(other.tavola),
           operation_pending(other.operation_pending),
           operation_pending_error(other.operation_pending_error) {
@@ -455,6 +463,7 @@ struct SceneNode {
         operation_pending_error = other.operation_pending_error;
         fillet = other.fillet;
         fillet_refusal = other.fillet_refusal;
+        fillet_operand_id = other.fillet_operand_id;
         tavola = other.tavola;
         if (other.fillet_body) {
             fillet_body = std::make_unique<brep::BRepBody>(*other.fillet_body);
@@ -914,6 +923,10 @@ inline bool attach_fillet(
                 "which carries its own class refusals.");
         }
         n.fillet_body = std::move(result);
+        // The operand the recipe consumed — the discovery's own
+        // answer, lodged beside the body (derived state, the same
+        // re-discovery at load; the display selection reads it).
+        n.fillet_operand_id = operand->id;
         // THE LODGING: the fillet's own tavola (fillet_descent), the
         // same site rule as the operations'.
         n.tavola = brep::fillet_descent(*n.fillet_body, operand_body);

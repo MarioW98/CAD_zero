@@ -847,6 +847,32 @@ def test_the_fillet_is_visible_after_apply(workbench_app):
     assert len(win._viewport._mesh_indices) // 3 >= cm.triangle_count()
     assert win._viewport._node_ranges.get(fid) is not None
 
+    # THE OPERAND STEPS ASIDE (m6-correttiva-bis, the second click-
+    # test's tail): the fillet body REPLACES the operand's in the
+    # viewport — the operand's sharper MC mesh would otherwise occlude
+    # the raccordo it consumed (the fillet body cuts INTO the
+    # operand's corner). The subtract's own hiding pattern: hidden on
+    # Apply, the frame's buffers carrying the FILLET's triangles
+    # alone, undo returning the operand, redo hiding it again.
+    assert win._scene.get_node(box_id).visible is False
+    assert win._viewport._node_ranges.get(box_id) is None
+    assert len(win._viewport._mesh_indices) // 3 == cm.triangle_count()
+    # The additivity's display twin: the operand's own CACHE unmoved
+    # by the hiding (the mesh is the node's data, the flag the frame's
+    # selection — two different things).
+    assert win._scene.get_node(box_id).cached_mesh.vertex_count() == \
+        box_verts_before
+    undo_before = win._command_stack.undo_count()
+    win.on_undo()
+    assert win._command_stack.undo_count() == undo_before - 1
+    assert win._scene.get_node(box_id).visible is True
+    assert win._viewport._node_ranges.get(box_id) is not None
+    assert win._viewport._node_ranges.get(fid) is None
+    win.on_redo()
+    assert win._scene.get_node(box_id).visible is False
+    assert win._viewport._node_ranges.get(fid) is not None
+    assert win._viewport._node_ranges.get(box_id) is None
+
     # THE ADDITIVITY: the operand's mesh unmoved by the fillet's
     # arrival (the same counts, the same content).
     box_mesh_after = win._scene.get_node(box_id).cached_mesh
