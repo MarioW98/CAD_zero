@@ -2,14 +2,48 @@
 
 ## Status
 
-**Accepted (2026-11-04) — the maintainer's review returned, the m2
-order given (IL MORSO 1: LO SPIGOLO DEL BOX, IL FIANCO CILINDRICO),
-and the register surgery applied in the same act (D6's own list,
-below).** Born Proposed (2026-11-04) as morso 1 of G2-u3, docs-only:
-the derivation pinned, NO code moves — the STOP held until this
-review. With acceptance every amendment D6 declares is applied and
-dated, and the morsi 2+ ladder is unlocked per its own order (m2 the
-cylindrical flank first, the chiral torus after).
+**Implemented (G2-u3 complete, 2026-11-08) — the flip is the
+click-test's own act (the ADR-0030/0032 precedent: the suite covers
+the contracts, the hands cover the experience, the register carries
+the verbalization).** Accepted 2026-11-04 — the maintainer's review
+returned, the m2 order given (IL MORSO 1: LO SPIGOLO DEL BOX, IL
+FIANCO CILINDRICO), the register surgery applied in the same act
+(D6's own list, below); born Proposed (2026-11-04) as morso 1 of
+G2-u3, docs-only, the STOP held until that review. The morsi landed
+standalone, each with the full suite green, across the five days
+2026-11-04 → 11-08: m2 the cylindrical flank; m3 the toroidal flank
+(the chirality flip with its pins, the landing incident declared at
+the register in its own act); m4 the recipe and the v0.6.0 format;
+m5 the UI and the report; m6 the click-test itself, the protocol
+pinned first (the eight steps, every expected value a kernel
+number); m7 the warm road interleaved, zero code moved. The phase's
+exit, cited as it happened: the suite covered the contracts (the
+goldens 10/15/7/χ=2 and 14/20/9/H=1 with their closed forms; the
+walls refused BY NAME with the remedy carried; the chain's counts
+and volumes; the round-trip; the determinism digests); the
+maintainer's click-test covered the experience — and it took FOUR
+tornate, every defect a correction with its own bite, never a
+silent fix: 2026-11-06 NON PASSATO (three defects: the fillet not
+shown in the viewport, the panel widening the window, the lag);
+2026-11-07 NON PASSATO (the six crossed planes); 2026-11-07
+exploratory NON PASSATO (the wall unseen, the two overlapped
+bodies); 2026-11-08 THE CLEAN VERDICT — the maintainer's words, as
+they arrived: "Riesco a fare i fillet solo per gli spigoli
+paralleli all'asse blu (credo sia l'asse z), ossia solo a quelli
+'vertical'. A differenza di prima ora riesco a vedere più di 1
+fillet alla volta." — "solo vertical" is the CLASS WALL this ADR's
+own D1.1 pins (the v1 class takes the VERTICAL spigolo, the flank
+the Z-axis cylinder family, the guide case's own edge; the general
+dihedral REGISTERED for its first consumer, D4's queue by name) and
+the picker's rows now DECLARE before every Apply (the 4 verticals
+IN CLASS, the 8 ring edges OUT with the family named, the dead
+references VANISHED with the killer); "più di 1 fillet" is the
+chain confirmed by the hands. **No other defect reported; the flip
+claims no step the hands did not report — the verdict is quoted as
+it arrived.** The click-test's whole verbalization is the register's
+m6 row; the closure's debts (the vertical-only reach, the watertight
+tessellator, the VBO caching, the nanobind shutdown noise) are named
+in the register's G row, the closure's own act.
 
 **ONE CORRECTION TO D6's OWN TEXT, on the record at the accepting
 act (the register's arbitration standing over the registration's
