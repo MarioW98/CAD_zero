@@ -432,3 +432,409 @@ TEST_CASE("K1 m3 the tessellation: the ellipsoid's display mesh — "
         CHECK(q == doctest::Approx(1.0).epsilon(0.01));
     }
 }
+
+// ===========================================================================
+// THE MASS FAMILY — the closed forms, the oracle, the barrel (ADR-0042
+// D3): every number the ADR pinned, the same arithmetic read twice
+// ===========================================================================
+#include "CAD_0/brep/mass_properties.hpp"
+
+namespace {
+
+// THE INDEPENDENT ORACLE (D1.5, the m3 precedent's form): the (u,v)
+// midpoint product quadrature of the divergence kernels — the TEST'S
+// OWN loops on the parametrization's formula, ZERO code shared with
+// the kernel's BForm machinery or its integ_cs recurrence. The grid
+// declared: 2000 x 1000 = 2e6 points; the tolerance declared with
+// its conditioning (the full-window u-integrals of the trig-power
+// kernels are EXACT under the periodic midpoint rule; the
+// v-direction converges O(h^2)).
+struct QuadFlux {
+    double F0{0}, Fxx{0}, Fyy{0}, Fzz{0};
+};
+
+QuadFlux ellipsoid_quad_flux(double a, double c, int NU, int NV,
+                             double u0, double u1, double v0,
+                             double v1) {
+    QuadFlux q;
+    const double du = (u1 - u0) / NU, dv = (v1 - v0) / NV;
+    for (int i = 0; i < NU; ++i) {
+        const double u = u0 + (i + 0.5) * du;
+        for (int j = 0; j < NV; ++j) {
+            const double v = v0 + (j + 0.5) * dv;
+            // x*N = a^2 c sin v (the ADR's own derivation, C = 0).
+            const double xn = a * a * c * std::sin(v);
+            const double w = du * dv;
+            q.F0 += xn * w;
+            // x = a sv cu, y = -a sv su, z = c cv (the default frame).
+            const double x = a * std::sin(v) * std::cos(u);
+            const double y = -a * std::sin(v) * std::sin(u);
+            const double z = c * std::cos(v);
+            q.Fxx += x * x * xn * w;
+            q.Fyy += y * y * xn * w;
+            q.Fzz += z * z * xn * w;
+        }
+    }
+    return q;
+}
+
+} // namespace
+
+TEST_CASE("K1 m3 the mass family: the full ellipsoid's closed forms "
+          "— V = 0.375 pi, the classical moments, all_exact") {
+    const auto body = make_ellipsoid(kA, kC);
+    const MassProperties mp =
+        mass_properties(*body, CAD_0::math::Tolerance::linear(1e-9));
+
+    // THE CLASSICAL FORMS (ADR-0042 D3's pins — they pre-date the
+    // kernel, the D1.5-qualified goldens).
+    CHECK(mp.all_exact);
+    CHECK(mp.volume == doctest::Approx(1.1780972450961724).epsilon(1e-12));
+    CHECK(mp.volume ==
+          doctest::Approx((4.0 / 3.0) * CAD_0::brep::kPi * kA * kA * kC)
+              .epsilon(1e-12));
+    CHECK(mp.centroid.x == doctest::Approx(0.0).epsilon(1e-12));
+    CHECK(mp.centroid.y == doctest::Approx(0.0).epsilon(1e-12));
+    CHECK(mp.centroid.z == doctest::Approx(0.0).epsilon(1e-12));
+    // I_z = (2/5) V a^2 = 0.2650718801466388; I_x = I_y =
+    // (V/5)(a^2+c^2) = 0.1914408023281280.
+    CHECK(mp.inertia_about_centroid(2, 2) ==
+          doctest::Approx(0.2650718801466388).epsilon(1e-12));
+    CHECK(mp.inertia_about_centroid(0, 0) ==
+          doctest::Approx(0.1914408023281280).epsilon(1e-12));
+    CHECK(mp.inertia_about_centroid(1, 1) ==
+          doctest::Approx(0.1914408023281280).epsilon(1e-12));
+    // The off-diagonals vanish (the principal frame).
+    CHECK(mp.inertia_about_centroid(0, 1) ==
+          doctest::Approx(0.0).epsilon(1e-12));
+    CHECK(mp.inertia_about_centroid(0, 2) ==
+          doctest::Approx(0.0).epsilon(1e-12));
+    CHECK(mp.inertia_about_centroid(1, 2) ==
+          doctest::Approx(0.0).epsilon(1e-12));
+
+    // THE ORACLE, road two: the 2e6-point midpoint quadrature of the
+    // SAME kernels — the agreement pinned at 2e-6 relative (the m3
+    // precedent's own form: the quadrature in the test, the
+    // recurrence in the kernel, the same question twice).
+    const QuadFlux q =
+        ellipsoid_quad_flux(kA, kC, 2000, 1000, 0.0,
+                            CAD_0::brep::kTwoPi, 0.0, CAD_0::brep::kPi);
+    const double Vq = q.F0 / 3.0;
+    CHECK(mp.volume == doctest::Approx(Vq).epsilon(2e-6));
+    // I_z = S_xx + S_yy with S_ij = F_ij / 5 (the aggregate's own
+    // algebra, read on the oracle's numbers).
+    const double Sxx = q.Fxx / 5.0, Syy = q.Fyy / 5.0, Szz = q.Fzz / 5.0;
+    CHECK(mp.inertia_about_centroid(2, 2) ==
+          doctest::Approx(Sxx + Syy).epsilon(2e-6));
+    CHECK(mp.inertia_about_centroid(0, 0) ==
+          doctest::Approx(Syy + Szz).epsilon(2e-6));
+    CHECK(mp.inertia_about_centroid(1, 1) ==
+          doctest::Approx(Sxx + Szz).epsilon(2e-6));
+
+    // THE NAIVE COUNTERPROOF, red: the sphere's form with R = a is
+    // NOT the spheroid's volume — the naive read is grossly wrong
+    // (the discrimination the classical forms pin).
+    const double v_naive_sphere_form =
+        (4.0 / 3.0) * CAD_0::brep::kPi * kA * kA * kA;
+    CHECK(mp.volume == doctest::Approx(1.1780972450961724).epsilon(1e-12));
+    CHECK_FALSE(mp.volume ==
+                doctest::Approx(v_naive_sphere_form).epsilon(1e-3));
+    CHECK(v_naive_sphere_form > 1.7);  // the naive read, grossly off
+}
+
+TEST_CASE("K1 m3 the mass family: the translated body — the centroid "
+          "moves, the moments follow the parallel axis (the "
+          "translated-sphere precedent)") {
+    const auto body = make_ellipsoid(kA, kC, {2, 0, 0});
+    const MassProperties mp =
+        mass_properties(*body, CAD_0::math::Tolerance::linear(1e-9));
+    CHECK(mp.all_exact);
+    CHECK(mp.volume == doctest::Approx(1.1780972450961724).epsilon(1e-12));
+    CHECK(mp.centroid.x == doctest::Approx(2.0).epsilon(1e-12));
+    // I about the centroid is translation-invariant — the same
+    // classical numbers one placement over.
+    CHECK(mp.inertia_about_centroid(2, 2) ==
+          doctest::Approx(0.2650718801466388).epsilon(1e-12));
+    CHECK(mp.inertia_about_centroid(0, 0) ==
+          doctest::Approx(0.1914408023281280).epsilon(1e-12));
+}
+
+// The barrel: the ellipsoid band between two latitudes closed by the
+// two planar disc caps — the BAND WINDOW's own body (the cylinder
+// factory's topology one family over: 4V/5E/3F, chi = 2). The golden
+// is Cavalieri's own form, the same arithmetic read twice.
+namespace {
+
+std::unique_ptr<BRepBody> make_barrel(double a, double c, double z0,
+                                      double z1) {
+    const double rho0 = a * std::sqrt(1.0 - z0 * z0 / (c * c));
+    const double rho1 = a * std::sqrt(1.0 - z1 * z1 / (c * c));
+    // THE DOMAIN'S OWN ORDER: v runs from the NORTH pole DOWN, so the
+    // z1 rim (upper) sits at the SMALLER v (the window's bottom) and
+    // the z0 rim (lower) at the larger (the top). The CCW walk reads
+    // bottom-east at the UPPER rim, top-west at the lower — the
+    // sphere-family's own convention (the walk that makes the caps'
+    // CCW loops the radial XOR's opposite, the cylinder factory's
+    // discipline one family over).
+    const double vN = std::acos(z1 / c);  // the upper rim's latitude
+    const double vS = std::acos(z0 / c);  // the lower rim's latitude
+    auto body = std::make_unique<BRepBody>();
+    auto& shell = body->solid.shell_mut();
+    shell.set_closed(true);
+    body->vertices = {
+        Vertex{{rho1, 0, z1}},   // 0: v_top1 (the seam side, +X)
+        Vertex{{-rho1, 0, z1}},  // 1: v_top2 (the antipode)
+        Vertex{{rho0, 0, z0}},   // 2: v_bot1
+        Vertex{{-rho0, 0, z0}},  // 3: v_bot2
+    };
+    for (std::size_t i = 0; i < body->vertices.size(); ++i)
+        body->vertices[i].set_id(static_cast<VertexId>(i));
+    // The rim arcs split at the seam meridian u = 0 and the antipode
+    // (the cylinder factory's own pattern); e_seam rides the meridian.
+    body->edges = {
+        Edge{0, 1},  // 0: e_top1 (through -Y, u: 0 -> pi)
+        Edge{1, 0},  // 1: e_top2 (through +Y, u: pi -> 2pi)
+        Edge{2, 3},  // 2: e_bot1 (through -Y)
+        Edge{3, 2},  // 3: e_bot2 (through +Y)
+        Edge{2, 0},  // 4: e_seam (the meridian u = 0, z0 -> z1)
+    };
+    for (std::size_t i = 0; i < body->edges.size(); ++i)
+        body->edges[i].set_id(static_cast<EdgeId>(i));
+
+    // Face 0: the ellipsoidal BAND — the window [0,2pi]x[vN,vS],
+    // walked CCW with material on the left: bottom-east at the UPPER
+    // rim (u: 0 -> 2pi, v = vN), right seam up (v: vN -> vS),
+    // top-west at the LOWER rim (u: 2pi -> 0, v = vS), left seam
+    // down.
+    {
+        Face face(std::make_shared<EllipsoidSurface>(a, c));
+        Loop loop;
+        const auto seg = [](Vec2d p, Vec2d q) {
+            return pcurve_segment(p, q, true);
+        };
+        CoEdge top1{0, false};  // the UPPER rim, east half (u: 0->pi)
+        top1.set_p_curve(seg({0, vN}, {CAD_0::brep::kPi, vN}));
+        CoEdge top2{1, false};  // the UPPER rim, west half (u: pi->2pi)
+        top2.set_p_curve(seg({CAD_0::brep::kPi, vN},
+                             {CAD_0::brep::kTwoPi, vN}));
+        CoEdge seam_up{4, true};  // the RIGHT side (u = 2pi), vN -> vS
+        seam_up.set_p_curve(seg({CAD_0::brep::kTwoPi, vN},
+                                {CAD_0::brep::kTwoPi, vS}));
+        CoEdge bot2_rev{3, true};  // the LOWER rim, u: 2pi -> pi
+        bot2_rev.set_p_curve(seg({CAD_0::brep::kTwoPi, vS},
+                                 {CAD_0::brep::kPi, vS}));
+        CoEdge bot1_rev{2, true};  // the LOWER rim, u: pi -> 0
+        bot1_rev.set_p_curve(seg({CAD_0::brep::kPi, vS}, {0, vS}));
+        CoEdge seam_dn{4, false};  // the LEFT side (u = 0), vS -> vN
+        seam_dn.set_p_curve(seg({0, vS}, {0, vN}));
+        loop.add_coedge(top1);
+        loop.add_coedge(top2);
+        loop.add_coedge(seam_up);
+        loop.add_coedge(bot2_rev);
+        loop.add_coedge(bot1_rev);
+        loop.add_coedge(seam_dn);
+        face.add_loop(std::move(loop));
+        face.set_id(0);
+        shell.add_face(std::move(face));
+    }
+    // Face 1: the UPPER cap (+Z): the rim walked CCW around +Z — the
+    // arcs REVERSED (the band walks them forward: the XOR's opposite).
+    // The plane's domain frame (-X, -Y) puts v_top1 (+X in 3D) at
+    // angle pi and v_top2 at 0.
+    {
+        Face face(std::make_shared<PlaneSurface>(Vec3d{0, 0, z1},
+                                                 Vec3d{0, 0, 1}));
+        Loop loop;
+        CoEdge top2_rev{1, true};
+        top2_rev.set_p_curve(pcurve_arc({0, 0}, rho1, false,
+                                        CAD_0::brep::kPi,
+                                        CAD_0::brep::kPi));
+        CoEdge top1_rev{0, true};
+        top1_rev.set_p_curve(pcurve_arc({0, 0}, rho1, false, 0.0,
+                                        CAD_0::brep::kPi));
+        loop.add_coedge(top2_rev);
+        loop.add_coedge(top1_rev);
+        face.add_loop(std::move(loop));
+        face.set_id(1);
+        shell.add_face(std::move(face));
+    }
+    // Face 2: the LOWER cap (-Z): CCW around -Z — the arcs FORWARD
+    // (the band walks them reversed). The plane's domain frame
+    // (X, -Y) puts v_bot1 at angle 0 and v_bot2 at pi.
+    {
+        Face face(std::make_shared<PlaneSurface>(Vec3d{0, 0, z0},
+                                                 Vec3d{0, 0, -1}));
+        Loop loop;
+        CoEdge bot1{2, false};
+        bot1.set_p_curve(pcurve_arc({0, 0}, rho0, false, 0.0,
+                                    CAD_0::brep::kPi));
+        CoEdge bot2{3, false};
+        bot2.set_p_curve(pcurve_arc({0, 0}, rho0, false,
+                                    CAD_0::brep::kPi,
+                                    CAD_0::brep::kPi));
+        loop.add_coedge(bot1);
+        loop.add_coedge(bot2);
+        face.add_loop(std::move(loop));
+        face.set_id(2);
+        shell.add_face(std::move(face));
+    }
+    link_radial_edges(*body);
+    return body;
+}
+
+} // namespace
+
+TEST_CASE("K1 m3 the mass family: the barrel — the band window closed "
+          "by the caps, Cavalieri's own form the golden (the two "
+          "arithmetic reads)") {
+    const double z0 = 0.2, z1 = 0.4;
+    const auto body = make_barrel(kA, kC, z0, z1);
+
+    // The structure first: 4V/5E/3F, chi = 2, closed orientable —
+    // the cylinder factory's own counts one family over.
+    const BodySummary q = query_body(*body);
+    REQUIRE(q.vertex_count == 4);
+    REQUIRE(q.edge_count == 5);
+    REQUIRE(q.face_count == 3);
+    REQUIRE(q.chi == 2);
+    REQUIRE(q.orientable);
+    REQUIRE(q.loops_closed);
+
+    const MassProperties mp =
+        mass_properties(*body, CAD_0::math::Tolerance::linear(1e-9));
+    CHECK(mp.all_exact);
+
+    // CAVALIERI'S FORM (the second road): V = pi a^2 [z - z^3/(3c^2)]
+    // between the limits — the same arithmetic the machinery's band +
+    // caps produce, read twice (the m3 wedge's own discipline).
+    const auto cavalieri = [](double z) {
+        return z - z * z * z / (3.0 * kC * kC);
+    };
+    const double v_cav = CAD_0::brep::kPi * kA * kA *
+                         (cavalieri(z1) - cavalieri(z0));
+    CHECK(mp.volume == doctest::Approx(v_cav).epsilon(1e-12));
+    CHECK(mp.volume ==
+          doctest::Approx(0.22148228207808035).epsilon(1e-12));
+
+    // The centroid on the axis, z-bar by Cavalieri's own first
+    // moment: pi a^2 [z^2/2 - z^4/(4c^2)] between the limits.
+    const auto cav_z = [](double z) {
+        return z * z / 2.0 - z * z * z * z / (4.0 * kC * kC);
+    };
+    const double m_cav = CAD_0::brep::kPi * kA * kA *
+                         (cav_z(z1) - cav_z(z0));
+    CHECK(mp.centroid.x == doctest::Approx(0.0).epsilon(1e-12));
+    CHECK(mp.centroid.y == doctest::Approx(0.0).epsilon(1e-12));
+    CHECK(mp.centroid.z ==
+          doctest::Approx(m_cav / v_cav).epsilon(1e-12));
+
+    // I_zz by the solid of revolution's own form:
+    // (pi/2) a^4 [z - 2z^3/(3c^2) + z^5/(5c^4)] between the limits.
+    const auto cav_i = [](double z) {
+        return z - 2.0 * z * z * z / (3.0 * kC * kC) +
+               std::pow(z, 5) / (5.0 * std::pow(kC, 4));
+    };
+    const double iz_cav = 0.5 * CAD_0::brep::kPi * std::pow(kA, 4) *
+                          (cav_i(z1) - cav_i(z0));
+    // I_zz about the centroid = about the axis (the z-shift does not
+    // enter the zz row).
+    CHECK(mp.inertia_about_centroid(2, 2) ==
+          doctest::Approx(iz_cav).epsilon(1e-12));
+
+    // THE ORACLE on the band window: the machinery's band face alone
+    // is not directly readable, but the TOTAL agrees with Cavalieri
+    // (above) and the full-body oracle already pinned the recurrence
+    // — the band's own quadrature cross-check rides the same grid.
+    const QuadFlux qb = ellipsoid_quad_flux(
+        kA, kC, 2000, 1000, 0.0, CAD_0::brep::kTwoPi,
+        std::acos(z0 / kC), std::acos(z1 / kC));
+    // The band's flux alone understates the barrel (the caps carry
+    // the rest); the pin is the DISCRIMINATION: the band's window
+    // flux is NOT the full window's (the m3 discriminator's form).
+    CHECK_FALSE(std::abs(qb.F0 - 3.0 * v_cav) < 1e-9);
+    CHECK(qb.F0 < 3.0 * 1.1780972450961724);
+}
+
+TEST_CASE("K1 m3 the mass family: the window discipline's honest "
+          "refusals — the span beyond 2pi and the degenerate window, "
+          "by name") {
+    // THE SPAN BODY: structurally the sphere's own shape (the seam
+    // pair, closed, orientable) but the p-curves span u in
+    // [0, 3pi] — the patch would double-cover the ellipsoid.
+    {
+        auto body = std::make_unique<BRepBody>();
+        auto& shell = body->solid.shell_mut();
+        shell.set_closed(true);
+        body->vertices = {Vertex{{0, 0, kC}}, Vertex{{0, 0, -kC}}};
+        body->vertices[0].set_id(0);
+        body->vertices[1].set_id(1);
+        body->edges = {Edge{0, 1}};
+        body->edges[0].set_id(0);
+        Face face(std::make_shared<EllipsoidSurface>(kA, kC));
+        Loop loop;
+        CoEdge fwd{0, false};
+        fwd.set_p_curve(pcurve_segment(
+            {0.0, 0.0}, {3.0 * CAD_0::brep::kPi, CAD_0::brep::kPi},
+            true));
+        CoEdge rev{0, true};
+        rev.set_p_curve(pcurve_segment(
+            {3.0 * CAD_0::brep::kPi, CAD_0::brep::kPi}, {0.0, 0.0},
+            true));
+        loop.add_coedge(fwd);
+        loop.add_coedge(rev);
+        face.add_loop(std::move(loop));
+        face.set_id(0);
+        shell.add_face(std::move(face));
+        link_radial_edges(*body);
+        REQUIRE(query_body(*body).orientable);
+        bool refused = false;
+        try {
+            mass_properties(*body,
+                            CAD_0::math::Tolerance::linear(1e-9));
+        } catch (const std::invalid_argument& ex) {
+            refused = true;
+            const std::string m = ex.what();
+            CHECK(m.find("spans") != std::string::npos);
+            CHECK(m.find("double-cover") != std::string::npos);
+        }
+        CHECK(refused);
+    }
+    // THE DEGENERATE WINDOW: the seam pair at constant v — a
+    // zero-area patch.
+    {
+        auto body = std::make_unique<BRepBody>();
+        auto& shell = body->solid.shell_mut();
+        shell.set_closed(true);
+        body->vertices = {Vertex{{0, 0, kC}}, Vertex{{0, 0, -kC}}};
+        body->vertices[0].set_id(0);
+        body->vertices[1].set_id(1);
+        body->edges = {Edge{0, 1}};
+        body->edges[0].set_id(0);
+        Face face(std::make_shared<EllipsoidSurface>(kA, kC));
+        Loop loop;
+        CoEdge fwd{0, false};
+        fwd.set_p_curve(pcurve_segment(
+            {0.0, 1.0},
+            {CAD_0::brep::kTwoPi, 1.0}, true));
+        CoEdge rev{0, true};
+        rev.set_p_curve(pcurve_segment(
+            {CAD_0::brep::kTwoPi, 1.0}, {0.0, 1.0}, true));
+        loop.add_coedge(fwd);
+        loop.add_coedge(rev);
+        face.add_loop(std::move(loop));
+        face.set_id(0);
+        shell.add_face(std::move(face));
+        link_radial_edges(*body);
+        REQUIRE(query_body(*body).orientable);
+        bool refused = false;
+        try {
+            mass_properties(*body,
+                            CAD_0::math::Tolerance::linear(1e-9));
+        } catch (const std::invalid_argument& ex) {
+            refused = true;
+            const std::string m = ex.what();
+            CHECK(m.find("degenerate") != std::string::npos);
+        }
+        CHECK(refused);
+    }
+}
