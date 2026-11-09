@@ -126,10 +126,19 @@ struct TorusRec {};
 struct NoSurfaceRec {};
 struct UnknownFamilyRec {};
 
+// The probe's family (K1 m3, ADR-0042 D5): the spheroid's own
+// payload — the center, the semiaxes, the INTRINSIC frame (the pole
+// IS the revolution axis; the azimuth the seam meridian's
+// reference).
+struct EllipsoidRec {
+    math::Vec3d center{}, pole{}, azimuth{};
+    double a{0.0}, c{0.0};
+};
+
 // The typed payload of one operand's surface.
 using SurfaceRec = std::variant<std::monostate, PlaneRec, SphereRec,
-                                CylRec, ConeRec, TorusRec, NoSurfaceRec,
-                                UnknownFamilyRec>;
+                                CylRec, ConeRec, TorusRec, EllipsoidRec,
+                                NoSurfaceRec, UnknownFamilyRec>;
 
 // The operand record: the family (the enum — one naming authority)
 // with its typed payload, plus the provenance fields the gates read.
@@ -193,6 +202,16 @@ struct SsiSurfaceReader : SurfaceVisitor {
 
     void visit(const ConeSurface&) override { r.rec = ConeRec{}; }
     void visit(const TorusSurface&) override { r.rec = TorusRec{}; }
+
+    void visit(const EllipsoidSurface& s) override {
+        EllipsoidRec e;
+        e.center = s.origin();
+        e.pole = s.pole().normalized();
+        e.azimuth = s.azimuth().normalized();
+        e.a = s.equatorial_semiaxis();
+        e.c = s.polar_semiaxis();
+        r.rec = e;
+    }
 
 protected:
     void unhandled() override {
@@ -349,6 +368,9 @@ SsiResult refusal_for(const SurfRecord& ra, const SurfRecord& rb,
                            rb.family == SurfaceFamily::Plane;
     const bool has_cyl = ra.family == SurfaceFamily::Cylinder ||
                          rb.family == SurfaceFamily::Cylinder;
+    const bool has_ellipsoid =
+        ra.family == SurfaceFamily::Ellipsoid ||
+        rb.family == SurfaceFamily::Ellipsoid;
     const bool has_none = ra.family == SurfaceFamily::None ||
                           rb.family == SurfaceFamily::None;
     const std::string pair = family_name(ra.family) +
@@ -365,6 +387,24 @@ SsiResult refusal_for(const SurfRecord& ra, const SurfRecord& rb,
             "its own). Remedy: none needed — no authored path reaches a "
             "cone face today; the pair is out of the table by scope, "
             "not by secrecy.");
+    }
+    if (has_ellipsoid && !has_plane && !has_cyl) {
+        // The probe's remaining pairs (K1 m3, ADR-0042 D5): the
+        // ellipsoid's own entries (plane ⊥, cylinder coaxial, the
+        // pair itself) answered in the dispatch above; what reaches
+        // the generic fallback is the quartic-and-beyond set —
+        // sphere×ellipsoid (Bézout, the sphere×torus precedent's
+        // form), torus×ellipsoid (out on degree). The cone pairs
+        // never reach here (the cone clause above owns them).
+        return wall(out,
+            "ssi_query: " + pair + " — the intersection is the "
+            "quadric-pair quartic or worse (Bézout for the "
+            "sphere pair, degree for the torus pair), typed in "
+            "neither domain — the wall (option (i); the ellipsoid's "
+            "typed rows are the plane ⊥ axis and cylinder coaxial "
+            "entries, ADR-0042 D5). Remedy: reorient the operands "
+            "toward the typed rows, accept the faceted path (the "
+            "bridge's own world), or await G3's splines.");
     }
     if (has_torus) {
         return wall(out,
@@ -857,6 +897,224 @@ SsiResult entry_cyl_cyl(const CylRec& c1, const CylRec& c2,
     return out;
 }
 
+// --- THE PROBE'S ENTRIES (K1 m3, ADR-0042 D5) ------------------------------
+//
+// ENTRY PxE: plane × ellipsoid, the plane ⊥ the STORED axis — the
+// sphere's row 4 one family over. The re-frame rule's BOUNDARY, read
+// honestly: the spheroid's pole is INTRINSIC (the revolution axis),
+// so the entry types ONLY in the stored frame (the pole must already
+// serve — for the ellipsoid there is no re-frame, ever). The oblique
+// or ∥ section is an ELLIPSE: a conic in the section plane's own
+// domain, but the space-curve vocabulary pins circles and lines, and
+// the p-curve image on the ellipsoid's (u,v) domain is typed in
+// neither — option (i), the wall.
+SsiResult entry_plane_ellipsoid(const PlaneRec& pl,
+                                const EllipsoidRec& el, SsiResult& out,
+                                double tol, SsiDomainAnswer& plane_dom,
+                                SsiDomainAnswer& el_dom) {
+    const math::Vec3d n = pl.normal;  // unit
+    // The stored-pole gate (the cosine band reads the declared
+    // tolerance — the same value every classification here reads).
+    if (std::abs(n.dot(el.pole)) < 1.0 - tol) {
+        return wall(
+            out,
+            "ssi_query: plane×ellipsoid oblique to the stored axis "
+            "(the plane's normal sits " +
+                num(std::acos(std::clamp(n.dot(el.pole), -1.0, 1.0))) +
+                " rad off the revolution axis): the section is an "
+                "ELLIPSE — a conic in the section plane's own domain, "
+                "but the space-curve vocabulary pins circles and "
+                "lines, and the p-curve image on the ellipsoid's "
+                "(u,v) domain is typed in neither — the re-frame rule "
+                "cannot serve (the pole is INTRINSIC, ADR-0042 D2), "
+                "so the boundary is the wall (option (i)). Remedy: "
+                "cut ⊥ the revolution axis, accept the faceted path "
+                "(the bridge's own world), or await G3's splines.");
+    }
+    // The section's latitude: the plane {x : (x−O)·n = 0} with
+    // n = ±pole; the center's signed distance d puts the section at
+    // the local height h = −σd on the pole (the sphere's own
+    // derivation one family over).
+    const double d = (el.center - pl.origin).dot(n);
+    const double sigma = n.dot(el.pole) >= 0.0 ? 1.0 : -1.0;
+    const double h = -sigma * d;
+
+    if (std::abs(h) > el.c + tol) {
+        out.kind = SsiResult::Kind::Empty;
+        out.message = "separate (|h| = " + num(std::abs(h)) +
+                      " > c = " + num(el.c) +
+                      ": the plane misses the ellipsoid)";
+        return out;
+    }
+    if (std::abs(std::abs(h) - el.c) <= tol) {
+        out.kind = SsiResult::Kind::Point;
+        out.point = el.center + el.pole * (h >= 0.0 ? el.c : -el.c);
+        out.message = "the tangent point (|h| = c: the plane touches "
+                      "the ellipsoid at the pole)";
+        return out;
+    }
+
+    out.kind = SsiResult::Kind::Circle;
+    // The derivation: the latitude h's circle — radius
+    // a·sqrt(1 − h²/c²), centered at C + h·pole, the frame the
+    // plane's own (u, v).
+    const double rho =
+        el.a * std::sqrt(std::max(0.0, 1.0 - h * h / (el.c * el.c)));
+    const math::Vec3d cc = el.center + el.pole * h;
+    SsiCurve c;
+    c.kind = SsiCurve::Kind::Circle;
+    c.center = cc;
+    c.radius = rho;
+    c.u_ref = pl.u_axis;
+    c.v_ref = pl.v_axis;
+    out.curves.push_back(c);
+
+    // The plane-domain p-curve: the Circle2 at the foot's domain
+    // coordinates (the same numbers the sketcher would read).
+    const math::Vec3d rel = cc - pl.origin;
+    const math::Vec2d cu{rel.dot(pl.u_axis), rel.dot(pl.v_axis)};
+    plane_dom.pcurves.push_back(pcurve_circle(cu, rho, false));
+
+    // The ellipsoid-domain p-curve: the latitude Line2 v = const, in
+    // the STORED frame (the pole serves by the gate — the spheroid's
+    // permanent condition, never a re-frame).
+    el_dom.pcurves.push_back(latitude_pc(std::acos(h / el.c)));
+    return out;
+}
+
+// ENTRY CxE: cylinder × ellipsoid, COAXIAL (the axes collinear) —
+// the sphere's row 6 one family over: r < a the TWO circles at
+// z = ±c·sqrt(1 − r²/a²); r = a the tangent circle (the equator);
+// r > a empty.
+SsiResult entry_cyl_ellipsoid(const CylRec& cy, const EllipsoidRec& el,
+                              SsiResult& out, double tol,
+                              SsiDomainAnswer& cyl_dom,
+                              SsiDomainAnswer& el_dom) {
+    const math::Vec3d a = cy.axis_dir;  // unit
+    const double r = cy.radius;
+
+    // The coaxiality gates: the axis ∥ the pole (the cosine band),
+    // and the ellipsoid's center ON the axis (the linear band).
+    if (std::abs(a.dot(el.pole)) < 1.0 - tol) {
+        return wall(
+            out,
+            "ssi_query: cylinder×ellipsoid non-parallel (the axes sit " +
+                num(std::acos(std::clamp(a.dot(el.pole), -1.0, 1.0))) +
+                " rad apart): the intersection is the general "
+                "quadric-pair quartic (Bézout), typed in neither "
+                "domain — the wall (option (i)). Remedy: reorient the "
+                "operands (coaxial), accept the faceted path, or "
+                "await G3's splines.");
+    }
+    const math::Vec3d rel = el.center - cy.axis_point;
+    const math::Vec3d perp = rel - a * rel.dot(a);
+    if (perp.length() > tol) {
+        return wall(
+            out,
+            "ssi_query: cylinder×ellipsoid parallel but offset (the "
+            "ellipsoid's center sits " + num(perp.length()) +
+                " off the cylinder's axis): the intersection is the "
+                "general quadric-pair quartic (Bézout), typed in "
+                "neither domain — the wall (option (i)). Remedy: "
+                "align the axes, accept the faceted path, or await "
+                "G3's splines.");
+    }
+
+    if (r > el.a + tol) {
+        out.kind = SsiResult::Kind::Empty;
+        out.message = "separate (r = " + num(r) + " > a = " + num(el.a) +
+                      ": the wall never reaches the ellipsoid)";
+        return out;
+    }
+    // The tangent circle (r = a): the equator, radius a, at the
+    // center's height on the axis.
+    if (std::abs(r - el.a) <= tol) {
+        out.kind = SsiResult::Kind::Circle;
+        const math::Vec3d cc = el.center;
+        const math::Vec3d e0 = cy.azimuth0;
+        const math::Vec3d e1 = a.cross(e0);
+        SsiCurve c;
+        c.kind = SsiCurve::Kind::Circle;
+        c.center = cc;
+        c.radius = el.a;
+        c.u_ref = e0;
+        c.v_ref = e1;
+        out.curves.push_back(c);
+        out.message = "the tangent circle (r = a: the wall touches "
+                      "the ellipsoid along its equator)";
+        cyl_dom.pcurves.push_back(latitude_pc(cy.v_of(el.center)));
+        el_dom.pcurves.push_back(latitude_pc(kPi / 2.0));
+        return out;
+    }
+
+    out.kind = SsiResult::Kind::CirclePair;
+    // The derivation: the wall meets the ellipsoid where
+    // r²/a² + z²/c² = 1 — the TWO circles at z = ±c·sqrt(1−r²/a²),
+    // radius r (the sphere's row 6 one family over). Order: +pole
+    // first.
+    const double w =
+        el.c * std::sqrt(std::max(0.0, 1.0 - r * r / (el.a * el.a)));
+    const math::Vec3d e0 = cy.azimuth0;
+    const math::Vec3d e1 = a.cross(e0);
+    const math::Vec3d cps[2] = {el.center + el.pole * w,
+                                el.center - el.pole * w};
+    for (int i = 0; i < 2; ++i) {
+        SsiCurve c;
+        c.kind = SsiCurve::Kind::Circle;
+        c.center = cps[i];
+        c.radius = r;
+        c.u_ref = e0;
+        c.v_ref = e1;
+        out.curves.push_back(c);
+        cyl_dom.pcurves.push_back(latitude_pc(cy.v_of(cps[i])));
+        el_dom.pcurves.push_back(
+            latitude_pc(std::acos(std::clamp(
+                (cps[i] - el.center).dot(el.pole) / el.c, -1.0, 1.0))));
+    }
+    return out;
+}
+
+// ENTRY ExE: ellipsoid × ellipsoid — the Coincident degenerate (the
+// dedup rule's trigger) typed; the general pair the WALL (no radical
+// plane for spheroids: subtracting the equations leaves a quadric,
+// the intersection a quartic — Bézout). The equal-a coaxial pair's
+// equator circle is REGISTERED FOR THE RECORD in the wall's own
+// words (typable, awaiting its consumer — the cone's row-8 form).
+SsiResult entry_ellipsoid_ellipsoid(const EllipsoidRec& e1,
+                                    const EllipsoidRec& e2,
+                                    SsiResult& out, double tol) {
+    const bool same_semi = std::abs(e1.a - e2.a) <= tol &&
+                           std::abs(e1.c - e2.c) <= tol;
+    const bool same_center =
+        (e1.center - e2.center).length() <= tol;
+    const bool same_axis =
+        std::abs(e1.pole.dot(e2.pole)) >= 1.0 - tol;
+    if (same_semi && same_center && same_axis) {
+        out.kind = SsiResult::Kind::Coincident;
+        out.message =
+            "the co-radial degenerate: equal semiaxes, same center, "
+            "same axis — the SAME mathematical surface (the azimuth "
+            "is a frame choice, not geometry), the co-radial dedup "
+            "rule's trigger (the coplanar rule's analog, G1's "
+            "subtract); the consuming operation dedups, the table "
+            "reports the degenerate.";
+        return out;
+    }
+    return wall(
+        out,
+        "ssi_query: ellipsoid×ellipsoid — the general pair intersects "
+        "in the quadric-pair quartic (Bézout; no radical plane for "
+        "spheroids — subtracting the equations leaves a quadric, "
+        "never a plane as two spheres' subtraction does), typed in "
+        "neither domain — the wall (option (i)). REGISTERED FOR THE "
+        "RECORD: the coaxial pair with EQUAL equatorial semiaxes "
+        "meets at the equator circle z = 0 (subtract the equations: "
+        "the z-squared terms cancel to a plane) — typable, awaiting "
+        "its consumer (the cone's row-8 form), never called "
+        "untypable. Remedy: accept the faceted path, or await the "
+        "unit that consumes the registered case.");
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -923,6 +1181,33 @@ SsiResult ssi_query(const BRepBody& body_a, FaceId face_a,
         // ---- ENTRY 7: cylinder × cylinder, parallel, EQUAL radii ------
         [&](const CylRec& c1, const CylRec& c2) {
             return entry_cyl_cyl(c1, c2, ra, rb, out, tol);
+        },
+
+        // ---- THE PROBE'S ENTRIES (K1 m3, ADR-0042 D5): plane ×
+        // ellipsoid ⊥ the stored axis (either order) ---------------
+        [&](const PlaneRec& pl, const EllipsoidRec& el) {
+            return entry_plane_ellipsoid(pl, el, out, tol,
+                                         out.a, out.b);
+        },
+        [&](const EllipsoidRec& el, const PlaneRec& pl) {
+            return entry_plane_ellipsoid(pl, el, out, tol,
+                                         out.b, out.a);
+        },
+
+        // ---- cylinder × ellipsoid coaxial (either order) -------------
+        [&](const CylRec& cy, const EllipsoidRec& el) {
+            return entry_cyl_ellipsoid(cy, el, out, tol,
+                                       out.a, out.b);
+        },
+        [&](const EllipsoidRec& el, const CylRec& cy) {
+            return entry_cyl_ellipsoid(cy, el, out, tol,
+                                       out.b, out.a);
+        },
+
+        // ---- ellipsoid × ellipsoid: the dedup degenerate typed, the
+        // general pair the wall ---------------------------------------
+        [&](const EllipsoidRec& e1, const EllipsoidRec& e2) {
+            return entry_ellipsoid_ellipsoid(e1, e2, out, tol);
         },
 
         // ---- THE WALL: the single generic fallback (the refusal
