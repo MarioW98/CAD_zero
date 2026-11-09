@@ -594,6 +594,68 @@ Contrib torus_contrib(const TorusFrame& fr, double u0, double u1,
     return c;
 }
 
+// The ellipsoid frame (K1 m3, ADR-0042 D3): the spheroid of
+// revolution — the center C, the INTRINSIC frame (e0, e1, n = the
+// pole) with e1 = e0 x n, the semiaxes (a, c). One mathematics for
+// every placement (the frame rides the surface as data, the sphere's
+// own discipline).
+struct EllipsoidFrame {
+    double C[3], e0[3], e1[3], n[3];
+    double a, c;
+};
+
+Contrib ellipsoid_contrib(const EllipsoidFrame& fr, double u0,
+                          double u1, double v0, double v1) {
+    // E(u,v) = C + e0*(a sv cu) + e1*(a sv su) + n*(c cv);
+    // N = du x dv = sv*(ac sv cu e0 + ac sv su e1 + a^2 cv n) — the
+    // CROSS-PRODUCT normal the divergence kernels demand (the
+    // ellipsoid's unit-normal measure carries the square root that
+    // does not separate; the flux forms never need it). The kernels
+    // are products of trig powers in u AND in v: the ONE integ_cs
+    // recurrence closes them all — the toroidal family's own, ZERO
+    // new recurrence code (the protocol's reuse thesis, the ADR's
+    // D7 unit 3).
+    BForm x[3], N[3];
+    for (int i = 0; i < 3; ++i) {
+        x[i].add(fr.C[i], 0, 0, 0, 0);
+        x[i].add(fr.a * fr.e0[i], 1, 0, 0, 1);  // cu*sv
+        x[i].add(fr.a * fr.e1[i], 0, 1, 0, 1);  // su*sv
+        x[i].add(fr.c * fr.n[i], 0, 0, 1, 0);   // cv
+        N[i].add(fr.a * fr.c * fr.e0[i], 1, 0, 0, 2);  // cu*sv^2
+        N[i].add(fr.a * fr.c * fr.e1[i], 0, 1, 0, 2);  // su*sv^2
+        N[i].add(fr.a * fr.a * fr.n[i], 0, 0, 1, 1);   // cv*sv
+    }
+
+    // x*N, as a form: (x-C)*N = a^2 c sv (ADR-0042 D3's own
+    // derivation — the sphere's R^3 sv one family over) + C*N.
+    BForm xn;
+    for (int i = 0; i < 3; ++i) {
+        const BForm p = x[i] * N[i];
+        for (const BTerm& t : p.terms)
+            xn.add(t.coef, t.uc, t.us, t.vc, t.vs);
+    }
+
+    Contrib c;
+    // F0 = Int[x*N], Fi = Int[x_i^2 N_i], Fij = Int[x_i x_j (x*N)]
+    // — du dv the rectangle, the cross-product normal the measure:
+    // never a unit normal, never a quadrature, never a hand-typed
+    // table.
+    c.F0 = b_integrate(xn, u0, u1, v0, v1);
+    for (int i = 0; i < 3; ++i) {
+        const BForm xi2 = x[i] * x[i];
+        const BForm g = xi2 * N[i];
+        c.Fi[i] = b_integrate(g, u0, u1, v0, v1);
+    }
+    for (int i = 0; i < 3; ++i)
+        for (int j = i; j < 3; ++j) {
+            const BForm xixj = x[i] * x[j];
+            const BForm g = xixj * xn;
+            const double v = b_integrate(g, u0, u1, v0, v1);
+            c.Fij[i][j] = c.Fij[j][i] = v;
+        }
+    return c;
+}
+
 // The unified cylinder frame: x = P0 + v·a + r·radial(φ), with
 // radial(φ) = cosφ·e1 + sinφ·e2, n = s·radial, dA = r dφ dv, and the
 // parameter relation φ = s·u (du = s·dφ — the one substitution
@@ -732,6 +794,7 @@ struct MassSurfaceReader : SurfaceVisitor {
     const SphereSurface* sphere{nullptr};
     const TorusZSurface* torus_z{nullptr};
     const TorusSurface* torus_y{nullptr};
+    const EllipsoidSurface* ellipsoid{nullptr};
     bool cyl_found{false};
     CylFrame cyl{};
 
@@ -742,6 +805,9 @@ struct MassSurfaceReader : SurfaceVisitor {
     // frame, the cylinders' own unification.
     void visit(const TorusZSurface& z) override { torus_z = &z; }
     void visit(const TorusSurface& y) override { torus_y = &y; }
+    // The probe's family (K1 m3, ADR-0042): the spheroid — the
+    // frame is INTRINSIC data, one placement.
+    void visit(const EllipsoidSurface& e) override { ellipsoid = &e; }
     void visit(const CylinderZSurface& z) override {
         cyl_found = true;
         cyl.P0[0] = z.axis_center().x;
@@ -1034,17 +1100,120 @@ MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
                         "body's construction.");
             }
             total.accumulate(torus_contrib(fr, u0, u1, v0, v1));
+        } else if (family == SurfaceFamily::Ellipsoid) {
+            // THE ELLIPSOIDAL PATCH (K1 m3, ADR-0042 D3): the (u,v)
+            // rectangle integrals on the CROSS-PRODUCT normal — the
+            // same window discipline the toroidal patches landed, the
+            // frame INTRINSIC (one placement, the sphere's reader).
+            if (reader.ellipsoid == nullptr)
+                throw std::invalid_argument(
+                    "mass_properties: face " + std::to_string(fi) +
+                    " carries an unknown 'ellipsoid' subtype - the mass "
+                    "machinery covers EllipsoidSurface. Remedy: report "
+                    "the body's construction.");
+            const EllipsoidSurface* es = reader.ellipsoid;
+            EllipsoidFrame fr{};
+            fr.C[0] = es->origin().x;
+            fr.C[1] = es->origin().y;
+            fr.C[2] = es->origin().z;
+            fr.e0[0] = es->azimuth().x;
+            fr.e0[1] = es->azimuth().y;
+            fr.e0[2] = es->azimuth().z;
+            // e1 = e0 x n (the class's own construction, computed on
+            // the same bytes — the sphere reader's discipline).
+            const math::Vec3d e1 =
+                es->azimuth().cross(es->pole());
+            fr.e1[0] = e1.x; fr.e1[1] = e1.y; fr.e1[2] = e1.z;
+            fr.n[0] = es->pole().x;
+            fr.n[1] = es->pole().y;
+            fr.n[2] = es->pole().z;
+            fr.a = es->equatorial_semiaxis();
+            fr.c = es->polar_semiaxis();
+
+            // The window: the bounding box of the loop's Line2
+            // endpoints (the torus patch's own discipline — the
+            // seam-wired walks SPLIT edges, never move the window),
+            // verified on the boundary (the patch class IS the
+            // rectangle).
+            double u0 = std::numeric_limits<double>::infinity();
+            double u1 = -std::numeric_limits<double>::infinity();
+            double v0 = std::numeric_limits<double>::infinity();
+            double v1 = -std::numeric_limits<double>::infinity();
+            std::vector<std::pair<double, double>> endpoints;
+            for (const auto& loop : f.loops())
+                for (const auto& ce : loop.coedges()) {
+                    const auto* pc = ce.p_curve();
+                    if (pc == nullptr)
+                        throw std::invalid_argument(
+                            "mass_properties: face " + std::to_string(fi) +
+                            " is exact but a co-edge carries no p-curve - "
+                            "the exact world's invariant is violated. "
+                            "Remedy: report the body's construction.");
+                    if (pc->kind != PCurve::Kind::Segment)
+                        throw std::invalid_argument(
+                            "mass_properties: face " + std::to_string(fi) +
+                            "'s ellipsoidal loop carries a non-Line2 "
+                            "p-curve - outside the rectangle-window class "
+                            "(the ellipsoidal patches are u-interval x "
+                            "v-interval rectangles, ADR-0042 D3). "
+                            "Remedy: report the body's construction.");
+                    endpoints.push_back({pc->segment.a.x, pc->segment.a.y});
+                    endpoints.push_back({pc->segment.b.x, pc->segment.b.y});
+                }
+            for (const auto& e : endpoints) {
+                u0 = std::min(u0, e.first);
+                u1 = std::max(u1, e.first);
+                v0 = std::min(v0, e.second);
+                v1 = std::max(v1, e.second);
+            }
+            if (u1 - u0 <= tol.value || v1 - v0 <= tol.value)
+                throw std::invalid_argument(
+                    "mass_properties: face " + std::to_string(fi) +
+                    "'s ellipsoidal window is degenerate ([" +
+                    std::to_string(u0) + ", " + std::to_string(u1) +
+                    "] x [" + std::to_string(v0) + ", " +
+                    std::to_string(v1) +
+                    "]) - a zero-area patch. Remedy: report the body's "
+                    "construction.");
+            if (u1 - u0 > 2.0 * M_PI + tol.value)
+                throw std::invalid_argument(
+                    "mass_properties: face " + std::to_string(fi) +
+                    "'s ellipsoidal window spans " +
+                    std::to_string(u1 - u0) +
+                    " > 2pi - the patch would double-cover the "
+                    "ellipsoid. Remedy: report the body's "
+                    "construction.");
+            for (const auto& e : endpoints) {
+                const bool on_u =
+                    std::abs(e.first - u0) <= tol.value ||
+                    std::abs(e.first - u1) <= tol.value;
+                const bool on_v =
+                    std::abs(e.second - v0) <= tol.value ||
+                    std::abs(e.second - v1) <= tol.value;
+                if (!(on_u || on_v))
+                    throw std::invalid_argument(
+                        "mass_properties: face " + std::to_string(fi) +
+                        "'s ellipsoidal loop leaves the window boundary "
+                        "(the point (" + std::to_string(e.first) + ", " +
+                        std::to_string(e.second) +
+                        ") is strictly inside) - a non-rectangular patch "
+                        "is outside the family. Remedy: report the "
+                        "body's construction.");
+            }
+            total.accumulate(ellipsoid_contrib(fr, u0, u1, v0, v1));
         } else {
             throw std::invalid_argument(
                 "mass_properties: face " + std::to_string(fi) + " carries a "
                 "'" + std::string(family_name(family)) +
                 "' surface - outside the supported families (plane with "
                 "line/arc loops, cylindrical patch, full sphere, toroidal "
-                "patch - landed G2-u3 m3 with the fillet's flank; the cone "
-                "closed form arrives with its own first writer, registered, "
-                "none designed today). Remedy: check the body's faces, or "
-                "accept the faceted path (the SDF materialization's bridge "
-                "extract answers the polyhedral value).");
+                "patch - landed G2-u3 m3 with the fillet's flank; "
+                "ellipsoidal patch - landed K1 m3 with the probe's "
+                "family; the cone closed form arrives with its own first "
+                "writer, registered, none designed today). Remedy: check "
+                "the body's faces, or accept the faceted path (the SDF "
+                "materialization's bridge extract answers the polyhedral "
+                "value).");
         }
     }
 
