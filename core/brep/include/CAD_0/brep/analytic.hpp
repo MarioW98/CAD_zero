@@ -468,4 +468,158 @@ private:
     double z_c_;
 };
 
+// Ellipsoid — THE PROBE'S FAMILY (K1 m3, ADR-0042): the ellipsoid of
+// revolution (the spheroid), the sphere's one-parameter generalization
+// — the first family to enter under ADR-0041's protocol, through the
+// six declared rows the ADR derives in the open. The sphere's own
+// (pole, azimuth) form, one parameter more:
+//
+//   evaluate(u, v) = C + e0·(a·sin v·cos u) + e1·(a·sin v·sin u)
+//                      + n̂·(c·cos v),      e1 = e0 × n̂,
+//
+// with a the EQUATORIAL semiaxis (the u-circle's radius, v = π/2 the
+// equator) and c the POLAR semiaxis (the pole distance; v = 0 and
+// v = π the poles — the parametrization's degenerate points, the
+// sphere's own pole discipline: the u-circle collapses there, the
+// pointwise frame checks sample off them). The frame rule holds BY
+// CONSTRUCTION, in every frame, pointwise over the open domain
+// (ADR-0042 D2's derivation):
+//
+//   ∂u×∂v = sin v·(a·c·sin v·cos u·e0 + a·c·sin v·sin u·e1
+//                  + a²·cos v·n̂),
+//   (∂u×∂v)·N̂ = sin v·(c·sin²v + (a²/c)·cos²v)  >  0,
+//
+// with N̂ the unnormalized outward gradient (sin v·cos u / a,
+// sin v·sin u / a, cos v / c) in the frame basis — positive for every
+// a, c > 0 and v ∈ (0, π), so the class is right-handed the only way
+// it can be authored: a left-handed spheroid is UNREPRESENTABLE (no
+// knob exists), the m3 pattern's cleanest case.
+//
+// THE RE-FRAME RULE'S BOUNDARY, read honestly (ADR-0042 D1/D2): the
+// sphere's full re-frame freedom (any derived axis serves — a
+// symmetry property) is a freedom the spheroid LACKS — the pole n̂ is
+// INTRINSIC (the revolution axis), the azimuth e0 a free choice (the
+// seam meridian u = 0 through +e0, the ADR-0023 discipline). The SSI
+// entries type in the STORED frame when the pole serves — the
+// sphere's own clause, the spheroid's permanent condition, never a
+// silent re-frame.
+//
+// The v1 class carries NO second equatorial knob: the triaxial
+// ellipsoid is unrepresentable in it (ADR-0042's Context: the
+// family's next member, entering through the same six rows when its
+// consumer arrives).
+class EllipsoidSurface : public SurfaceGeometry {
+public:
+    // The default frame the world reads: pole +Z (the revolution axis
+    // vertical — the CylinderZ/TorusZ precedent of the axis the
+    // world's primitives stand on), azimuth +X (the seam meridian in
+    // the +X half-plane).
+    EllipsoidSurface(double equatorial, double polar,
+                     math::Vec3d origin = {})
+        : a_(equatorial), c_(polar), origin_(origin),
+          pole_{0, 0, 1}, azimuth_{1, 0, 0} {
+        validate();
+        precompute();
+    }
+
+    // The explicit frame (the SphereSurface re-frame constructor's own
+    // shape): `pole` IS the revolution axis, `azimuth` the seam
+    // meridian's reference — perpendicularity validated LOUDLY (a
+    // skewed frame has no spheroid parametrization in its span).
+    EllipsoidSurface(double equatorial, double polar, math::Vec3d origin,
+                     math::Vec3d pole, math::Vec3d azimuth)
+        : a_(equatorial), c_(polar), origin_(origin),
+          pole_(pole.normalized()), azimuth_(azimuth.normalized()) {
+        validate();
+        const double dot = pole_.dot(azimuth_);
+        if (!std::isfinite(dot) || std::abs(dot) > 1e-6) {
+            throw std::invalid_argument(
+                "EllipsoidSurface: (pole, azimuth) must be perpendicular "
+                "(the revolution axis and the seam meridian's reference), "
+                "got pole·azimuth=" + std::to_string(dot) +
+                " — a skewed frame bends the parametrization off the "
+                "meridians and every authored p-curve with it (the "
+                "SphereSurface re-frame rule's own form). Remedy: pass "
+                "the revolution axis and a perpendicular azimuth "
+                "reference (the entries' own derivations).");
+        }
+        precompute();
+    }
+
+    math::Vec3d evaluate(double u, double v) const override {
+        const double sv = std::sin(v);
+        return origin_ + e0_ * (a_ * sv * std::cos(u)) +
+               e1_ * (a_ * sv * std::sin(u)) +
+               pole_ * (c_ * std::cos(v));
+    }
+
+    math::Vec3d normal(double u, double v) const override {
+        // The outward gradient (x/a², y/a², z/c²) read in the frame
+        // basis, normalized — the SAME direction ∂u×∂v points (the
+        // frame rule's own pin, ADR-0042 D2).
+        const double sv = std::sin(v);
+        const math::Vec3d g = e0_ * (sv * std::cos(u) / a_) +
+                              e1_ * (sv * std::sin(u) / a_) +
+                              pole_ * (std::cos(v) / c_);
+        return g.normalized();
+    }
+
+    SurfaceFamily family() const override {
+        return SurfaceFamily::Ellipsoid;
+    }
+    void accept(SurfaceVisitor& v) const override { v.visit(*this); }
+    math::Bboxd bounds() const override {
+        // The frame's own box: the principal extents carried through
+        // the frame's components (conservative for a tilted frame,
+        // EXACT for the default axes-aligned one — the honest v1; the
+        // trim lives in the loops, not the surface).
+        const auto ax = [](const math::Vec3d& e, double k) {
+            return math::Vec3d{std::abs(e.x) * k, std::abs(e.y) * k,
+                               std::abs(e.z) * k};
+        };
+        const math::Vec3d e = ax(e0_, a_) + ax(e1_, a_) + ax(pole_, c_);
+        return {{origin_.x - e.x, origin_.y - e.y, origin_.z - e.z},
+                {origin_.x + e.x, origin_.y + e.y, origin_.z + e.z}};
+    }
+
+    double equatorial_semiaxis() const noexcept { return a_; }
+    double polar_semiaxis() const noexcept { return c_; }
+    // The placement origin (G1 unit 4's table: translate_body re-anchors
+    // through the family's own accessors).
+    const math::Vec3d& origin() const noexcept { return origin_; }
+    // The intrinsic frame (K1 m3): the pole n̂ (v = 0, the revolution
+    // axis) and the azimuth reference e0 (u = 0, the seam meridian) —
+    // readable so translate_body and the SSI entries carry the frame
+    // through without a second copy (the sphere's own discipline).
+    const math::Vec3d& pole() const noexcept { return pole_; }
+    const math::Vec3d& azimuth() const noexcept { return azimuth_; }
+
+private:
+    void validate() const {
+        if (!(std::isfinite(a_) && a_ > 0.0) ||
+            !(std::isfinite(c_) && c_ > 0.0)) {
+            throw std::invalid_argument(
+                "EllipsoidSurface: the semiaxes must be finite and > 0 "
+                "(equatorial=" + std::to_string(a_) + ", polar=" +
+                std::to_string(c_) +
+                ") — a non-positive or non-finite semiaxis degenerates "
+                "the surface (the ADR-0029 family: the 'inside' becomes "
+                "empty or the complement). Remedy: construct with "
+                "positive finite semiaxes.");
+        }
+    }
+    void precompute() {
+        e0_ = azimuth_;
+        e1_ = e0_.cross(pole_);  // e1 = e0 × n̂ (the sphere's own form)
+    }
+
+    double a_;
+    double c_;
+    math::Vec3d origin_;
+    math::Vec3d pole_;
+    math::Vec3d azimuth_;
+    math::Vec3d e0_;
+    math::Vec3d e1_;
+};
+
 } // namespace CAD_0::brep

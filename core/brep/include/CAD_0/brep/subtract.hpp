@@ -423,12 +423,14 @@ struct TranslateReader : SurfaceVisitor {
     const SphereSurface* sphere{nullptr};
     const ConeSurface* cone{nullptr};
     const TorusSurface* torus{nullptr};
+    const EllipsoidSurface* ellipsoid{nullptr};
     void visit(const PlaneSurface& s) override { plane = &s; }
     void visit(const CylinderSurface& s) override { cyl_y = &s; }
     void visit(const CylinderZSurface& s) override { cyl_z = &s; }
     void visit(const SphereSurface& s) override { sphere = &s; }
     void visit(const ConeSurface& s) override { cone = &s; }
     void visit(const TorusSurface& s) override { torus = &s; }
+    void visit(const EllipsoidSurface& s) override { ellipsoid = &s; }
 };
 } // namespace subtract_detail
 
@@ -493,6 +495,19 @@ inline void translate_body(BRepBody& body, math::Vec3d delta) {
             f.set_surface(std::make_shared<TorusSurface>(
                 r.torus->major_radius(), r.torus->minor_radius(),
                 r.torus->origin() + delta));
+            break;
+        case SurfaceFamily::Ellipsoid:
+            // The probe's family (K1 m3, ADR-0042): the sphere's own
+            // discipline — the translation moves the mathematical
+            // object (C, a, c) and keeps the INTRINSIC frame (the pole
+            // is the revolution axis, derived state like the sphere's
+            // re-framed pole — the authored p-curves stay valid
+            // verbatim).
+            f.set_surface(std::make_shared<EllipsoidSurface>(
+                r.ellipsoid->equatorial_semiaxis(),
+                r.ellipsoid->polar_semiaxis(),
+                r.ellipsoid->origin() + delta,
+                r.ellipsoid->pole(), r.ellipsoid->azimuth()));
             break;
         default:
             throw std::invalid_argument(

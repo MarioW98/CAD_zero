@@ -42,6 +42,7 @@ const char* family_name(SurfaceFamily f) noexcept {
     case SurfaceFamily::Sphere:   return "sphere";
     case SurfaceFamily::Cone:     return "cone";
     case SurfaceFamily::Torus:    return "torus";
+    case SurfaceFamily::Ellipsoid: return "ellipsoid";
     case SurfaceFamily::Unknown:  return "unknown";
     }
     return "unknown";

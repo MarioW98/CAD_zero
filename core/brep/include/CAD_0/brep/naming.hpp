@@ -126,9 +126,13 @@ enum class FeatureKind : std::uint8_t {
     Sketch,    // "sk"  — the sketch document (the roots' own feature)
     Extrude,   // "ext" — the extrude operation
     Subtract,  // "sub" — the exact subtract operation
-    Fillet     // "fil" — the fillet operation (ADR-0039, G2-u3: the
+    Fillet,    // "fil" — the fillet operation (ADR-0039, G2-u3: the
                //         rolling ball — the first feature that
                //         substitutes instead of subtracting)
+    Ellipsoid  // "elp" — the ellipsoid of revolution (K1 m3, ADR-0042:
+               //         the probe's family, the first to enter under
+               //         ADR-0041's protocol — the exact-side primitive
+               //         whose recipe rides the file since v0.7)
 };
 
 // kind -> token, one switch, the single authority (the family_name
@@ -372,6 +376,21 @@ inline constexpr OperationNaming kSphereNaming{
     FeatureKind::Sphere, kSphereFaceRoles, kSphereEdgeRoles, {}};
 inline constexpr OperationNaming kCylinderNaming{
     FeatureKind::Cylinder, kCylinderFaceRoles, kCylinderEdgeRoles, {}};
+
+// make_ellipsoid — the probe's family (K1 m3, ADR-0042 D1): the
+// sphere's own vocabulary one family over — F = {f_ellipsoid} (the
+// one ellipsoidal face, the seam-wired disk of the slit rectangle
+// [0,2pi]x[0,pi]); E = {e_seam} (the meridian seam, north -> south,
+// the poles the degenerate endpoints that carry no co-edges).
+inline constexpr RoleEntry kEllipsoidFaceRoles[1] = {
+    {"ellipsoid", RoleForm::Bare, nullptr, nullptr, {}},
+};
+inline constexpr RoleEntry kEllipsoidEdgeRoles[1] = {
+    {"seam", RoleForm::Bare, nullptr, nullptr, {}},
+};
+inline constexpr OperationNaming kEllipsoidNaming{
+    FeatureKind::Ellipsoid, kEllipsoidFaceRoles, kEllipsoidEdgeRoles,
+    {}};
 
 // ---------------------------------------------------------------------------
 // THE NORMATIVE EXTRUDE ROLE TABLES — ADR-0036 D1 (morso 3, the walk

@@ -411,6 +411,7 @@ const CAD_0::brep::naming::OperationNaming* naming_table_of(
     case n::FeatureKind::Box:      return &n::kBoxNaming;
     case n::FeatureKind::Sphere:   return &n::kSphereNaming;
     case n::FeatureKind::Cylinder: return &n::kCylinderNaming;
+    case n::FeatureKind::Ellipsoid: return &n::kEllipsoidNaming;
     case n::FeatureKind::Extrude:  return &n::kExtNaming;
     case n::FeatureKind::Sketch:
     case n::FeatureKind::Subtract:
@@ -421,8 +422,8 @@ const CAD_0::brep::naming::OperationNaming* naming_table_of(
             "(named by the root reference, never a role table) and "
             "the subtract and the fillet are CONSUMERS, not "
             "operands; remedy: pass the CREATING operation's kind "
-            "(Box, Sphere, Cylinder or Extrude) - the one that "
-            "built the operand body.");
+            "(Box, Sphere, Cylinder, Ellipsoid or Extrude) - the one "
+            "that built the operand body.");
     }
     return nullptr;  // unreachable — all enum cases handled above
 }
@@ -594,6 +595,30 @@ void bind_brep(nb::module_& m) {
         "ring names. The `feature` is the DAG node's FeatureId\n"
         "(defaulted to 0: the standalone caller reads box#0 - the id\n"
         "is the caller's to supply).");
+
+    // THE PROBE'S WRITER (K1 m3, ADR-0042): the ellipsoid of\n"
+    // revolution — the first family to enter under ADR-0041's\n"
+    // protocol, queryable from Python (the make_box precedent — the\n"
+    // census reads the writer through the binding).\n"
+    brep_mod.def(
+        "make_ellipsoid",
+        [](double equatorial, double polar,
+           const CAD_0::math::Vec3f& center, std::uint64_t feature) {
+            return CAD_0::brep::make_ellipsoid(
+                equatorial, polar,
+                CAD_0::math::Vec3d{center.x, center.y, center.z},
+                CAD_0::geometry::FeatureId{feature});
+        },
+        nb::arg("equatorial"), nb::arg("polar"),
+        nb::arg("center") = CAD_0::math::Vec3f{0, 0, 0},
+        nb::arg("feature") = 0,
+        "The ellipsoid factory (K1 m3, ADR-0042 D1): the spheroid of\n"
+        "revolution, semiaxes (equatorial a, polar c) on the +Z axis\n"
+        "— the seam-wired single-face body (2V/1E/1F, chi=2, the\n"
+        "sphere's own topology one family over), the slit-rectangle\n"
+        "trim [0,2pi]x[0,pi], the names 'elp#F:ellipsoid' and\n"
+        "'elp#F:seam' (the ADR-0036 D1 stamp). Raises ValueError for\n"
+        "the semiaxis class (finite and > 0, the ADR-0029 family).");
     // THE POLYGON UNION (H2-u5 m2, ADR-0025 + ADR-0037 D3): the door
     // reachable from Python — the three cases of the wall map's one
     // refusing brick answer (the crossing pair, the diagonal, the
@@ -983,6 +1008,20 @@ void bind_brep(nb::module_& m) {
                         "operands; remedy: pass operands=[].");
                 naming = n::OperationNaming{
                     kind, n::kCylinderFaceRoles, n::kCylinderEdgeRoles,
+                    {}};
+                break;
+            case n::FeatureKind::Ellipsoid:
+                // The probe's family (K1 m3, ADR-0042): the factory
+                // bootstrap, the sphere's own form — the construction
+                // index alone, no operand bindings.
+                if (!storage.empty())
+                    throw std::invalid_argument(
+                        "Generation: the ellipsoid's naming declares no "
+                        "operands (the factories bootstrap from the "
+                        "construction index alone); remedy: pass "
+                        "operands=[].");
+                naming = n::OperationNaming{
+                    kind, n::kEllipsoidFaceRoles, n::kEllipsoidEdgeRoles,
                     {}};
                 break;
             case n::FeatureKind::Extrude:

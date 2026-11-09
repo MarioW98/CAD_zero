@@ -364,6 +364,93 @@ inline std::unique_ptr<BRepBody> make_sphere(double radius,
     return body;
 }
 
+// Create an ellipsoid B-Rep body — the spheroid of revolution — with a
+// seam wire (K1 m3, ADR-0042 D1: the probe's writer, make_sphere's own
+// topology one family over).
+//
+// Topology: 2V / 1E / 1F, χ = V−E+F−H = 2 — the sphere's own counts,
+// the golden's pins:
+//   v_north = C + c·n̂   (the north pole, v = 0 — n̂ the default +Z)
+//   v_south = C − c·n̂   (the south pole, v = π)
+//   e_seam: v_north → v_south   (the meridian at u = 0, the +X
+//                                half-plane — the azimuth reference)
+//
+// The trimming (the sphere's own slit rectangle): the face's region is
+// [0,2π]×[0,π] of the (u,v) domain (u the azimuth, v the polar angle
+// from the north pole). The CCW boundary walk is bottom-east (the
+// degenerate north-pole edge), right seam UP, top-west (the degenerate
+// south-pole edge), left seam DOWN — the degenerate pole edges carry
+// no co-edges, so the 3D loop is the seam pair, and the p-curves
+// chain across the poles modulo the 2π period:
+//   seam fwd (north→south): the RIGHT edge, Line2 (2π,0) → (2π,π);
+//   seam rev (south→north): the LEFT edge, Line2 (0,π) → (0,0).
+// Both carry material on the left (the rectangle's interior).
+inline std::unique_ptr<BRepBody> make_ellipsoid(
+    double equatorial, double polar, math::Vec3d center = {},
+    geometry::FeatureId feature = {}) {
+    auto body = std::make_unique<BRepBody>();
+    auto& shell = body->solid.shell_mut();
+    shell.set_closed(true);
+
+    // 2 vertices: the poles (the default frame's +Z axis — the class's
+    // own constructor pins it; the frame is INTRINSIC data, ADR-0042
+    // D1's re-frame boundary declaration).
+    const EllipsoidSurface surf(equatorial, polar, center);
+    const math::Vec3d north = center + surf.pole() * polar;
+    const math::Vec3d south = center - surf.pole() * polar;
+    body->vertices = {Vertex{north}, Vertex{south}};
+    for (std::size_t i = 0; i < body->vertices.size(); ++i)
+        body->vertices[i].set_id(static_cast<VertexId>(i));
+
+    // 1 edge: the seam meridian from north to south. The NAME in the
+    // same pass (ADR-0036 D1): kEllipsoidEdgeRoles' 'seam' — the
+    // sphere's own vocabulary one family over.
+    body->edges = { Edge{0, 1} };
+    body->edges[0].set_id(0);
+    {
+        const geometry::SubshapeRef ref =
+            geometry::SubshapeRef{}.push(0u);
+        body->edges[0].set_shape_id({feature, ref, {}});
+        body->edges[0].set_name(naming::render_name(
+            feature, ref, naming::kEllipsoidNaming.edges()));
+    }
+
+    // 1 face: the ellipsoidal surface, the seam pair its single loop
+    // — the closed manifold that bounds the entire surface.
+    Face face(std::make_shared<EllipsoidSurface>(equatorial, polar,
+                                                 center));
+    Loop loop;
+    {
+        CoEdge seam_fwd{0, false};  // north → south, the RIGHT edge
+        seam_fwd.set_p_curve(pcurve_segment(
+            math::Vec2d{detail::kTwoPi, 0.0},
+            math::Vec2d{detail::kTwoPi, detail::kPi},
+            /*interior_left=*/true));
+        CoEdge seam_rev{0, true};   // south → north, the LEFT edge
+        seam_rev.set_p_curve(pcurve_segment(
+            math::Vec2d{0.0, detail::kPi},
+            math::Vec2d{0.0, 0.0},
+            /*interior_left=*/true));
+        loop.add_coedge(seam_fwd);
+        loop.add_coedge(seam_rev);
+    }
+    face.add_loop(std::move(loop));
+    face.set_id(0);
+    {
+        // The NAME in the same pass (ADR-0036 D1):
+        // kEllipsoidFaceRoles' 'ellipsoid'.
+        const geometry::SubshapeRef ref =
+            geometry::SubshapeRef{}.push(0u);
+        face.set_shape_id({feature, ref, {}});
+        face.set_name(naming::render_name(
+            feature, ref, naming::kEllipsoidNaming.faces()));
+    }
+    shell.add_face(std::move(face));
+
+    link_radial_edges(*body);
+    return body;
+}
+
 // Create a cylinder B-Rep body with a seam wire — ADR-0023 §1.
 //
 // Topology: 4V / 5E / 3F, χ = 2. The lateral face's loop uses the seam

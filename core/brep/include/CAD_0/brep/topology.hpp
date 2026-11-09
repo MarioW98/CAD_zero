@@ -249,6 +249,9 @@ enum class SurfaceFamily : std::uint8_t {
     Sphere,
     Cone,
     Torus,
+    Ellipsoid, // the spheroid of revolution (K1 m3, ADR-0042): the
+               // probe's family — the first to enter under ADR-0041's
+               // protocol, the sphere's one-parameter generalization
     Unknown   // a subclass the vocabulary does not know (future/foreign)
 };
 
@@ -262,6 +265,7 @@ class SphereSurface;
 class ConeSurface;
 class TorusSurface;
 class TorusZSurface;
+class EllipsoidSurface;
 
 // The surface visitor: typed overloads, one per concrete class. A
 // handler that implements the wrong class name does not compile;
@@ -279,6 +283,10 @@ public:
     // The Z-axis torus writer (G2-u3 m3, ADR-0039 D1.2): the flank's
     // own class, right-handed from birth like every analytic frame.
     virtual void visit(const TorusZSurface&) { unhandled(); }
+    // The probe's family (K1 m3, ADR-0042): the spheroid — the first
+    // class born under the family protocol, right-handed by the
+    // sphere's own e1 = e0 x pole construction.
+    virtual void visit(const EllipsoidSurface&) { unhandled(); }
 protected:
     virtual void unhandled() {}
 };

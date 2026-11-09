@@ -189,6 +189,12 @@ sdf::TriangleMesh tessellate_face(const Face& face,
         u_min = 0.0; u_max = kTwoPi;
         v_min = 0.0; v_max = kTwoPi;
         break;
+    case SurfaceFamily::Ellipsoid:
+        // The spheroid's full sweep (K1 m3, ADR-0042): the sphere's own
+        // window — azimuth the full turn, polar from pole to pole.
+        u_min = 0.0; u_max = kTwoPi;
+        v_min = 0.0; v_max = kPi;
+        break;
     default:
         break;
     }
