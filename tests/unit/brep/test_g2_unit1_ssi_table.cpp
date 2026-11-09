@@ -353,6 +353,66 @@ TEST_CASE("G2-U1 plane×sphere degenerates: the tangent point and the empty clas
     }
 }
 
+TEST_CASE("G2-U1 plane×sphere's stored-frame latitude: the height reads "
+          "the SECTION, never the origin's placement — the zoo's second "
+          "catch (K1 m4)") {
+    // THE EXHIBIT (the near-band corpus's pole-band member, adversarial
+    // by construction): a plane tilted θ = 1e-3 INSIDE the pole band
+    // (cos θ = 0.9999995 ≥ 1 − 1e-6) whose origin sits 1000 mm off the
+    // foot IN-PLANE. The section is a genuine circle (d = −1.5, ρ =
+    // √1.75); its mean height on the stored pole is −d·(n·p̂) ≈ 1.5 —
+    // but the pre-cure branch authored the latitude at the PLANE
+    // ORIGIN's pole-projection (0.5), a latitude 0.60 rad below the
+    // section, and the answer MOVED with the origin's placement (the
+    // same plane authored at the foot answered a different latitude) —
+    // not a pure function of the geometry.
+    const double R = 2.0;
+    const double theta = 1e-3;  // inside the pole band: cos θ ≥ 1 − tol
+    const Vec3d n{std::sin(theta), std::cos(theta), 0.0};
+    const Vec3d far_origin{1000.0, 0.5, 0.0};
+    const auto sph = CAD_0::brep::make_sphere(2.0f);
+    const auto pl_far = one_face_body(std::make_shared<CAD_0::brep::PlaneSurface>(far_origin, n));
+    const SsiResult r_far = CAD_0::brep::ssi_query(*pl_far, 0, *sph, 0, kTol);
+
+    REQUIRE(r_far.kind == SsiResult::Kind::Circle);
+    REQUIRE(r_far.b.pcurves.size() == 1);
+    // The section's own arithmetic, derived here (the independent
+    // read): d = (c − o)·n; the mean height k = −d·(n·p̂); the
+    // latitude v = acos(k/R).
+    const double d_far = (Vec3d{0, 0, 0} - far_origin).dot(n);
+    const double k_true = -d_far * n.dot(Vec3d{0, 1, 0});  // the stored pole +Y
+    const double v_true = std::acos(k_true / R);
+    CHECK(r_far.b.pcurves[0].segment.a.y ==
+          doctest::Approx(v_true).epsilon(1e-9));
+    // The pre-cure red, read as numbers: the origin's projection 0.5
+    // against the section's mean 1.5 — the latitude acos(0.25) ≈
+    // 1.3181 rad, 0.5954 rad BELOW the section's acos(0.75) ≈ 0.7227.
+    CHECK(std::abs(far_origin.dot(Vec3d{0, 1, 0}) - k_true) > 0.99);
+
+    // THE PURITY PIN: the same plane authored at the FOOT (o′ = c −
+    // n·d, the identical geometric plane, d unchanged) must answer
+    // the SAME latitude — the answer a pure function of the geometry,
+    // never of the author's placement.
+    const Vec3d foot = Vec3d{0, 0, 0} - n * d_far;
+    const auto pl_foot = one_face_body(std::make_shared<CAD_0::brep::PlaneSurface>(foot, n));
+    const SsiResult r_foot = CAD_0::brep::ssi_query(*pl_foot, 0, *sph, 0, kTol);
+    REQUIRE(r_foot.kind == SsiResult::Kind::Circle);
+    REQUIRE(r_foot.b.pcurves.size() == 1);
+    CHECK(r_foot.b.pcurves[0].segment.a.y ==
+          doctest::Approx(v_true).epsilon(1e-9));
+    CHECK(r_foot.b.pcurves[0].segment.a.y ==
+          doctest::Approx(r_far.b.pcurves[0].segment.a.y).epsilon(1e-12));
+
+    // The band's own declared residual, pinned beside the cure (not
+    // cured by it): the true p-curve image of the tilted section
+    // oscillates ±ρ·sin θ around the mean latitude — the cosine band's
+    // registered residual, ~1.3e-3 here (θ = 1e-3, ρ = √1.75), said
+    // in the open, never hidden.
+    const double rho = std::sqrt(R * R - d_far * d_far);
+    CHECK(rho * std::sin(theta) > 1.3e-3);
+    CHECK(rho * std::sin(theta) < 1.4e-3);
+}
+
 // ===========================================================================
 // FAMILY 2 — sphere×sphere: the radical plane
 // ===========================================================================
@@ -419,6 +479,28 @@ TEST_CASE("G2-U1 sphere×sphere degenerates: tangencies, the nested/separate emp
         CHECK(r.kind == SsiResult::Kind::Point);
         CHECK(close3(r.point, {2, 0, 0}, 1e-4f));
         CHECK(r.message.find("internal") != std::string::npos);
+    }
+    // Internal tangency, the SWAPPED operands — the zoo's first catch
+    // (K1 m4, ADR-0041 D1.2): s1 now the SMALLER sphere (R1 = 0.5
+    // inside R2 = 2), D = |R1−R2| = 1.5. The touch point is s1's FAR
+    // foot (−0.5, 0, 0): at distance R1 = 0.5 from c1 AND R2 = 2 from
+    // c2 — the only point of the line on BOTH surfaces. The pre-cure
+    // code answered c1 + û·R1 = (0.5, 0, 0): ON s1, but a full
+    // radius INSIDE s2 (|P − c2| = 1.0 ≠ 2.0) — the operand-order
+    // asymmetry the near-band corpus's order sweep exists to catch.
+    {
+        auto s1 = CAD_0::brep::make_sphere(0.5f);
+        auto s2 = CAD_0::brep::make_sphere(2.0f);
+        CAD_0::brep::translate_body(*s2, {1.5f, 0, 0});
+        const SsiResult r = CAD_0::brep::ssi_query(*s1, f0, *s2, f0, kTol);
+        CHECK(r.kind == SsiResult::Kind::Point);
+        CHECK(close3(r.point, {-0.5f, 0, 0}, 1e-4f));
+        CHECK(r.message.find("internal") != std::string::npos);
+        // The geometric identity, the definition: the point on BOTH
+        // surfaces (the counterproof's own red read: the pre-cure
+        // point fails the second line by its full radius).
+        CHECK(close((r.point - Vec3d{0, 0, 0}).length(), 0.5f, 1e-4f));
+        CHECK(close((r.point - Vec3d{1.5, 0, 0}).length(), 2.0f, 1e-4f));
     }
     // Nested: D < |R₁−R₂| → the empty, the class named.
     {

@@ -472,15 +472,29 @@ SsiResult entry_plane_sphere(const PlaneRec& pl, const SphereRec& sp,
     const math::Vec3d n = pl.normal;
     const double R = sp.radius;
     const double d = (sp.center - pl.origin).dot(n);
+    const double ad = std::abs(d);
 
-    if (std::abs(d) > R + tol) {
+    if (ad > R + tol) {
         out.kind = SsiResult::Kind::Empty;
-        out.message = "separate (|d| = " + num(std::abs(d)) +
+        out.message = "separate (|d| = " + num(ad) +
                       " > R = " + num(R) + ": the plane misses the "
                       "sphere)";
         return out;
     }
-    if (std::abs(std::abs(d) - R) <= tol) {
+    // THE BAND TEST IN COMPARISON FORM — THE ZOO'S THIRD CATCH (K1
+    // m4, ADR-0041 D1.2 — the band-edge crack): the subtraction
+    // |‖d‖−R| ≤ tol cracks on the edge authored as fl(R + 1·tol) —
+    // the rounded difference reads 1.0000000001e-06 > tol (the
+    // cancellation), and the member falls through the crack between
+    // the separate test above and this one into the CIRCLE branch,
+    // where R²−d² < 0 clamps to the radius-0 p-curve the authoring
+    // contract REFUSES — the zoo's k = +1 member (R = 2, the plane
+    // at R + tol) crashed exactly there: pcurve_circle radius 0.
+    // The comparison form — the same shape the separate gate above
+    // already reads — is cancellation-free: the authored edge double
+    // satisfies it exactly. The registered disposition unchanged:
+    // the tie within the band resolves to the POINT.
+    if (ad <= R + tol && ad >= R - tol) {
         out.kind = SsiResult::Kind::Point;
         out.point = sp.center - n * (d >= 0.0 ? R : -R);
         out.message = "the tangent point (|d| = R: the plane touches "
@@ -516,7 +530,24 @@ SsiResult entry_plane_sphere(const PlaneRec& pl, const SphereRec& sp,
     // the entry DERIVES the re-frame (pole = the normal, azimuth =
     // the plane's u axis) — budget-gated.
     if (pole_serves(sp, n, tol)) {
-        const double k = (pl.origin - sp.center).dot(sp.pole);
+        // The latitude's height: the SECTION's mean height on the
+        // stored pole, −d·(n·p̂) — the m3 ellipsoid entry's own form
+        // one family back (its h = −σd). THE ZOO'S SECOND CATCH (K1
+        // m4, ADR-0041 D1.2 — the pole-band member): this line read
+        // (pl.origin − sp.center)·p̂, which on the exactly parallel
+        // planes is the same number, but within the pole band (a
+        // tilt up to √(2·tol)) it picks up the origin's IN-PLANE
+        // offset — unbounded with the placement: the exhibit (R = 2,
+        // θ = 1e-3, the origin 1000 mm off the foot) authored the
+        // latitude 0.5954 rad below the section, and the same plane
+        // authored at the foot answered a different latitude — the
+        // answer was not a pure function of the geometry. The
+        // section's own height is placement-independent (identical
+        // to the old read on both exactly parallel orientations,
+        // ±p̂); the band's registered residual — the true p-curve
+        // image oscillates ±ρ·sin θ around the mean — stands
+        // declared, unchanged by this cure.
+        const double k = -d * n.dot(sp.pole);
         sph_dom.pcurves.push_back(latitude_pc(latitude_v(k, R)));
     } else {
         if (sp_rec.face != nullptr && face_is_budgeted(*sp_rec.face)) {
@@ -545,7 +576,17 @@ SsiResult entry_sphere_sphere(const SphereRec& s1, const SphereRec& s2,
     const double D = w.length();
 
     if (D <= tol) {
-        if (std::abs(R1 - R2) <= tol) {
+        // THE RADII TIE IN COMPARISON FORM — the zoo's third catch
+        // (the band-edge crack, this entry's own site): the
+        // subtraction |R1−R2| ≤ tol cracks on the double-edge
+        // member (R2 authored as fl(R1 + 1·tol), D = 1·tol — both
+        // AT their edges): the rounded difference reads
+        // 1.0000000001e-06 > tol and the co-radial dedup MISSED —
+        // the pre-cure answer the "concentric, different radii"
+        // empty, the class flip at the edge. The comparison form
+        // reads the tie TRUE → Coincident, the canonical key's own
+        // resolution at the double edge.
+        if (R1 <= R2 + tol && R1 >= R2 - tol) {
             out.kind = SsiResult::Kind::Coincident;
             out.message =
                 "the co-radial degenerate: equal spheres, same center "
@@ -566,13 +607,55 @@ SsiResult entry_sphere_sphere(const SphereRec& s1, const SphereRec& s2,
                       num(R1 + R2) + ")";
         return out;
     }
-    const bool ext_tan = std::abs(D - (R1 + R2)) <= tol;
-    const bool int_tan =
-        std::abs(D - std::abs(R1 - R2)) <= tol && R1 != R2;
+    // Both tangency bands in the comparison form — the zoo's third
+    // catch (the crack, this entry's tangent sites): the k = +1
+    // member at the external edge (D authored as fl(R1+R2+tol))
+    // fell through the subtraction test into the RADICAL-PLANE
+    // branch, where R1²−h² < 0 clamped to the radius-0 circle — a
+    // wrong class with degenerate geometry. The comparison form is
+    // cancellation-free at both edges.
+    const bool ext_tan =
+        D <= R1 + R2 + tol && D >= R1 + R2 - tol;
+    const bool int_tan = R1 != R2 &&
+        D <= std::abs(R1 - R2) + tol &&
+        D >= std::abs(R1 - R2) - tol;
     if (ext_tan || int_tan) {
         out.kind = SsiResult::Kind::Point;
-        const math::Vec3d u = w * (1.0 / D);
-        out.point = s1.center + u * R1;
+        // The touch point, on the center line, read from the
+        // CANONICAL sphere — never the leading operand (THE ZOO'S
+        // FIRST CATCH, completed by its FOURTH — the order purity):
+        //   EXTERNAL — the BIGGER sphere's foot toward the smaller
+        //   (between the spheres: distance R2 from c2 by D = R1+R2);
+        //   INTERNAL — the SMALLER sphere's FAR foot (away from the
+        //   bigger: s2 smaller (R1 > R2) → c1 + û·R1, the existing
+        //   pin; s1 smaller (R2 > R1) → c1 − û·R1 = c2 − û·R2,
+        //   distance R2 from c2 by D = R2−R1).
+        // THE FIRST CATCH (K1 m4, ADR-0041 D1.2 — the operand-order
+        // sweep): the pre-cure code answered c1 + û·R1
+        // unconditionally, ON s1 but a full radius INSIDE s2
+        // (|P−c2| = D−R1 = 2R1−R2 ≠ R2) — caught red by the
+        // swapped-orientation member, cured with the same member
+        // green (the counterproof's numbers: R1 = 0.5, R2 = 2,
+        // D = 1.5 — the point (−0.5, 0, 0), not (0.5, 0, 0)).
+        // THE FOURTH CATCH (the same sweep, one tie over): reading
+        // ±R1 from c1 — the LEADING operand — made the answer
+        // order-DEPENDENT at the band members (D = the tie ± k·tol):
+        // the swapped query read its own leader's foot, a point
+        // k·tol away — not a pure function of the geometry. The
+        // canonical read (bigger for external, smaller for internal,
+        // whichever leads) answers the SAME point at either order;
+        // at the exact tie (k = 0) it coincides with every existing
+        // pin — the goldens unmoved.
+        const bool s1_is_big = R1 >= R2;
+        const math::Vec3d c_big =
+            s1_is_big ? s1.center : s2.center;
+        const math::Vec3d c_small =
+            s1_is_big ? s2.center : s1.center;
+        const double r_big = s1_is_big ? R1 : R2;
+        const double r_small = s1_is_big ? R2 : R1;
+        const math::Vec3d u_bs = (c_small - c_big) * (1.0 / D);
+        out.point = int_tan ? (c_small + u_bs * r_small)
+                            : (c_big + u_bs * r_big);
         out.message = std::string(int_tan ? "internal" : "external") +
                       " tangency (D = " +
                       (int_tan ? "|R1-R2|" : "R1+R2") +
@@ -680,7 +763,14 @@ SsiResult entry_cyl_sphere(const CylRec& cy, const SphereRec& sp,
                       "wall)";
         return out;
     }
-    if (std::abs(R - r) <= tol) {
+    // The radii tie in the comparison form — the zoo's third catch
+    // (the crack, this entry's site): the k = −1 member (R authored
+    // as fl(r − tol)) fell through the subtraction test into the
+    // PAIR branch — two circles 1.4e-3 apart where the tie's key
+    // says ONE tangent circle (the m3 counterproof's double-count
+    // class, one family back, at the edge). The comparison form
+    // reads the tie TRUE.
+    if (R <= r + tol && R >= r - tol) {
         out.kind = SsiResult::Kind::Circle;
         SsiCurve c;
         c.kind = SsiCurve::Kind::Circle;
@@ -783,7 +873,14 @@ SsiResult entry_cyl_cyl(const CylRec& c1, const CylRec& c2,
             "await G3's splines.");
     }
 
-    if (std::abs(c1.radius - c2.radius) > tol) {
+    // The equal-radii gate in the comparison form — the zoo's third
+    // catch (the crack, this gate's own site): the k = −1 member (r2
+    // authored as fl(r1 − tol)) read |r1−r2| =
+    // 1.0000000000287557e-06 > tol through the subtraction — the
+    // member answered the UNEQUAL-RADII wall at the band's edge; the
+    // comparison form reads the tie TRUE, the pair typed.
+    if (c1.radius > c2.radius + tol ||
+        c1.radius < c2.radius - tol) {
         return wall(
             out,
             "ssi_query: cylinder×cylinder parallel with unequal "
@@ -820,7 +917,13 @@ SsiResult entry_cyl_cyl(const CylRec& c1, const CylRec& c2,
             "reports the degenerate.";
         return out;
     }
-    if (std::abs(d - 2.0 * r) <= tol) {
+    // The tangent band in the comparison form — the zoo's third
+    // catch (the crack, this entry's site): the k = +1 member (d
+    // authored as fl(2r + tol)) fell through the subtraction test
+    // into the PAIR branch, where r² − d²/4 < 0 clamped half to
+    // ZERO — two collapsed lines at the mid-plane instead of the
+    // tangent double line. The comparison form reads the tie TRUE.
+    if (d <= 2.0 * r + tol && d >= 2.0 * r - tol) {
         out.kind = SsiResult::Kind::TangentLine;
         out.message = "the tangent double line (d = 2r: the walls "
                       "touch along the common ruling)";
@@ -946,7 +1049,16 @@ SsiResult entry_plane_ellipsoid(const PlaneRec& pl,
                       ": the plane misses the ellipsoid)";
         return out;
     }
-    if (std::abs(std::abs(h) - el.c) <= tol) {
+    // The tangent band in the comparison form — the zoo's third
+    // catch (the crack, this entry's site): the typed edge members
+    // (c = 0.75, h authored as fl(c ± 1·tol)) fell through the
+    // subtraction test at BOTH signs — the +1 member into the
+    // CIRCLE branch with the radius-0 latitude p-curve the
+    // authoring contract refuses (the crash), the −1 member into a
+    // real shrunk circle 1.6e-3 (the class flip at the edge). The
+    // comparison form reads the tie TRUE at both signs.
+    const double ah = std::abs(h);
+    if (ah <= el.c + tol && ah >= el.c - tol) {
         out.kind = SsiResult::Kind::Point;
         out.point = el.center + el.pole * (h >= 0.0 ? el.c : -el.c);
         out.message = "the tangent point (|h| = c: the plane touches "
@@ -1027,8 +1139,14 @@ SsiResult entry_cyl_ellipsoid(const CylRec& cy, const EllipsoidRec& el,
         return out;
     }
     // The tangent circle (r = a): the equator, radius a, at the
-    // center's height on the axis.
-    if (std::abs(r - el.a) <= tol) {
+    // center's height on the axis. The radii tie in the comparison
+    // form — the zoo's third catch (the crack, this entry's site):
+    // the k = −1 member (r authored as fl(a − tol), a = 1.0) fell
+    // through the subtraction test into the PAIR branch with
+    // w = c·√max(0, 1−r²/a²) = 0 — two coincident equator circles,
+    // the double-count at the edge (the m3 counterproof's own
+    // class). The comparison form reads the tie TRUE.
+    if (r <= el.a + tol && r >= el.a - tol) {
         out.kind = SsiResult::Kind::Circle;
         const math::Vec3d cc = el.center;
         const math::Vec3d e0 = cy.azimuth0;
@@ -1083,8 +1201,15 @@ SsiResult entry_cyl_ellipsoid(const CylRec& cy, const EllipsoidRec& el,
 SsiResult entry_ellipsoid_ellipsoid(const EllipsoidRec& e1,
                                     const EllipsoidRec& e2,
                                     SsiResult& out, double tol) {
-    const bool same_semi = std::abs(e1.a - e2.a) <= tol &&
-                           std::abs(e1.c - e2.c) <= tol;
+    // The semiaxes tie in the comparison form — the zoo's third
+    // catch (the crack, this entry's site): the edge member (e2's a
+    // authored as fl(e1.a + 1·tol)) fell through the subtraction
+    // test and the co-radial dedup MISSED — the WALL (the quartic,
+    // the remedy text) where the canonical key says Coincident, the
+    // class flip at the edge. The comparison form reads the tie
+    // TRUE.
+    const bool same_semi = e1.a <= e2.a + tol && e1.a >= e2.a - tol &&
+                           e1.c <= e2.c + tol && e1.c >= e2.c - tol;
     const bool same_center =
         (e1.center - e2.center).length() <= tol;
     const bool same_axis =
