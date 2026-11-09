@@ -838,3 +838,309 @@ TEST_CASE("K1 m3 the mass family: the window discipline's honest "
         CHECK(refused);
     }
 }
+
+// ===========================================================================
+// THE SSI ROWS (ADR-0042 D5) — the two typed entries, the degenerate
+// classes, the near-band corpus, the walls with the pairs named, the
+// naive counterproofs red
+// ===========================================================================
+#include "CAD_0/brep/ssi.hpp"
+
+namespace {
+
+constexpr double kTol = 1e-6;
+
+// The record body (the G2-u1 table test's own form): one face, the
+// family itself the thing under test — the wall pairs' operand.
+std::unique_ptr<BRepBody> one_face_body(
+    std::shared_ptr<SurfaceGeometry> surf) {
+    auto body = std::make_unique<BRepBody>();
+    auto& shell = body->solid.shell_mut();
+    shell.set_closed(false);
+    Face face(std::move(surf));
+    face.set_id(0);
+    shell.add_face(std::move(face));
+    body->vertices.emplace_back(Vec3d{0, 0, 0});
+    body->vertices.back().set_id(0);
+    body->edges.emplace_back(Edge{0, 0});
+    body->edges.back().set_id(0);
+    link_radial_edges(*body);
+    return body;
+}
+
+// The ellipsoid's own surface equation, for the counterproofs: the
+// value (x/a)^2 + (y/a)^2 + (z/c)^2 must be 1 ON the surface.
+double spheroid_q(const Vec3d& p) {
+    return p.x * p.x / (kA * kA) + p.y * p.y / (kA * kA) +
+           p.z * p.z / (kC * kC);
+}
+
+} // namespace
+
+TEST_CASE("K1 m3 SSI plane×ellipsoid ⊥ the stored axis: the latitude "
+          "circle 0.6 at z 0.3 — Circle2 on the plane, the latitude "
+          "Line2 on the ellipsoid (the sphere's row 4 one family over)") {
+    const auto el = make_ellipsoid(kA, kC);
+    const auto pl = one_face_body(std::make_shared<PlaneSurface>(
+        Vec3d{0, 0, 0.3}, Vec3d{0, 0, 1}));
+
+    const SsiResult r = ssi_query(*pl, 0, *el, 0, kTol);
+    REQUIRE(r.kind == SsiResult::Kind::Circle);
+    REQUIRE(r.curves.size() == 1);
+    CHECK(r.curves[0].kind == SsiCurve::Kind::Circle);
+    CHECK(r.curves[0].center.z == doctest::Approx(0.3).epsilon(1e-12));
+    CHECK(r.curves[0].center.x == doctest::Approx(0.0).epsilon(1e-12));
+    CHECK(r.curves[0].center.y == doctest::Approx(0.0).epsilon(1e-12));
+    CHECK(r.curves[0].radius ==
+          doctest::Approx(0.6).epsilon(1e-12));  // 0.75*sqrt(1-0.36)
+    // The curve LIES on the ellipsoid (the counterproof's own
+    // criterion, pinned green here).
+    for (double t : {0.0, 1.1, 2.5, 4.4}) {
+        CHECK(spheroid_q(r.curves[0].evaluate(t)) ==
+              doctest::Approx(1.0).epsilon(1e-12));
+    }
+    // The plane-domain p-curve: the Circle2 at the foot (the origin,
+    // this plane's own frame), radius 0.6, the disc region.
+    REQUIRE(r.a.pcurves.size() == 1);
+    CHECK(r.a.pcurves[0].kind == PCurve::Kind::Circle);
+    CHECK(r.a.pcurves[0].circle.center.x == doctest::Approx(0.0));
+    CHECK(r.a.pcurves[0].circle.center.y == doctest::Approx(0.0));
+    CHECK(r.a.pcurves[0].circle.radius == doctest::Approx(0.6));
+    CHECK(!r.a.pcurves[0].circle.hole);
+    // The ellipsoid-domain p-curve: the latitude Line2 v = arccos(0.6)
+    // — the STORED frame (no re-frame, ever: the pole is intrinsic).
+    REQUIRE(r.b.pcurves.size() == 1);
+    CHECK(r.b.pcurves[0].kind == PCurve::Kind::Segment);
+    CHECK(r.b.pcurves[0].segment.a.y ==
+          doctest::Approx(std::acos(0.6)).epsilon(1e-12));
+    CHECK(r.b.pcurves[0].segment.b.y ==
+          doctest::Approx(std::acos(0.6)).epsilon(1e-12));
+    CHECK(r.b.reframe_needed == false);
+
+    // The symmetric order: the same answer, the domains swapped.
+    const SsiResult r2 = ssi_query(*el, 0, *pl, 0, kTol);
+    REQUIRE(r2.kind == SsiResult::Kind::Circle);
+    CHECK(r2.curves[0].radius == doctest::Approx(0.6));
+    REQUIRE(r2.b.pcurves.size() == 1);
+    CHECK(r2.b.pcurves[0].circle.radius == doctest::Approx(0.6));
+
+    // The FLIPPED normal (the plane's normal -Z at the same place):
+    // the same section — the sign algebra h = -sigma*d read both ways.
+    const auto pl2 = one_face_body(std::make_shared<PlaneSurface>(
+        Vec3d{0, 0, 0.3}, Vec3d{0, 0, -1}));
+    const SsiResult r3 = ssi_query(*pl2, 0, *el, 0, kTol);
+    REQUIRE(r3.kind == SsiResult::Kind::Circle);
+    CHECK(r3.curves[0].center.z == doctest::Approx(0.3).epsilon(1e-12));
+    CHECK(r3.curves[0].radius == doctest::Approx(0.6).epsilon(1e-12));
+}
+
+TEST_CASE("K1 m3 SSI plane×ellipsoid: the degenerate classes and the "
+          "NEAR-BAND corpus — the ties at the border resolved by the "
+          "canonical key (Point, never a shrunk circle)") {
+    const auto el = make_ellipsoid(kA, kC);
+
+    SUBCASE("the tangent point at the north pole") {
+        const auto pl = one_face_body(std::make_shared<PlaneSurface>(
+            Vec3d{0, 0, kC}, Vec3d{0, 0, 1}));
+        const SsiResult r = ssi_query(*pl, 0, *el, 0, kTol);
+        REQUIRE(r.kind == SsiResult::Kind::Point);
+        CHECK(r.point.z == doctest::Approx(kC).epsilon(1e-12));
+    }
+    SUBCASE("the tangent point at the south pole") {
+        const auto pl = one_face_body(std::make_shared<PlaneSurface>(
+            Vec3d{0, 0, -kC}, Vec3d{0, 0, 1}));
+        const SsiResult r = ssi_query(*pl, 0, *el, 0, kTol);
+        REQUIRE(r.kind == SsiResult::Kind::Point);
+        CHECK(r.point.z == doctest::Approx(-kC).epsilon(1e-12));
+    }
+    SUBCASE("separate beyond the pole") {
+        const auto pl = one_face_body(std::make_shared<PlaneSurface>(
+            Vec3d{0, 0, kC + 0.1}, Vec3d{0, 0, 1}));
+        const SsiResult r = ssi_query(*pl, 0, *el, 0, kTol);
+        REQUIRE(r.kind == SsiResult::Kind::Empty);
+        CHECK(r.message.find("separate") != std::string::npos);
+    }
+    SUBCASE("the near-band: just inside, AT the tie, just outside") {
+        // JUST INSIDE (outside the band): a genuine small circle.
+        const auto in1 = one_face_body(std::make_shared<PlaneSurface>(
+            Vec3d{0, 0, kC - 1e-3}, Vec3d{0, 0, 1}));
+        const SsiResult r1 = ssi_query(*in1, 0, *el, 0, kTol);
+        REQUIRE(r1.kind == SsiResult::Kind::Circle);
+        CHECK(r1.curves[0].radius <
+              0.11);  // 0.75*sqrt(1-0.96) = 0.15, small but real
+        // AT THE TIE (inside the band): the POINT, the canonical key's
+        // own resolution — never the shrunk circle the un-banded read
+        // would produce (the counterproof, below).
+        const auto tie = one_face_body(std::make_shared<PlaneSurface>(
+            Vec3d{0, 0, kC - 1e-9}, Vec3d{0, 0, 1}));
+        const SsiResult r2 = ssi_query(*tie, 0, *el, 0, kTol);
+        REQUIRE(r2.kind == SsiResult::Kind::Point);
+        // JUST OUTSIDE (inside the band): the POINT again — the band
+        // is symmetric in |h| - c.
+        const auto out1 = one_face_body(std::make_shared<PlaneSurface>(
+            Vec3d{0, 0, kC + 1e-9}, Vec3d{0, 0, 1}));
+        const SsiResult r3 = ssi_query(*out1, 0, *el, 0, kTol);
+        REQUIRE(r3.kind == SsiResult::Kind::Point);
+        // THE NAIVE UN-BANDED READ, red: at h = c - 1e-9 the shrunk
+        // circle's radius would be a*sqrt(1-(1-1e-9/0.5)^2) ~ 4.7e-5
+        // — a class flip inside the band, the key's own red.
+        const double h_naive = kC - 1e-9;
+        const double rho_naive = kA * std::sqrt(
+            std::max(0.0, 1.0 - h_naive * h_naive / (kC * kC)));
+        CHECK(rho_naive > 4e-5);   // the naive class is a CIRCLE...
+        CHECK(rho_naive < 6e-5);   // ...of a shrunk radius
+        CHECK(r2.kind == SsiResult::Kind::Point);  // the typed: POINT
+    }
+    SUBCASE("the oblique plane: the WALL, the section an ellipse") {
+        const auto pl = one_face_body(std::make_shared<PlaneSurface>(
+            Vec3d{0, 0, 0}, Vec3d{0, 1, 1}));
+        const SsiResult r = ssi_query(*pl, 0, *el, 0, kTol);
+        REQUIRE(r.kind == SsiResult::Kind::OutOfTable);
+        CHECK(r.message.find("ELLIPSE") != std::string::npos);
+        CHECK(r.message.find("plane×ellipsoid") != std::string::npos);
+        CHECK(r.message.find("Remedy") != std::string::npos);
+
+        // THE NAIVE COUNTERPROOF, red: the sphere's row-4 form applied
+        // to the oblique plane claims a circle of radius a in the
+        // plane — its points LEAVE the ellipsoid (the surface
+        // equation's own verdict). The plane (normal (0,1,1))'s own
+        // circle at t = pi/2: p = a*(0, 1,-1)/sqrt(2).
+        const Vec3d claimed{0.0, kA / std::sqrt(2.0),
+                            -kA / std::sqrt(2.0)};
+        CHECK(spheroid_q(claimed) == doctest::Approx(1.625).epsilon(1e-12));
+        CHECK(spheroid_q(claimed) > 1.5);  // grossly off the surface
+        // ...while the typed entry's circle (the ⊥ case) sits ON it
+        // (pinned in the guide case above) — the discrimination.
+    }
+}
+
+TEST_CASE("K1 m3 SSI cylinder×ellipsoid coaxial: the two circles at "
+          "z 0.4 — the sphere's row 6 one family over, with the "
+          "tangent, the empty and the near-band") {
+    const auto el = make_ellipsoid(kA, kC);
+
+    SUBCASE("r < a: the two circles") {
+        const auto cy = one_face_body(
+            std::make_shared<CylinderZSurface>(Vec2d{0, 0}, 0.45,
+                                               0.0, +1));
+        const SsiResult r = ssi_query(*cy, 0, *el, 0, kTol);
+        REQUIRE(r.kind == SsiResult::Kind::CirclePair);
+        REQUIRE(r.curves.size() == 2);
+        CHECK(r.curves[0].center.z ==
+              doctest::Approx(0.4).epsilon(1e-12));  // +pole first
+        CHECK(r.curves[1].center.z == doctest::Approx(-0.4).epsilon(1e-12));
+        CHECK(r.curves[0].radius == doctest::Approx(0.45));
+        CHECK(r.curves[1].radius == doctest::Approx(0.45));
+        for (const SsiCurve& c : r.curves)
+            for (double t : {0.0, 1.3, 4.0})
+                CHECK(spheroid_q(c.evaluate(t)) ==
+                      doctest::Approx(1.0).epsilon(1e-12));
+        // The p-curves: the cylinder's Line2 v = ±0.4; the
+        // ellipsoid's latitudes v = arccos(±0.8).
+        REQUIRE(r.a.pcurves.size() == 2);
+        CHECK(r.a.pcurves[0].segment.a.y ==
+              doctest::Approx(0.4).epsilon(1e-12));
+        CHECK(r.a.pcurves[1].segment.a.y ==
+              doctest::Approx(-0.4).epsilon(1e-12));
+        REQUIRE(r.b.pcurves.size() == 2);
+        CHECK(r.b.pcurves[0].segment.a.y ==
+              doctest::Approx(std::acos(0.8)).epsilon(1e-12));
+        CHECK(r.b.pcurves[1].segment.a.y ==
+              doctest::Approx(std::acos(-0.8)).epsilon(1e-12));
+    }
+    SUBCASE("r = a: the tangent circle, ONE (the tie's key)") {
+        const auto cy = one_face_body(
+            std::make_shared<CylinderZSurface>(Vec2d{0, 0}, kA,
+                                               0.0, +1));
+        const SsiResult r = ssi_query(*cy, 0, *el, 0, kTol);
+        REQUIRE(r.kind == SsiResult::Kind::Circle);
+        REQUIRE(r.curves.size() == 1);  // never the pair's double
+        CHECK(r.curves[0].center.z == doctest::Approx(0.0).epsilon(1e-12));
+        CHECK(r.curves[0].radius == doctest::Approx(kA));
+        CHECK(r.message.find("tangent circle") != std::string::npos);
+        // THE NAIVE COUNTERPROOF, red: the two-circle class at r = a
+        // would place BOTH circles at z = 0 — a double count of the
+        // same geometric circle; the typed answer is ONE.
+        const double z_naive =
+            kC * std::sqrt(std::max(0.0, 1.0 - kA * kA / (kA * kA)));
+        CHECK(z_naive == 0.0);  // the naive pair degenerates to a tie
+    }
+    SUBCASE("the near-band at the tie: inside the band, the tangent") {
+        const auto cy = one_face_body(
+            std::make_shared<CylinderZSurface>(Vec2d{0, 0},
+                                               kA - 1e-9, 0.0, +1));
+        const SsiResult r = ssi_query(*cy, 0, *el, 0, kTol);
+        REQUIRE(r.kind == SsiResult::Kind::Circle);
+        REQUIRE(r.curves.size() == 1);
+    }
+    SUBCASE("r > a: empty") {
+        const auto cy = one_face_body(
+            std::make_shared<CylinderZSurface>(Vec2d{0, 0}, 0.9,
+                                               0.0, +1));
+        const SsiResult r = ssi_query(*cy, 0, *el, 0, kTol);
+        REQUIRE(r.kind == SsiResult::Kind::Empty);
+        CHECK(r.message.find("separate") != std::string::npos);
+    }
+    SUBCASE("non-parallel: the wall (the Y-axis cylinder)") {
+        const auto cy = one_face_body(
+            std::make_shared<CylinderSurface>(0.45, 2.0));
+        const SsiResult r = ssi_query(*cy, 0, *el, 0, kTol);
+        REQUIRE(r.kind == SsiResult::Kind::OutOfTable);
+        CHECK(r.message.find("non-parallel") != std::string::npos);
+        CHECK(r.message.find("quartic") != std::string::npos);
+    }
+    SUBCASE("parallel but offset: the wall") {
+        const auto cy = one_face_body(
+            std::make_shared<CylinderZSurface>(Vec2d{0.3, 0}, 0.45,
+                                               0.0, +1));
+        const SsiResult r = ssi_query(*cy, 0, *el, 0, kTol);
+        REQUIRE(r.kind == SsiResult::Kind::OutOfTable);
+        CHECK(r.message.find("offset") != std::string::npos);
+        CHECK(r.message.find("quartic") != std::string::npos);
+    }
+}
+
+TEST_CASE("K1 m3 SSI ellipsoid×ellipsoid: the co-radial dedup "
+          "degenerate typed, the general pair the wall with the "
+          "equal-a record registered") {
+    const auto e1 = make_ellipsoid(kA, kC);
+    const auto e2 = make_ellipsoid(kA, kC);
+    const SsiResult rc = ssi_query(*e1, 0, *e2, 0, kTol);
+    REQUIRE(rc.kind == SsiResult::Kind::Coincident);
+    CHECK(rc.message.find("dedup") != std::string::npos);
+
+    // The general pair: the wall (Bézout, no radical plane), with the
+    // equal-a equator circle REGISTERED FOR THE RECORD.
+    const auto e3 = make_ellipsoid(kA, 0.4);
+    const SsiResult rw = ssi_query(*e1, 0, *e3, 0, kTol);
+    REQUIRE(rw.kind == SsiResult::Kind::OutOfTable);
+    CHECK(rw.message.find("quartic") != std::string::npos);
+    CHECK(rw.message.find("REGISTERED FOR THE RECORD") !=
+          std::string::npos);
+    CHECK(rw.message.find("ellipsoid×ellipsoid") != std::string::npos);
+}
+
+TEST_CASE("K1 m3 SSI the remaining walls: sphere, torus, cone against "
+          "the ellipsoid — the pairs named, option (i)") {
+    const auto el = make_ellipsoid(kA, kC);
+    const auto sph = make_sphere(0.6);
+    const auto tor = one_face_body(
+        std::make_shared<TorusSurface>(2.0, 0.5));
+    const auto cone = one_face_body(
+        std::make_shared<ConeSurface>(1.0, 2.0));
+
+    const SsiResult rs = ssi_query(*sph, 0, *el, 0, kTol);
+    REQUIRE(rs.kind == SsiResult::Kind::OutOfTable);
+    CHECK(rs.message.find("sphere×ellipsoid") != std::string::npos);
+    CHECK(rs.message.find("quartic") != std::string::npos);
+
+    const SsiResult rt = ssi_query(*tor, 0, *el, 0, kTol);
+    REQUIRE(rt.kind == SsiResult::Kind::OutOfTable);
+    CHECK(rt.message.find("torus×ellipsoid") != std::string::npos);
+
+    const SsiResult rco = ssi_query(*cone, 0, *el, 0, kTol);
+    REQUIRE(rco.kind == SsiResult::Kind::OutOfTable);
+    CHECK(rco.message.find("cone×ellipsoid") != std::string::npos);
+    CHECK(rco.message.find("REGISTERED") != std::string::npos);
+    CHECK(rco.message.find("no writer") != std::string::npos);
+}
