@@ -1030,6 +1030,28 @@ void bind_scene(nb::module_& m) {
              "back. Raises RuntimeError if the id is in use (never a "
              "silent rebind) and ValueError/RuntimeError for every "
              "kernel refusal (diagnosis + remedy verbatim).")
+        // ---- The ellipsoid primitive's scene surface (K1 m3) -------
+        // add_ellipsoid_node creates the exact-side primitive from
+        // the recipe (the semiaxes, named fields — the recipe the
+        // sphere never paid, ADR-0042 D6): the body materializes at
+        // creation, the node rides the file at v0.7 as its own kind.
+        .def("add_ellipsoid_node",
+             [](scene::Scene& s, const std::string& name,
+                double equatorial, double polar) {
+                 brep::EllipsoidRecipe r;
+                 r.equatorial_radius = equatorial;
+                 r.polar_semiaxis = polar;
+                 return s.add_ellipsoid_node(name, std::move(r));
+             },
+             nb::arg("name"), nb::arg("equatorial"),
+             nb::arg("polar"),
+             "Create an ellipsoid primitive node (K1 m3, ADR-0042): "
+             "the spheroid of revolution, semiaxes (equatorial a, "
+             "polar c) — the exact body materialized from the recipe "
+             "(2V/1E/1F, chi=2), the names 'elp#<id>:ellipsoid' and "
+             "'elp#<id>:seam'. Returns the new node id; raises "
+             "ValueError for the semiaxis class (finite and > 0, the "
+             "ADR-0029 family).")
         .def("restore_sdf_node",
              [](scene::Scene& s, std::uint32_t node_id,
                 const std::string& name, sdf::SDFBody body) {

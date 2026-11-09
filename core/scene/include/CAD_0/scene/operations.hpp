@@ -230,6 +230,16 @@ inline OperationRebuildResult rebuild_operations_core(
         attach_fillet(*n, nodes, &old_tavole);
         if (notify) notify(n->id);
     }
+
+    // THE ELLIPSOID NODES (K1 m3, ADR-0042 D6): the primitive re-runs
+    // with the same pass — no operands, no ordering, no refusal path
+    // (the value class is the loader's own door), the body derived
+    // state rebuilt from the recipe exactly as every recipe's is.
+    for (SceneNode* n : nodes) {
+        if (!n->ellipsoid.has_value()) continue;
+        attach_ellipsoid(*n);
+        if (notify) notify(n->id);
+    }
     return result;
 }
 

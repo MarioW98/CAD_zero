@@ -364,10 +364,19 @@ inline std::unique_ptr<BRepBody> make_sphere(double radius,
     return body;
 }
 
+// The ellipsoid's recipe (K1 m3, ADR-0042 D6): the exact-side
+// primitive's own parameters — NAMED FIELDS in the file (never a raw
+// struct image, never an address: the m4 padding lesson, standing).
+// The materialized exact body is DERIVED state, rebuilt from these
+// two numbers by the same pass that materializes every recipe.
+struct EllipsoidRecipe {
+    double equatorial_radius{0.0};
+    double polar_semiaxis{0.0};
+};
+
 // Create an ellipsoid B-Rep body — the spheroid of revolution — with a
 // seam wire (K1 m3, ADR-0042 D1: the probe's writer, make_sphere's own
 // topology one family over).
-//
 // Topology: 2V / 1E / 1F, χ = V−E+F−H = 2 — the sphere's own counts,
 // the golden's pins:
 //   v_north = C + c·n̂   (the north pole, v = 0 — n̂ the default +Z)

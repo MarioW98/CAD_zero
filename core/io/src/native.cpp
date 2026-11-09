@@ -146,6 +146,29 @@ const bool kMigrator0506Registered [[maybe_unused]] = [] {
     return true;
 }();
 
+// The 0.6.0 -> 0.7.0 migrator (K1 m3, ADR-0042 D6 — THE CAPABILITY
+// BUMP, the honest rite): a deliberate CONTENT no-op, the step
+// exists for the WALK and NO door stands before it — the reason
+// named (ADR-0042 D6): the v0.6 era carried NO unpersisted
+// ellipsoid content (no ellipsoid node existed), so a v0.6 file
+// loses NOTHING at v0.7 — the CAPABILITY-ADDING bump of the
+// v0.3→v0.4 precedent (the sketch payload), NOT the silent-loss
+// doors of v0.4/v0.5 (constraints as session state; fillets
+// kernel-only, on the bodies). The v0.6-DECLARING file walks this
+// step WHOLE (its fillet recipes preserved verbatim by the no-op) —
+// the frozen v0_6 golden's own new discipline; the anachronism gate
+// at the payload refuses an ellipsoid node in any file declaring
+// < 0.7 (the hand-edited lie, the fillet's own gate form). The
+// entry exists so the chain 0.1.0 → … → 0.7.0 is explicit,
+// registered, and exercised by the frozen goldens on every CI run.
+const bool kMigrator0607Registered [[maybe_unused]] = [] {
+    register_migrator(NativeVersion{0, 6, 0}, NativeVersion{0, 7, 0},
+                      [](json::JsonValue&) {
+                          // no-op by design — see ADR-0042 D6.
+                      });
+    return true;
+}();
+
 std::string version_to_string(const NativeVersion& v) {
     return std::to_string(v.major) + "." + std::to_string(v.minor) + "." +
            std::to_string(v.patch);
@@ -1255,6 +1278,26 @@ std::string serialize_document(const scene::Scene& s, const NativeCamera& cam,
                     .set("radius",
                          JsonValue(static_cast<double>(
                              node.fillet->radius))));
+        } else if (node.kind == scene::NodeKind::Ellipsoid) {
+            // v0.7.0 (K1 m3, ADR-0042 D6): the exact side's first
+            // scene-side PRIMITIVE — the recipe the sphere never paid,
+            // paid here. The named fields (the semiaxes), never a raw
+            // struct image (the m4 padding lesson), never an address;
+            // the materialized exact body DERIVED state, never
+            // serialized (the recipe the truth, the loader's pass 2
+            // the rebuild — attach_ellipsoid). The kind is guaranteed
+            // to carry the payload (add_ellipsoid_node's own
+            // invariant, the fillet's).
+            n.emplace_back("kind", JsonValue("ellipsoid"));
+            n.emplace_back(
+                "ellipsoid",
+                JsonValue(JsonObject{})
+                    .set("equatorial_radius",
+                         JsonValue(static_cast<double>(
+                             node.ellipsoid->equatorial_radius)))
+                    .set("polar_semiaxis",
+                         JsonValue(static_cast<double>(
+                             node.ellipsoid->polar_semiaxis))));
         } else {
             if (!node.builder.empty())
                 n.emplace_back("builder", JsonValue(node.builder));
@@ -1586,20 +1629,39 @@ ParsedDocument parse_document(std::string_view text,
                         version_to_string(file_version) +
                         " writer ever emitted one: the file is not what "
                         "its version claims");
+            } else if (kind == "ellipsoid") {
+                node.kind = scene::NodeKind::Ellipsoid;
+                // The v0.7.0 payload (K1 m3, ADR-0042 D6). The same
+                // anachronism discipline: a file whose ORIGINAL
+                // version predates 0.7.0 cannot carry an ellipsoid
+                // node — no earlier writer ever emitted one: the file
+                // is not what its version claims.
+                if (file_version.major == 0 && file_version.minor < 7)
+                    throw std::runtime_error(
+                        "native format: node " + std::to_string(node.id) +
+                        " is an \"ellipsoid\" node but the file declares "
+                        + version_to_string(file_version) +
+                        " — ellipsoid nodes are the v0.7.0 payload (K1 "
+                        "m3, ADR-0042 D6) and no " +
+                        version_to_string(file_version) +
+                        " writer ever emitted one: the file is not what "
+                        "its version claims");
             } else {
                 throw std::runtime_error(
                     "native format: unknown node \"kind\" \"" + kind +
-                    "\" (this build reads Sdf, \"mesh\", \"sketch\" and "
-                    "\"fillet\" nodes; the file was likely written by a "
-                    "newer CAD_0 version)");
+                    "\" (this build reads Sdf, \"mesh\", \"sketch\", "
+                    "\"fillet\" and \"ellipsoid\" nodes; the file was "
+                    "likely written by a newer CAD_0 version)");
             }
         }
 
         if (node.kind == scene::NodeKind::Sdf ||
-            node.kind == scene::NodeKind::Fillet) {
+            node.kind == scene::NodeKind::Fillet ||
+            node.kind == scene::NodeKind::Ellipsoid) {
             node.mesh_dirty = true; // re-tessellate SDF caches after load;
-                                    // the fillet's display mesh is the
-                                    // exact body's own tessellation
+                                    // the fillet's and the ellipsoid's
+                                    // display meshes are the exact
+                                    // bodies' own tessellations
                                     // (m6-correttiva) — a cache like any
                                     // other, never serialized (D11).
         } else {
@@ -1619,6 +1681,8 @@ ParsedDocument parse_document(std::string_view text,
                 node.name = "Sketch_" + std::to_string(node.id); break;
             case scene::NodeKind::Fillet:
                 node.name = "Fillet_" + std::to_string(node.id); break;
+            case scene::NodeKind::Ellipsoid:
+                node.name = "Ellipsoid_" + std::to_string(node.id); break;
             default:
                 node.name = "Shape_" + std::to_string(node.id); break;
             }
@@ -1757,6 +1821,64 @@ ParsedDocument parse_document(std::string_view text,
                         "value in the file.");
                 recipe.radius = r;
                 node.fillet = std::move(recipe);
+            }
+            doc.nodes.push_back(std::move(node));
+            continue;
+        }
+
+        if (node.kind == scene::NodeKind::Ellipsoid) {
+            // v0.7.0 (K1 m3, ADR-0042 D6): the ellipsoid payload — the
+            // exact-side PRIMITIVE's recipe, the sphere's debt paid as
+            // a pattern. The NAMED FIELDS (the semiaxes), the VALUE
+            // class the loader's (finite and > 0, the ADR-0029
+            // family): corruption of this class is a loud load error,
+            // never a default, never a best-effort guess. No builder,
+            // no params, no body, no operation, no mesh — the
+            // representations never mix. The body is DERIVED state:
+            // the pass-2 tail re-materializes it from the recipe
+            // (attach_ellipsoid), deterministically.
+            for (const char* leftover :
+                 {"builder", "params", "body", "operation", "mesh"})
+                if (node_v.find(leftover))
+                    throw std::runtime_error(
+                        std::string("native format: node ") +
+                        std::to_string(node.id) + " is an \"ellipsoid\" "
+                        "node but carries a non-ellipsoid field \"" +
+                        leftover + "\" — the representations never mix "
+                        "(ADR-0002 honest dispatch; the primitive's "
+                        "payload is the recipe alone)");
+            {
+                const JsonValue& el = node_v.at("ellipsoid");
+                if (!el.is_object())
+                    type_error("object for node \"ellipsoid\"", el);
+                brep::EllipsoidRecipe recipe{};
+                const JsonValue& a = el.at("equatorial_radius");
+                if (!a.is_number())
+                    type_error("number for ellipsoid "
+                               "\"equatorial_radius\"", a);
+                const JsonValue& c = el.at("polar_semiaxis");
+                if (!c.is_number())
+                    type_error("number for ellipsoid "
+                               "\"polar_semiaxis\"", c);
+                recipe.equatorial_radius = a.as_number();
+                recipe.polar_semiaxis = c.as_number();
+                const bool bad_a = !std::isfinite(recipe.equatorial_radius) ||
+                                   !(recipe.equatorial_radius > 0.0);
+                const bool bad_c = !std::isfinite(recipe.polar_semiaxis) ||
+                                   !(recipe.polar_semiaxis > 0.0);
+                if (bad_a || bad_c)
+                    throw std::runtime_error(
+                        "native format: node " + std::to_string(node.id) +
+                        " ellipsoid semiaxes must be finite and > 0 "
+                        "(equatorial_radius=" +
+                        std::to_string(recipe.equatorial_radius) +
+                        ", polar_semiaxis=" +
+                        std::to_string(recipe.polar_semiaxis) +
+                        ") — a non-positive or non-finite semiaxis "
+                        "degenerates the surface (the ADR-0029 family, "
+                        "the typed value class). Remedy: fix the values "
+                        "in the file.");
+                node.ellipsoid = std::move(recipe);
             }
             doc.nodes.push_back(std::move(node));
             continue;
@@ -1915,7 +2037,10 @@ ParsedDocument parse_document(std::string_view text,
     {
         bool has_ops = false;
         for (const auto& n : doc.nodes)
-            if (n.operation || n.fillet) { has_ops = true; break; }
+            if (n.operation || n.fillet || n.ellipsoid) {
+                has_ops = true;
+                break;
+            }
         if (has_ops) {
             for (const auto& n : doc.nodes) {
                 if (!n.operation) continue;

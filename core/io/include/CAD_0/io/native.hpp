@@ -111,23 +111,40 @@ struct NativeVersion {
 // OLDER version (v0.1–v0.4) keep walking the migrator chain to the
 // current number (the v0.4-declaring file still meets the v0.5
 // door's own gate, unchanged); a NEWER file is refused by name.
+// 0.7.0 (K1 m3, ADR-0042 D6 — THE CAPABILITY BUMP, the honest
+// rite): the document gains the ELLIPSOID PRIMITIVE — the exact
+// side's first scene-side PRIMITIVE, the recipe the sphere never
+// paid (the semiaxes as NAMED FIELDS, `equatorial_radius` and
+// `polar_semiaxis`; the FeatureKind `elp`; the node kind
+// "ellipsoid"). THE DOOR, the reason named: NO v0.6 refusal — the
+// v0.6 era carried NO unpersisted ellipsoid content (no ellipsoid
+// node existed), so a v0.6 file loses NOTHING at v0.7 and WALKS the
+// chain's sixth step (the v0.3→v0.4 capability-bump precedent, the
+// sketch payload — NOT the v0.4/v0.5 silent-loss doors); the
+// anachronism gate at the payload refuses an ellipsoid node in any
+// file declaring < 0.7 (the hand-edited lie, the fillet's own gate
+// form); a NEWER file is refused by name.
 // The migrator chain upgrades older documents: 0.1.0 → 0.2.0
 // (ADR-0007a), 0.2.0 → 0.3.0 (ADR-0027 D4), 0.3.0 → 0.4.0
 // (ADR-0030 D4), 0.4.0 → 0.5.0 (ADR-0040 D6 — the step the
 // pre-sketch goldens walk THROUGH; the v0.4-DECLARING file never
-// reaches it, the door above refuses it first) and 0.5.0 → 0.6.0
+// reaches it, the door above refuses it first), 0.5.0 → 0.6.0
 // (ADR-0039 D6 — the step the v0.1–v0.3 goldens walk through on
 // their way to the current number; the v0.5-DECLARING file never
-// reaches it, the v0.6 door refuses it first).
-inline constexpr NativeVersion kNativeVersion{0, 6, 0};
+// reaches it, the v0.6 door refuses it first) and 0.6.0 → 0.7.0
+// (ADR-0042 D6 — the step the v0.6-DECLARING golden now WALKS
+// whole, its fillet recipe preserved by the no-op: no door stands
+// before it, the era lost nothing).
+inline constexpr NativeVersion kNativeVersion{0, 7, 0};
 
 // A Migrator transforms a parsed JSON document from `from_version` to
 // `to_version`. Registered in a chain indexed by the version pair. The
 // registered steps today: the no-op 0.1.0 → 0.2.0 upgrade (ADR-0007a),
 // the no-op 0.2.0 → 0.3.0 upgrade (ADR-0027 D4), the no-op
 // 0.3.0 → 0.4.0 upgrade (ADR-0030 D4), the no-op 0.4.0 → 0.5.0
-// upgrade (ADR-0040 D6) and the no-op 0.5.0 → 0.6.0 upgrade
-// (ADR-0039 D6). Any file whose MAJOR.MINOR differs from the
+// upgrade (ADR-0040 D6), the no-op 0.5.0 → 0.6.0 upgrade
+// (ADR-0039 D6) and the no-op 0.6.0 → 0.7.0 upgrade (ADR-0042 D6).
+// Any file whose MAJOR.MINOR differs from the
 // current version and has no registered chain of steps fails with an
 // explicit error — except a v0.4-declaring file (the v0.5 door's
 // gate) and a v0.5-declaring file (the v0.6 door's gate), which fail
@@ -135,7 +152,7 @@ inline constexpr NativeVersion kNativeVersion{0, 6, 0};
 using Migrator = std::function<void(json::JsonValue&)>;
 
 void register_migrator(NativeVersion from, NativeVersion to, Migrator m);
-std::size_t migrator_count() noexcept; // test hook: 5 (0.1→0.2, 0.2→0.3, 0.3→0.4, 0.4→0.5, 0.5→0.6)
+std::size_t migrator_count() noexcept; // test hook: 6 (0.1→0.2, 0.2→0.3, 0.3→0.4, 0.4→0.5, 0.5→0.6, 0.6→0.7)
 
 // Parse "MAJOR.MINOR.PATCH" (e.g. "0.1.0"). Throws std::runtime_error
 // with an explicit message on malformed input.

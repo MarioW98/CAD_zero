@@ -53,6 +53,7 @@
 #include "CAD_0/brep/factory.hpp"
 #include "CAD_0/brep/extrude.hpp"
 #include "CAD_0/brep/subtract.hpp"
+#include "CAD_0/scene/operations.hpp"
 #include "CAD_0/sdf/operators.hpp"
 #include "CAD_0/sdf/primitives.hpp"
 #include "CAD_0/sdf/transforms.hpp"
@@ -193,9 +194,25 @@ std::filesystem::path golden_v6_path() {
     // via CAD_0_GENERATE_GOLDEN=1 after an INTENTIONAL format change
     // (the companion declaration required per ADR-0007 — the reason
     // rides the landing commit's body: "v0.6: the fillet recipe rides
-    // named fields").
+    // named fields"). Since K1 m3 (ADR-0042 D6): FROZEN HISTORY that
+    // WALKS — the 0.6→0.7 capability bump puts no door before it (the
+    // era lost nothing), so the golden loads whole through the
+    // chain's sixth step, its fillet recipe preserved verbatim.
     return std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
            "native_v0_6_0.CAD_0";
+}
+
+std::filesystem::path golden_v7_path() {
+    // The v0.7.0 golden (K1 m3, ADR-0042 D6 — THE CAPABILITY BUMP):
+    // the v0.6 document whole (ids 1-9) PLUS the ellipsoid primitive
+    // (id 10, the guide case a = 0.75, c = 0.5) — the recipe the
+    // sphere never paid, paid as a pattern: the semiaxes as NAMED
+    // FIELDS. Regenerable via CAD_0_GENERATE_GOLDEN=1 after an
+    // INTENTIONAL format change (the companion declaration required
+    // per ADR-0007 — the reason rides the landing commit's body:
+    // "v0.7: the ellipsoid recipe rides named fields").
+    return std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
+           "native_v0_7_0.CAD_0";
 }
 
 std::filesystem::path golden_v5_path() {
@@ -390,6 +407,23 @@ scene::Scene make_v0_6_scene() {
     return s;
 }
 
+// The v0.7.0 golden's scene (K1 m3, ADR-0042 D6): the v0.6 document
+// WHOLE (ids 1-9 — the parametric hole, the blind chain, the rim
+// fillet, every byte the no-op walk preserves) PLUS the ellipsoid
+// primitive (id 10) — the probe's own node, the guide case's
+// semiaxes (a = 0.75, c = 0.5), VISIBLE (a standalone primitive,
+// no operand to hide).
+scene::Scene make_v0_7_scene() {
+    scene::Scene s = make_v0_6_scene();
+    brep::EllipsoidRecipe r;
+    r.equatorial_radius = 0.75;
+    r.polar_semiaxis = 0.5;
+    const std::uint32_t id =
+        s.add_ellipsoid_node("Guide_Ellipsoid", std::move(r));
+    REQUIRE(id == 10);
+    return s;
+}
+
 // The embedded mesh of the v0.2.0 golden: a regular octahedron — 6
 // vertices, 8 triangles, deterministic to the last bit. Normals are the
 // positions themselves (every vertex is a unit vector).
@@ -427,23 +461,29 @@ std::string read_file(const std::filesystem::path& p) {
 
 TEST_SUITE("io native format") {
 
-TEST_CASE("version constant + migrator chain (ADR-0007/0007a/0027/0030/0040/0039)") {
+TEST_CASE("version constant + migrator chain (ADR-0007/0007a/0027/0030/0040/0039/0042)") {
     CHECK(native::kNativeVersion.major == 0);
-    CHECK(native::kNativeVersion.minor == 6);
+    CHECK(native::kNativeVersion.minor == 7);
     CHECK(native::kNativeVersion.patch == 0);
     // The registered chain: 0.1.0 -> 0.2.0 (ADR-0007a, no-op),
     // 0.2.0 -> 0.3.0 (ADR-0027 D4, content no-op), 0.3.0 -> 0.4.0
     // (ADR-0030 D4, content no-op), 0.4.0 -> 0.5.0 (ADR-0040 D6,
     // content no-op — the step the pre-sketch goldens walk THROUGH;
     // a file DECLARING 0.4.x never reaches it: the version door
-    // refuses it with the remedy, see the gate test below) and
+    // refuses it with the remedy, see the gate test below),
     // 0.5.0 -> 0.6.0 (ADR-0039 D6, the REBASED bump — content no-op,
     // the step the v0.1-v0.3 goldens walk through on their way to the
     // current number; a file DECLARING 0.5.x never reaches it: the
-    // v0.6 door refuses it with the remedy, see the gate test below).
-    CHECK(native::migrator_count() == 5);
+    // v0.6 door refuses it with the remedy, see the gate test below)
+    // and 0.6.0 -> 0.7.0 (K1 m3, ADR-0042 D6, THE CAPABILITY BUMP —
+    // content no-op, and NO door before it: the v0.6 era lost
+    // nothing at v0.7 (no unpersisted ellipsoid content existed), so
+    // the v0.6-DECLARING file walks this step whole, the v0_6 golden
+    // with it — the v0.3→v0.4 precedent, never the v0.4/v0.5
+    // silent-loss doors).
+    CHECK(native::migrator_count() == 6);
 
-    const auto v = native::parse_version("0.6.0");
+    const auto v = native::parse_version("0.7.0");
     CHECK(v == native::kNativeVersion);
 
     CHECK_THROWS_WITH_AS(native::parse_version("0.1"),
@@ -612,7 +652,7 @@ TEST_CASE("golden v0.2.0: loads through the 0.2→0.3 migrator; migrated save ==
     native::save_file(tmp, make_canonical_scene(),
                       make_canonical_camera(), make_golden_meshes());
     const std::string fresh_save = read_file(tmp);
-    CHECK(fresh_save.find("\"version\": \"0.6.0\"") != std::string::npos);
+    CHECK(fresh_save.find("\"version\": \"0.7.0\"") != std::string::npos);
     std::filesystem::remove(tmp);
 
     // (b) Load the golden: the 0.2.0 → 0.3.0 migrator runs, framing,
@@ -733,7 +773,7 @@ TEST_CASE("golden v0.3.0: pierced box with recipe - migrates, extraction chi=0 g
     // drift detector survives the bump.
     native::save_file(tmp, make_pierced_scene(), make_canonical_camera());
     const std::string fresh_save = read_file(tmp);
-    CHECK(fresh_save.find("\"version\": \"0.6.0\"") != std::string::npos);
+    CHECK(fresh_save.find("\"version\": \"0.7.0\"") != std::string::npos);
     std::filesystem::remove(tmp);
 
     const native::ParsedDocument doc = native::load_file(gp);
@@ -892,32 +932,39 @@ TEST_CASE("golden v0.5.0: frozen history, the v0.6 door's own fixture (G2-u3 m4)
 }
 
 TEST_CASE("golden v0.6.0: the fillet recipe rides named fields - the blind chain and the rim fillet, 14/20/9") {
-    // Regeneration mode (maintainer-only, never active in CI):
-    //   CAD_0_GENERATE_GOLDEN=1 ./CAD_0_tests
-    // rewrites the v0.6.0 golden after an INTENTIONAL format change
-    // (companion declaration required per ADR-0007; the v0.6 landing's
-    // own reason: "v0.6: the fillet recipe rides named fields").
-    if (const char* env = std::getenv("CAD_0_GENERATE_GOLDEN");
-        env && std::string_view(env) == "1") {
-        std::filesystem::create_directories(golden_v6_path().parent_path());
-        native::save_file(golden_v6_path(), make_v0_6_scene(),
-                          make_canonical_camera());
-        MESSAGE("golden file (re)written: ", golden_v6_path().string());
-        return;
-    }
-
+    // FROZEN HISTORY since K1 m3 (ADR-0042 D6 — the capability bump):
+    // the bytes a v0.6.0 writer produced, NEVER rewritten (the
+    // current writer declares 0.7.0 — it can no longer produce these
+    // bytes; the regeneration block retired with the bump, the
+    // native_v0_5_0 precedent). No door stands before it: the golden
+    // WALKS the chain's sixth step whole, the walk pinned in (a)
+    // below and in the K1 m3 doors test.
     const std::filesystem::path gp = golden_v6_path();
     const std::string missing = "golden file missing: " + gp.string();
     REQUIRE_MESSAGE(std::filesystem::exists(gp), missing);
     const std::string golden = read_file(gp);
     CHECK(golden.find("\"version\": \"0.6.0\"") != std::string::npos);
 
-    // (a) The fresh save of the v0.6 scene IS the golden bytes (the
-    // writer is the current one — no bump in between).
+    // (a) THE WALK (K1 m3, ADR-0042 D6 — the capability bump's own
+    // rite): the golden DECLARING 0.6.0 loads whole (NO door stands
+    // before the 0.6->0.7 step — the era lost nothing), and the
+    // fresh save of the same scene differs from the golden by the
+    // VERSION FIELD ALONE: the no-op migrator's own proof, every
+    // other byte preserved verbatim.
     const std::filesystem::path tmp =
         std::filesystem::temp_directory_path() / "cad0_golden_v6_check.CAD_0";
     native::save_file(tmp, make_v0_6_scene(), make_canonical_camera());
-    CHECK(read_file(tmp) == golden);
+    {
+        const std::string fresh = read_file(tmp);
+        CHECK(fresh.find("\"version\": \"0.7.0\"") != std::string::npos);
+        std::string fresh_as_v6 = fresh;
+        const std::string v7 = "\"version\": \"0.7.0\"";
+        const std::string v6 = "\"version\": \"0.6.0\"";
+        const auto pos = fresh_as_v6.find(v7);
+        REQUIRE(pos != std::string::npos);
+        fresh_as_v6.replace(pos, v7.size(), v6);
+        CHECK(fresh_as_v6 == golden);
+    }
     std::filesystem::remove(tmp);
 
     // (b) The golden carries the v0.6 payload: the FILLET node in
@@ -1317,8 +1364,17 @@ TEST_CASE("G2-u3 m4 - the round-trip's digests: N cycles bit-identical, the refe
         const std::string file_bytes = read_file(next);
         if (cycle == 0) {
             first_file = file_bytes;
-            // The first re-save IS the golden bytes (no bump between).
-            CHECK(file_bytes == read_file(golden_v6_path()));
+            // The first re-save IS the golden bytes MODULO THE VERSION
+            // FIELD (K1 m3, ADR-0042 D6 — the capability bump: the
+            // golden declares 0.6.0, the current writer 0.7.0, and
+            // the no-op walk's own proof is that NOTHING ELSE moved).
+            std::string as_v6 = file_bytes;
+            const std::string v7 = "\"version\": \"0.7.0\"";
+            const std::string v6 = "\"version\": \"0.6.0\"";
+            const auto pos = as_v6.find(v7);
+            REQUIRE(pos != std::string::npos);
+            as_v6.replace(pos, v7.size(), v6);
+            CHECK(as_v6 == read_file(golden_v6_path()));
         } else {
             CHECK(file_bytes == first_file);
         }
@@ -1405,11 +1461,107 @@ TEST_CASE("G2-u3 m4 - the doors: the fillet's value class, the anachronism, the 
     }
 
     // (e) THE NEWER FILE, refused by name (upgrade-only, never a
-    // guessed downgrade) — one check on the fillet-era door.
+    // guessed downgrade) — one check on the door (K1 m3: the current
+    // number is 0.7.0, so the newer file declares 0.8.0).
     CHECK_THROWS_WITH_AS(native::parse_document(
-        "{\"format\": \"CAD_0 native\", \"version\": \"0.7.0\","
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.8.0\","
         " \"scene\": { \"next_id\": 1, \"nodes\": [] }}"),
         doctest::Contains("NEWER CAD_0"), std::runtime_error);
+}
+
+// ===========================================================================
+// K1 m3 — THE ELLIPSOID'S SERIALIZATION (ADR-0042 D6): the recipe the
+// sphere never paid, paid as a pattern. The golden corpus moves (the
+// v0_7 NEW, the v0_6 walks), the round-trip's digests, the doors, the
+// padding counterproof, the re-run after the load.
+// ===========================================================================
+
+TEST_CASE("K1 m3 golden v0.7.0: the ellipsoid recipe rides named fields - the document whole plus the probe's node") {
+    // Regeneration mode (maintainer-only, never active in CI):
+    //   CAD_0_GENERATE_GOLDEN=1 ./CAD_0_tests
+    // rewrites the v0.7.0 golden after an INTENTIONAL format change
+    // (companion declaration required per ADR-0007; the v0.7 landing's
+    // own reason: "v0.7: the ellipsoid recipe rides named fields").
+    if (const char* env = std::getenv("CAD_0_GENERATE_GOLDEN");
+        env && std::string_view(env) == "1") {
+        std::filesystem::create_directories(golden_v7_path().parent_path());
+        native::save_file(golden_v7_path(), make_v0_7_scene(),
+                          make_canonical_camera());
+        MESSAGE("golden file (re)written: ", golden_v7_path().string());
+        return;
+    }
+
+    const std::filesystem::path gp = golden_v7_path();
+    const std::string missing = "golden file missing: " + gp.string();
+    REQUIRE_MESSAGE(std::filesystem::exists(gp), missing);
+    const std::string golden = read_file(gp);
+    CHECK(golden.find("\"version\": \"0.7.0\"") != std::string::npos);
+
+    // (a) The fresh save of the v0.7 scene IS the golden bytes (the
+    // writer is the current one — no bump in between).
+    {
+        const std::filesystem::path tmp =
+            std::filesystem::temp_directory_path() /
+            "cad0_golden_v7_check.CAD_0";
+        native::save_file(tmp, make_v0_7_scene(), make_canonical_camera());
+        CHECK(read_file(tmp) == golden);
+        std::filesystem::remove(tmp);
+    }
+
+    // (b) The golden carries the v0.7 payload: the ELLIPSOID node in
+    // NAMED FIELDS — the semiaxes their own typed fields, the file
+    // saying the FIELD's name, never a struct's byte (the m2/m4
+    // padding lessons' mirror).
+    CHECK(golden.find("\"kind\": \"ellipsoid\"") != std::string::npos);
+    CHECK(golden.find("\"equatorial_radius\": 0.75") != std::string::npos);
+    CHECK(golden.find("\"polar_semiaxis\": 0.5") != std::string::npos);
+    // The v0.6 payload rides WHOLE (the additivity: the fillet recipe,
+    // the blind chain, the parametric hole — every earlier byte).
+    CHECK(golden.find("\"kind\": \"fillet\"") != std::string::npos);
+    CHECK(golden.find("\"edge\": \"sub#8:isect[box#7:top "
+                      "\xc3\x97 ext#6:lat(0)]@hi\"") != std::string::npos);
+    CHECK(golden.find("\"kind\": \"sketch\"") != std::string::npos);
+
+    // (c) Load: TEN nodes in construction order, the ellipsoid id 10
+    // re-materialized by the loader's pass 2 from the recipe alone
+    // (the derived body never serialized).
+    const native::ParsedDocument doc = native::load_file(gp);
+    REQUIRE(doc.nodes.size() == 10);
+    REQUIRE(doc.next_id == 11);
+    const scene::SceneNode* el = &doc.nodes[9];
+    REQUIRE(el->id == 10);
+    REQUIRE(el->kind == scene::NodeKind::Ellipsoid);
+    REQUIRE(el->ellipsoid.has_value());
+    CHECK(el->ellipsoid->equatorial_radius == 0.75);
+    CHECK(el->ellipsoid->polar_semiaxis == 0.5);
+    REQUIRE(el->ellipsoid_body != nullptr);
+    // The probe's own counts, now on the scene's node: 2/1/1, chi 2.
+    CHECK(el->ellipsoid_body->vertex_count() == 2);
+    CHECK(el->ellipsoid_body->edge_count() == 1);
+    CHECK(el->ellipsoid_body->face_count() == 1);
+    CHECK(brep::euler_characteristic(*el->ellipsoid_body) == 2);
+    CHECK(brep::is_closed_orientable(*el->ellipsoid_body));
+    // The names: the node's own id the feature (elp#10:...).
+    CHECK(brep::query_face(*el->ellipsoid_body, 0).name ==
+          "elp#10:ellipsoid");
+    CHECK(brep::query_edge(*el->ellipsoid_body, 0).name == "elp#10:seam");
+    // The mass golden through the loaded body (the recipe the truth,
+    // the body the cache — the classical numbers one trip later):
+    // V = 0.375*pi.
+    {
+        const brep::MassProperties mp = brep::mass_properties(
+            *el->ellipsoid_body, CAD_0::math::Tolerance::linear(1e-9));
+        CHECK(mp.all_exact);
+        CHECK(mp.volume ==
+              doctest::Approx(1.1780972450961724).epsilon(1e-12));
+    }
+    // The fillet's pins UNMOVED (the additivity): 14/20/9 on node 9.
+    const scene::SceneNode* fil = &doc.nodes[8];
+    REQUIRE(fil->id == 9);
+    REQUIRE(fil->fillet_body != nullptr);
+    CHECK(fil->fillet_body->vertex_count() == 14);
+    CHECK(fil->fillet_body->edge_count() == 20);
+    CHECK(fil->fillet_body->face_count() == 9);
 }
 
 TEST_CASE("G2-u3 m4 - the re-run after the load: class 1 silent with reference_resolved; the dead reference class 4 by name") {
@@ -1829,10 +1981,10 @@ TEST_CASE("G4 m4 — the doors: the NEWER file refused by name; the hand-edited 
     // this build's is refused naming both versions and the direction
     // — migrators run upgrade-only, a downgrade is never guessed.
     const std::string newer_minor =
-        "{\"format\": \"CAD_0 native\", \"version\": \"0.7.0\","
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.8.0\","
         " \"scene\": { \"next_id\": 1, \"nodes\": [] }}";
     CHECK_THROWS_WITH_AS(native::parse_document(newer_minor),
-        doctest::Contains("0.7.0"), std::runtime_error);
+        doctest::Contains("0.8.0"), std::runtime_error);
     CHECK_THROWS_WITH_AS(native::parse_document(newer_minor),
         doctest::Contains("NEWER CAD_0"), std::runtime_error);
     CHECK_THROWS_WITH_AS(native::parse_document(newer_minor),

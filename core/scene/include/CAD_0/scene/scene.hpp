@@ -210,6 +210,13 @@ enum class NodeKind : std::uint8_t {
             // special render of the fillet). FeatureKind `fil` in the naming plane
             // (the grammar's three-letter token); "fillet" here in
             // the scene's own dispatch vocabulary.
+    Ellipsoid // the exact-side PRIMITIVE (K1 m3, ADR-0042 D6): the
+              // probe's family rides the file as its own node kind —
+              // the recipe the sphere never paid, paid here (the
+              // semiaxes as NAMED FIELDS, the exact body derived
+              // state rebuilt by the same pass, no SDF twin — the
+              // fillet's own form one kind over). FeatureKind `elp`
+              // in the naming plane; "ellipsoid" in the dispatch.
 };
 
 // The kind's name, for error messages ("must be a sketch-kind node").
@@ -219,6 +226,7 @@ inline std::string node_kind_name(NodeKind k) {
     case NodeKind::Mesh:   return "mesh";
     case NodeKind::Sketch: return "sketch";
     case NodeKind::Fillet: return "fillet";
+    case NodeKind::Ellipsoid: return "ellipsoid";
     }
     return "?";
 }
@@ -352,6 +360,18 @@ struct SceneNode {
     // pattern) and the panel read it, never a file.
     std::uint32_t fillet_operand_id{0};
 
+    // ---- The ellipsoid primitive (K1 m3, ADR-0042 D6) -------------
+    // The exact-side PRIMITIVE: the payload is the RECIPE alone
+    // (brep::EllipsoidRecipe — the semiaxes, named fields), the
+    // materialized exact body DERIVED state rebuilt by the same
+    // pass (attach_ellipsoid — creation and the loader's pass 2),
+    // never serialized. No operands, no discovery, no refusal path:
+    // the value class (finite, > 0) is the only gate, validated at
+    // creation and at the loader's own door. No SDF twin (the
+    // fillet's declaration one kind over).
+    std::optional<brep::EllipsoidRecipe> ellipsoid;
+    std::unique_ptr<brep::BRepBody> ellipsoid_body;
+
     // ---- THE TAVOLA'S LODGING (the morse-5 register's item 7, the
     // deferred item ADR-0036 D6 registered for "the first scene-side
     // consumer, the fillet's unit" — redeemed here, G2-u3 m4): the
@@ -422,12 +442,18 @@ struct SceneNode {
           hybrid_refusal(other.hybrid_refusal),
           fillet(other.fillet), fillet_refusal(other.fillet_refusal),
           fillet_operand_id(other.fillet_operand_id),
+          ellipsoid(other.ellipsoid),
           tavola(other.tavola),
           operation_pending(other.operation_pending),
           operation_pending_error(other.operation_pending_error) {
         if (other.fillet_body) {
             fillet_body = std::make_unique<brep::BRepBody>(*other.fillet_body);
             brep::link_radial_edges(*fillet_body);
+        }
+        if (other.ellipsoid_body) {
+            ellipsoid_body =
+                std::make_unique<brep::BRepBody>(*other.ellipsoid_body);
+            brep::link_radial_edges(*ellipsoid_body);
         }
         if (other.hybrid) {
             auto sdf_clone =
@@ -464,12 +490,20 @@ struct SceneNode {
         fillet = other.fillet;
         fillet_refusal = other.fillet_refusal;
         fillet_operand_id = other.fillet_operand_id;
+        ellipsoid = other.ellipsoid;
         tavola = other.tavola;
         if (other.fillet_body) {
             fillet_body = std::make_unique<brep::BRepBody>(*other.fillet_body);
             brep::link_radial_edges(*fillet_body);
         } else {
             fillet_body.reset();
+        }
+        if (other.ellipsoid_body) {
+            ellipsoid_body =
+                std::make_unique<brep::BRepBody>(*other.ellipsoid_body);
+            brep::link_radial_edges(*ellipsoid_body);
+        } else {
+            ellipsoid_body.reset();
         }
         if (other.hybrid) {
             auto sdf_clone =
@@ -871,6 +905,18 @@ inline FilletDiscovery discover_fillet_operand(
         }
     }
     return out;
+}
+
+// attach_ellipsoid — THE PROBE'S OWN materialization (K1 m3,
+// ADR-0042 D6): ONE definition for creation and the loader's pass 2,
+// the attach_fillet pattern with the primitive's own economy — no
+// operands, no discovery, no tavola: the recipe's two numbers and the
+// factory. The node's own id is the feature (the naming plane's
+// creator part, 'elp#<id>'), the body the exact ellipsoid ALONE.
+inline void attach_ellipsoid(SceneNode& n) {
+    n.ellipsoid_body = brep::make_ellipsoid(
+        n.ellipsoid->equatorial_radius, n.ellipsoid->polar_semiaxis,
+        {}, geometry::FeatureId{n.id});
 }
 
 // attach_fillet — THE FILLET'S OWN attach_operation_hybrid: ONE
@@ -1593,6 +1639,41 @@ public:
         return id;
     }
 
+    // THE ELLIPSOID NODE (K1 m3, ADR-0042 D6): the exact-side
+    // primitive — the recipe the sphere never paid, paid here. The
+    // value class validated LOUDLY (finite, > 0 — the ADR-0029
+    // family, the loader's own door); the body materialized FIRST,
+    // the node installed after (a refused creation touches nothing).
+    // The name defaults to "Ellipsoid_<id>" (the operation rows'
+    // own pattern).
+    std::uint32_t add_ellipsoid_node(const std::string& name,
+                                     brep::EllipsoidRecipe recipe) {
+        if (!(recipe.equatorial_radius > 0.0) ||
+            !std::isfinite(recipe.equatorial_radius) ||
+            !(recipe.polar_semiaxis > 0.0) ||
+            !std::isfinite(recipe.polar_semiaxis))
+            throw std::invalid_argument(
+                "Scene::add_ellipsoid_node: the recipe's semiaxes must "
+                "be finite and > 0 (equatorial=" +
+                std::to_string(recipe.equatorial_radius) + ", polar=" +
+                std::to_string(recipe.polar_semiaxis) +
+                ") - a non-positive or non-finite semiaxis degenerates "
+                "the surface (the ADR-0029 family, the typed value "
+                "class, the loader's own door).");
+        SceneNode node;
+        node.id = next_id_;
+        node.kind = NodeKind::Ellipsoid;
+        node.ellipsoid = std::move(recipe);
+        attach_ellipsoid(node);
+        node.id = next_id_++;
+        node.name = name.empty()
+                        ? ("Ellipsoid_" + std::to_string(node.id))
+                        : name;
+        nodes_.push_back(std::move(node));
+        notify(SceneChange::NodeAdded, nodes_.back().id);
+        return nodes_.back().id;
+    }
+
     // The radius edit AFTER the load or at any later time: ONE scene
     // mutation, the recipe's own parameter (the class-1 SILENT edit —
     // the reference taken once, the re-run answers through the find;
@@ -1758,23 +1839,28 @@ public:
             if (n.kind == NodeKind::Mesh || n.kind == NodeKind::Sketch)
                 continue;
             if (!n.mesh_dirty || !n.visible) continue;
-            if (n.kind == NodeKind::Fillet) {
-                // THE FILLET'S DISPLAY MESH (G2-u3 m6-correttiva, the
-                // click-test's defect 1 — "the fillet applied does
-                // not show in the viewport"): the exact body
-                // tessellated on the exact bodies' OWN road
-                // (brep::tessellate_body — the same tessellator the
-                // bridge and the CSG precedent walk), never a special
-                // render of the fillet. A refused re-run keeps the
-                // last good body — and its mesh keeps rendering (the
-                // visible state); a null body (never installed in
-                // practice — creation refuses before installing) is a
-                // clean skip, never a guess.
-                if (n.fillet_body != nullptr) {
+            if (n.kind == NodeKind::Fillet ||
+                n.kind == NodeKind::Ellipsoid) {
+                // THE EXACT BODIES' DISPLAY MESH (G2-u3 m6-correttiva,
+                // the click-test's defect 1 — "the fillet applied does
+                // not show in the viewport"; the ellipsoid rides the
+                // same road, K1 m3): the exact body tessellated on the
+                // exact bodies' OWN road (brep::tessellate_body — the
+                // same tessellator the bridge and the CSG precedent
+                // walk), never a special render. A refused re-run
+                // keeps the last good body — and its mesh keeps
+                // rendering (the visible state); a null body (never
+                // installed in practice — creation refuses before
+                // installing) is a clean skip, never a guess.
+                const brep::BRepBody* exact =
+                    n.kind == NodeKind::Fillet
+                        ? n.fillet_body.get()
+                        : n.ellipsoid_body.get();
+                if (exact != nullptr) {
                     brep::TessellationOptions opts;
                     opts.resolution = resolution;
                     n.cached_mesh =
-                        brep::tessellate_body(*n.fillet_body, opts);
+                        brep::tessellate_body(*exact, opts);
                 }
             } else {
                 n.cached_mesh =
