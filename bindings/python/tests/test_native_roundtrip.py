@@ -63,7 +63,7 @@ def test_native_version():
     # sketcher's document layer — sketch nodes and extrude recipes
     # (ADR-0030 D4); 0.5.0 the constraints riding the sketch payload
     # as named fields (ADR-0040 D3.1, G4 m4).
-    assert CAD_0.io.NATIVE_VERSION == "0.6.0"
+    assert CAD_0.io.NATIVE_VERSION == "0.7.0"
 
 
 def test_roundtrip_scene_and_metadata(saved_path):
@@ -591,7 +591,10 @@ def test_fillet_v0_5_door_readable_from_the_binding():
             sc)
     msg = str(ei.value)
     assert "the format moved to v0.6: re-apply the fillets" in msg
-    assert "0.5.0" in msg and "0.6.0" in msg
+    # The door names the file's version and THIS build's (K1 m3:
+    # the current number is 0.7.0 — the remedy's own words
+    # still speak v0.6, the era the fillet recipe entered).
+    assert "0.5.0" in msg and "0.7.0" in msg
     # The scene untouched (the load is transactional).
     assert sc.node_count() == 0
 
