@@ -2,9 +2,10 @@
 
 All notable changes to the **software axis** of CAD_0 are documented
 here — one entry per tagged release, content frozen as published.
-The **format axis** (the `.CAD_0` document format, today v0.6.0 — the
-fillet recipe rides named fields: the edge-reference string verbatim
-+ the radius its typed field, ADR-0039 D6; the constraints rode at
+The **format axis** (the `.CAD_0` document format, today v0.7.0 — the
+ellipsoid recipe rides named fields: the semiaxes as the exact-side
+primitive's own node, ADR-0042 D6; the fillet recipe rode at v0.6.0,
+ADR-0039 D6; the constraints rode at
 v0.5.0, ADR-0040 D3.1)
 has its own changelog: the [ADR-0007](docs/adr/0007-native-format-versioning.md)
 series, where every bump has its ADR and its migrator. The two axes
