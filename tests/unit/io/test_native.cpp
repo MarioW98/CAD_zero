@@ -1564,6 +1564,236 @@ TEST_CASE("K1 m3 golden v0.7.0: the ellipsoid recipe rides named fields - the do
     CHECK(fil->fillet_body->face_count() == 9);
 }
 
+TEST_CASE("K1 m3 the round-trip's digests: N cycles bit-identical, the recipe field for field") {
+    // N = 10 cycles on the v0.7 golden: load -> read the digests ->
+    // save -> load again. Every cycle's digests equal the first's; every
+    // re-save is byte-identical to the golden (the writer is the
+    // current one); the recipe comes back field for field every time.
+    std::string first_names, first_coedges;
+    std::uint64_t first_struct = 0;
+    std::string first_file;
+    std::filesystem::path prev = golden_v7_path();
+    for (int cycle = 0; cycle < 10; ++cycle) {
+        const native::ParsedDocument doc = native::load_file(prev);
+        REQUIRE(doc.nodes.size() == 10);
+        const scene::SceneNode* el = &doc.nodes[9];
+        REQUIRE(el->ellipsoid.has_value());
+        CHECK(el->ellipsoid->equatorial_radius == 0.75);
+        CHECK(el->ellipsoid->polar_semiaxis == 0.5);
+        REQUIRE(el->ellipsoid_body != nullptr);
+        const std::string names = m4_name_digest(*el->ellipsoid_body);
+        const std::string coedges = m4_coedge_digest(*el->ellipsoid_body);
+        const std::uint64_t structure =
+            m4_structure_digest(*el->ellipsoid_body);
+        if (cycle == 0) {
+            first_names = names;
+            first_coedges = coedges;
+            first_struct = structure;
+        } else {
+            INFO("cycle ", cycle);
+            CHECK(names == first_names);
+            CHECK(coedges == first_coedges);
+            CHECK(structure == first_struct);
+        }
+        scene::Scene sc;
+        native::install_document(sc, native::ParsedDocument(doc));
+        const std::filesystem::path next =
+            std::filesystem::temp_directory_path() /
+            ("cad0_k1m3_cycle_" + std::to_string(cycle) + ".CAD_0");
+        native::save_file(next, sc, doc.camera);
+        const std::string file_bytes = read_file(next);
+        if (cycle == 0) {
+            first_file = file_bytes;
+            // The first re-save IS the golden bytes (no bump between).
+            CHECK(file_bytes == read_file(golden_v7_path()));
+        } else {
+            CHECK(file_bytes == first_file);
+        }
+        if (cycle > 0) std::filesystem::remove(prev);
+        prev = next;
+    }
+    std::filesystem::remove(prev);
+}
+
+TEST_CASE("K1 m3 the padding counterproof: the naive raw-struct write dies on the padding class, the named fields live") {
+    // THE G4-m4 FORM (the ellipsoid's own subject is the DISCIPLINE,
+    // not a pointer — the recipe is two doubles): a naive payload
+    // IMAGE with a trailing flag carries TAIL PADDING — 7 bytes no
+    // field owns, two same-content instances two digests (the m2's
+    // own discovery); the named-fields writer stores the FIELDS, and
+    // two same-content recipes produce identical file bytes.
+    using brep::EllipsoidRecipe;
+    // (a) The real recipe carries no padding today — the DISCIPLINE
+    // (never a raw image in the file) is what keeps it honest as the
+    // payload grows, and the naive class below shows the death.
+    CHECK(sizeof(EllipsoidRecipe) == 2 * sizeof(double));
+
+    // (b) THE NAIVE IMAGE, the G4-m4's own trick: a payload struct
+    // with a trailing bool — 7 bytes of tail padding nobody owns.
+    struct NaiveImage {
+        double a, c;
+        bool visible;
+    };
+    CHECK(sizeof(NaiveImage) == 2 * sizeof(double) + sizeof(double));
+    NaiveImage n1{}, n2{};
+    n1.a = n2.a = 0.75;
+    n1.c = n2.c = 0.5;
+    n1.visible = n2.visible = true;
+    // Poison n2's padding (bytes [17, 24) — the tail no field owns).
+    unsigned char* raw2 = reinterpret_cast<unsigned char*>(&n2);
+    std::memset(raw2 + 17, 0xAA, sizeof(NaiveImage) - 17);
+    // Same content, DIFFERENT raw digests — the naive road dies.
+    const std::string naive1 = fnv1a_hex(
+        reinterpret_cast<const unsigned char*>(&n1), sizeof(n1));
+    const std::string naive2 = fnv1a_hex(
+        reinterpret_cast<const unsigned char*>(&n2), sizeof(n2));
+    CHECK(naive1 != naive2);
+
+    // (c) THE FIELDS LIVE: two same-content recipes (one a copy —
+    // different addresses, the allocator's own invariant) ride the
+    // LANDED writer to IDENTICAL file bytes.
+    EllipsoidRecipe c1{0.75, 0.5};
+    EllipsoidRecipe c2 = c1;
+    const auto scene_with = [&](const EllipsoidRecipe& c) {
+        scene::Scene s = make_v0_7_scene();
+        scene::SceneNode* el = s.get_node_mut(10);
+        REQUIRE(el != nullptr);
+        el->ellipsoid->equatorial_radius = c.equatorial_radius;
+        el->ellipsoid->polar_semiaxis = c.polar_semiaxis;
+        return s;
+    };
+    const std::filesystem::path pa =
+        std::filesystem::temp_directory_path() / "cad0_k1m3_pad_a.CAD_0";
+    const std::filesystem::path pb =
+        std::filesystem::temp_directory_path() / "cad0_k1m3_pad_b.CAD_0";
+    native::save_file(pa, scene_with(c1), make_canonical_camera());
+    native::save_file(pb, scene_with(c2), make_canonical_camera());
+    CHECK(read_file(pa) == read_file(pb));
+    std::filesystem::remove(pa);
+    std::filesystem::remove(pb);
+}
+
+TEST_CASE("K1 m3 the doors: the anachronism, the value class, the leftovers, and the v0.6 golden WALKS (no door)") {
+    const auto ellipsoid_doc = [](const char* recipe,
+                                  const char* version) {
+        std::string body =
+            "{\"format\": \"CAD_0 native\", \"version\": \"";
+        body += version;
+        body += "\", \"scene\": { \"next_id\": 2, \"nodes\": ["
+                "  { \"id\": 1, \"name\": \"E\", \"kind\": \"ellipsoid\","
+                "    \"ellipsoid\": ";
+        body += recipe;
+        body += " } ] } }";
+        return body;
+    };
+
+    // (a) THE VALUE CLASS at the recipe's fields (the same doctrine as
+    // the fillet's and the constraints'): the semiaxes finite and > 0
+    // — corruption of the class is a LOUD load error, never a default.
+    CHECK_THROWS_WITH_AS(native::parse_document(ellipsoid_doc(
+        "{ \"equatorial_radius\": 0.75, \"polar_semiaxis\": 0.0 }",
+        "0.7.0")),
+        doctest::Contains("must be finite and > 0"), std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(ellipsoid_doc(
+        "{ \"equatorial_radius\": -0.75, \"polar_semiaxis\": 0.5 }",
+        "0.7.0")),
+        doctest::Contains("must be finite and > 0"), std::runtime_error);
+    // THE NON-FINITE CLASS is unreachable through the JSON road: the
+    // parser's own range gate refuses an out-of-range literal FIRST
+    // (a different door, the container's own — pinned as such, never
+    // mistaken for the value class).
+    CHECK_THROWS_WITH_AS(native::parse_document(ellipsoid_doc(
+        "{ \"equatorial_radius\": 1e400, \"polar_semiaxis\": 0.5 }",
+        "0.7.0")),
+        doctest::Contains("number out of range"), std::runtime_error);
+    CHECK_THROWS_WITH_AS(native::parse_document(ellipsoid_doc(
+        "{ \"equatorial_radius\": \"x\", \"polar_semiaxis\": 0.5 }",
+        "0.7.0")),
+        doctest::Contains("number for ellipsoid"), std::runtime_error);
+
+    // (b) THE LEFTOVERS: an ellipsoid node carrying an SDF-side field
+    // — the representations never mix.
+    CHECK_THROWS_WITH_AS(native::parse_document(
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.7.0\","
+        " \"scene\": { \"next_id\": 2, \"nodes\": ["
+        "  { \"id\": 1, \"name\": \"E\", \"kind\": \"ellipsoid\","
+        "    \"ellipsoid\": { \"equatorial_radius\": 0.75,"
+        " \"polar_semiaxis\": 0.5 },"
+        "    \"body\": {} } ] } }"),
+        doctest::Contains("representations never mix"), std::runtime_error);
+
+    // (c) THE ANACHRONISM: an ellipsoid node in a file whose ORIGINAL
+    // version predates 0.7.0 — no legitimate writer ever emitted one;
+    // the file is not what its version claims.
+    CHECK_THROWS_WITH_AS(native::parse_document(ellipsoid_doc(
+        "{ \"equatorial_radius\": 0.75, \"polar_semiaxis\": 0.5 }",
+        "0.6.0")),
+        doctest::Contains("ellipsoid nodes are the v0.7.0 payload"),
+        std::runtime_error);
+
+    // (d) THE V0.6 GOLDEN WALKS — the capability bump's own rite (NO
+    // door before the 0.6->0.7 step: the era lost nothing, ADR-0042
+    // D6). The golden DECLARING 0.6.0 loads whole, its fillet recipe
+    // intact — the walk's own pin, the v0.3->v0.4 precedent.
+    {
+        const native::ParsedDocument doc =
+            native::load_file(golden_v6_path());
+        REQUIRE(doc.nodes.size() == 9);
+        const scene::SceneNode* fil = &doc.nodes[8];
+        REQUIRE(fil->kind == scene::NodeKind::Fillet);
+        CHECK(fil->fillet->edge_reference ==
+              "sub#8:isect[box#7:top \xc3\x97 ext#6:lat(0)]@hi");
+        CHECK(fil->fillet->radius == 0.25);
+        REQUIRE(fil->fillet_body != nullptr);
+        CHECK(fil->fillet_body->vertex_count() == 14);
+    }
+
+    // (e) THE NEWER FILE, refused by name (one check on this door).
+    CHECK_THROWS_WITH_AS(native::parse_document(
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.8.0\","
+        " \"scene\": { \"next_id\": 1, \"nodes\": [] }}"),
+        doctest::Contains("NEWER CAD_0"), std::runtime_error);
+}
+
+TEST_CASE("K1 m3 the re-run after the load: the recipe the truth, the body the cache, bit-identical") {
+    // The loaded node's body is DERIVED state, rebuilt by the pass 2
+    // from the recipe alone — and the rebuild is deterministic: the
+    // digests equal the CREATION body's (make_ellipsoid's own), the
+    // same numbers one materialization later. No edit API rides this
+    // morso (the panel's parameter editor is the first UI consumer's
+    // own bite, registered); the re-run's proof is the pass-2
+    // materialization itself.
+    const native::ParsedDocument doc = native::load_file(golden_v7_path());
+    const scene::SceneNode* el = &doc.nodes[9];
+    REQUIRE(el->ellipsoid_body != nullptr);
+
+    const auto creation = brep::make_ellipsoid(
+        0.75, 0.5, {}, geometry::FeatureId{10});
+    REQUIRE(creation != nullptr);
+    CHECK(m4_name_digest(*el->ellipsoid_body) ==
+          m4_name_digest(*creation));
+    CHECK(m4_coedge_digest(*el->ellipsoid_body) ==
+          m4_coedge_digest(*creation));
+    CHECK(m4_structure_digest(*el->ellipsoid_body) ==
+          m4_structure_digest(*creation));
+    CHECK(el->ellipsoid_body->vertex_count() ==
+          creation->vertex_count());
+    CHECK(brep::euler_characteristic(*el->ellipsoid_body) ==
+          brep::euler_characteristic(*creation));
+    // And the second pass-2 run (the scene-side rebuild) is the same
+    // again: the derived state has no will of its own.
+    scene::Scene sc;
+    native::install_document(sc, native::ParsedDocument(doc));
+    scene::rebuild_operations(sc);
+    const scene::SceneNode* el2 = sc.get_node(10);
+    REQUIRE(el2 != nullptr);
+    REQUIRE(el2->ellipsoid_body != nullptr);
+    CHECK(m4_structure_digest(*el2->ellipsoid_body) ==
+          m4_structure_digest(*creation));
+    CHECK(m4_name_digest(*el2->ellipsoid_body) ==
+          m4_name_digest(*creation));
+}
+
 TEST_CASE("G2-u3 m4 - the re-run after the load: class 1 silent with reference_resolved; the dead reference class 4 by name") {
     // (a) THE CLASS-1 EDIT after the load: the radius edit is ONE
     // scene mutation (set_fillet_radius), the reference taken ONCE
