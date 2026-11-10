@@ -54,6 +54,7 @@ set(CAD_0_TEST_SOURCES
     unit/brep/test_g2_u3_m6ter_the_chain.cpp
     unit/brep/test_k1_m3_ellipsoid.cpp
     unit/brep/test_k1_m4_zoo.cpp
+    unit/brep/test_k1_m5_chain_gate.cpp
     unit/brep/test_h2_u3_pcurve_double.cpp
     unit/brep/test_h2_u6_m2_factory_names.cpp
     unit/brep/test_h2_u6_m3_extrude_names.cpp
