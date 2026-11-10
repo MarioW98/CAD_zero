@@ -116,6 +116,7 @@
 // flank reachable from Python; the m6 click-test is the phase's
 // exit, declared and deferred).
 #include "CAD_0/brep/fillet.hpp"
+#include "CAD_0/brep/chain_gate.hpp"
 #include "CAD_0/sdf/sketch_profile.hpp"
 
 namespace nb = nanobind;
@@ -1281,4 +1282,74 @@ void bind_brep(nb::module_& m) {
         "The faces carrying this structural name, in address order.\n"
         "Raises ValueError when no face carries the name (diagnosis +\n"
         "remedy verbatim).");
+
+    // THE CHAIN GATE (K1 m5, ADR-0041 D1.3): the report's own door
+    // to the topological correctness after every step — THE SAME
+    // DOOR the C++ suite consumes (CAD_0/brep/chain_gate.hpp, one
+    // module, never a second opinion), here with the report's own
+    // evidence: the body alone. The radial, the loops and the chi
+    // run on it; the census and the drift are HONESTLY not
+    // applicable at this door (they read the step's tavola and the
+    // re-run's digest — the caller's evidence, carried by the C++
+    // ChainStep) and say so in not_applicable, never silently
+    // skipped.
+    brep_mod.def(
+        "chain_gate",
+        [](const BRepBody& body) {
+            const CAD_0::brep::ChainStep step{&body};
+            const auto v = CAD_0::brep::chain_gate(step);
+            nb::dict d;
+            d["pass"] = v.pass;
+            nb::list failures;
+            for (const auto& f : v.failures) {
+                nb::dict fd;
+                fd["check"] =
+                    std::string(
+                        CAD_0::brep::gate_check_token(f.check));
+                fd["message"] = f.message;
+                failures.append(fd);
+            }
+            d["failures"] = failures;
+            nb::list na;
+            for (const auto c : v.not_applicable)
+                na.append(std::string(
+                    CAD_0::brep::gate_check_token(c)));
+            d["not_applicable"] = na;
+            d["v"] = v.v;
+            d["e"] = v.e;
+            d["f"] = v.f;
+            d["h"] = v.h;
+            d["chi"] = v.chi;
+            d["digest"] = v.digest;
+            return d;
+        },
+        nb::arg("body"),
+        "The chain gate on a body (ADR-0041 D1.3, K1 m5): the\n"
+        "topological correctness as VALUES — pass, the named\n"
+        "failures (check + message, every corruption quoted with\n"
+        "its entity and its numbers), the not_applicable list (the\n"
+        "census and the drift read the step's tavola and the\n"
+        "re-run's digest, this door's body-alone evidence does not\n"
+        "reach them — said, never hidden), and the body's own\n"
+        "numbers: v/e/f, h (the inner-loop term), chi, and the\n"
+        "digest (chain_digest's own answer, the drift's left\n"
+        "side). The report and the tests share this one door.");
+
+    brep_mod.def(
+        "chain_digest",
+        [](const BRepBody& body) {
+            return CAD_0::brep::chain_digest(body);
+        },
+        nb::arg("body"),
+        "The body's whole answer as one comparable multi-line\n"
+        "string (the H2 unit 6 pattern grown the chain's spine):\n"
+        "the summary line (V E F H chi), one line per vertex (the\n"
+        "position), per edge (the endpoints, the name) and per\n"
+        "face (the family, the loops, every co-edge's typed\n"
+        "p-curve, the name) — the entities in the body's own\n"
+        "order, every DOUBLE written with 12 significant digits\n"
+        "(ADR-0014's serialization rule for double-originated\n"
+        "numbers). The same recipe re-run reproduces it\n"
+        "bit-identically — that is the drift predicate's own\n"
+        "instrument.");
 }
