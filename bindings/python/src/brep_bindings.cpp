@@ -98,6 +98,7 @@
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/tuple.h>
+#include <deque>
 
 #include "CAD_0/brep/topology.hpp"
 #include "CAD_0/brep/naming.hpp"
@@ -117,6 +118,7 @@
 // exit, declared and deferred).
 #include "CAD_0/brep/fillet.hpp"
 #include "CAD_0/brep/chain_gate.hpp"
+#include "CAD_0/brep/survival_ledger.hpp"
 #include "CAD_0/sdf/sketch_profile.hpp"
 
 namespace nb = nanobind;
@@ -932,6 +934,22 @@ void bind_brep(nb::module_& m) {
         "stored: recomputed deterministically from the bodies on\n"
         "every call.");
 
+    // The fillet's tavola (K1 m6, the survival ledger's own need at
+    // the report's door: the MEAL step's old side — the vanished
+    // row's lodging, the death's cause verbatim).
+    brep_mod.def(
+        "fillet_descent",
+        [](const BRepBody& result, const BRepBody& operand) {
+            return CAD_0::brep::fillet_descent(result, operand);
+        },
+        nb::arg("result"), nb::arg("operand"),
+        "The fillet's descent table (ADR-0039 D3): the kept, the\n"
+        "absorbed (the re-spanned edges, the shrunk faces), the born\n"
+        "(the flank, the tangent wires) and the VANISHED tail (the\n"
+        "consumed edge and its corners, the cause verbatim -\n"
+        "'replaced by the flank'). Derived, never stored: recomputed\n"
+        "deterministically from the bodies on every call.");
+
     brep_mod.def(
         "extrude_descent",
         [](const BRepBody& body,
@@ -1352,4 +1370,242 @@ void bind_brep(nb::module_& m) {
         "numbers). The same recipe re-run reproduces it\n"
         "bit-identically — that is the drift predicate's own\n"
         "instrument.");
+
+    // THE SURVIVAL LEDGER (K1 m6, ADR-0041 D1.4): the report's own
+    // door to the feature stability after parameter edits — THE SAME
+    // DOOR the C++ suite consumes (CAD_0/brep/survival_ledger.hpp,
+    // one module, never a second opinion). The caller (the report,
+    // the test) holds the corpus's evidence — the chains, the
+    // tavole, the edit contexts — and hands it to the door as a list
+    // of member dicts; the door walks the references through the
+    // steps (the resolver's own answers, one opinion), enforces the
+    // metric's discipline (a death without its name is REFUSED —
+    // ValueError, the diagnosis verbatim) and returns the fraction
+    // AND the deaths' register in one value.
+    brep_mod.def(
+        "survival_ledger",
+        [](const nb::list& py_members) {
+            namespace sl = CAD_0::brep;
+            using SK = sl::SurvivalStepKind;
+
+            // The grammars' storage — one PyGeneration per reference,
+            // alive through the ledger call (the naming's operand
+            // spans point into them; the DEQUE keeps every element's
+            // address stable across the pushes — a vector's
+            // reallocation would dangle the stored naming pointers).
+            std::deque<PyGeneration> grammars;
+            std::vector<sl::SurvivalMember> members;
+
+            for (const auto& py_m : py_members) {
+                const nb::dict d = nb::cast<nb::dict>(py_m);
+                sl::SurvivalMember m;
+                m.name = nb::cast<std::string>(d["name"]);
+                const std::string kind_tok =
+                    nb::cast<std::string>(d["kind"]);
+                if (kind_tok == "silent_radius_edit")
+                    m.kind = sl::SurvivalEditKind::SilentRadiusEdit;
+                else if (kind_tok == "sketch_root_edit")
+                    m.kind = sl::SurvivalEditKind::SketchRootEdit;
+                else if (kind_tok == "load_boolean_rerun")
+                    m.kind = sl::SurvivalEditKind::LoadBooleanRerun;
+                else if (kind_tok == "chained_fillet_edit")
+                    m.kind = sl::SurvivalEditKind::ChainedFilletEdit;
+                else if (kind_tok == "recipe_rerun")
+                    m.kind = sl::SurvivalEditKind::RecipeRerun;
+                else
+                    throw std::invalid_argument(
+                        "survival_ledger: unknown member kind '" +
+                        kind_tok +
+                        "' - the corpus is TYPED (the five the "
+                        "mandate named). Remedy: one of "
+                        "silent_radius_edit, sketch_root_edit, "
+                        "load_boolean_rerun, chained_fillet_edit, "
+                        "recipe_rerun.");
+                if (d.contains("digest"))
+                    m.digest =
+                        nb::cast<std::string>(d["digest"]);
+                if (d.contains("seats"))
+                    for (const auto& s : nb::cast<nb::list>(
+                             d["seats"]))
+                        m.seats_declared.push_back(
+                            nb::cast<std::string>(s));
+
+                // The references: the render, the structural id, the
+                // grammar (the creating declaration — built from the
+                // (kind, operands) pair the caller holds).
+                for (const auto& py_r : nb::cast<nb::list>(
+                         d["references"])) {
+                    const nb::dict r =
+                        nb::cast<nb::dict>(py_r);
+                    std::vector<std::pair<
+                        std::uint64_t,
+                        CAD_0::brep::naming::FeatureKind>>
+                        ops{};
+                    if (r.contains("operands") &&
+                        !nb::cast<nb::object>(r["operands"])
+                             .is_none())
+                        ops = nb::cast<std::vector<
+                            std::pair<
+                                std::uint64_t,
+                                CAD_0::brep::naming::
+                                    FeatureKind>>>(r["operands"]);
+                    const bool multi =
+                        r.contains("multi_chain") &&
+                        nb::cast<bool>(r["multi_chain"]);
+                    grammars.emplace_back(
+                        nullptr, nullptr,
+                        nb::cast<CAD_0::brep::naming::
+                                     FeatureKind>(r["kind"]),
+                        ops, multi);
+                    m.references.push_back(sl::SurvivalReference{
+                        nb::cast<std::string>(r["name"]),
+                        nb::cast<CAD_0::geometry::ShapeId>(
+                            r["id"]),
+                        grammars.back().gen.naming, multi});
+                }
+
+                // The steps: the walk's own distinction (edit/meal)
+                // and the per-reference evidence.
+                for (const auto& py_s : nb::cast<nb::list>(
+                         d["steps"])) {
+                    const nb::dict st = nb::cast<nb::dict>(py_s);
+                    sl::SurvivalStep step;
+                    const std::string sk =
+                        nb::cast<std::string>(st["kind"]);
+                    if (sk == "edit")
+                        step.kind = SK::Edit;
+                    else if (sk == "meal")
+                        step.kind = SK::Meal;
+                    else
+                        throw std::invalid_argument(
+                            "survival_ledger: unknown step kind '" +
+                            sk + "' (member '" + m.name +
+                            "') - a step is the EDIT's own "
+                            "(the class's step) or the MEAL's (the "
+                            "consuming feature's act, the register's "
+                            "step). Remedy: 'edit' or 'meal'.");
+                    step.name =
+                        nb::cast<std::string>(st["name"]);
+                    if (st.contains("killer"))
+                        step.killer = nb::cast<std::string>(
+                            st["killer"]);
+                    for (const auto& py_sr : nb::cast<nb::list>(
+                             st["refs"])) {
+                        const nb::dict sr =
+                            nb::cast<nb::dict>(py_sr);
+                        sl::SurvivalStepRef out;
+                        out.reference = nb::cast<std::size_t>(
+                            sr["reference"]);
+                        out.old_tavola = nb::cast<const CAD_0::
+                                                      brep::
+                                                          DescentTable*>(
+                            sr["old_tavola"]);
+                        out.new_body = nb::cast<const BRepBody*>(
+                            sr["new_body"]);
+                        if (sr.contains("edit")) {
+                            const PyEditContext& ec =
+                                nb::cast<const PyEditContext&>(
+                                    sr["edit"]);
+                            out.edit = ec.ctx;
+                        }
+                        step.refs.push_back(std::move(out));
+                    }
+                    m.steps.push_back(std::move(step));
+                }
+                members.push_back(std::move(m));
+            }
+
+            const sl::SurvivalLedger ledger =
+                sl::survival_ledger(members);
+
+            // The verdict as plain values: the members' rows, the
+            // counts, the FRACTION (a pair — never a naked number
+            // without the register) and the register itself, line by
+            // line — the report's own evidence, both or neither.
+            nb::dict out;
+            nb::list py_ms;
+            for (const auto& m : ledger.members) {
+                nb::dict md;
+                md["name"] = m.name;
+                md["kind"] = std::string(
+                    sl::survival_edit_token(m.kind));
+                md["digest"] = m.digest;
+                nb::list seats;
+                for (const auto& s : m.seats_declared)
+                    seats.append(s);
+                md["seats"] = seats;
+                nb::list entries;
+                for (const auto& e : m.entries) {
+                    nb::dict ed;
+                    ed["reference"] = e.reference;
+                    ed["code"] = e.code;
+                    ed["dead"] = e.dead;
+                    ed["died"] = e.died;
+                    ed["killer"] = e.killer;
+                    ed["cause"] = e.cause;
+                    ed["step"] = e.step;
+                    ed["remedy"] = e.remedy;
+                    ed["renamed_from"] = e.renamed_from;
+                    ed["renamed_to"] = e.renamed_to;
+                    ed["renamed_map"] = e.renamed_map;
+                    nb::list cands;
+                    for (const auto& c : e.candidates)
+                        cands.append(c);
+                    ed["candidates"] = cands;
+                    entries.append(ed);
+                }
+                md["entries"] = entries;
+                md["resolved"] = m.resolved;
+                md["renamed"] = m.renamed;
+                md["ambiguous"] = m.ambiguous;
+                md["vanished"] = m.vanished;
+                py_ms.append(md);
+            }
+            out["members"] = py_ms;
+            out["total"] = ledger.total;
+            out["resolved"] = ledger.resolved;
+            out["renamed"] = ledger.renamed;
+            out["ambiguous"] = ledger.ambiguous;
+            out["vanished"] = ledger.vanished;
+            out["fraction"] = std::make_pair(ledger.resolved,
+                                             ledger.total);
+            nb::list deaths;
+            for (const auto& d : ledger.deaths) {
+                nb::dict dd;
+                dd["member"] = d.member;
+                dd["reference"] = d.reference;
+                dd["code"] = d.code;
+                dd["died"] = d.died;
+                dd["killer"] = d.killer;
+                dd["cause"] = d.cause;
+                dd["step"] = d.step;
+                dd["remedy"] = d.remedy;
+                deaths.append(dd);
+            }
+            out["deaths"] = deaths;
+            out["deaths_text"] = ledger.deaths_text();
+            out["text"] = ledger.text();
+            return out;
+        },
+        nb::arg("members"),
+        "The survival ledger (ADR-0041 D1.4, K1 m6): the feature\n"
+        "stability after parameter edits, the deaths NAMED — THE\n"
+        "SAME door the C++ suite consumes. Takes the corpus's\n"
+        "evidence as a list of member dicts (name, kind, references,\n"
+        "steps, seats, digest), walks every reference through every\n"
+        "step (the resolver's own answers, one opinion), and returns\n"
+        "the fraction AND the deaths' register in one value:\n"
+        "{members: [...], total, resolved, renamed, ambiguous,\n"
+        "vanished, fraction: (resolved, total), deaths: [...],\n"
+        "deaths_text, text}. The fraction's NUMERATOR is class 1\n"
+        "ALONE (ADR-0041 D1.4, verbatim: 'references that resolve\n"
+        "class 1 (reference_resolved, the feature re-running\n"
+        "silently, ONE undo entry) over the total') -\n"
+        "reference_renamed (UNIQUE CONTINUER, a survival of the\n"
+        "NAME, not a resolve) rides the denominator and the\n"
+        "register's counts, never the numerator. A death without\n"
+        "its name (the killer\n"
+        "not declared, the cause wiped) is REFUSED - never a\n"
+        "partial ledger, never an anonymous death riding a fraction\n"
+        "(raises ValueError, diagnosis + remedy verbatim).");
 }
