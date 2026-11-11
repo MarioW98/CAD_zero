@@ -237,8 +237,7 @@ struct DChain {
     ShapeId wall{};  // ext#3:lat(1) — the ARC's wall, absorbed
 
     DChain(std::vector<s::SketchChain> authored) {
-        const float r = 0.5f;
-        const Vec2f A{-r, 0.0f}, B{r, 0.0f};
+
         box = b::make_box({1.0, 1.0, 1.0}, FeatureId{1});
         chains = std::move(authored);
         tool = b::make_prism(chains, 3.0f, +1, FeatureId{3});
