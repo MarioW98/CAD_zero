@@ -17,6 +17,7 @@ set(CAD_0_BREP_HEADERS
     include/CAD_0/brep/descent.hpp
     include/CAD_0/brep/resolve.hpp
     include/CAD_0/brep/chain_gate.hpp
+    include/CAD_0/brep/survival_ledger.hpp
     include/CAD_0/brep/detail/boolean_test_hooks.hpp
 )
 
@@ -31,6 +32,7 @@ set(CAD_0_BREP_SOURCES
     src/descent.cpp
     src/resolve.cpp
     src/chain_gate.cpp
+    src/survival_ledger.cpp
 )
 
 add_library(CAD_0_brep STATIC ${CAD_0_BREP_SOURCES} ${CAD_0_BREP_HEADERS})
