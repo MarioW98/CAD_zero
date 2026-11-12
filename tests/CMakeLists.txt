@@ -196,3 +196,10 @@ target_compile_options(CAD_0_tests PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Werror>)
 
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${CAD_0_TEST_SOURCES})
+
+# K1 m8 — THE BENCHMARK SUITE's own home, separate from the unit
+# tests above (ADR-0041 D5): a second target, built by the same
+# columns (the compile discipline holds for it too), run by the rite
+# — never a ctest member by default (its posture and its reasons
+# declared in tests/benchmarks/CMakeLists.txt's own header).
+add_subdirectory(benchmarks)
