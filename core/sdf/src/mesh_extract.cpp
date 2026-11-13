@@ -1,6 +1,7 @@
 // core/sdf/src/mesh_extract.cpp
 //
-// Marching Cubes implementation (Phase B.5 — with vertex welding + narrow-band).
+// Marching Cubes implementation (Phase B.5 — with vertex welding + narrow-band;
+// PERF 2 — the slice-streamed grid).
 //
 // Reference: Lorensen & Cline, "Marching Cubes: A High Resolution 3D
 // Surface Construction Algorithm", SIGGRAPH 1987.
@@ -14,6 +15,46 @@
 //   * Narrow-band culling: cells whose 8 corners all share the same
 //     sign are skipped (no surface crossing). For compact SDFs this
 //     avoids ~75% of cell evaluations.
+//
+// PERF 2 — THE SLICE-STREAMED GRID (the memory of the tessellation
+// becomes a function of the SLICE and the SURFACE, never of the
+// volume): the pre-PERF-2 code materialized the whole volume before
+// walking it — the grid's three arrays (points 12 B/pt, field 4 B/pt,
+// gradient 12 B/pt) plus the evaluation result's two (values 4 B/pt,
+// gradients 12 B/pt) all live TOGETHER during the bulk evaluate:
+// 44 bytes per grid point, 712 MiB at resolution 256. The walk needs,
+// at any instant, only the TWO z-planes a cell layer spans — so the
+// grid is now streamed: two planes of field+gradient ping-pong by
+// parity (plane zi lives in slot zi&1; the ceiling plane of cell
+// layer cz overwrites the floor plane of layer cz-1, dead by then —
+// the sequence is the algorithm's own, sequential and deterministic,
+// so no flags and no invalidation logic exist to get wrong), the
+// point positions are recomputed analytically per plane by ONE
+// shared function (never stored as a volume), and the evaluation
+// scratch (one plane of points, one plane of values+gradients) is
+// allocated once and reused by every slice.
+//
+// THE BIT-IDENTITY CONTRACT (the constraint this rewrite is bound
+// to, ADR-0014's own law riding it): the output mesh — every
+// position, every normal, every index — must remain BIT-IDENTICAL to
+// the volume-built walk at every resolution. Three facts carry it:
+//   * the per-point SDF evaluation is independent of its neighbours
+//     (CpuEvalBackend::evaluate samples each point alone — TBB grains
+//     and batch boundaries change the SCHEDULE, never the arithmetic),
+//     so evaluating per plane instead of per volume yields the SAME
+//     values in the SAME slots;
+//   * the grid point's position is computed by the SAME expression
+//     in ONE function (grid_point below) for both the evaluation
+//     span and the interpolation — one code, one set of bits, and
+//     -ffp-contract=off (the project's own flag, CMakeLists.txt)
+//     forbids the contraction that could make two compilations of
+//     one expression differ;
+//   * the cell walk itself is unchanged — same order (z, y, x), same
+//     MC33 dispatch over the same corner values, same edge keys, same
+//     caches. Only WHERE the values live changed, never WHAT they
+//     are. The suite pins the digests (the PERF 2 row's second
+//     assertion) and the gate refuses a tessellation that buys memory
+//     with one drifted bit.
 //
 // Edge numbering convention (cube with 8 corners labeled 0..7):
 //   Corner positions:
@@ -84,65 +125,88 @@ static const std::array<std::pair<int, int>, 12> kEdgeCorners = {{
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// marching_cubes implementation (Phase B.5)
+// marching_cubes implementation (Phase B.5 + PERF 2 slice streaming)
 // ---------------------------------------------------------------------------
 
 namespace {
 
-struct Grid {
+// PERF 2 — THE GRID POINT, computed analytically by ONE function for
+// every consumer (the evaluation span and the interpolation). The
+// pre-PERF-2 walk stored N^3 of these; the expression is the walk's
+// own (bounds.min + extent * (i / resolution), per axis), kept in one
+// place so every caller computes the SAME bits — with
+// -ffp-contract=off (the project's flag) the arithmetic is the
+// machine's own, identical wherever it runs.
+math::Vec3f grid_point(const math::Bboxf& bounds,
+                       const math::Vec3f& extent,
+                       std::uint32_t resolution,
+                       std::uint32_t xi, std::uint32_t yi,
+                       std::uint32_t zi) {
+    return {bounds.min.x + extent.x * (float(xi) / float(resolution)),
+            bounds.min.y + extent.y * (float(yi) / float(resolution)),
+            bounds.min.z + extent.z * (float(zi) / float(resolution))};
+}
+
+// PERF 2 — THE SLICE-STREAMED GRID: TWO z-planes of field (and
+// gradient, when normals are asked) live at a time, ping-pong by
+// parity — plane zi lives in slot zi&1. A cell layer cz reads planes
+// cz and cz+1; loading plane cz+1 overwrites slot (cz+1)&1, which
+// held plane cz-1 — dead since layer cz-1 ended. The load order is
+// the walk's own (floor plane once, then each ceiling plane in
+// order), sequential and deterministic: no flags, no invalidation
+// logic, nothing to get wrong. The point positions are never stored
+// as a volume — each plane's evaluation span is filled from
+// grid_point and reused; the interpolation recomputes on demand from
+// the same function. The memory is the slice's, never the volume's:
+// 2*N^2*(4+12) bytes of field+gradient planes plus N^2*(12+16) of
+// reused evaluation scratch (at resolution 256: ~4 MB total, against
+// the 712 MiB of the volume-built walk's five live arrays).
+struct SliceGrid {
     std::uint32_t N;  // vertices per axis = resolution + 1
-    std::vector<float> field;
-    std::vector<math::Vec3f> points;
-    std::vector<math::Vec3f> grad;
+    std::uint32_t R;  // cells per axis = the resolution itself
     math::Bboxf bounds;
-    math::Vec3f cell_size;
+    math::Vec3f extent;
     bool has_normals;
+    std::vector<float> field;       // 2 * N * N — the ping-pong planes
+    std::vector<math::Vec3f> grad;  // 2 * N * N (empty when !has_normals)
+    std::vector<math::Vec3f> pts;   // N * N — the evaluation span, reused
+    EvalResult result;              // one plane's values+gradients, reused
 
-    std::size_t idx(std::uint32_t xi, std::uint32_t yi, std::uint32_t zi) const noexcept {
-        return std::size_t(zi) * N * N + std::size_t(yi) * N + xi;
+    std::size_t plane_base(std::uint32_t zi) const noexcept {
+        return std::size_t(zi & 1u) * std::size_t(N) * N;
     }
-};
 
-// Evaluate the SDF on a uniform grid.
-Grid evaluate_grid(const SDFBody& body, const math::Bboxf& bounds,
-                   std::uint32_t resolution, bool compute_normals) {
-    Grid g{};
-    g.N = resolution + 1;
-    g.bounds = bounds;
-    g.has_normals = compute_normals;
+    // Absolute grid coordinates -> the live plane slot. The callers
+    // keep the walk's original arithmetic (idx(x,y,z) = z*N*N + y*N + x)
+    // modulo the plane fold — the VALUES are the volume walk's own.
+    std::size_t idx(std::uint32_t xi, std::uint32_t yi,
+                    std::uint32_t zi) const noexcept {
+        return plane_base(zi) + std::size_t(yi) * N + xi;
+    }
 
-    const auto extent = bounds.extent();
-    g.cell_size = {extent.x / float(resolution),
-                  extent.y / float(resolution),
-                  extent.z / float(resolution)};
-
-    const std::size_t total = std::size_t(g.N) * g.N * g.N;
-    g.points.resize(total);
-    g.field.resize(total);
-    if (compute_normals) g.grad.resize(total);
-
-    for (std::uint32_t zi = 0; zi < g.N; ++zi) {
-        for (std::uint32_t yi = 0; yi < g.N; ++yi) {
-            for (std::uint32_t xi = 0; xi < g.N; ++xi) {
-                const float fx = bounds.min.x + extent.x * (float(xi) / float(resolution));
-                const float fy = bounds.min.y + extent.y * (float(yi) / float(resolution));
-                const float fz = bounds.min.z + extent.z * (float(zi) / float(resolution));
-                g.points[g.idx(xi, yi, zi)] = {fx, fy, fz};
+    // Evaluate one z-plane of the field into its slot. The span is
+    // filled by grid_point (the same bits the volume walk stored),
+    // evaluated through the same backend (per-point independent — the
+    // batch boundary changes the schedule, never the values), and
+    // copied into the slot in the same per-index order.
+    void load_plane(const SDFBody& body, CpuEvalBackend& backend,
+                    std::uint32_t zi) {
+        for (std::uint32_t yi = 0; yi < N; ++yi) {
+            for (std::uint32_t xi = 0; xi < N; ++xi) {
+                pts[std::size_t(yi) * N + xi] =
+                    grid_point(bounds, extent, R, xi, yi, zi);
             }
         }
+        backend.evaluate(
+            body, std::span<const math::Vec3f>(pts.data(), pts.size()),
+            result);
+        const std::size_t base = plane_base(zi);
+        for (std::size_t i = 0; i < pts.size(); ++i) {
+            field[base + i] = result.values[i];
+            if (has_normals) grad[base + i] = result.gradients[i];
+        }
     }
-
-    EvalResult result;
-    CpuEvalBackend backend;
-    backend.evaluate(body,
-                     std::span<const math::Vec3f>(g.points.data(), g.points.size()),
-                     result);
-    for (std::size_t i = 0; i < total; ++i) {
-        g.field[i] = result.values[i];
-        if (compute_normals) g.grad[i] = result.gradients[i];
-    }
-    return g;
-}
+};
 
 // Compute the vertex position along a grid edge between two absolute
 // grid points (ax,ay,az) and (bx,by,bz). The endpoints are canonicalized
@@ -154,7 +218,11 @@ Grid evaluate_grid(const SDFBody& body, const math::Bboxf& bounds,
 // so adjacent cells passing the same endpoints in different order got
 // t and 1-t, which are mathematically equal but can differ in the last
 // ULP, yielding two distinct vertices on one physical edge.
-math::Vec3f interp_edge_abs(const Grid& g,
+//
+// PERF 2: the endpoint positions come from grid_point (the ONE
+// function, the same bits the volume walk stored) — never from a
+// stored points volume, because none exists anymore.
+math::Vec3f interp_edge_abs(const SliceGrid& g,
                              std::int32_t ax_p, std::int32_t ay_p, std::int32_t az_p,
                              std::int32_t bx_p, std::int32_t by_p, std::int32_t bz_p) {
     // Canonicalize: A < B lexicographically.
@@ -180,14 +248,18 @@ math::Vec3f interp_edge_abs(const Grid& g,
         t = fA / denom;
         t = std::clamp(t, 0.0f, 1.0f);
     }
-    const math::Vec3f& pA = g.points[ia];
-    const math::Vec3f& pB = g.points[ib];
+    const math::Vec3f pA = grid_point(g.bounds, g.extent, g.R,
+                                      std::uint32_t(ax_p), std::uint32_t(ay_p),
+                                      std::uint32_t(az_p));
+    const math::Vec3f pB = grid_point(g.bounds, g.extent, g.R,
+                                      std::uint32_t(bx_p), std::uint32_t(by_p),
+                                      std::uint32_t(bz_p));
     return {pA.x + t * (pB.x - pA.x),
             pA.y + t * (pB.y - pA.y),
             pA.z + t * (pB.z - pA.z)};
 }
 
-math::Vec3f interp_gradient_abs(const Grid& g,
+math::Vec3f interp_gradient_abs(const SliceGrid& g,
                                   std::int32_t ax_p, std::int32_t ay_p, std::int32_t az_p,
                                   std::int32_t bx_p, std::int32_t by_p, std::int32_t bz_p) {
     // Canonicalize: A < B lexicographically (same as interp_edge_abs).
@@ -237,8 +309,26 @@ TriangleMesh marching_cubes(const SDFBody& body,
         return mesh;
     }
 
-    // Evaluate the SDF on the grid.
-    Grid g = evaluate_grid(body, bounds, opts.resolution, opts.compute_normals);
+    // PERF 2 — the slice-streamed grid: two z-planes live at a time
+    // (see SliceGrid above). The floor plane loads once, then each
+    // cell layer's ceiling plane loads into the slot the previous
+    // floor left dead — every plane evaluated exactly once, the
+    // buffers allocated once and reused. The memory is the slice's
+    // and the surface's, never the volume's.
+    SliceGrid g{};
+    g.N = opts.resolution + 1;
+    g.R = opts.resolution;
+    g.bounds = bounds;
+    g.extent = extent;
+    g.has_normals = opts.compute_normals;
+    const std::size_t plane = std::size_t(g.N) * g.N;
+    g.field.assign(2 * plane, 0.0f);
+    if (opts.compute_normals) {
+        g.grad.assign(2 * plane, math::Vec3f{});
+    }
+    g.pts.resize(plane);
+    CpuEvalBackend backend;
+    g.load_plane(body, backend, 0);
 
     // Vertex cache keyed by grid-edge endpoints (provably correct).
     // Each marching-cubes edge is identified by its two grid vertex
@@ -352,9 +442,13 @@ TriangleMesh marching_cubes(const SDFBody& body,
     // all cells sharing a grid edge produce the exact same vertex.
 
     // Iterate over all cells. Use narrow-band culling: skip cells where
-    // all 8 corners have the same sign (no surface crossing).
+    // all 8 corners have the same sign (no surface crossing). PERF 2:
+    // before each layer, its CEILING plane loads — into the slot the
+    // previous layer's floor left dead (parity ping-pong; plane cz+1
+    // overwrites plane cz-1). The layer then reads only live planes.
     const std::uint32_t R = opts.resolution;
     for (std::uint32_t cz = 0; cz < R; ++cz) {
+        g.load_plane(body, backend, cz + 1);
         for (std::uint32_t cy = 0; cy < R; ++cy) {
             for (std::uint32_t cx = 0; cx < R; ++cx) {
                 const std::size_t c0 = g.idx(cx,   cy,   cz);
