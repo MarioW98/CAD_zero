@@ -88,3 +88,38 @@ target_compile_definitions(CAD_0_perf2_memory PRIVATE
 
 target_compile_options(CAD_0_perf2_memory PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Werror>)
+
+# ---------------------------------------------------------------------------
+# PERF 3 — THE EVALUATOR THROUGHPUT ROW (the benchmark suite's fourth
+# row): the field evaluation's points per second, the audit's own
+# before (the scalar tree walk, reproduced as the beside-compiled twin)
+# against the batch road (the leaves' xsimd kernels). The m8 posture
+# verbatim: built in every column, NOT a ctest member, the rite runs
+# it; digest identity the first predicate, medians and p95 (warmup 3,
+# iterations 21), the within-run A/B gate relative only, both
+# counterproofs red. The deterministic verdict is FNV-pinned.
+# ---------------------------------------------------------------------------
+add_executable(CAD_0_perf3_evaluator perf3_evaluator.cpp)
+
+target_include_directories(CAD_0_perf3_evaluator PRIVATE
+    ${CMAKE_SOURCE_DIR}/core/math/include
+    ${CMAKE_SOURCE_DIR}/core/geometry/include
+    ${CMAKE_SOURCE_DIR}/core/sdf/include
+    ${CMAKE_SOURCE_DIR}/core/concurrency/include
+    ${CMAKE_BINARY_DIR}/include
+)
+
+target_link_libraries(CAD_0_perf3_evaluator PRIVATE
+    CAD_0_math
+    CAD_0_geometry
+    CAD_0_sdf
+    CAD_0_concurrency
+)
+
+target_compile_definitions(CAD_0_perf3_evaluator PRIVATE
+    CAD_0_BENCH_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+)
+
+target_compile_options(CAD_0_perf3_evaluator PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Werror>
+)
