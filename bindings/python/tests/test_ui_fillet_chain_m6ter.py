@@ -332,7 +332,11 @@ def test_the_chain_consumes_the_current_state(workbench_app):
     assert win._viewport._node_ranges.get(box_id) is None
     cm = node2.cached_mesh
     assert cm is not None and cm.triangle_count() > 0
-    assert len(win._viewport._mesh_indices) // 3 == cm.triangle_count()
+    # the frame's mirror (PERF 1: one entry per visible feature): the
+    # one body's triangles alone — the whole-scene concatenation dead
+    entries = {e.node_id: e for e in win._viewport._draw_nodes}
+    assert list(entries) == [f2]
+    assert entries[f2].triangle_count == cm.triangle_count()
 
     # THE UNDO returns fillet#1's body (the box stays hidden —
     # fillet#1's own Apply still owns it); the redo hides again.

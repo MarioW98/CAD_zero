@@ -1,7 +1,7 @@
 """CAD_0.ui.viewport_widget — PySide6 viewport with real OpenGL rendering.
 
-Uses PyOpenGL for fixed-function pipeline (glMatrixMode, glBegin, etc.)
-and QOpenGLWindow as the rendering surface.
+Uses PyOpenGL for fixed-function pipeline (glMatrixMode, client
+arrays, etc.) and QOpenGLWindow as the rendering surface.
 
 Requires: pip install PyOpenGL PySide6
 """
@@ -22,7 +22,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout
 from OpenGL.GL import (
     glEnable, glDisable, glClearColor, glClear, glViewport,
     glMatrixMode, glLoadIdentity, glFrustum, glMultMatrixf, glTranslatef,
-    glLightfv, glColor3f, glBegin, glEnd, glVertex3f, glNormal3f,
+    glLightfv, glColor3f,
     glLineWidth,
     GL_DEPTH_TEST, GL_LEQUAL, GL_LIGHTING, GL_LIGHT0,
     GL_COLOR_MATERIAL, GL_NORMALIZE,
@@ -31,10 +31,12 @@ from OpenGL.GL import (
     GL_LINES, GL_TRIANGLES,
     GL_POSITION, GL_DIFFUSE, GL_AMBIENT,
     glDepthFunc,
-    GL_FLOAT, GL_UNSIGNED_INT,
-    GL_VERTEX_ARRAY, GL_NORMAL_ARRAY,
+    GL_FLOAT, GL_UNSIGNED_INT, GL_UNSIGNED_BYTE,
+    GL_VERTEX_ARRAY, GL_NORMAL_ARRAY, GL_COLOR_ARRAY,
     glEnableClientState, glDisableClientState,
-    glVertexPointer, glNormalPointer, glDrawElements,
+    glVertexPointer, glNormalPointer, glColorPointer, glDrawElements,
+    glGenBuffers, glBindBuffer, glBufferData, glDeleteBuffers,
+    GL_ARRAY_BUFFER, GL_ELEMENT_ARRAY_BUFFER, GL_STATIC_DRAW,
 )
 
 
@@ -73,15 +75,22 @@ class ViewportWidget(QWidget):
         # + MainWindow's re-dirty pass implement the menu's re-tess.
         self._tess_resolution = 48
 
-        # Mesh data cache
-        self._mesh_positions = None
-        self._mesh_normals = None
-        self._mesh_indices = None
-        # Selection highlight state: node id -> (first tri, last tri) in
-        # the concatenated index buffer, plus the selected ids. Extended
-        # selection: EVERY selected body is highlighted (the subtract's
-        # target AND tool), while _selected_node_id keeps the anchor
-        # (the single-selection surface the picking tests pin).
+        # THE DRAW MIRROR (PERF 1 — the VBO/IBO cache's contract side):
+        # one _NodeDrawEntry per VISIBLE feature, holding the node's
+        # derived mesh and its digest. This replaces the old whole-scene
+        # concatenated buffers (_mesh_positions/_mesh_normals/
+        # _mesh_indices): a concatenation is a per-edit rebuild of
+        # EVERYTHING — the very courtesy flush the cache exists to
+        # refuse. The mirror is per-feature because the cache is.
+        self._draw_nodes: list = []
+        # Selection highlight state: node id -> (first tri, last tri) of
+        # that node's OWN buffer (PERF 1: per-feature buffers — the
+        # range is the node's whole buffer, kept as a pair for the
+        # non-empty check the picking tests pin), plus the selected
+        # ids. Extended selection: EVERY selected body is highlighted
+        # (the subtract's target AND tool), while _selected_node_id
+        # keeps the anchor (the single-selection surface the picking
+        # tests pin).
         self._node_ranges = {}
         self._selected_node_id = None
         self._selected_node_ids: set = set()
@@ -160,15 +169,19 @@ class ViewportWidget(QWidget):
         self._refresh_meshes()
 
     def _refresh_meshes(self) -> None:
+        """Build the draw mirror: one entry per visible feature.
+
+        The digest is computed HERE, once per refresh (an edit gesture,
+        a visibility flip, a scene load — never per frame): the paint
+        that follows only compares strings. The per-refresh cost is the
+        price of not trusting age, measured and declared (~1 ms/MB on
+        the guide-chain meshes, blake2b-64); the per-frame cost is zero.
+        """
         if self._scene is None:
             return
         if hasattr(self._scene, 'update_meshes'):
             self._scene.update_meshes(self._tess_resolution)
-        positions = []
-        normals = []
-        indices = []
-        offset = 0
-        tri_offset = 0
+        entries = []
         node_ranges = {}
         count = self._scene.node_count()
         for i in range(count):
@@ -182,34 +195,21 @@ class ViewportWidget(QWidget):
                 continue
             # Shading normals come from the field, not the mesh (the
             # graphics-sprint display pipeline — see _display_normals).
-            # Positions/indices are still the MC mesh: exports and the
-            # bridge read those from the node, byte-identically.
+            # Positions/indices are still the node's own mesh: exports
+            # and the bridge read those from the node, byte-identically.
             nor = _display_normals(node)
-            n_tris = len(idx) // 3
-            node_ranges[node.id] = (tri_offset, tri_offset + n_tris)
-            tri_offset += n_tris
-            positions.append(pos)
+            pos = np.ascontiguousarray(pos, dtype="<f4")
+            idx = np.ascontiguousarray(idx, dtype="<u4")
             if nor is not None and len(nor) == len(pos):
-                normals.append(nor)
+                nor = np.ascontiguousarray(nor, dtype="<f4")
             else:
-                normals.append(np.zeros_like(pos))
-            indices.append(idx + offset)
-            offset += len(pos)
+                nor = np.zeros_like(pos, dtype="<f4")
+            digest = _display_mesh_digest(pos, nor, idx)
+            n_tris = len(idx) // 3
+            node_ranges[node.id] = (0, n_tris)
+            entries.append(_NodeDrawEntry(node.id, pos, nor, idx, digest))
+        self._draw_nodes = entries
         self._node_ranges = node_ranges
-        if positions:
-            # The display buffers, typed and contiguous for the batch
-            # draw (m6-correttiva): float32 positions/normals, uint32
-            # indices — the dtypes glDrawElements reads in place, never
-            # a per-call conversion.
-            self._mesh_positions = np.ascontiguousarray(
-                np.concatenate(positions), dtype=np.float32)
-            self._mesh_normals = np.ascontiguousarray(
-                np.concatenate(normals), dtype=np.float32)
-            self._mesh_indices = np.ascontiguousarray(
-                np.concatenate(indices), dtype=np.uint32)
-        else:
-            self._mesh_positions = None
-            self._mesh_indices = None
         self._request_update()
 
     def set_camera_target(self, x: float, y: float, z: float) -> None:
@@ -359,6 +359,14 @@ class _ViewportWindow(QOpenGLWindow):
         self._last_mouse_pos: Optional[QPoint] = None
         self._mouse_button = Qt.MouseButton.NoButton
         self._drag_distance = 0
+        # THE VBO/IBO CACHE (PERF 1 — Phase C.6's registered seat, the
+        # register's G row): one _NodeGpuBuffers per feature, the
+        # digest of the bytes each entry holds. Owned by the window
+        # because GL resources live and die with the context.
+        self._node_buffers: dict = {}
+        # The static overlays (grid + axes) in their own buffers,
+        # uploaded ONCE at GL initialization — never per frame.
+        self._overlay_buffers = None
 
     # ----- Navigation (orbit / pan / zoom) -----
 
@@ -434,6 +442,18 @@ class _ViewportWindow(QOpenGLWindow):
         except Exception:
             self._initialized = False
             return
+        # THE CONTEXT-DEATH RULE (PERF 1): this method runs on a FRESH
+        # context — if the cache holds entries, their buffer ids were
+        # allocated on a context that is now gone, and GL ids do not
+        # survive their context. The dead context's resources died
+        # with it (there is nothing to glDeleteBuffers on the new
+        # one), so the dict is simply reborn empty and the next mesh
+        # pass re-uploads every visible feature — the first-sight act
+        # again, declared. Serving an id across contexts would draw
+        # from a dead name (or another buffer's storage): the digest
+        # labels die WITH the ids they certify, never after them.
+        if self._node_buffers:
+            self._node_buffers = {}
         try:
             glEnable(GL_DEPTH_TEST)
             glDepthFunc(GL_LEQUAL)
@@ -441,10 +461,69 @@ class _ViewportWindow(QOpenGLWindow):
             glEnable(GL_LIGHT0)
             glEnable(GL_COLOR_MATERIAL)
             glEnable(GL_NORMALIZE)
+            self._init_overlay_buffers()
             self._initialized = True
         except Exception as e:
             print(f"[viewport] GL initialization failed: {e}")
             self._initialized = False
+
+    def _init_overlay_buffers(self) -> None:
+        """The grid and the axes into their OWN static buffers (PERF 1).
+
+        Before the VBO morso these were the frame's last immediate-mode
+        walks — 44 glVertex3f for the grid, 6 more for the axes, every
+        frame, forever: bounded (O(1) in scene size) but a per-frame
+        vertex upload all the same, and the stable path's contract is
+        ZERO. Uploaded once here, at GL initialization: the frame's
+        every vertex byte rides a buffer from this day.
+        """
+        extent = 5.0
+        step = 1.0
+        lines = []
+        i = -extent
+        while i <= extent:
+            lines.append((i, 0.0, -extent, i, 0.0, extent))
+            lines.append((-extent, 0.0, i, extent, 0.0, i))
+            i += step
+        grid_pos = np.ascontiguousarray(
+            np.array(lines, dtype="<f4").reshape(-1, 3))
+        grid_idx = np.ascontiguousarray(
+            np.arange(len(grid_pos), dtype="<u4"))
+        axes_pos = np.ascontiguousarray(
+            np.array([(0, 0, 0), (2, 0, 0),
+                      (0, 0, 0), (0, 2, 0),
+                      (0, 0, 0), (0, 0, 2)], dtype="<f4"))
+        # ubyte colors: per-vertex RGB — the color array is the one
+        # addition the fixed-function pipeline needs for a single
+        # draw call to carry the axes' three colors.
+        axes_col = np.ascontiguousarray(
+            np.array([(255, 0, 0), (255, 0, 0),
+                      (0, 255, 0), (0, 255, 0),
+                      (0, 0, 255), (0, 0, 255)], dtype=np.ubyte))
+        axes_idx = np.ascontiguousarray(
+            np.arange(6, dtype="<u4"))
+
+        class _Overlays:
+            __slots__ = ("grid_vbo", "grid_ibo", "axes_vbo",
+                         "axes_cbo", "axes_ibo", "grid_count",
+                         "axes_count")
+
+        ov = _Overlays()
+        ov.grid_vbo, ov.grid_ibo, ov.axes_vbo, ov.axes_cbo, ov.axes_ibo = (
+            int(b) for b in glGenBuffers(5))
+        ov.grid_count = len(grid_idx)
+        ov.axes_count = len(axes_idx)
+        glBindBuffer(GL_ARRAY_BUFFER, ov.grid_vbo)
+        glBufferData(GL_ARRAY_BUFFER, grid_pos, GL_STATIC_DRAW)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ov.grid_ibo)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, grid_idx, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, ov.axes_vbo)
+        glBufferData(GL_ARRAY_BUFFER, axes_pos, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, ov.axes_cbo)
+        glBufferData(GL_ARRAY_BUFFER, axes_col, GL_STATIC_DRAW)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ov.axes_ibo)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, axes_idx, GL_STATIC_DRAW)
+        self._overlay_buffers = ov
 
     def resizeGL(self, w: int, h: int) -> None:
         if not self._initialized:
@@ -548,108 +627,266 @@ class _ViewportWindow(QOpenGLWindow):
         if self._parent._show_axes:
             self._draw_axes()
         # Meshes
-        if self._parent._mesh_positions is not None and self._parent._mesh_indices is not None:
+        if self._parent._draw_nodes:
             self._draw_meshes()
 
     def _draw_grid(self) -> None:
+        if self._overlay_buffers is None:
+            return
+        ov = self._overlay_buffers
         glDisable(GL_LIGHTING)
         glColor3f(0.3, 0.3, 0.3)
-        glBegin(GL_LINES)
-        extent = 5.0
-        step = 1.0
-        i = -extent
-        while i <= extent:
-            glVertex3f(i, 0, -extent)
-            glVertex3f(i, 0, extent)
-            glVertex3f(-extent, 0, i)
-            glVertex3f(extent, 0, i)
-            i += step
-        glEnd()
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glBindBuffer(GL_ARRAY_BUFFER, ov.grid_vbo)
+        glVertexPointer(3, GL_FLOAT, 0, None)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ov.grid_ibo)
+        glDrawElements(GL_LINES, int(ov.grid_count),
+                       GL_UNSIGNED_INT, None)
+        glDisableClientState(GL_VERTEX_ARRAY)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
         glEnable(GL_LIGHTING)
 
     def _draw_axes(self) -> None:
+        if self._overlay_buffers is None:
+            return
+        ov = self._overlay_buffers
         glDisable(GL_LIGHTING)
         glLineWidth(2.0)
-        glColor3f(1, 0, 0)
-        glBegin(GL_LINES)
-        glVertex3f(0, 0, 0)
-        glVertex3f(2, 0, 0)
-        glEnd()
-        glColor3f(0, 1, 0)
-        glBegin(GL_LINES)
-        glVertex3f(0, 0, 0)
-        glVertex3f(0, 2, 0)
-        glEnd()
-        glColor3f(0, 0, 1)
-        glBegin(GL_LINES)
-        glVertex3f(0, 0, 0)
-        glVertex3f(0, 0, 2)
-        glEnd()
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glEnableClientState(GL_COLOR_ARRAY)
+        glBindBuffer(GL_ARRAY_BUFFER, ov.axes_vbo)
+        glVertexPointer(3, GL_FLOAT, 0, None)
+        glBindBuffer(GL_ARRAY_BUFFER, ov.axes_cbo)
+        glColorPointer(3, GL_UNSIGNED_BYTE, 0, None)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ov.axes_ibo)
+        glDrawElements(GL_LINES, int(ov.axes_count),
+                       GL_UNSIGNED_INT, None)
+        glDisableClientState(GL_COLOR_ARRAY)
+        glDisableClientState(GL_VERTEX_ARRAY)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
         glLineWidth(1.0)
         glEnable(GL_LIGHTING)
 
     def _draw_meshes(self) -> None:
-        positions = self._parent._mesh_positions
-        normals = self._parent._mesh_normals
-        indices = self._parent._mesh_indices
-        if positions is None or len(positions) == 0:
+        """The mesh pass: ensure the buffers, then draw one range per
+        feature (the m6-correttiva grammar riding PERF 1's buffers)."""
+        entries = self._parent._draw_nodes
+        if not entries:
+            self._drop_absent_buffers(set())
             return
+        live = {}
         glColor3f(0.7, 0.75, 0.8)
-        has_normals = normals is not None and len(normals) == len(positions)
-        n_tris = len(indices) // 3
-        self._draw_tri_range(positions, normals, indices,
-                             has_normals, 0, n_tris)
+        # The array states are the mesh pass's own (the grid and the
+        # axes manage theirs); the pointers ride the per-range binds
+        # below — the m6-correttiva plumbing, counted per range.
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glEnableClientState(GL_NORMAL_ARRAY)
+        for entry in entries:
+            bufs = self._ensure_node_buffers(entry)
+            live[entry.node_id] = bufs
+            self._draw_tri_range(bufs, 0, entry.triangle_count)
         # Selection highlight (visible feedback for "Click on shape |
         # Select it"): repaint the SELECTED nodes' triangles in amber,
         # on top of the base pass — every selected body of an extended
         # selection, not just one (both operands of a subtract pair
-        # light up). Same geometry, so the depth test (LEQUAL) lets the
+        # light up). Same buffers, so the depth test (LEQUAL) lets the
         # repaint win exactly where the shape is visible — no
         # z-fighting, no halo.
-        if self._parent._selected_node_ids:
+        selected = self._parent._selected_node_ids
+        if selected:
             glColor3f(1.0, 0.62, 0.10)
-            for sel in sorted(self._parent._selected_node_ids):
-                rng = self._parent._node_ranges.get(sel)
-                if rng is not None and rng[1] > rng[0]:
-                    self._draw_tri_range(positions, normals, indices,
-                                         has_normals, rng[0], rng[1])
+            for sel in sorted(selected):
+                bufs = live.get(sel)
+                if bufs is not None and bufs.triangle_count > 0:
+                    self._draw_tri_range(bufs, 0, bufs.triangle_count)
+        glDisableClientState(GL_NORMAL_ARRAY)
+        glDisableClientState(GL_VERTEX_ARRAY)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        # The nodes that left the mirror hand their buffers back (the
+        # removal rule — see _drop_absent_buffers).
+        self._drop_absent_buffers(set(live))
+
+    def _ensure_node_buffers(self, entry: "_NodeDrawEntry") -> "_NodeGpuBuffers":
+        """THE INVALIDATION CONTRACT (PERF 1) — every rule named, with
+        its perché:
+
+        1. THE DIGEST IS THE ONLY KEY. A feature's buffers are reused
+           iff the digest of the mesh they HOLD equals the digest of
+           the mesh the mirror DECLARES — never age, never the scene's
+           dirty flag, never object identity. The comparison is at the
+           point of service (here), so a stale buffer cannot be drawn
+           without the digest having certified the bytes in it.
+
+        2. AN EDIT TOUCHES ONE FEATURE -> ONE FEATURE RE-UPLOADS. The
+           scene's own dirty-flag discipline re-tessellates only the
+           touched features (and the declared dependents — the operand
+           edit that invalidates a consumer re-derives the consumer's
+           mesh); untouched features keep byte-identical meshes, their
+           digests match, their buffers are served with ZERO upload.
+           There is NO whole-scene flush here — per-feature buffers ARE
+           the granularity, and a courtesy flush is what this cache
+           exists to refuse.
+
+        3. THE UPLOAD IS THE EXCEPTION, NOT THE RULE. glBufferData runs
+           exactly when a digest differs (a re-derived mesh, a first
+           sight) — the stable path (orbit, selection, visibility —
+           any frame that changes no mesh bytes) uploads NOTHING.
+
+        Why glBufferData and not glBufferSubData: a re-derived mesh can
+        change SIZE (a fillet at a new radius, a resolution bump);
+        glBufferData re-specifies the storage wholesale — one call, the
+        old bytes gone, the entry's digest replaced by the mesh's own.
+        """
+        cached = self._node_buffers.get(entry.node_id)
+        if cached is not None and cached.digest == entry.digest:
+            # The bytes in these buffers ARE the mesh's — verified by
+            # the digest, the only witness the cache trusts.
+            return cached
+        if cached is None:
+            pos_buf, nor_buf, idx_buf = (int(b) for b in glGenBuffers(3))
+            cached = _NodeGpuBuffers(pos_buf, nor_buf, idx_buf)
+            self._node_buffers[entry.node_id] = cached
+        # (Re)specify the three buffers with the entry's own arrays.
+        glBindBuffer(GL_ARRAY_BUFFER, cached.pos_buf)
+        glBufferData(GL_ARRAY_BUFFER, entry.positions, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, cached.nor_buf)
+        glBufferData(GL_ARRAY_BUFFER, entry.normals, GL_STATIC_DRAW)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, cached.idx_buf)
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, entry.indices,
+                     GL_STATIC_DRAW)
+        cached.digest = entry.digest
+        cached.vertex_count = entry.vertex_count
+        cached.triangle_count = entry.triangle_count
+        return cached
+
+    def _drop_absent_buffers(self, live_ids: set) -> None:
+        """THE REMOVAL RULE: a node that left the mirror (hidden,
+        deleted, the scene replaced) hands its buffers back —
+        glDeleteBuffers at the next mesh pass, and ONLY the absent
+        ones. GPU memory is the scene's own currency: a cache that
+        hoards dead features' buffers is a leak wearing a cache's
+        name."""
+        absent = [nid for nid in self._node_buffers if nid not in live_ids]
+        for nid in absent:
+            bufs = self._node_buffers.pop(nid)
+            ids = np.ascontiguousarray(
+                [bufs.pos_buf, bufs.nor_buf, bufs.idx_buf],
+                dtype=np.uint32)
+            glDeleteBuffers(len(ids), ids)
 
     @staticmethod
-    def _draw_tri_range(positions, normals, indices, has_normals,
-                        tri_start: int, tri_end: int) -> None:
-        """ONE draw call per range (G2-u3 m6-correttiva, the
-        click-test's defect 3 — "the interaction lags"): the range's
-        triangles submitted through client-side vertex arrays and a
-        single glDrawElements. The profile that named the cause (the
-        register's m6-correttiva row): the immediate-mode walk made
-        one Python->GL call PER VERTEX — 529,817 calls and ~338 ms of
-        pure Python per frame on the m6 scene (607.97 ms measured per
-        frame on software GL, 1.64 fps) — before the GPU drew
-        anything. The geometry is the very buffer that walk read:
-        exports, the bridge and the golden digests never touch this
-        path (display pipeline only, the normals' own discipline).
+    def _draw_tri_range(bufs: "_NodeGpuBuffers", tri_start: int,
+                        tri_end: int) -> None:
+        """ONE draw call per range (G2-u3 m6-correttiva's grammar,
+        riding PERF 1's buffers): the range's triangles drawn from the
+        feature's OWN VBO/IBO — the vertex and normal pointers read the
+        buffer bound at pointer time, the indices the IBO bound at
+        draw time, the range's first index at its byte offset. Zero
+        per-vertex calls, zero per-frame uploads: the geometry was
+        uploaded once at its digest's first sight (see
+        _ensure_node_buffers — the m6-correttiva profile's own cause,
+        the per-vertex walk, stays dead; the per-frame implicit upload
+        of client-side arrays dies with it). The pointer-per-range
+        plumbing is the GL 2.1 compatibility road's own grammar —
+        counted per range, never per vertex (no VAO: that is GL 3.0's
+        road and the widget's context is 2.1 — the declared bound).
         """
         n_tris = tri_end - tri_start
-        if n_tris <= 0:
+        if n_tris <= 0 or bufs is None:
             return
-        idx = np.ascontiguousarray(
-            indices[tri_start * 3:tri_end * 3], dtype=np.uint32)
-        glEnableClientState(GL_VERTEX_ARRAY)
-        if has_normals:
-            glEnableClientState(GL_NORMAL_ARRAY)
-            glNormalPointer(GL_FLOAT, 0, normals)
-        else:
-            glDisableClientState(GL_NORMAL_ARRAY)
-        glVertexPointer(3, GL_FLOAT, 0, positions)
+        glBindBuffer(GL_ARRAY_BUFFER, bufs.pos_buf)
+        glVertexPointer(3, GL_FLOAT, 0, None)
+        glBindBuffer(GL_ARRAY_BUFFER, bufs.nor_buf)
+        glNormalPointer(GL_FLOAT, 0, None)
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs.idx_buf)
         glDrawElements(GL_TRIANGLES, int(n_tris * 3),
-                       GL_UNSIGNED_INT, idx)
-        glDisableClientState(GL_VERTEX_ARRAY)
-        if has_normals:
-            glDisableClientState(GL_NORMAL_ARRAY)
+                       GL_UNSIGNED_INT, int(tri_start * 3 * 4))
 
 
 # Need GLfloat for the matrix array
 from ctypes import c_float as GLfloat
+
+
+# ===========================================================================
+# PERF 1 — THE DISPLAY MESH'S IDENTITY (the chain digest's own model,
+# applied to the display payload)
+# ===========================================================================
+#
+# The VBO/IBO cache (below) does not trust AGE — a buffer is not "fresh
+# enough" — it trusts the IDENTITY of the derived mesh: a blake2b-64
+# over the exact bytes a VBO would upload (positions, display normals,
+# indices), the same one-comparable-value contract the chain digests
+# hold for the kernel's bodies (chain_digest: "the whole body as one
+# comparable value" — here the whole DISPLAY mesh as one comparable
+# value). Why blake2b and not the house FNV-1a: the chain digests are
+# rendered in C++ over strings the kernel already walks; this digest
+# runs in the refresh path over megabytes of float payload, where a
+# byte-sequential FNV in Python would cost seconds — blake2b is the
+# standard library's own C-speed instrument (~1 ms/MB, measured on the
+# guide-chain meshes), a DIFFERENT instrument with a DIFFERENT seat,
+# named as such. The bytes are DECLARED little-endian ('<f4'/'<u4') so
+# the digest is well-defined on every machine that can build the
+# module; the digest never leaves the process — it is a cache key and
+# a proof of identity, never a serialized value.
+
+def _display_mesh_digest(positions, normals, indices) -> str:
+    """blake2b-64 hex over the display payload's declared-LE bytes.
+
+    Any change in the mesh — one float32 in one vertex, one index —
+    moves the digest; an unchanged mesh answers the same digest on
+    every call, every machine, every run.
+    """
+    import hashlib
+    h = hashlib.blake2b(digest_size=8)
+    for part, dtype in ((positions, "<f4"), (normals, "<f4"),
+                        (indices, "<u4")):
+        # ascontiguousarray with an LE dtype: a no-op view on every
+        # machine this module runs on, an honest conversion on one
+        # that is not — the bytes are declared, never assumed.
+        flat = np.ascontiguousarray(part, dtype=dtype).ravel()
+        h.update(flat.view(np.uint8))
+    return h.hexdigest()
+
+
+class _NodeDrawEntry:
+    """One visible feature's display mesh, mirrored for the draw.
+
+    Built by _refresh_meshes (the wrapper — no GL): the arrays are the
+    node's own derived mesh (positions/indices the scene's cache, the
+    display normals the field's), typed contiguous, with the mesh's
+    digest. The paint uploads NOTHING the mirror did not declare.
+    """
+
+    __slots__ = ("node_id", "positions", "normals", "indices",
+                 "digest", "vertex_count", "triangle_count")
+
+    def __init__(self, node_id, positions, normals, indices, digest):
+        self.node_id = node_id
+        self.positions = positions
+        self.normals = normals
+        self.indices = indices
+        self.digest = digest
+        self.vertex_count = len(positions)
+        self.triangle_count = len(indices) // 3
+
+
+class _NodeGpuBuffers:
+    """The GL buffer objects holding ONE feature's display mesh, with
+    the digest of the bytes they hold — the cache's own entry."""
+
+    __slots__ = ("pos_buf", "nor_buf", "idx_buf", "digest",
+                 "vertex_count", "triangle_count")
+
+    def __init__(self, pos_buf, nor_buf, idx_buf):
+        self.pos_buf = pos_buf
+        self.nor_buf = nor_buf
+        self.idx_buf = idx_buf
+        self.digest = None          # set at the first upload
+        self.vertex_count = 0
+        self.triangle_count = 0
 
 
 def _display_normals(node):

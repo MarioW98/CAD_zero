@@ -841,10 +841,13 @@ def test_the_fillet_is_visible_after_apply(workbench_app):
                < 1e-3))
     assert not bflank.any()
 
-    # THE VIEWPORT'S BUFFERS CARRY IT: the concatenated indices include
-    # the fillet's own triangles (the render batch the frame walks).
-    assert win._viewport._mesh_indices is not None
-    assert len(win._viewport._mesh_indices) // 3 >= cm.triangle_count()
+    # THE VIEWPORT'S MIRROR CARRIES IT (PERF 1: the per-feature draw
+    # mirror — one _NodeDrawEntry per visible feature, the whole-scene
+    # concatenation dead): the fillet's own entry with its own
+    # triangles, the buffers the frame draws.
+    entries = {e.node_id: e for e in win._viewport._draw_nodes}
+    assert fid in entries
+    assert entries[fid].triangle_count >= cm.triangle_count()
     assert win._viewport._node_ranges.get(fid) is not None
 
     # THE OPERAND STEPS ASIDE (m6-correttiva-bis, the second click-
@@ -856,7 +859,10 @@ def test_the_fillet_is_visible_after_apply(workbench_app):
     # alone, undo returning the operand, redo hiding it again.
     assert win._scene.get_node(box_id).visible is False
     assert win._viewport._node_ranges.get(box_id) is None
-    assert len(win._viewport._mesh_indices) // 3 == cm.triangle_count()
+    entries = {e.node_id: e for e in win._viewport._draw_nodes}
+    assert list(entries) == [fid], (
+        "the frame's mirror must carry the FILLET alone")
+    assert entries[fid].triangle_count == cm.triangle_count()
     # The additivity's display twin: the operand's own CACHE unmoved
     # by the hiding (the mesh is the node's data, the flag the frame's
     # selection — two different things).
@@ -954,13 +960,16 @@ def test_the_panel_that_breathes_fixed_width(workbench_app):
 #    immediate-mode walk made one Python->GL call PER VERTEX (529,817
 #    per frame on the m6 scene). This pin holds the cure: the meshes
 #    draw in BATCHES — one glDrawElements per range, zero per-vertex
-#    calls, whatever the triangle count.
+#    calls, whatever the triangle count. PERF 1 moved the range's
+#    geometry into the feature's OWN VBO/IBO (the cache): the pin now
+#    rides the buffers — the pointer/bind plumbing counted per range,
+#    and the DRAW path uploads NOTHING (glBufferData is not the draw's
+#    to call; the upload is the cache's own exception, tested in
+#    test_perf1_vbo_cache.py).
 # ===========================================================================
 
 @pytest.mark.skipif(not _pyside6_available(), reason="PySide6 not installed")
 def test_the_frame_draws_in_batches(monkeypatch):
-    pytest.importorskip("numpy")
-    import numpy as np
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication([])
@@ -970,14 +979,12 @@ def test_the_frame_draws_in_batches(monkeypatch):
     # triangles, 42,046 vertices — the count that made the frame.
     n_tris = 84080
     n_verts = 42046
-    pos = np.zeros((n_verts, 3), dtype=np.float32)
-    nor = np.zeros((n_verts, 3), dtype=np.float32)
-    idx = np.zeros(n_tris * 3, dtype=np.uint32)
 
     calls = {"glVertex3f": 0, "glNormal3f": 0, "glBegin": 0,
              "glEnd": 0, "glDrawElements": 0,
              "glEnableClientState": 0, "glDisableClientState": 0,
-             "glVertexPointer": 0, "glNormalPointer": 0}
+             "glVertexPointer": 0, "glNormalPointer": 0,
+             "glBindBuffer": 0, "glBufferData": 0}
     saved = {}
 
     def _counting(name):
@@ -988,13 +995,17 @@ def test_the_frame_draws_in_batches(monkeypatch):
     for name in calls:
         saved[name] = getattr(vw, name, None)
         setattr(vw, name, _counting(name))
+
+    # The range's OWN buffers (PERF 1): the draw grammar reads the
+    # feature's VBO/IBO — a light stand-in with the ids is all the
+    # static method touches.
+    class _Bufs:
+        pos_buf, nor_buf, idx_buf = 11, 12, 13
     try:
         # The whole buffer in ONE range, then a selection highlight's
         # subrange: the two calls a frame makes at the m6 scale.
-        vw._ViewportWindow._draw_tri_range(pos, nor, idx, True,
-                                           0, n_tris)
-        vw._ViewportWindow._draw_tri_range(pos, nor, idx, True,
-                                           0, n_tris // 2)
+        vw._ViewportWindow._draw_tri_range(_Bufs, 0, n_tris)
+        vw._ViewportWindow._draw_tri_range(_Bufs, 0, n_tris // 2)
     finally:
         for name, fn in saved.items():
             if fn is not None:
@@ -1002,8 +1013,11 @@ def test_the_frame_draws_in_batches(monkeypatch):
 
     # THE BOUND (the register's own words): one draw call per range,
     # zero per-vertex calls — the per-vertex walk cannot return. The
-    # array plumbing (pointers, client states) is the batch's own
-    # handful of O(1) calls per range — counted, never per vertex.
+    # array plumbing (binds, pointers) is the batch's own handful of
+    # O(1) calls per range — counted, never per vertex — and the draw
+    # path UPLOADS NOTHING: glBufferData zero here is PERF 1's own
+    # contract (the upload lives in the cache's exception, never in
+    # the frame).
     assert calls["glDrawElements"] == 2
     assert calls["glVertex3f"] == 0
     assert calls["glNormal3f"] == 0
@@ -1011,6 +1025,6 @@ def test_the_frame_draws_in_batches(monkeypatch):
     assert calls["glEnd"] == 0
     assert calls["glVertexPointer"] == 2
     assert calls["glNormalPointer"] == 2
-    assert calls["glEnableClientState"] == 4
-    assert calls["glDisableClientState"] == 4
+    assert calls["glBindBuffer"] == 6      # 3 binds per range (pos/nor/idx)
+    assert calls["glBufferData"] == 0      # the draw path never uploads
 

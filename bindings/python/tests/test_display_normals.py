@@ -322,11 +322,15 @@ def test_viewport_uploads_field_sampled_buffer(monkeypatch):
         win._do_subtract(box_id, cyl_id, 0.0, 0.0, 0.0)
 
         vp = win._viewport
-        assert vp._mesh_normals is not None
+        # PERF 1: the draw mirror — one _NodeDrawEntry per visible
+        # feature (the whole-scene concatenation is dead). The
+        # field-sampled buffer is each entry's own normals payload.
+        entries = list(vp._draw_nodes)
+        assert entries, "the mirror must carry the visible bodies"
 
-        # Reconstruct the expected buffer exactly as _refresh_meshes
-        # builds it: visible, non-empty nodes in order, display normals
-        # from the field for Sdf nodes.
+        # Reconstruct the expected buffers exactly as _refresh_meshes
+        # builds them: visible, non-empty nodes in order, display
+        # normals from the field for Sdf nodes.
         expected = []
         for i in range(win._scene.node_count()):
             node = win._scene.node_at(i)
@@ -338,12 +342,14 @@ def test_viewport_uploads_field_sampled_buffer(monkeypatch):
                 continue
             expected.append(
                 CAD_0.sdf.display_normals(node.body, pos, mesh.normals))
-        expected = np.concatenate(expected)
+        assert len(expected) == len(entries), (
+            "the mirror's entry count must match the visible bodies")
 
-        assert vp._mesh_normals.shape == expected.shape
-        assert np.array_equal(vp._mesh_normals, expected), (
-            "the viewport is not uploading the field-sampled buffer")
-        assert not np.isnan(vp._mesh_normals).any()
+        for entry, exp in zip(entries, expected):
+            assert entry.normals.shape == np.asarray(exp).shape
+            assert np.array_equal(entry.normals, exp), (
+                "the viewport is not carrying the field-sampled buffer")
+            assert not np.isnan(entry.normals).any()
 
         # ---- Optional item: View -> Tessellation Resolution -------------
         #
@@ -365,11 +371,15 @@ def test_viewport_uploads_field_sampled_buffer(monkeypatch):
         checked = [a.text() for a in tess_menu.actions() if a.isChecked()]
         assert checked == ["&48"], f"default must be 48, got {checked}"
 
-        v48 = len(vp._mesh_positions)
+        def _mirror_vertex_count():
+            return sum(len(e.positions) for e in vp._draw_nodes)
+
+        v48 = _mirror_vertex_count()
         win._set_tessellation_resolution(32)
-        v32 = len(vp._mesh_positions)
+        v32 = _mirror_vertex_count()
         assert v32 != v48, "resolution change did not re-tessellate"
-        assert vp._mesh_normals.shape == (v32, 3)
+        assert all(e.normals.shape == (len(e.positions), 3)
+                   for e in vp._draw_nodes)
 
         # Cross-check against the kernel path: a fresh scene
         # tessellated at 32 must produce the same vertex count.
@@ -381,7 +391,7 @@ def test_viewport_uploads_field_sampled_buffer(monkeypatch):
         # Round-trip back to 48 (the re-dirty pass must work in both
         # directions, and the default-resolution mesh must come back).
         win._set_tessellation_resolution(48)
-        assert len(vp._mesh_positions) == v48
+        assert _mirror_vertex_count() == v48
 
     finally:
         from PySide6.QtCore import QCoreApplication, QEvent
