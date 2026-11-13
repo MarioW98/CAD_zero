@@ -149,6 +149,13 @@ jobs:
       # Fresh pytest process on purpose. These two GL-bound files are
       # the ones the ctest bindings target ignores (a display is their
       # prerequisite, not a sanitizer).
+      # The insertion display suite (2026-11-13 correttiva) joins the
+      # step for the same reason, with one difference: its headless
+      # half (the mirror guard, the offset contract, the diagnostic)
+      # runs inside the ctest bindings target on every column; only
+      # its framebuffer verdict needs the display. The file itself is
+      # NOT in the runner's ignore list — it degrades to a declared
+      # skip when no context exists, and this step is its judge.
       - name: UI smoke tests (GL)
         if: matrix.preset != 'linux-gcc-debug'
         run: |
@@ -157,7 +164,8 @@ jobs:
           export QT_QPA_PLATFORM=offscreen
           PYTHONPATH=build/${{ matrix.preset }}/python \
             python3 -m pytest bindings/python/tests/test_ui_navigation.py \
-              bindings/python/tests/test_ui_startup.py -v
+              bindings/python/tests/test_ui_startup.py \
+              bindings/python/tests/test_ui_insertion_display.py -v
 
       # Python package (CAD_0 module: nanobind bindings + UI) from every
       # matrix job. Low retention to keep storage costs down.
