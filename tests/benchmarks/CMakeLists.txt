@@ -52,3 +52,39 @@ target_compile_definitions(CAD_0_benchmarks PRIVATE
 # anywhere). GNU/Clang only.
 target_compile_options(CAD_0_benchmarks PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Werror>)
+
+# ---------------------------------------------------------------------------
+# PERF 2 — THE MEMORY ROW (the benchmark suite's third row, beside the
+# m8 row zero and the PERF 1 frame-time row): the tessellation's
+# memory at 256^3, measured with the declared /proc peak probe and
+# gated against the volume-built baseline. The SAME posture as the m8
+# bench above (built in every column, NOT a ctest member) with one
+# declared difference: this row's GATE runs in CI every day — the
+# unit suite's own seat (tests/unit/sdf/test_perf2_mesh_memory.cpp,
+# a ctest member) carries the same threshold and the same
+# counterproof; this target is the rite's richer report (the baseline
+# reproduced two ways, the breakdown, the medians).
+# ---------------------------------------------------------------------------
+add_executable(CAD_0_perf2_memory perf2_memory.cpp)
+
+target_include_directories(CAD_0_perf2_memory PRIVATE
+    ${CMAKE_SOURCE_DIR}/core/math/include
+    ${CMAKE_SOURCE_DIR}/core/geometry/include
+    ${CMAKE_SOURCE_DIR}/core/sdf/include
+    ${CMAKE_SOURCE_DIR}/core/concurrency/include
+    ${CMAKE_BINARY_DIR}/include
+)
+
+target_link_libraries(CAD_0_perf2_memory PRIVATE
+    CAD_0_math
+    CAD_0_geometry
+    CAD_0_sdf
+    CAD_0_concurrency
+)
+
+target_compile_definitions(CAD_0_perf2_memory PRIVATE
+    CAD_0_BENCH_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+)
+
+target_compile_options(CAD_0_perf2_memory PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Werror>)
