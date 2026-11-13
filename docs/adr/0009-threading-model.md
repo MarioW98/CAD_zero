@@ -82,3 +82,45 @@ set straight here rather than by silently editing the decision:
 - **TaskGraph is still the serial topological pass** — the "Phase B
   will dispatch to tbb::flow::graph" note in `thread_pool.cpp`
   stands unimplemented.
+
+## Amendment 2 (2026-11-14, PERF 3 — the opt-in made real)
+
+The first amendment retired the "production wheels ship with TBB"
+clause; this one records what the PERF 3 audit found about the opt-in
+itself and what the tree now does:
+
+- **The first amendment's "(xsimd-vectorized, serial)" parenthetical
+  was itself hollow** — the audit's primary finding (ADR-0008's
+  amendment carries the evidence): the serial fallback evaluated one
+  virtual `sample()` per point with zero SIMD instructions in the
+  generated code. The clause is not edited above (the record stands);
+  this amendment supersedes it: the serial road is now the xsimd
+  batch road, bit-identical to the scalar form, the witness-counted
+  truth pinned by the suite.
+- **The opt-in had never been compiled by any column** — the
+  register's own record: no CI column and no rite ever set
+  `CAD_0_USE_TBB`. The first compile (the PERF 3 audit's own probe)
+  hit the wall this ADR's context never named: oneTBB v2022.0.0's
+  headers instantiate int → `depth_t` (unsigned char) conversions
+  inside `tbb/parallel_for.h` that surface as `-Wconversion` errors
+  under the kernel targets' `-Werror`, in OUR translation units. The
+  cure is the xsimd precedent applied verbatim (the FASE B warning
+  bonifica's own form): oneTBB's interface include directories get
+  the SYSTEM treatment (core/sdf + core/concurrency), the compiled
+  code unchanged — the "known include-path caveat" recorded at the
+  option site in `CMakeLists.txt` is RESOLVED, and the comment now
+  says so.
+- **The parallel evaluate is real and deterministic**
+  (`CpuEvalBackend::evaluate` under the flag): the span partitions
+  into ARITHMETIC blocks — block b owns [b·chunk, min((b+1)·chunk,
+  n)), chunk a pure function of n and the configured thread count —
+  each block rides the same `sample_batch` inside a `task_arena` of
+  the constructor's `num_threads` workers (the constructor's count is
+  honored now, not stored and ignored). NO reductions exist anywhere
+  in the batch road (each point writes its own slot), so the result
+  is bit-identical at every thread count; the digest test
+  (test_perf3_evaluator.cpp, {1, 2, 4, 8} threads against the serial
+  per-point reference) runs on the TBB column and SKIPS DECLARED
+  everywhere else — never a silence.
+- **TaskGraph stands as amended above** — the serial topological
+  pass, its seat unchanged by this morso.
