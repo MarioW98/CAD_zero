@@ -3,7 +3,8 @@
 // SDFBody — the native implicit representation of a solid.
 //
 // An SDFBody is an immutable tree of nodes. Each node is one of:
-//   * Primitive — sphere, box, cylinder, torus, cone, capsule, plane
+//   * Primitive — sphere, box, cylinder, torus, cone, capsule, plane,
+//                  slab-z (the extrusion slab)
 //   * Operator  — union, intersection, subtraction, smooth_min, blend
 //   * Transform — translate, rotate, scale, twist, bend, mirror
 //   * Domain    — repeat, symmetry, warp
@@ -14,6 +15,17 @@
 //   * Each node also declares a Lipschitz constant for the field, used
 //     by the ray-marcher to size step lengths and by the mesh extractor
 //     to bound marching cubes refinement.
+//   * Each node implements `sample(p)` (one point, the scalar form) and
+//     may override `sample_batch(...)` (many points, the batch form).
+//     PERF 3: the batch form is the evaluator's real road — the leaf
+//     classes with xsimd kernels (the seven primitives + SlabZ, in
+//     core/sdf/src/batch_kernels.cpp) compute `width` points per pass
+//     with bit-identical arithmetic to sample() (ADR-0014; pinned per
+//     class by test_perf3_evaluator.cpp); the interior classes compose
+//     their children's batches; the classes WITHOUT an override (twist,
+//     extrude — the register's declared seats) ride the scalar default.
+//     The dispatch witness (detail/batch_stats.hpp) counts the points
+//     each path serves.
 //
 // The body is the *root* of an SDF expression tree. The body itself
 // is the root node.
@@ -22,7 +34,9 @@
 
 #include "CAD_0/math/vec.hpp"
 #include "CAD_0/math/bbox.hpp"
+#include "CAD_0/sdf/detail/batch_stats.hpp"
 
+#include <cstddef>
 #include <memory>
 #include <span>
 #include <string>
@@ -44,6 +58,33 @@ public:
 
     // Evaluate the field at a single point in *local* coordinates.
     virtual SDFSample sample(const math::Vec3f& p) const noexcept = 0;
+
+    // Evaluate the field at a BATCH of points (AoS in, SoA out: one
+    // value per point in `values`, one gradient per point in
+    // `gradients`; both arrays are `points.size()` long, both are
+    // written entirely).
+    //
+    // PERF 3 — the batch road. The default is the scalar fallback
+    // (one virtual sample() per point; the witness counts every point
+    // scalar). A class whose field arithmetic is lane-vectorizable
+    // overrides this with an xsimd kernel that MUST produce bits
+    // identical to sample() for every point of every input — the
+    // per-class bit-identity corpora of test_perf3_evaluator.cpp are
+    // the contract's enforcement, ADR-0014 the law. The interior
+    // classes (operators, rigid transforms) override it to compose
+    // their children's batches with the SAME per-point expressions
+    // their sample() uses — bit-identity by construction.
+    virtual void sample_batch(std::span<const math::Vec3f> points,
+                              float* values,
+                              math::Vec3f* gradients) const noexcept {
+        for (std::size_t i = 0; i < points.size(); ++i) {
+            const SDFSample s = sample(points[i]);
+            values[i] = s.value;
+            gradients[i] = s.gradient;
+        }
+        detail::batch_witness().scalar_points.fetch_add(
+            points.size(), std::memory_order_relaxed);
+    }
 
     // Lipschitz constant for the field. Used by:
     //   * Ray marchers — step size = |value| / lipschitz

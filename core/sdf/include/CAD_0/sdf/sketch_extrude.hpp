@@ -70,16 +70,10 @@ public:
                 "their entry criterion). Remedy: pass +1 or -1.");
     }
 
-    SDFSample sample(const math::Vec3f& p) const noexcept override {
-        const float zc = center_z();
-        const float f = std::abs(p.z - zc) - distance_ * 0.5f;
-        // Gradient: (0, 0, sign(z − zc)) — at the mirror plane the +Z
-        // branch wins by convention (the field there is at its deepest,
-        // −d/2: no surface consumer asks for the normal there).
-        const float gz = (p.z >= zc) ? 1.0f : -1.0f;
-        return SDFSample{f, math::Vec3f{0.0f, 0.0f, gz}};
-    }
-
+    SDFSample sample(const math::Vec3f& p) const noexcept override;
+    // PERF 3: the xsimd kernel — bit-identical, per-class pin.
+    void sample_batch(std::span<const math::Vec3f> points, float* values,
+                      math::Vec3f* gradients) const noexcept override;
     float lipschitz() const noexcept override { return 1.0f; }
 
     math::Bboxf bounds() const noexcept override {
@@ -121,6 +115,11 @@ private:
 // (samples + pairwise + bounded result) runs in the profile's
 // constructor, the slab validates its own distance/direction — the
 // ADR-0029 D5 family through and through.
+//   * Each node implements `sample(p)` (the scalar form) and may
+//     override `sample_batch` (the batch form): ExtrudeSDF rides the
+//     scalar default — the 2D profile walk is its own arithmetic
+//     family (the register's declared seat; the batch road stops at
+//     the slab's own kernel, which the extrusion composes scalarly).
 class ExtrudeSDF final : public SDFNode {
 public:
     ExtrudeSDF(ProfileSDF profile, float distance, int direction)

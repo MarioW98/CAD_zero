@@ -1,28 +1,43 @@
 // core/sdf/src/evaluate.cpp
 //
-// CPU implementation of EvalBackend. Uses xsimd for vectorized
-// evaluation across points (batched, not SoA — we keep AoS layout
-// because it makes the Python-facing API simpler).
+// The evaluation backend. PERF 3 rewrote the dispatch: the batch road
+// (SDFNode::sample_batch) is the evaluator's real path — the scalar
+// per-point walk it replaced was the audit's own finding (a virtual
+// sample() per point, zero SIMD instructions in the generated code,
+// the "xsimd-vectorized" declaration hollow; the register's PERF 3
+// row carries the evidence and the cure).
 //
-// For massive grids (>=1M points) the caller should consider switching
-// to a SoA representation. We can add that as an optimization in Phase B
-// without changing the EvalBackend interface.
+// The two execution modes, one output:
+//   * serial (the shipped default, no CAD_0_USE_TBB): ONE call into
+//     root->sample_batch over the whole span;
+//   * oneTBB (the explicit opt-in): the span is partitioned into
+//     ARITHMETIC blocks — block b owns [b*chunk, min((b+1)*chunk, n))
+//     with chunk a pure function of n and the configured thread count
+//     — and each block rides the same sample_batch inside a task_arena
+//     of num_threads_ workers. There are NO reductions (each point
+//     writes its own slot), so the result is bit-identical at every
+//     thread count: the map i -> block is index arithmetic, the
+//     scheduler decides only when and where — the thread-varying
+//     digest test (test_perf3_evaluator.cpp, on the TBB column) is
+//     the pinned proof, ADR-0014's clause.
 //
+// GpuEvalBackend is unchanged: the stub whose name() announces the
+// fallback (ADR-0008's no-silent-fallback law).
 #include "CAD_0/sdf/evaluate.hpp"
 #include "CAD_0/sdf/field.hpp"
-
-#include <xsimd/xsimd.hpp>
 
 #include <CAD_0/config.h>
 #if defined(CAD_0_USE_TBB) && CAD_0_USE_TBB
 #  include <tbb/parallel_for.h>
 #  include <tbb/blocked_range.h>
-#  include <tbb/global_control.h>
+#  include <tbb/task_arena.h>
 #  define CAD_0_HAVE_TBB 1
 #else
 #  define CAD_0_HAVE_TBB 0
 #endif
 
+#include <algorithm>
+#include <limits>
 #include <thread>
 
 namespace CAD_0::sdf {
@@ -49,32 +64,54 @@ void CpuEvalBackend::evaluate(const SDFBody& body,
     }
 
     const SDFNode* root = body.root();
+    float* const values = out.values.data();
+    math::Vec3f* const gradients = out.gradients.data();
 
 #if CAD_0_HAVE_TBB
-    // Use oneTBB's parallel_for with a reasonable grain size so that
-    // small inputs (< 1000 points) don't pay for thread startup.
-    constexpr std::size_t kGrain = 1024;
-    tbb::parallel_for(
-        tbb::blocked_range<std::size_t>(0, n, kGrain),
-        [&](const tbb::blocked_range<std::size_t>& r) {
-            for (std::size_t i = r.begin(); i != r.end(); ++i) {
-                const auto s = root->sample(points[i]);
-                out.values[i]    = s.value;
-                out.gradients[i] = s.gradient;
-            }
-        });
-#else
-    // Fallback: single-threaded. Adequate for tests, not for production.
-    for (std::size_t i = 0; i < n; ++i) {
-        const auto s = root->sample(points[i]);
-        out.values[i]    = s.value;
-        out.gradients[i] = s.gradient;
+    // Small inputs run inline (the arena executes a single-block
+    // parallel_for on the calling thread — no worker wakeup to pay).
+    constexpr std::size_t kMinParallel = 1024;
+    if (n < kMinParallel) {
+        root->sample_batch(points, values, gradients);
+        return;
     }
+    // The deterministic partition map: chunk depends only on n and the
+    // configured thread count; block b owns [b*chunk, min((b+1)*chunk,
+    // n)) — pure index arithmetic. No reduction exists anywhere in the
+    // batch road, so any scheduling of any thread count produces the
+    // same bits in the same slots.
+    const std::size_t nthreads =
+        num_threads_ == 0 ? std::thread::hardware_concurrency() : num_threads_;
+    const std::size_t lanes = nthreads > 0 ? nthreads : 1;
+    constexpr std::size_t kGrain = 1024;
+    const std::size_t chunk =
+        std::max<std::size_t>(kGrain, (n + 4 * lanes - 1) / (4 * lanes));
+    const std::size_t nblocks = (n + chunk - 1) / chunk;
+    // tbb::task_arena takes int max_concurrency (oneTBB 2022's own
+    // signature); thread counts are small — clamped, never truncated.
+    const int arena_lanes = static_cast<int>(
+        lanes > static_cast<std::size_t>(std::numeric_limits<int>::max())
+            ? static_cast<std::size_t>(std::numeric_limits<int>::max())
+            : lanes);
+    tbb::task_arena arena(arena_lanes);
+    arena.execute([&] {
+        tbb::parallel_for(
+            tbb::blocked_range<std::size_t>(0, nblocks, 1),
+            [&](const tbb::blocked_range<std::size_t>& rb) {
+                for (std::size_t b = rb.begin(); b != rb.end(); ++b) {
+                    const std::size_t lo = b * chunk;
+                    const std::size_t hi = std::min(lo + chunk, n);
+                    root->sample_batch(
+                        std::span<const math::Vec3f>(points.data() + lo,
+                                                     hi - lo),
+                        values + lo, gradients + lo);
+                }
+            });
+    });
+#else
+    // The shipped serial road: one batch call, the leaves' kernels.
+    root->sample_batch(points, values, gradients);
 #endif
-    // NOTE: explicit xsimd batch math would replace the inner loop body in
-    // a SoA variant. For AoS, the compiler's auto-vectorizer handles the
-    // common case (sphere, box) reasonably well. Phase B will add a
-    // specialized SoA fast path for known primitive leaf types.
 }
 
 // ----------------------------------------------------------------------------
@@ -96,10 +133,7 @@ void CpuEvalBackend::evaluate(const SDFBody& body,
 // All GpuEvalBackend methods are declared in evaluate.hpp and *defined*
 // here (out-of-line). This avoids "multiple definition" link errors
 // that occur when an inline-defined virtual method is included in
-// multiple TUs and the linker tries to deduplicate the vtable. The
-// same is true for the CpuEvalBackend::name() method — we keep it
-// inline there because it's `final` and trivial, but we could move
-// it out-of-line here if any link error surfaces.
+// multiple TUs and the linker tries to deduplicate the vtable.
 // ----------------------------------------------------------------------------
 
 GpuEvalBackend::GpuEvalBackend() = default;

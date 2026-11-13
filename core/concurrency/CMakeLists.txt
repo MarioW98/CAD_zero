@@ -24,12 +24,34 @@ target_link_libraries(CAD_0_concurrency PUBLIC CAD_0_math)
 
 # Link TBB when enabled. TBB::tbb is an imported target created by
 # oneTBB's CMake config. We check both names for robustness.
+# PERF 3, audit finding #2: the SYSTEM-include treatment for oneTBB —
+# the same cure core/sdf applies (see the block there for the finding,
+# its precedent, and the ALIASED_TARGET resolution): oneTBB v2022.0.0's
+# headers instantiate conversion warnings under the project's
+# -Wconversion that surface as errors in first-party TUs; SYSTEM stops
+# them, the code unchanged.
 if(CAD_0_USE_TBB)
-    if(TARGET TBB::tbb)
-        target_link_libraries(CAD_0_concurrency PRIVATE TBB::tbb)
-    elseif(TARGET tbb)
-        target_link_libraries(CAD_0_concurrency PRIVATE tbb)
-    endif()
+    foreach(_tbb_candidate TBB::tbb tbb)
+        if(TARGET ${_tbb_candidate})
+            get_target_property(_tbb_aliased ${_tbb_candidate} ALIASED_TARGET)
+            if(_tbb_aliased)
+                set(_tbb_real ${_tbb_aliased})
+            else()
+                set(_tbb_real ${_tbb_candidate})
+            endif()
+            get_target_property(_tbb_inc ${_tbb_real} INTERFACE_INCLUDE_DIRECTORIES)
+            if(_tbb_inc)
+                set_target_properties(${_tbb_real} PROPERTIES
+                    INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_tbb_inc}")
+            endif()
+            if(NOT _tbb_aliased)
+                target_link_libraries(CAD_0_concurrency PRIVATE ${_tbb_candidate})
+            else()
+                target_link_libraries(CAD_0_concurrency PRIVATE tbb)
+            endif()
+            break()
+        endif()
+    endforeach()
     target_compile_definitions(CAD_0_concurrency PRIVATE CAD_0_USE_TBB=1)
 endif()
 

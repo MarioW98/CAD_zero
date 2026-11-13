@@ -30,9 +30,11 @@ public:
             "translate by a finite vector");
     }
 
-    SDFSample sample(const math::Vec3f& p) const noexcept override {
-        return child_->sample(p - offset_);
-    }
+    SDFSample sample(const math::Vec3f& p) const noexcept override;
+    // PERF 3: the domain map is the same scalar per-point expression
+    // (bit-identity by construction); the child rides its own batch.
+    void sample_batch(std::span<const math::Vec3f> points, float* values,
+                      math::Vec3f* gradients) const noexcept override;
     float lipschitz()    const noexcept override { return child_->lipschitz(); }
     math::Bboxf bounds() const noexcept override {
         // ADR-0028 bounds-contract audit: IMMUNE — the negative region
@@ -82,12 +84,12 @@ public:
             "it with from_axis_angle(unit_axis, angle)");
     }
 
-    SDFSample sample(const math::Vec3f& p) const noexcept override {
-        const math::Vec3f local = inv_q_.rotate(p);
-        auto s = child_->sample(local);
-        s.gradient = qmat_.transform_dir(s.gradient);
-        return s;
-    }
+    SDFSample sample(const math::Vec3f& p) const noexcept override;
+    // PERF 3: the pre/post maps are the same scalar per-point
+    // expressions (inv_q_.rotate / qmat_.transform_dir — bit-identity
+    // by construction, the SAME functions); the child rides its batch.
+    void sample_batch(std::span<const math::Vec3f> points, float* values,
+                      math::Vec3f* gradients) const noexcept override;
     float lipschitz()    const noexcept override { return child_->lipschitz(); }
     math::Bboxf bounds() const noexcept override {
         // ADR-0028 bounds-contract audit: IMMUNE — a rigid rotation
@@ -162,15 +164,11 @@ public:
             "this kernel");
     }
 
-    SDFSample sample(const math::Vec3f& p) const noexcept override {
-        auto r = child_->sample(p * inv_s_);
-        // f(x) = scale · g(x/scale). The value scales linearly.
-        r.value *= scale_;
-        // ∇f(x) = ∇g(x/scale) — the gradient is inherited unchanged.
-        // |∇f| = |∇g| ≤ lipschitz(g) = lipschitz(f), so the Lipschitz
-        // invariant is preserved without any modification.
-        return r;
-    }
+    SDFSample sample(const math::Vec3f& p) const noexcept override;
+    // PERF 3: the pre/post maps are the same scalar per-point
+    // expressions; the child rides its batch.
+    void sample_batch(std::span<const math::Vec3f> points, float* values,
+                      math::Vec3f* gradients) const noexcept override;
     float lipschitz()    const noexcept override { return child_->lipschitz(); }
     math::Bboxf bounds() const noexcept override {
         // ADR-0028 bounds-contract audit: IMMUNE for s > 0 — f is
@@ -201,6 +199,13 @@ private:
 };
 
 // Twist — non-rigid warp along the Y axis. Useful for organic shapes.
+//
+// PERF 3: this class deliberately rides the SCALAR batch default —
+// the per-point cos/sin are libm's own (ADR-0014's ≤1 ULP clause
+// forbids a vector approximation that would change them), and a
+// lane-transcription of the sandwich adds nothing the corpus needs;
+// the register carries the seat, the witness counts every twist
+// point scalar (pinned by the suite).
 //
 // The warp rotates each horizontal slice by θ(y) = y·k around Y. It is
 // NOT rigid — the rotation angle depends on the height — and the three

@@ -70,21 +70,12 @@ public:
                 "pass constructed children only");
     }
 
-    SDFSample sample(const math::Vec3f& p) const noexcept override {
-        if (children_.empty()) return SDFSample{1e30f, {}};
-        auto r = children_[0]->sample(p);
-        for (std::size_t i = 1; i < children_.size(); ++i) {
-            const auto s = children_[i]->sample(p);
-            if (s.value < r.value) r = s;
-        }
-        // Normalize the picked gradient (defensive — children of
-        // composites may not have unit gradient).
-        math::Vec3f g = r.gradient;
-        const float gl = g.length();
-        if (gl > 1e-9f) g = g * (1.0f / gl);
-        r.gradient = g;
-        return r;
-    }
+    SDFSample sample(const math::Vec3f& p) const noexcept override;
+    // PERF 3: composes the children's batches (the register's declared
+    // road); the combine rides the same per-point expressions sample()
+    // uses — bit-identity by construction.
+    void sample_batch(std::span<const math::Vec3f> points, float* values,
+                      math::Vec3f* gradients) const noexcept override;
 
     float lipschitz() const noexcept override {
         float m = 1.0f;
@@ -146,21 +137,11 @@ public:
             "pass two constructed bodies");
     }
 
-    SDFSample sample(const math::Vec3f& p) const noexcept override {
-        auto sa = a_->sample(p);
-        const auto sb = b_->sample(p);
-        // Max of the two signed distances.
-        if (sb.value > sa.value) {
-            sa = sb;
-        }
-        // Normalize the gradient we picked (defensive — children of
-        // composites may not have unit gradient).
-        math::Vec3f g = sa.gradient;
-        const float gl = g.length();
-        if (gl > 1e-9f) g = g * (1.0f / gl);
-        sa.gradient = g;
-        return sa;
-    }
+    SDFSample sample(const math::Vec3f& p) const noexcept override;
+    // PERF 3: composes the children's batches; the combine rides the
+    // same per-point expressions — bit-identity by construction.
+    void sample_batch(std::span<const math::Vec3f> points, float* values,
+                      math::Vec3f* gradients) const noexcept override;
 
     float lipschitz() const noexcept override {
         return std::max(a_->lipschitz(), b_->lipschitz());
@@ -218,30 +199,11 @@ public:
             "pass two constructed bodies (place the tool with translate)");
     }
 
-    SDFSample sample(const math::Vec3f& p) const noexcept override {
-        auto sa = a_->sample(p);
-        const auto sb = b_->sample(p);
-        // Inside b => outside the result, so negate b's distance and take max.
-        const float bneg = -sb.value;
-        if (bneg > sa.value) {
-            sa.value = bneg;
-            // Result inherits -∇b as its gradient. Normalize it to keep
-            // |∇f| = 1 (assuming b is a proper SDF with |∇b| = 1 on the
-            // surface; this also clamps any slight over-unit magnitude
-            // from composited children).
-            math::Vec3f g = -sb.gradient;
-            const float gl = g.length();
-            if (gl > 1e-9f) g = g * (1.0f / gl);
-            sa.gradient = g;
-        } else {
-            // Result inherits ∇a. Normalize for the same reason.
-            math::Vec3f g = sa.gradient;
-            const float gl = g.length();
-            if (gl > 1e-9f) g = g * (1.0f / gl);
-            sa.gradient = g;
-        }
-        return sa;
-    }
+    SDFSample sample(const math::Vec3f& p) const noexcept override;
+    // PERF 3: composes the children's batches; the combine rides the
+    // same per-point expressions — bit-identity by construction.
+    void sample_batch(std::span<const math::Vec3f> points, float* values,
+                      math::Vec3f* gradients) const noexcept override;
 
     float lipschitz() const noexcept override {
         return std::max(a_->lipschitz(), b_->lipschitz());
@@ -379,40 +341,11 @@ public:
             "k > 0 is a smooth blend");
     }
 
-    SDFSample sample(const math::Vec3f& p) const noexcept override {
-        const auto sa = a_->sample(p);
-        const auto sb = b_->sample(p);
-        if (k_ <= 0.0f) {
-            // k=0 → hard min; pick the closer child and normalize its
-            // gradient defensively (the child might be a composite
-            // whose gradient magnitude slightly exceeds 1).
-            auto r = (sb.value < sa.value) ? sb : sa;
-            const float gl = r.gradient.length();
-            if (gl > 1e-9f) r.gradient = r.gradient * (1.0f / gl);
-            return r;
-        }
-        const float diff = sb.value - sa.value;
-        // h = 1 when b ≤ a - k (v follows b, the SMALLER child — see
-        // the bug-fix note in the class comment); the sign of the
-        // clamp argument is what selects min vs max semantics.
-        const float h = std::clamp(0.5f - 0.5f * diff / k_, 0.0f, 1.0f);
-        const float v = sa.value + diff * h - k_ * h * (1.0f - h) * 0.25f;
-        // Full chain-rule gradient:
-        //   ∇v = (1 - h)·∇a + h·∇b + (3/8)·(2h - 1)·(∇b - ∇a)
-        // for 0 < h < 1, and ∇v = ∇a or ∇b in the clamped region.
-        // The clamped branches fall out automatically because (2h - 1)
-        // is ±1 at h = 0 or h = 1 but (3/8)·(±1)·(∇b - ∇a) is the
-        // (linear extrapolation) contribution; we must NOT add it in
-        // the clamped region. Use a coefficient that vanishes at the
-        // clamp boundaries.
-        const float chain_coeff = (h > 0.0f && h < 1.0f)
-            ? (3.0f / 8.0f) * (2.0f * h - 1.0f)
-            : 0.0f;
-        const math::Vec3f ga = sa.gradient;
-        const math::Vec3f gb = sb.gradient;
-        math::Vec3f g = ga * (1.0f - h) + gb * h + (gb - ga) * chain_coeff;
-        return SDFSample{v, g};
-    }
+    SDFSample sample(const math::Vec3f& p) const noexcept override;
+    // PERF 3: composes the children's batches; the blend rides the
+    // same per-point expressions — bit-identity by construction.
+    void sample_batch(std::span<const math::Vec3f> points, float* values,
+                      math::Vec3f* gradients) const noexcept override;
 
     float lipschitz() const noexcept override {
         // (7/4)·max(L_a, L_b) ≤ 2.5·max(L_a, L_b). See derivation above.

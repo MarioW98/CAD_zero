@@ -51,13 +51,18 @@ option(CAD_0_BUILD_EXAMPLES "Build C++ examples" ON)
 option(CAD_0_SANITIZE       "Enable ASan/UBSan (debug builds only)" OFF)
 # oneTBB is OFF by default and every shipped surface keeps it OFF: no
 # CI column and no wheel build sets CAD_0_USE_TBB — the kernel ships
-# the single-threaded fallback (xsimd-vectorized, serial; the
-# ADR-0009 amendment, 2026-11-01). ON is an explicit opt-in: CPM then
-# fetches oneTBB at the pinned v2022.0.0 (the pin register:
-# docs/dependencies.md). Known caveat: the CPM-fetched headers don't
-# always end up on the include path of downstream targets (depends on
-# the CMake generator and the imported target's
-# INTERFACE_INCLUDE_DIRECTORIES).
+# the serial evaluator (PERF 3: the batch road — the leaves' xsimd
+# kernels, bit-identical to the scalar form, the dispatch witness
+# counting the points each path serves; the register's PERF 3 row
+# carries the audit that closed the hollow "xsimd-vectorized"
+# declaration this comment once carried). ON is an explicit opt-in:
+# CPM then fetches oneTBB at the pinned v2022.0.0 (the pin register:
+# docs/dependencies.md) — the parallel evaluate rides arithmetic-block
+# partitioning with no reductions (bit-identical at any thread count,
+# the digest test the proof), and the include-path caveat below is
+# RESOLVED as of PERF 3: oneTBB's interface includes get the SYSTEM
+# treatment (core/sdf + core/concurrency, the xsimd precedent), so
+# the opt-in column compiles clean under the project's -Werror.
 option(CAD_0_USE_TBB        "Use oneTBB for thread pool" OFF)
 
 # ---------------------------------------------------------------------------

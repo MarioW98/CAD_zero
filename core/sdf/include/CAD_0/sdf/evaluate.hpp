@@ -2,10 +2,16 @@
 //
 // Bulk SDF evaluation backend. The SDFNode::sample() API evaluates a
 // single point; in practice the mesh extractor and the ray marcher
-// need to evaluate a *batch* of points (often millions per frame).
+// need to evaluate a *batch* of points (often millions per frame) —
+// SDFNode::sample_batch is that road (PERF 3: the leaves ride xsimd
+// kernels, bit-identical to sample(), the dispatch witness counting
+// the points each path serves).
 //
 // We expose an abstract EvalBackend with two implementations:
-//   * CpuEvalBackend  — scalar + xsimd-vectorized (default)
+//   * CpuEvalBackend  — the batch road, serial by default, oneTBB
+//                       parallelism behind the explicit CAD_0_USE_TBB
+//                       opt-in (deterministic partitioning, no
+//                       reductions, bit-identical at any thread count)
 //   * GpuEvalBackend  — stub (post-MVP, see ADR-0008)
 //
 // The dispatch happens at runtime so the Python API can switch backends
@@ -41,7 +47,10 @@ public:
     virtual const char* name() const noexcept = 0;
 };
 
-// Default CPU backend — scalar + xsimd. Auto-vectorized via xsimd::batch.
+// Default CPU backend — the batch road over SDFNode::sample_batch
+// (the leaves' xsimd kernels in core/sdf/src/batch_kernels.cpp),
+// serial; with CAD_0_USE_TBB the same batches partition onto an arena
+// of num_threads workers (the constructor's count is honored there).
 class CpuEvalBackend final : public EvalBackend {
 public:
     explicit CpuEvalBackend(unsigned num_threads = 0);

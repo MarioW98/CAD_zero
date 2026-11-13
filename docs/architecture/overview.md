@@ -87,8 +87,13 @@ Every primitive declares its `lipschitz()` constant, used by the ray marcher and
 
 - **oneTBB** is the concurrency library, OFF by default: no CI column
   and no wheel build enables it — everything shipped and tested runs
-  the single-threaded fallback (xsimd-vectorized, serial; the
-  [ADR-0009](../adr/0009-threading-model.md) amendment, 2026-11-01).
+  the serial batch road (the eight leaves' xsimd kernels,
+  bit-identical to the scalar form, the dispatch witness counting the
+  points each path serves — PERF 3; the
+  [ADR-0009](../adr/0009-threading-model.md) amendments, 2026-11-01
+  and 2026-11-14). The opt-in's parallel evaluate is real and
+  deterministic at every thread count, and compiles for the first
+  time (the SYSTEM-include cure, the ADR's second amendment).
 - **RAII GIL guard** (`gil_release`, `gil_acquire`) for safe Python ↔ C++ threading.
 - **parallel_for**: serial below 1024 elements by grain-size choice;
   with oneTBB enabled (`-DCAD_0_USE_TBB=ON`, the pinned v2022.0.0 via
