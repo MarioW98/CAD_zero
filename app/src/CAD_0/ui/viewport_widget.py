@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 import math
+from ctypes import c_void_p
 from typing import Optional, Any
 
 import numpy as np
@@ -192,6 +193,37 @@ class ViewportWidget(QWidget):
             pos = mesh.positions
             idx = mesh.indices
             if pos is None or len(pos) == 0 or idx is None or len(idx) == 0:
+                # THE DECLARED DIAGNOSTIC (the 2026-11-13 correttiva,
+                # the click-test's second face): a visible node whose
+                # display mesh is empty after the tessellation pass is
+                # never dropped in silence again. The case is
+                # UNREACHABLE for valid nodes — the C++ dirty-flag
+                # discipline hands every insertion, restore and load
+                # over dirty (scene.hpp: add_node, restore_sdf_node,
+                # the io loader all set mesh_dirty, and update_meshes
+                # tessellates dirty+visible before this loop reads the
+                # cache) — so what reaches here is a defect by
+                # definition: a discipline bug, a degenerate body, a
+                # corrupted payload. The old `continue` made it a
+                # disappearance without a word; the cure names it on
+                # the status log (the [viewport] tag, this module's
+                # own convention) so the next pair of eyes asks WHY,
+                # not WHERE DID IT GO. One line per node per refresh —
+                # the refresh runs per gesture, never per frame.
+                # EXEMPT BY DESIGN: sketch-kind nodes (2D data, no 3D
+                # mesh, ADR-0030 D2) — their emptiness is the design,
+                # not a defect, and diagnosing it would be noise.
+                if getattr(node, "kind", "sdf") == "sketch":
+                    continue
+                print(
+                    f"[viewport] node {node.id} ({node.name!r}) is "
+                    "visible but carries no display mesh after the "
+                    "refresh - its tessellation cache is empty (kind "
+                    f"{getattr(node, 'kind', '?')}); it is excluded "
+                    "from this frame. A valid node never lands here "
+                    "(the dirty-flag discipline derives every visible "
+                    "body): this is a defect to report, not a silence "
+                    "to trust.")
                 continue
             # Shading normals come from the field, not the mesh (the
             # graphics-sprint display pipeline — see _display_normals).
@@ -802,8 +834,25 @@ class _ViewportWindow(QOpenGLWindow):
         glBindBuffer(GL_ARRAY_BUFFER, bufs.nor_buf)
         glNormalPointer(GL_FLOAT, 0, None)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, bufs.idx_buf)
+        # THE OFFSET'S OWN FORM (the 2026-11-13 correttiva): the
+        # indices argument is a byte offset into the bound IBO, and
+        # it must travel as None (offset 0) or a c_void_p holding the
+        # offset — the two forms PyOpenGL's array converter passes
+        # through as the pointer VALUE. A bare Python int is NOT one
+        # of them: glDrawElements' `indices` goes through
+        # AsArrayOfType (OpenGL/GL/pointers.py), which converts an int
+        # to a c_uint scalar and hands GL the scalar's heap ADDRESS —
+        # a client pointer wearing an offset's clothes. With the IBO
+        # bound, that address is read as a wild offset far beyond the
+        # buffer's size: the fetch is undefined and draws nothing
+        # (PERF 1's regression, invisible to every recorder-based
+        # suite because a recorder counts the call and never asks
+        # what GL would do with its arguments). c_void_p is the
+        # canonical PyOpenGL VBO-offset idiom — keep it exactly this
+        # form; the contract is pinned by the correttiva's own suite
+        # (test_ui_insertion_display.py, the offset test).
         glDrawElements(GL_TRIANGLES, int(n_tris * 3),
-                       GL_UNSIGNED_INT, int(tri_start * 3 * 4))
+                       GL_UNSIGNED_INT, c_void_p(int(tri_start * 3 * 4)))
 
 
 # Need GLfloat for the matrix array
