@@ -15,11 +15,14 @@
 #include "CAD_0/sdf/operators.hpp"
 #include "CAD_0/sdf/transforms.hpp"
 #include "CAD_0/sdf/evaluate.hpp"
+#include "CAD_0/sdf/display.hpp"
 
 #include "CAD_0/math/vec.hpp"
 #include "CAD_0/math/quat.hpp"
 
 #include <memory>
+#include <span>
+#include <vector>
 
 namespace nb = nanobind;
 using namespace CAD_0::sdf;
@@ -155,35 +158,52 @@ void bind_sdf(nb::module_& m) {
                 }
             }
 
-            // Same guard constant as the kernel's own normal paths
-            // (interp_gradient_abs, CylinderSDF's axis guard): below it a
-            // direction is not defined.
-            constexpr float kDegenerateGradient = 1e-9f;
+            // PERF 4 — the arithmetic lives in ONE place:
+            // sdf::display_normals (core/sdf/src/display.cpp), so this
+            // road (the SYNC refresh, the LIVE body) and the async
+            // worker's road (scene::derive_display_mesh over a
+            // snapshot) answer byte-identical normals for the same
+            // body and positions — a second copy of the loop anywhere
+            // would be a drift the bit-identity pins exist to refuse.
+            // The ndarray plumbing stays here; only the loop moved.
+            const std::size_t count = static_cast<std::size_t>(n);
 
-            auto* out = new std::vector<float>();
-            out->resize(std::size_t(n) * 3);
-            for (std::size_t i = 0; i < n; ++i) {
-                const Vec3f p{positions(i, 0), positions(i, 1), positions(i, 2)};
-                const Vec3f g = body.sample(p).gradient;
-                const float gl = g.length();
-                Vec3f nv;
-                if (gl > kDegenerateGradient) {
-                    nv = g * (1.0f / gl);
-                } else if (fb != nullptr) {
-                    nv = Vec3f{fb[i * 3 + 0], fb[i * 3 + 1], fb[i * 3 + 2]};
-                } else {
-                    nv = Vec3f{0.0f, 0.0f, 0.0f};
+            // positions: a C-contiguous (N,3) float32 array is
+            // layout-compatible with Vec3f (the Vec's own design note,
+            // math/vec.hpp) — the zero-copy road the viewport's
+            // ascontiguousarray payloads always take; a strided array
+            // is copied first (the core must never silently misread
+            // memory the strides do not describe).
+            std::vector<Vec3f> pos_copy;
+            std::span<const Vec3f> pos_span;
+            if (positions.stride(0) == 3 && positions.stride(1) == 1) {
+                pos_span = std::span<const Vec3f>(
+                    reinterpret_cast<const Vec3f*>(positions.data()),
+                    count);
+            } else {
+                pos_copy.reserve(count);
+                for (std::size_t i = 0; i < count; ++i) {
+                    pos_copy.push_back(Vec3f{positions(i, 0),
+                                             positions(i, 1),
+                                             positions(i, 2)});
                 }
-                (*out)[i * 3 + 0] = nv.x;
-                (*out)[i * 3 + 1] = nv.y;
-                (*out)[i * 3 + 2] = nv.z;
+                pos_span = pos_copy;
             }
+            // The validated fallback (fb is null for None/empty, or an
+            // exact C-contiguous (N,3) match — the checks above).
+            std::span<const Vec3f> fallback_span(
+                reinterpret_cast<const Vec3f*>(fb),
+                fb != nullptr ? count : 0);
+
+            auto* out = new std::vector<Vec3f>(
+                CAD_0::sdf::display_normals(body, pos_span, fallback_span));
 
             nb::capsule owner(out, [](void* p) noexcept {
-                delete static_cast<std::vector<float>*>(p);
+                delete static_cast<std::vector<Vec3f>*>(p);
             });
             return nb::ndarray<nb::numpy, float, nb::ndim<2>>(
-                out->data(), {std::size_t(n), std::size_t(3)}, owner);
+                reinterpret_cast<float*>(out->data()),
+                {out->size(), std::size_t(3)}, owner);
         },
         nb::arg("body"), nb::arg("positions"), nb::arg("mesh_normals").none() = nb::none(),
         "Display-only normal buffer from the EXACT SDF gradient sampled at "

@@ -32,6 +32,7 @@ set(CAD_0_TEST_SOURCES
     unit/scene/test_operations.cpp
     unit/scene/test_sketch_scene.cpp
     unit/scene/test_g2_u3_m6_fillet_display.cpp
+    unit/scene/test_perf4_display_derivation.cpp
     unit/viewport/test_camera.cpp
     unit/viewport/test_command_stack.cpp
     unit/viewport/test_selection.cpp

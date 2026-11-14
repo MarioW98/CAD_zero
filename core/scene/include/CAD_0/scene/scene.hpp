@@ -26,6 +26,7 @@
 #include "CAD_0/sdf/operators.hpp"
 #include "CAD_0/sdf/transforms.hpp"
 #include "CAD_0/sdf/mesh_extract.hpp"
+#include "CAD_0/sdf/display.hpp"
 #include "CAD_0/sdf/sketch_profile.hpp"
 #include "CAD_0/sdf/sketch_solver.hpp"
 #include "CAD_0/sdf/sketch_extrude.hpp"
@@ -522,6 +523,140 @@ struct SceneNode {
     SceneNode(SceneNode&&) = default;
     SceneNode& operator=(SceneNode&&) = default;
 };
+
+// ---------------------------------------------------------------------------
+// PERF 4 — THE DISPLAY DERIVATION'S ASYNC ROAD (the three LOD levels'
+// off-thread seat). The functions below are the WORKER'S contract: the
+// snapshot is taken on the OWNER thread (the UI thread — the one that
+// mutates the scene), the derivation runs anywhere (the worker thread)
+// on the snapshot ALONE, and the result lands back on the owner thread
+// (Scene::land_fine_mesh — the fine level's only writer of
+// cached_mesh). The thread-ownership rule, named once and binding:
+//
+//   * THE OWNER THREAD OWNS EVERY MUTATION. The Scene carries no
+//     locks by design; every mutator (add_node, set_fillet_radius,
+//     rebuild_operations, update_meshes, land_fine_mesh, ...) runs on
+//     the thread that owns the scene — today and after PERF 4, the
+//     Qt main thread the bindings are called from.
+//   * THE WORKER READS ITS OWN DATA. snapshot_display_source deep-copies
+//     what the derivation needs (the SDF tree for an Sdf node, the
+//     exact B-Rep for a Fillet/Ellipsoid node) — the worker never
+//     touches the mutable scene, and a mutation racing the worker is
+//     impossible by construction, not by locking discipline.
+//   * THE RESULT IS A GENERATION'S PRISONER. The Python pipeline gates
+//     every landing by generation (a new edit supersedes); the C++
+//     side stays generation-free — it is pure: snapshot in, arrays
+//     out, no scene state read or written.
+//
+// The BIT-IDENTITY LAW (ADR-0014's own, extended to the display road):
+// derive_display_mesh at the FINE level answers the same bytes
+// Scene::update_meshes produces for the same node and resolution —
+// the same marching_cubes / tessellate_body calls, the same
+// display-normals core (sdf::display_normals, ONE definition) —
+// pinned by the suite on both roads. A drift here is a defect, not a
+// variation.
+// ---------------------------------------------------------------------------
+
+// The worker's own immutable input: WHAT the derivation needs, copied
+// from the node at schedule time, nothing else (no recipe, no params,
+// no cached mesh — the derivation does not read them).
+struct DisplaySourceSnapshot {
+    NodeKind kind{NodeKind::Sdf};
+    // Sdf-kind: the deep-cloned body tree (SDFBody's copy ctor clones
+    // the subtree — the snapshot owns every node of it).
+    sdf::SDFBody body;
+    // Fillet/Ellipsoid-kind: the deep-cloned exact body, radial edges
+    // RELINKED (the B-Rep's cross-pointers do not survive a shallow
+    // copy — the SceneNode copy ctor's own recipe, followed verbatim).
+    std::unique_ptr<brep::BRepBody> exact;
+};
+
+// Take the snapshot — OWNER THREAD ONLY (it reads the live node; a
+// call from any other thread is a discipline bug the ownership rule
+// above forbids). Mesh/Sketch nodes answer an empty-bodied snapshot
+// with their kind: the pipeline never schedules them (an imported
+// mesh IS the geometry, a sketch has nothing 3D — update_meshes' own
+// dispatch), and the derive below refuses them loudly rather than
+// guessing (the honest-dispatch law, ADR-0002).
+inline DisplaySourceSnapshot snapshot_display_source(const SceneNode& n) {
+    DisplaySourceSnapshot s;
+    s.kind = n.kind;
+    switch (n.kind) {
+    case NodeKind::Sdf:
+        s.body = n.body;
+        break;
+    case NodeKind::Fillet:
+    case NodeKind::Ellipsoid: {
+        const brep::BRepBody* src =
+            n.kind == NodeKind::Fillet ? n.fillet_body.get()
+                                       : n.ellipsoid_body.get();
+        if (src != nullptr) {
+            s.exact = std::make_unique<brep::BRepBody>(*src);
+            brep::link_radial_edges(*s.exact);
+        }
+        break;
+    }
+    case NodeKind::Mesh:
+    case NodeKind::Sketch:
+        break;
+    }
+    return s;
+}
+
+// The derived display payload for ONE node at ONE level: the mesh (the
+// same mesh update_meshes would install — the fine level's landing
+// writes it into cached_mesh byte-identically) PLUS the display
+// normals (the shading buffer — display-pipeline only, PERF 1's
+// contract: exports and the bridge read the mesh, never this buffer).
+struct DisplayDerivation {
+    sdf::TriangleMesh mesh;
+    std::vector<math::Vec3f> display_normals;
+};
+
+// Derive — ANY THREAD (the worker), pure: the snapshot alone is read,
+// nothing is written anywhere. The dispatch mirrors Scene::
+// update_meshes' own (Sdf -> marching_cubes, Fillet/Ellipsoid ->
+// brep::tessellate_body, the exact bodies' own road); the display
+// normals mirror the sync road's _display_normals (the field gradient
+// for an Sdf body, the mesh's own normals for the exact kinds —
+// sdf::display_normals / mesh.normals, ONE definition each). The
+// empty-mesh answers (a null exact body, an empty field) are the
+// update_meshes skip cases, named: the caller decides what an empty
+// derivation means (the pipeline keeps the previous mesh — the
+// previous-or-new rule, never a mix).
+inline DisplayDerivation derive_display_mesh(
+    const DisplaySourceSnapshot& s, std::uint32_t resolution) {
+    DisplayDerivation out;
+    switch (s.kind) {
+    case NodeKind::Sdf: {
+        out.mesh = sdf::marching_cubes(s.body, resolution, true);
+        out.display_normals = sdf::display_normals(
+            s.body, out.mesh.positions, out.mesh.normals);
+        break;
+    }
+    case NodeKind::Fillet:
+    case NodeKind::Ellipsoid: {
+        if (s.exact == nullptr)
+            break; // the refused/null body: the update_meshes skip
+        brep::TessellationOptions opts;
+        opts.resolution = resolution;
+        out.mesh = brep::tessellate_body(*s.exact, opts);
+        // The exact kinds' shading normals ARE the mesh's own (the
+        // sync road's _display_normals dispatch — there is no SDF
+        // field behind an exact-only body to sample).
+        out.display_normals = out.mesh.normals;
+        break;
+    }
+    case NodeKind::Mesh:
+    case NodeKind::Sketch:
+        throw std::logic_error(
+            "derive_display_mesh: kind " + node_kind_name(s.kind) +
+            " has no derivation - an imported mesh IS the geometry and "
+            "a sketch is 2D data (update_meshes' own dispatch, "
+            "ADR-0002 honest dispatch)");
+    }
+    return out;
+}
 
 enum class SceneChange {
     NodeAdded,
@@ -1868,6 +2003,31 @@ public:
             }
             n.mesh_dirty = false;
         }
+    }
+
+    // PERF 4 — THE FINE LEVEL'S LANDING (the async road's ONLY write
+    // into the scene, and it happens on the OWNER thread — the
+    // ownership rule at the DisplaySourceSnapshot seat, binding).
+    // Installs a derived fine mesh as the node's cached_mesh and
+    // clears the dirty flag: the contractual mesh every consumer
+    // (exports, the bridge, the pick bounds) reads is the FINE one,
+    // byte-identical to what update_meshes would have installed (the
+    // derive/update_meshes bit-identity law). The draft and medium
+    // levels NEVER touch the scene — they are display-pipeline state
+    // only (the Python pipeline's own store); this is the declared
+    // switch: a bozza mesh is never served where the contract asks
+    // for the fine one.
+    // Unknown node: the landing is refused (the node left the scene
+    // while its derivation was in flight — the pipeline's generation
+    // gate already dropped the result in that case; this is the
+    // kernel-side backstop, loud and stateless).
+    bool land_fine_mesh(std::uint32_t id, sdf::TriangleMesh mesh) {
+        SceneNode* n = get_node_mut(id);
+        if (n == nullptr)
+            return false;
+        n->cached_mesh = std::move(mesh);
+        n->mesh_dirty = false;
+        return true;
     }
 
     void set_change_callback(SceneChangeCallback cb) {

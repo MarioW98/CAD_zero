@@ -8,6 +8,7 @@ set(CAD_0_SDF_HEADERS
     include/CAD_0/sdf/detail/validate.hpp
     include/CAD_0/sdf/evaluate.hpp
     include/CAD_0/sdf/mesh_extract.hpp
+    include/CAD_0/sdf/display.hpp
 )
 
 set(CAD_0_SDF_SOURCES
@@ -16,6 +17,9 @@ set(CAD_0_SDF_SOURCES
                            # composing interior (xsimd stays PRIVATE
                            # to this TU — the headers never see it)
     src/mesh_extract.cpp
+    src/display.cpp         # PERF 4: the display normals' ONE
+                           # definition — the sync road (the binding)
+                           # and the async worker both call it
 )
 
 add_library(CAD_0_sdf STATIC ${CAD_0_SDF_SOURCES} ${CAD_0_SDF_HEADERS})

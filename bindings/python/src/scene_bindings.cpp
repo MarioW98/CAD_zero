@@ -3,6 +3,7 @@
 // Python bindings for the Scene class, OrbitCamera, and CommandStack.
 //
 #include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/function.h>
 #include <nanobind/stl/unique_ptr.h>
@@ -874,6 +875,22 @@ void bind_scene(nb::module_& m) {
         .def("empty", &scene::Scene::empty)
         .def("bounds", &scene::Scene::bounds)
         .def("update_meshes", &scene::Scene::update_meshes, nb::arg("resolution") = 48)
+        // PERF 4 — the fine level's landing (the async road's ONLY
+        // scene write, OWNER THREAD ONLY — the ownership rule at the
+        // DisplaySourceSnapshot seat in scene.hpp, binding). The mesh
+        // is COPIED into the node on purpose: the caller (the display
+        // pipeline) keeps its derivation object alive for the mirror
+        // and the VBO upload, the scene keeps its own contractual
+        // cached_mesh — one owner each, no shared mutable state.
+        .def("land_fine_mesh", [](scene::Scene& s, std::uint32_t id,
+                                  const sdf::TriangleMesh& mesh) {
+                 return s.land_fine_mesh(id, mesh);
+             },
+             nb::arg("id"), nb::arg("mesh"),
+             "Install a derived FINE mesh as the node's cached_mesh and "
+             "clear the dirty flag (the async display road's landing — "
+             "owner thread only; the contractual mesh stays the FINE "
+             "one, byte-identical to update_meshes' own).")
         .def("node_count", &scene::Scene::node_count)
         .def("node_at", [](scene::Scene& s, std::size_t i) -> scene::SceneNode* {
             return s.node_at(i);
@@ -1165,6 +1182,67 @@ void bind_scene(nb::module_& m) {
              nb::arg("node_id"),
              "The actionable dangling message for an operation node "
              "(empty string when the node is not dangling).");
+
+    // ---- PERF 4: the display derivation's async road ------------------
+    //
+    // The worker's three entries (the contract at the
+    // DisplaySourceSnapshot seat in scene.hpp): the SNAPSHOT taken on
+    // the owner thread, the DERIVE pure on the snapshot (the GIL
+    // RELEASED for its whole body — the UI thread stays live while
+    // the worker tessellates), the LANDING on the owner thread
+    // (Scene.land_fine_mesh above). The Python pipeline
+    // (app/src/CAD_0/ui/display_pipeline.py) drives them; the level
+    // ladder and the generation gate live THERE — this side stays
+    // pure and stateless.
+    nb::class_<scene::DisplaySourceSnapshot>(scene_mod, "DisplaySourceSnapshot")
+        .def_prop_ro("kind", [](const scene::DisplaySourceSnapshot& s) {
+            return scene::node_kind_name(s.kind);
+        });
+
+    scene_mod.def("snapshot_display_source",
+        [](const scene::SceneNode& n) {
+            return scene::snapshot_display_source(n);
+        },
+        nb::arg("node"),
+        "Deep-copy what the display derivation needs from the node "
+        "(the SDF tree for an sdf node, the exact B-Rep for a "
+        "fillet/ellipsoid) — OWNER THREAD ONLY (it reads the live "
+        "node); the worker owns the result and never touches the "
+        "mutable scene.");
+
+    nb::class_<scene::DisplayDerivation>(scene_mod, "DisplayDerivation")
+        .def_prop_ro("mesh", [](const scene::DisplayDerivation& d)
+                           -> const sdf::TriangleMesh& {
+            return d.mesh;
+        }, nb::rv_policy::reference_internal)
+        .def_prop_ro("display_normals", [](const scene::DisplayDerivation& d) {
+            // A view over the derivation's own vector, the derivation
+            // object its owner (the mesh_bindings pattern — the arrays
+            // die with the derivation, never before it).
+            return nb::ndarray<nb::numpy, float, nb::ndim<2>>(
+                const_cast<float*>(reinterpret_cast<const float*>(
+                    d.display_normals.data())),
+                {d.display_normals.size(), std::size_t(3)},
+                nb::find(&d));
+        });
+
+    scene_mod.def("derive_display_mesh",
+        [](const scene::DisplaySourceSnapshot& s,
+           std::uint32_t resolution) {
+            return scene::derive_display_mesh(s, resolution);
+        },
+        nb::arg("snapshot"), nb::arg("resolution"),
+        // THE GIL RELEASE — the whole point of the async road: the
+        // tessellation (the field evaluation, PERF 3's batch kernels,
+        // the slice-streamed walk) runs with the interpreter lock
+        // released, so the UI thread keeps living while the worker
+        // derives. The function is pure (the snapshot alone is read),
+        // so releasing the GIL around it is sound by construction.
+        nb::call_guard<nb::gil_scoped_release>(),
+        "Derive the display payload (mesh + display normals) from a "
+        "snapshot at a resolution — PURE, any thread, GIL released: "
+        "the same bytes update_meshes produces at the FINE level "
+        "(the bit-identity law, scene.hpp's own seat).");
 
     // OrbitCamera — bind to Python so the viewport widget can use it
     auto cam_mod = m.def_submodule("camera", "Camera system");
