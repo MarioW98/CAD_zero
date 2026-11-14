@@ -830,6 +830,37 @@ struct MassSurfaceReader : SurfaceVisitor {
         cyl.r = y.radius();
         cyl.s = 1.0;
     }
+    // The general fillet's ring flanks (G5 m1, ADR-0043 D2.1/D8):
+    // the X and Y placements fill the SAME unified frame — one
+    // mathematics, the closed forms unchanged (the census row's
+    // cells deepen; the writer sites arrive with the flank's own
+    // morso).
+    void visit(const CylinderXSurface& x) override {
+        cyl_found = true;
+        cyl.P0[0] = x.x_base();
+        cyl.P0[1] = x.axis_y();
+        cyl.P0[2] = x.axis_z();
+        // â = +x̂, ê₀ = +ẑ (the seam meridian), ê₁ = â × ê₀ = −ŷ —
+        // the constructor's own derivation, read here as the
+        // frame's payload.
+        cyl.a[0] = 1.0; cyl.a[1] = 0.0; cyl.a[2] = 0.0;
+        cyl.e1[0] = 0.0; cyl.e1[1] = 0.0; cyl.e1[2] = 1.0;
+        cyl.e2[0] = 0.0; cyl.e2[1] = -1.0; cyl.e2[2] = 0.0;
+        cyl.r = x.radius();
+        cyl.s = 1.0;
+    }
+    void visit(const CylinderYSurface& y) override {
+        cyl_found = true;
+        cyl.P0[0] = y.axis_x();
+        cyl.P0[1] = y.y_base();
+        cyl.P0[2] = y.axis_z();
+        // â = +ŷ, ê₀ = +x̂ (the seam meridian), ê₁ = â × ê₀ = −ẑ.
+        cyl.a[0] = 0.0; cyl.a[1] = 1.0; cyl.a[2] = 0.0;
+        cyl.e1[0] = 1.0; cyl.e1[1] = 0.0; cyl.e1[2] = 0.0;
+        cyl.e2[0] = 0.0; cyl.e2[1] = 0.0; cyl.e2[2] = -1.0;
+        cyl.r = y.radius();
+        cyl.s = 1.0;
+    }
 };
 
 } // namespace
@@ -908,8 +939,10 @@ MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
                 throw std::invalid_argument(
                     "mass_properties: face " + std::to_string(fi) +
                     " carries an unknown 'cylinder' subtype - the mass "
-                    "machinery covers CylinderZSurface and "
-                    "CylinderSurface. Remedy: report the body's "
+                    "machinery covers CylinderZSurface, "
+                    "CylinderSurface, CylinderXSurface and "
+                    "CylinderYSurface (the four placements, one "
+                    "unified frame). Remedy: report the body's "
                     "construction.");
             const CylFrame fr = reader.cyl;
 

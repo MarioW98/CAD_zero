@@ -266,6 +266,13 @@ class ConeSurface;
 class TorusSurface;
 class TorusZSurface;
 class EllipsoidSurface;
+// The general fillet's ring flanks (G5 m1, ADR-0043 D2.1): the X
+// and Y placements of the cylinder family — the same mathematics
+// one axis under CylinderZ, the flank writer's own classes (the
+// TorusZ precedent: the family class and the writer class side by
+// side).
+class CylinderXSurface;
+class CylinderYSurface;
 
 // The surface visitor: typed overloads, one per concrete class. A
 // handler that implements the wrong class name does not compile;
@@ -287,6 +294,11 @@ public:
     // class born under the family protocol, right-handed by the
     // sphere's own e1 = e0 x pole construction.
     virtual void visit(const EllipsoidSurface&) { unhandled(); }
+    // The general fillet's ring flanks (G5 m1, ADR-0043 D2.1): the
+    // X and Y cylinder placements — right-handed by the constructor's
+    // own e1 = axis x e0 derivation, the chirality not a knob.
+    virtual void visit(const CylinderXSurface&) { unhandled(); }
+    virtual void visit(const CylinderYSurface&) { unhandled(); }
 protected:
     virtual void unhandled() {}
 };

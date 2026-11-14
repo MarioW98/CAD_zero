@@ -221,6 +221,170 @@ private:
     double u_sign_;
 };
 
+// CylinderX / CylinderY — the general fillet's RING FLANKS (G5 m1,
+// ADR-0043 D2.1): the cylinder family's X and Y placements, the same
+// mathematics one axis under CylinderZSurface. The ring edges of the
+// cube (the horizontal 90° joints between two planes) roll the same
+// inscribed ball — the center on the bisector at r·cot(π/4) = r from
+// the edge — and the swept envelope is a cylinder whose axis is
+// PARALLEL TO THE EDGE: world X or Y, the two classes below (the
+// TorusZ precedent: the family class CylinderSurface stays the
+// factory's own, the writer classes anchor at the flank's frame).
+//
+// THE FRAME (the ADR's own derivation, one axis under the Z
+// discipline): u = the azimuth AROUND the axis measured from the
+// DECLARED reference ê₀ (the seam meridian u = 0, frozen by the
+// goldens: +Z for CylinderX, +X for CylinderY — the factories'
+// reference planes), v = the height along the axis above the base.
+// The second azimuth axis is DERIVED IN THE CONSTRUCTOR from the
+// product, ê₁ = â × ê₀:
+//
+//   evaluate(u, v) = P₀ + R·(cos u·ê₀ + sin u·ê₁) + v·â,
+//   ∂u×∂v = +R·(cos u·ê₀ + sin u·ê₁) = +R·radial
+//
+// — right-handed around the outward normal BY CONSTRUCTION for any
+// (â, ê₀) with ê₁ = â × ê₀ (the (ê₀, ê₁, â) triplet: ê₀×ê₁ = â), the
+// SAME sign as the returned normal, and the chirality is NOT A KNOB:
+// a left-handed X/Y flank is unrepresentable in the class (the
+// linear-plane law, one family over — the counterproof in
+// test_g5_m1_cylinder_xy.cpp pins the discrimination). No u_sign
+// parameter exists: the flank's outward normal is +radial (the
+// material inside the eroded body, the wedge removed outside), the
+// hole-side flip has no consumer here.
+//
+// THE SEAM: the slit-rectangle pattern of ADR-0023 exactly as the Z
+// placement's — u = 0 ≡ u ∓ 2π the declared reference meridian, the
+// seam-wired window walks material-on-left in (u, v).
+class CylinderXSurface : public SurfaceGeometry {
+public:
+    CylinderXSurface(double radius, double x_base, double axis_y,
+                     double axis_z)
+        : radius_(radius), x_base_(x_base), axis_y_(axis_y),
+          axis_z_(axis_z) {
+        if (!(radius_ > 0.0) || !std::isfinite(radius_)) {
+            throw std::invalid_argument(
+                "CylinderXSurface: the radius must be finite and "
+                "positive, got " +
+                std::to_string(radius_) +
+                " — a non-positive cylinder has no flank to sweep "
+                "(the rolling ball's own radius, ADR-0043 D2.1). "
+                "Remedy: construct with the fillet's positive "
+                "radius.");
+        }
+        // The second azimuth axis DERIVED from the product — the
+        // right-handedness's source, never a hand-written constant.
+        e1_ = a_.cross(e0_);
+    }
+
+    math::Vec3d evaluate(double u, double v) const override {
+        const double c = std::cos(u), s = std::sin(u);
+        return {x_base_ + v,
+                axis_y_ + radius_ * (c * e0_.y + s * e1_.y),
+                axis_z_ + radius_ * (c * e0_.z + s * e1_.z)};
+    }
+    math::Vec3d normal(double u, double) const override {
+        // +radial(u): the SAME direction ∂u×∂v points (the frame
+        // rule's pin — the flank's outward normal, the material
+        // inside the eroded body).
+        const double c = std::cos(u), s = std::sin(u);
+        return {0.0, c * e0_.y + s * e1_.y, c * e0_.z + s * e1_.z};
+    }
+
+    SurfaceFamily family() const override { return SurfaceFamily::Cylinder; }
+    void accept(SurfaceVisitor& v) const override { v.visit(*this); }
+    math::Bboxd bounds() const override {
+        // The full-cylinder box (the patch trim lives in the loops,
+        // not the surface): x unbounded above x_base — the flank's
+        // span is carried by the trimming window, the Z placement's
+        // own discipline one axis under.
+        math::Bboxd b = math::Bboxd::universe();
+        b.min.x = x_base_;
+        b.min.y = axis_y_ - radius_;
+        b.max.y = axis_y_ + radius_;
+        b.min.z = axis_z_ - radius_;
+        b.max.z = axis_z_ + radius_;
+        return b;
+    }
+
+    double radius() const noexcept { return radius_; }
+    // The placement accessors (G1 unit 4's table: translate_body
+    // re-anchors through the family's own accessors).
+    double x_base() const noexcept { return x_base_; }
+    double axis_y() const noexcept { return axis_y_; }
+    double axis_z() const noexcept { return axis_z_; }
+
+private:
+    double radius_;
+    double x_base_;
+    double axis_y_;
+    double axis_z_;
+    // The frame, derived once: â = +x̂, ê₀ = +ẑ (the seam meridian,
+    // frozen by the goldens), ê₁ = â × ê₀ = −ŷ — the constructor's
+    // own cross product, the right-handedness's source.
+    math::Vec3d a_{1.0, 0.0, 0.0};
+    math::Vec3d e0_{0.0, 0.0, 1.0};
+    math::Vec3d e1_{0.0, -1.0, 0.0};
+};
+
+class CylinderYSurface : public SurfaceGeometry {
+public:
+    CylinderYSurface(double radius, double y_base, double axis_x,
+                     double axis_z)
+        : radius_(radius), y_base_(y_base), axis_x_(axis_x),
+          axis_z_(axis_z) {
+        if (!(radius_ > 0.0) || !std::isfinite(radius_)) {
+            throw std::invalid_argument(
+                "CylinderYSurface: the radius must be finite and "
+                "positive, got " +
+                std::to_string(radius_) +
+                " — a non-positive cylinder has no flank to sweep "
+                "(the rolling ball's own radius, ADR-0043 D2.1). "
+                "Remedy: construct with the fillet's positive "
+                "radius.");
+        }
+        e1_ = a_.cross(e0_);
+    }
+
+    math::Vec3d evaluate(double u, double v) const override {
+        const double c = std::cos(u), s = std::sin(u);
+        return {axis_x_ + radius_ * (c * e0_.x + s * e1_.x),
+                y_base_ + v,
+                axis_z_ + radius_ * (c * e0_.z + s * e1_.z)};
+    }
+    math::Vec3d normal(double u, double) const override {
+        const double c = std::cos(u), s = std::sin(u);
+        return {c * e0_.x + s * e1_.x, 0.0, c * e0_.z + s * e1_.z};
+    }
+
+    SurfaceFamily family() const override { return SurfaceFamily::Cylinder; }
+    void accept(SurfaceVisitor& v) const override { v.visit(*this); }
+    math::Bboxd bounds() const override {
+        math::Bboxd b = math::Bboxd::universe();
+        b.min.y = y_base_;
+        b.min.x = axis_x_ - radius_;
+        b.max.x = axis_x_ + radius_;
+        b.min.z = axis_z_ - radius_;
+        b.max.z = axis_z_ + radius_;
+        return b;
+    }
+
+    double radius() const noexcept { return radius_; }
+    double y_base() const noexcept { return y_base_; }
+    double axis_x() const noexcept { return axis_x_; }
+    double axis_z() const noexcept { return axis_z_; }
+
+private:
+    double radius_;
+    double y_base_;
+    double axis_x_;
+    double axis_z_;
+    // The frame, derived once: â = +ŷ, ê₀ = +x̂ (the seam meridian,
+    // frozen by the goldens), ê₁ = â × ê₀ = −ẑ.
+    math::Vec3d a_{0.0, 1.0, 0.0};
+    math::Vec3d e0_{1.0, 0.0, 0.0};
+    math::Vec3d e1_{0.0, 0.0, -1.0};
+};
+
 // Sphere: radius R centered at origin, in a (pole, azimuth) frame.
 //
 // THE FRAME (G2 unit 1's re-frame rule, ADR-0033 D1.1): the

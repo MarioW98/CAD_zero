@@ -420,6 +420,12 @@ struct TranslateReader : SurfaceVisitor {
     const PlaneSurface* plane{nullptr};
     const CylinderSurface* cyl_y{nullptr};
     const CylinderZSurface* cyl_z{nullptr};
+    // The general fillet's ring flanks (G5 m1, ADR-0043 D2.1): the
+    // table's own prescribed extension — "extend the table with its
+    // own placement accessor", the refusal's own remedy read as the
+    // instruction it always was.
+    const CylinderXSurface* cyl_x{nullptr};
+    const CylinderYSurface* cyl_yflank{nullptr};
     const SphereSurface* sphere{nullptr};
     const ConeSurface* cone{nullptr};
     const TorusSurface* torus{nullptr};
@@ -427,6 +433,8 @@ struct TranslateReader : SurfaceVisitor {
     void visit(const PlaneSurface& s) override { plane = &s; }
     void visit(const CylinderSurface& s) override { cyl_y = &s; }
     void visit(const CylinderZSurface& s) override { cyl_z = &s; }
+    void visit(const CylinderXSurface& s) override { cyl_x = &s; }
+    void visit(const CylinderYSurface& s) override { cyl_yflank = &s; }
     void visit(const SphereSurface& s) override { sphere = &s; }
     void visit(const ConeSurface& s) override { cone = &s; }
     void visit(const TorusSurface& s) override { torus = &s; }
@@ -465,13 +473,32 @@ inline void translate_body(BRepBody& body, math::Vec3d delta) {
                 f.set_surface(std::make_shared<CylinderSurface>(
                     r.cyl_y->radius(), r.cyl_y->height(),
                     r.cyl_y->origin() + delta));
+            } else if (r.cyl_x != nullptr) {
+                // The general fillet's ring flank (G5 m1, ADR-0043
+                // D2.1): the X placement re-anchors through its own
+                // accessors — the axis rides (y, z), the base rides
+                // x, the seam meridian and the frame unchanged (the
+                // authored p-curves stay valid verbatim, the
+                // translation moves the mathematical object only).
+                f.set_surface(std::make_shared<CylinderXSurface>(
+                    r.cyl_x->radius(), r.cyl_x->x_base() + delta.x,
+                    r.cyl_x->axis_y() + delta.y,
+                    r.cyl_x->axis_z() + delta.z));
+            } else if (r.cyl_yflank != nullptr) {
+                f.set_surface(std::make_shared<CylinderYSurface>(
+                    r.cyl_yflank->radius(),
+                    r.cyl_yflank->y_base() + delta.y,
+                    r.cyl_yflank->axis_x() + delta.x,
+                    r.cyl_yflank->axis_z() + delta.z));
             } else {
                 throw std::invalid_argument(
                     "translate_body: unknown 'cylinder' surface subtype "
-                    "- the translation table covers CylinderSurface and "
-                    "CylinderZSurface (a third subtype would be a kernel "
-                    "extension, not a silent skip). Remedy: extend the "
-                    "table with its own placement accessor.");
+                    "- the translation table covers CylinderSurface, "
+                    "CylinderZSurface, CylinderXSurface and "
+                    "CylinderYSurface (a further subtype would be a "
+                    "kernel extension, not a silent skip). Remedy: "
+                    "extend the table with its own placement "
+                    "accessor.");
             }
             break;
         case SurfaceFamily::Sphere:

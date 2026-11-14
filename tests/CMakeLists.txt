@@ -61,6 +61,7 @@ set(CAD_0_TEST_SOURCES
     unit/brep/test_k1_m5_chain_gate.cpp
     unit/brep/test_k1_m6_survival_ledger.cpp
     unit/brep/test_k1_m7_oracle_suite.cpp
+    unit/brep/test_g5_m1_cylinder_xy.cpp
     unit/brep/test_h2_u3_pcurve_double.cpp
     unit/brep/test_h2_u6_m2_factory_names.cpp
     unit/brep/test_h2_u6_m3_extrude_names.cpp
