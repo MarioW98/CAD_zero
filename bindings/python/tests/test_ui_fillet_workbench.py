@@ -202,8 +202,22 @@ def _make_guide_box(win):
         editor = _panel_field(win, axis)
         assert editor is not None, axis
         editor.setValue(1.0)
+    # PERF 4 — the panel edits are GESTURES now: the mesh settles at
+    # the ladder's fine rung (the declared idle). The test fires the
+    # idle switch itself and joins the worker — the explicit sync
+    # point, never a time sleep — so every later read of the box's
+    # cached_mesh sees the extent-1.0 fine mesh, byte-identical to the
+    # sync road's own answer (the bit-identity law).
+    pipeline = win._viewport._display_pipeline
+    if pipeline is not None:
+        pipeline.on_idle()
+        assert pipeline.wait_until_settled(timeout=30.0)
     node = win._scene.get_node(box_id)
     assert node is not None and node.builder == "box"
+    assert not node.mesh_dirty, (
+        "the guide box's ladder did not settle at fine - the async "
+        "road left the node dirty (a pipeline defect, not a slow "
+        "worker: wait_until_settled returned)")
     return box_id
 
 

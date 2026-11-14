@@ -898,6 +898,9 @@ class MainWindow(QMainWindow):
                 self._scene.set_change_callback(None)
             except RuntimeError:
                 pass
+        # PERF 4 — the display worker exits at its next job boundary
+        # (a daemon thread: the process never waits on it).
+        self._viewport.shutdown_display_pipeline()
         event.accept()
 
     def _add_shape_to_scene(self, name: str, body) -> None:
@@ -914,8 +917,20 @@ class MainWindow(QMainWindow):
         self._status.showMessage(f"Created {name} (id={node_id})", 3000)
 
     def _refresh_viewport(self) -> None:
-        """Re-tessellate and redraw."""
+        """Re-tessellate and redraw (the SYNC road — the static path:
+        loads, undo, visibility, selection, resolution changes)."""
         self._viewport._refresh_meshes()
+
+    def _refresh_viewport_edit(self) -> None:
+        """PERF 4 — THE EDIT GESTURE'S ROAD (async): the handler
+        returns immediately; the display derivation runs on the
+        worker and the viewport walks the LOD ladder (bozza during
+        the gesture, medio at the release, fine at the declared idle
+        — display_pipeline.py's own named rules). Undo rides the SYNC
+        road (_refresh_viewport): the brief's target is the gesture,
+        and an undo is a discrete act with its own expectations, not a
+        drag to keep alive."""
+        self._viewport.refresh_edit_gesture()
 
     # ----- Sketch views (ADR-0030 D5.6: the canvas is a node view) -----
 
@@ -1096,7 +1111,11 @@ class MainWindow(QMainWindow):
         """
         self._update_constraints_menu()
         self._refresh_operation_rows()
-        self._refresh_viewport()
+        # PERF 4 — the canvas's commit (a drag's release, a panel
+        # edit) is an edit GESTURE: the viewport walks the ladder
+        # (bozza immediately, medio as the release's own, fine at the
+        # declared idle).
+        self._refresh_viewport_edit()
         if self._selected_entity is not None:
             node_id, chain, index = self._selected_entity
             chains = self._scene.sketch_chains(node_id) \
@@ -1499,7 +1518,7 @@ class MainWindow(QMainWindow):
     def on_create_torus(self) -> None:
         self._create_registered("torus")
 
-    def _rebuild_node(self, node_id: int) -> None:
+    def _rebuild_node(self, node_id: int, gesture: bool = False) -> None:
         """Rebuild a PRIMITIVE node's body from its stored params and
         type, then run the DAG pass so every dependent operation
         follows the edit (ADR-0027 D2).
@@ -1509,6 +1528,11 @@ class MainWindow(QMainWindow):
         (which reads the other two axes from the node's CURRENT recipe
         — the recipe is the source of truth; the UI keeps no second
         copy of any parameter table).
+
+        PERF 4: `gesture=True` routes the final refresh through the
+        ASYNC display road (the parameter edit's own act); the default
+        is the SYNC road (the undo path's own — undo is a discrete
+        act, not a drag).
         """
         if node_id not in self._node_params or not self._scene:
             return
@@ -1535,7 +1559,10 @@ class MainWindow(QMainWindow):
             # the DAG pass propagates operand edits to dependents).
             self._scene.rebuild_operations()
             self._refresh_operation_rows()
-            self._refresh_viewport()
+            if gesture:
+                self._refresh_viewport_edit()
+            else:
+                self._refresh_viewport()
 
     def _on_import(self, format_name: str) -> None:
         """Import an STL/OBJ file as a first-class mesh scene node.
@@ -1617,6 +1644,16 @@ class MainWindow(QMainWindow):
         except ImportError:
             self._status.showMessage("Export failed: CAD_0.io not importable", 3000)
             return
+        # PERF 4 — THE SYNC BARRIER (the commutation never degrades
+        # the data): an export is a point-in-time consumer of the
+        # node's cached_mesh, the CONTRACTUAL mesh (PERF 1's own
+        # words: "exports and the bridge read those from the node,
+        # byte-identically"). While the gesture's ladder is mid-flight
+        # the pipeline's freshest answer may be a draft — the barrier
+        # derives the dirty visible set at FINE here, on this thread,
+        # and the export reads what the static path would have
+        # answered: the CURRENT recipe's full-resolution mesh.
+        self._viewport.flush_fine_meshes()
         # Export the first visible mesh with actual geometry.
         # (Bug fix: the original condition was inverted — it skipped valid
         # meshes and only tried to export null/hidden/empty nodes, so
@@ -2715,7 +2752,7 @@ class MainWindow(QMainWindow):
 
         def execute():
             self._node_params[node_id][name] = value
-            self._rebuild_node(node_id)
+            self._rebuild_node(node_id, gesture=True)
             # node.body assignment bypasses Scene-level notifications, so
             # the dirty flag is marked here explicitly.
             self._mark_modified()
@@ -2751,13 +2788,18 @@ class MainWindow(QMainWindow):
             return
         old_value = float(node.fillet_radius)
 
-        def apply(v: float) -> None:
+        def apply(v: float, gesture: bool = False) -> None:
             answer = self._scene.set_fillet_radius(node_id, v)
             self._node_params[node_id]["radius"] = float(v)
             # The visible state: the tree row's FIL! follows the
             # re-run's answer, the status bar speaks it.
             self._refresh_operation_rows()
-            self._refresh_viewport()
+            if gesture:
+                # PERF 4 — the radius edit is the gesture (the m8
+                # corpus's own act): the refresh rides the async road.
+                self._refresh_viewport_edit()
+            else:
+                self._refresh_viewport()
             if answer == "reference_resolved":
                 self._mark_modified()
                 self._status.showMessage(
@@ -2789,10 +2831,10 @@ class MainWindow(QMainWindow):
 
         if self._command_stack:
             self._command_stack.push(
-                lambda: apply(radius), lambda: apply(old_value),
+                lambda: apply(radius, True), lambda: apply(old_value),
                 f"Set radius = {radius}")
         else:
-            apply(radius)
+            apply(radius, True)
 
     def _deferred_fillet_panel_refresh(self) -> None:
         """The next-pass panel rebuild for the selected fillet node
@@ -2816,7 +2858,7 @@ class MainWindow(QMainWindow):
         if op is None or axis not in ("offset_x", "offset_y", "offset_z"):
             return
 
-        def apply(v: float) -> None:
+        def apply(v: float, gesture: bool = False) -> None:
             axes = {"offset_x": op["offset_x"],
                     "offset_y": op["offset_y"],
                     "offset_z": op["offset_z"]}
@@ -2825,16 +2867,21 @@ class MainWindow(QMainWindow):
                 node_id, axes["offset_x"], axes["offset_y"], axes["offset_z"])
             self._node_params[node_id][axis] = float(v)
             self._refresh_operation_rows()
-            self._refresh_viewport()
+            if gesture:
+                # PERF 4 — the placement edit is a gesture (the drag
+                # of a tool's position): the async road.
+                self._refresh_viewport_edit()
+            else:
+                self._refresh_viewport()
             self._mark_modified()
 
         old_value = float(op[axis])
         if self._command_stack:
             self._command_stack.push(
-                lambda: apply(value), lambda: apply(old_value),
+                lambda: apply(value, True), lambda: apply(old_value),
                 f"Set {axis} = {value}")
         else:
-            apply(value)
+            apply(value, True)
         self._status.showMessage(f"Set {axis} = {value}", 2000)
 
     def _push_extrude_distance_command(self, node_id: int,
@@ -2858,22 +2905,29 @@ class MainWindow(QMainWindow):
         name = node.name
         old_distance = float(op["distance"])
 
-        def apply(d: float) -> None:
+        def apply(d: float, gesture: bool = False) -> None:
             self._scene.remove_node(node_id)
             self._scene.restore_extrude_node(
                 node_id, name, sketch_id, d, direction)
             self._scene.rebuild_operations()
             self._node_params[node_id] = {"distance": float(d)}
             self._refresh_operation_rows()
-            self._refresh_viewport()
+            if gesture:
+                # PERF 4 — the distance edit is a gesture: the async
+                # road (the prism re-materialized, its display walks
+                # the ladder).
+                self._refresh_viewport_edit()
+            else:
+                self._refresh_viewport()
             self._mark_modified()
 
         if self._command_stack:
             self._command_stack.push(
-                lambda: apply(distance), lambda: apply(old_distance),
+                lambda: apply(distance, True),
+                lambda: apply(old_distance),
                 f"Set distance = {distance}")
         else:
-            apply(distance)
+            apply(distance, True)
         self._status.showMessage(f"Set distance = {distance}", 2000)
 
     def _do_restore_param(self, node_id: int, name: str, old_value: float) -> None:
@@ -2930,6 +2984,13 @@ class MainWindow(QMainWindow):
         """Picking: select the closest visible node in the viewport."""
         if not self._scene or self._scene.empty():
             return
+        # PERF 4 — THE PICK BARRIER (the same door the export walks):
+        # the fillet-kind pick bounds read the node's cached_mesh (the
+        # contractual fine mesh), and a click is a point-in-time query
+        # on the SETTLED state — mid-ladder the freshest answer may be
+        # a draft, and a pick against a stale box is a pick against a
+        # shape the user no longer sees. The barrier settles it here.
+        self._viewport.flush_fine_meshes()
         # Simple picking: find the node whose bounding box is closest
         # to the ray from the camera through the clicked pixel.
         import math

@@ -211,8 +211,14 @@ def gl_window(monkeypatch):
         recorder.restore()
 
 
-def _entry(vw, node_id, seed, n_tris=8):
+def _entry(vw, node_id, seed, n_tris=8, level="fine"):
     """A hand-built mirror entry: a distinct mesh per (node_id, seed).
+
+    PERF 4: the entry carries its LOD level beside the digest — the
+    cache's key is the PAIR. The PERF 1 assertions ride the fine level
+    (the static path's own, the level every PERF 1 act was pinned on);
+    the level's own contract (a bozza never served as the fine) is
+    PERF 4's suite, the same door never a second opinion.
 
     The payload is deterministic in the seed — the same seed answers
     the same bytes, a different seed a different mesh on ALL THREE
@@ -234,7 +240,7 @@ def _entry(vw, node_id, seed, n_tris=8):
     idx[1::3] = (np.arange(1, n_tris + 1) + shift) % n_verts
     idx[2::3] = (np.arange(2, n_tris + 2) + shift) % n_verts
     digest = vw._display_mesh_digest(pos, nor, idx)
-    return vw._NodeDrawEntry(node_id, pos, nor, idx, digest)
+    return vw._NodeDrawEntry(node_id, pos, nor, idx, digest, level)
 
 
 def _served_contract(vw, window, recorder, entries):

@@ -14,7 +14,7 @@ from ctypes import c_void_p
 from typing import Optional, Any
 
 import numpy as np
-from PySide6.QtCore import Qt, QPoint, Signal
+from PySide6.QtCore import Qt, QPoint, QTimer, Signal
 from PySide6.QtGui import QSurfaceFormat, QMouseEvent, QWheelEvent
 from PySide6.QtOpenGL import QOpenGLWindow
 from PySide6.QtWidgets import QWidget, QVBoxLayout
@@ -45,6 +45,15 @@ class ViewportWidget(QWidget):
     """A QWidget that hosts an OpenGL viewport with real rendering."""
 
     clicked = Signal(float, float)
+
+    # PERF 4 — the async road's delivery hop: the display worker
+    # (a plain Python thread, never this one) emits this when a
+    # derivation is ready; a Qt signal emitted from a worker thread is
+    # delivered to THIS thread by a queued connection — the one safe
+    # road from the worker to the UI (the widget's GL state, the
+    # mirror and the scene are the UI thread's alone, the ownership
+    # rule display_pipeline.py's own header names).
+    _display_landed = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -78,11 +87,12 @@ class ViewportWidget(QWidget):
 
         # THE DRAW MIRROR (PERF 1 — the VBO/IBO cache's contract side):
         # one _NodeDrawEntry per VISIBLE feature, holding the node's
-        # derived mesh and its digest. This replaces the old whole-scene
-        # concatenated buffers (_mesh_positions/_mesh_normals/
-        # _mesh_indices): a concatenation is a per-edit rebuild of
-        # EVERYTHING — the very courtesy flush the cache exists to
-        # refuse. The mirror is per-feature because the cache is.
+        # derived mesh, its LOD level (PERF 4) and its digest. This
+        # replaces the old whole-scene concatenated buffers
+        # (_mesh_positions/_mesh_normals/_mesh_indices): a
+        # concatenation is a per-edit rebuild of EVERYTHING — the very
+        # courtesy flush the cache exists to refuse. The mirror is
+        # per-feature because the cache is.
         self._draw_nodes: list = []
         # Selection highlight state: node id -> (first tri, last tri) of
         # that node's OWN buffer (PERF 1: per-feature buffers — the
@@ -95,6 +105,48 @@ class ViewportWidget(QWidget):
         self._node_ranges = {}
         self._selected_node_id = None
         self._selected_node_ids: set = set()
+
+        # PERF 4 — THE ASYNC DISPLAY ROAD (the gesture's own): the
+        # landed display state (node id -> (level, DisplayDerivation))
+        # and the pipeline. The display state holds the draft/medium
+        # meshes of nodes whose fine has not landed yet — display-only
+        # payloads, never the scene's cached_mesh (the commutation
+        # never degrades the data: the contractual mesh is the FINE
+        # one, PERF 1's own contract). The pipeline is created in
+        # set_scene (it needs the scene); None until then, and None
+        # for good when the kernel extension predates PERF 4 (the
+        # declared fallback: the sync road, with the words, never a
+        # silent downgrade — the display_normals fallback's own law).
+        self._display_state: dict = {}
+        self._display_pipeline = None
+        self._async_available = False
+
+        # PERF 4 — THE DECLARED IDLE's own mezzo: a single-shot timer
+        # of exactly IDLE_FINE_DELAY_MS (a FIXED named constant, the
+        # brief's own law — never a runtime-measured threshold). Armed
+        # (restarted) at every edit gesture; its fire is the FINE
+        # level's switch (the pipeline's on_idle — the rule; this
+        # timer, the trigger). The tests fire the switch directly and
+        # never wait on the timer: the rule is the pipeline's, the
+        # milliseconds are the widget's.
+        from CAD_0.ui.display_pipeline import IDLE_FINE_DELAY_MS
+        self._idle_fine_timer = QTimer(self)
+        self._idle_fine_timer.setSingleShot(True)
+        self._idle_fine_timer.setInterval(IDLE_FINE_DELAY_MS)
+        self._idle_fine_timer.timeout.connect(self._on_idle_fine)
+        # The worker's hop: the signal is emitted from the worker
+        # thread (the pipeline's notify_fn) and delivered HERE by the
+        # queued connection Qt makes for cross-thread signals — the
+        # one safe road from the worker to this thread's mirror.
+        self._display_landed.connect(self._drain_display_results)
+
+    def _on_idle_fine(self) -> None:
+        """The idle threshold elapsed (the widget's timer): throw the
+        FINE switch — the pipeline's own rule — and deliver whatever
+        has landed meanwhile."""
+        if self._display_pipeline is not None:
+            self._display_pipeline.on_idle()
+            self._display_pipeline.drain()
 
     def _setup_ui(self) -> None:
         fmt = QSurfaceFormat()
@@ -167,21 +219,191 @@ class ViewportWidget(QWidget):
 
     def set_scene(self, scene: Any) -> None:
         self._scene = scene
+        self._setup_display_pipeline()
         self._refresh_meshes()
 
-    def _refresh_meshes(self) -> None:
-        """Build the draw mirror: one entry per visible feature.
+    def _setup_display_pipeline(self) -> None:
+        """PERF 4 — create (or reset) the async display pipeline for
+        the CURRENT scene. The pipeline is the gesture's road (the
+        three LOD levels, the generation gate — display_pipeline.py's
+        own header); the sync road below stays the static path every
+        non-gesture caller rides. A scene replacement resets the
+        epoch: nothing of the old scene can land in the new one (the
+        reset's own law, ids could even collide).
 
-        The digest is computed HERE, once per refresh (an edit gesture,
-        a visibility flip, a scene load — never per frame): the paint
-        that follows only compares strings. The per-refresh cost is the
-        price of not trusting age, measured and declared (~1 ms/MB on
-        the guide-chain meshes, blake2b-64); the per-frame cost is zero.
+        The declared fallback: a kernel extension that predates PERF 4
+        (no derive_display_mesh / snapshot_display_source /
+        land_fine_mesh) leaves the pipeline None — the gestures ride
+        the sync road WITH THE WORDS, never a silent downgrade (the
+        display_normals fallback's own law, this module's precedent).
+        """
+        from CAD_0.ui.display_pipeline import AsyncDisplayPipeline
+        if self._display_pipeline is not None:
+            self._display_pipeline.reset()
+            self._display_pipeline = None
+        self._display_state = {}
+        self._async_available = False
+        if self._scene is None:
+            return
+        try:
+            import CAD_0 as _cad0
+            if not (hasattr(_cad0.scene, "derive_display_mesh")
+                    and hasattr(_cad0.scene, "snapshot_display_source")
+                    and hasattr(self._scene, "land_fine_mesh")):
+                raise AttributeError("the extension predates PERF 4")
+        except (ImportError, AttributeError) as e:
+            print("[viewport] async display road unavailable "
+                  f"({e}) — the edit gestures ride the synchronous "
+                  "refresh (declared, never silent)")
+            return
+        self._display_pipeline = AsyncDisplayPipeline(
+            scene=self._scene,
+            fine_resolution_fn=lambda: self._tess_resolution,
+            land_fn=self._on_display_landed,
+            notify_fn=self._display_landed.emit,
+        )
+        self._async_available = True
+
+    # ----- PERF 4: the gesture's road (async) --------------------------
+
+    def refresh_edit_gesture(self) -> None:
+        """PERF 4 — THE GESTURE'S ROAD: the edit handler returns
+        immediately; the derivation is the worker's business.
+
+        A discrete edit (a spinbox commit, a canvas drag's committed
+        release) is its own gesture: on_edit schedules the DRAFT of a
+        new generation, on_release the MEDIUM of the same one (the
+        ladder's pairing — display_pipeline.py's own law), and the
+        idle timer arms for the FINE. During the flight the mirror
+        keeps the PREVIOUS meshes (the previous-or-new rule): the
+        landing rebuilds, atomically, when the worker answers.
+        """
+        if not (self._async_available
+                and self._display_pipeline is not None):
+            self._refresh_meshes()     # the declared fallback road
+            return
+        self._display_pipeline.on_edit()
+        self._display_pipeline.on_release()
+        self._display_pipeline.drain()
+        self._idle_fine_timer.start()
+
+    def _drain_display_results(self) -> None:
+        """The delivery hop's far side (the UI thread): deliver every
+        completed result — the generation gate lives in the drain
+        (an obsolete result never lands)."""
+        if self._display_pipeline is not None:
+            self._display_pipeline.drain()
+
+    def _on_display_landed(self, generation: int, level: str,
+                           results: list) -> None:
+        """A job's results, delivered as ONE atomic landing (the
+        no-mixed-state rule): the display state updates for every node
+        in the job, THEN the mirror rebuilds once.
+
+        The FINE level is the contract's own switch: the derivation
+        installs into the node's cached_mesh (the owner thread — this
+        one) and the display state lets go (the fine mesh IS the
+        scene's). The DRAFT and MEDIUM levels are display-pipeline
+        state only — the scene is never touched.
+        """
+        from CAD_0.ui.display_pipeline import LOD_FINE
+        for (node_id, derivation) in results:
+            mesh = derivation.mesh
+            positions = mesh.positions
+            if positions is None or len(positions) == 0:
+                # An empty async answer is not a switch: the previous
+                # mesh stands (the previous-or-new rule; the empty
+                # case is the derive's own refusal, already named by
+                # the pipeline's status line).
+                continue
+            if level == LOD_FINE:
+                self._scene.land_fine_mesh(node_id, mesh)
+                self._display_state.pop(node_id, None)
+            else:
+                self._display_state[node_id] = (level, derivation)
+        self._rebuild_mirror()
+        self._request_update()
+
+    def flush_fine_meshes(self) -> bool:
+        """PERF 4 — THE SYNC BARRIER (the exports' and the picks'
+        door): every consumer of a node's cached_mesh outside the
+        display pipeline must see the CURRENT recipe's FINE mesh. The
+        barrier derives the dirty visible set at FINE on THIS thread
+        (the owner), exactly the static path's own behavior — the
+        commutation never degrades the data. Returns whether anything
+        changed (the caller may rebuild its own views)."""
+        changed = False
+        if (self._async_available
+                and self._display_pipeline is not None):
+            changed = self._display_pipeline.flush_fine()
+        elif self._scene is not None and \
+                hasattr(self._scene, "update_meshes"):
+            # The fallback road is synchronous — nothing can be in
+            # flight; a dirty node here means a caller marked dirty
+            # without a refresh: the static path's own semantics
+            # answer it (idempotent for clean nodes).
+            for i in range(self._scene.node_count()):
+                node = self._scene.node_at(i)
+                if node is not None and node.visible and node.mesh_dirty:
+                    changed = True
+                    break
+            if changed:
+                self._scene.update_meshes(self._tess_resolution)
+        if changed:
+            self._display_state = {}
+            self._rebuild_mirror()
+            self._request_update()
+        return changed
+
+    def shutdown_display_pipeline(self) -> None:
+        """The window is going away: the worker exits at its next job
+        boundary (a daemon — the process never waits on it)."""
+        if self._display_pipeline is not None:
+            self._display_pipeline.stop()
+            self._display_pipeline = None
+            self._async_available = False
+
+    def _refresh_meshes(self) -> None:
+        """THE SYNC ROAD (the static path — PERF 4's own naming): the
+        refresh every non-gesture caller rides (loads, undo, visibility,
+        selection, resolution changes). The whole derivation runs HERE,
+        on the UI thread, exactly as it always did — and the async
+        road's pending work is superseded first: a result that would
+        land after this refresh belongs to a world this refresh just
+        replaced (the pipeline's supersede — the epoch moves).
+
+        The mirror itself is built by _rebuild_mirror (the one builder
+        both roads share — the mirror's own single definition).
         """
         if self._scene is None:
             return
+        if self._display_pipeline is not None:
+            self._display_pipeline.supersede()
+        self._display_state = {}
         if hasattr(self._scene, 'update_meshes'):
             self._scene.update_meshes(self._tess_resolution)
+        self._rebuild_mirror()
+        self._request_update()
+
+    def _rebuild_mirror(self) -> None:
+        """Build the draw mirror: one entry per visible feature, from
+        whichever road owns the node's freshest mesh — the async
+        display state (a landed draft/medium of the current
+        generation) or the node's cached_mesh (the fine/clean
+        contractual mesh). The entry carries its LOD LEVEL beside the
+        digest: the VBO cache's key is the PAIR (PERF 4 — a bozza mesh
+        is never served where the fine one is declared; the level is
+        the declaration of which contract the bytes serve).
+
+        The digest is computed HERE, once per rebuild (an edit
+        gesture's landing, a sync refresh — never per frame): the
+        per-rebuild cost is the price of not trusting age, measured
+        and declared (~1 ms/MB on the guide-chain meshes, blake2b-64);
+        the per-frame cost is zero.
+        """
+        from CAD_0.ui.display_pipeline import LOD_FINE
+        if self._scene is None:
+            return
         entries = []
         node_ranges = {}
         count = self._scene.node_count()
@@ -189,47 +411,68 @@ class ViewportWidget(QWidget):
             node = self._scene.node_at(i)
             if node is None or not node.visible:
                 continue
-            mesh = node.cached_mesh
-            pos = mesh.positions
-            idx = mesh.indices
-            if pos is None or len(pos) == 0 or idx is None or len(idx) == 0:
-                # THE DECLARED DIAGNOSTIC (the 2026-11-13 correttiva,
-                # the click-test's second face): a visible node whose
-                # display mesh is empty after the tessellation pass is
-                # never dropped in silence again. The case is
-                # UNREACHABLE for valid nodes — the C++ dirty-flag
-                # discipline hands every insertion, restore and load
-                # over dirty (scene.hpp: add_node, restore_sdf_node,
-                # the io loader all set mesh_dirty, and update_meshes
-                # tessellates dirty+visible before this loop reads the
-                # cache) — so what reaches here is a defect by
-                # definition: a discipline bug, a degenerate body, a
-                # corrupted payload. The old `continue` made it a
-                # disappearance without a word; the cure names it on
-                # the status log (the [viewport] tag, this module's
-                # own convention) so the next pair of eyes asks WHY,
-                # not WHERE DID IT GO. One line per node per refresh —
-                # the refresh runs per gesture, never per frame.
-                # EXEMPT BY DESIGN: sketch-kind nodes (2D data, no 3D
-                # mesh, ADR-0030 D2) — their emptiness is the design,
-                # not a defect, and diagnosing it would be noise.
-                if getattr(node, "kind", "sdf") == "sketch":
+            landed = self._display_state.get(node.id)
+            if landed is not None:
+                # The async road's payload: the derivation's own
+                # arrays (the mesh positions/indices + the display
+                # normals computed off the snapshot) — never the
+                # scene's, never the live body (the ownership rule).
+                level, derivation = landed
+                mesh = derivation.mesh
+                pos = mesh.positions
+                idx = mesh.indices
+                if pos is None or len(pos) == 0 or idx is None \
+                        or len(idx) == 0:
                     continue
-                print(
-                    f"[viewport] node {node.id} ({node.name!r}) is "
-                    "visible but carries no display mesh after the "
-                    "refresh - its tessellation cache is empty (kind "
-                    f"{getattr(node, 'kind', '?')}); it is excluded "
-                    "from this frame. A valid node never lands here "
-                    "(the dirty-flag discipline derives every visible "
-                    "body): this is a defect to report, not a silence "
-                    "to trust.")
-                continue
-            # Shading normals come from the field, not the mesh (the
-            # graphics-sprint display pipeline — see _display_normals).
-            # Positions/indices are still the node's own mesh: exports
-            # and the bridge read those from the node, byte-identically.
-            nor = _display_normals(node)
+                nor = derivation.display_normals
+                level_of_entry = level
+            else:
+                mesh = node.cached_mesh
+                pos = mesh.positions
+                idx = mesh.indices
+                if pos is None or len(pos) == 0 or idx is None \
+                        or len(idx) == 0:
+                    # THE DECLARED DIAGNOSTIC (the 2026-11-13
+                    # correttiva, the click-test's second face): a
+                    # visible node whose display mesh is empty after
+                    # the tessellation pass is never dropped in
+                    # silence again. The case is UNREACHABLE for valid
+                    # nodes — the C++ dirty-flag discipline hands
+                    # every insertion, restore and load over dirty
+                    # (scene.hpp: add_node, restore_sdf_node, the io
+                    # loader all set mesh_dirty, and update_meshes
+                    # tessellates dirty+visible before this loop reads
+                    # the cache) — so what reaches here is a defect by
+                    # definition: a discipline bug, a degenerate body,
+                    # a corrupted payload. The old `continue` made it
+                    # a disappearance without a word; the cure names
+                    # it on the status log (the [viewport] tag, this
+                    # module's own convention) so the next pair of
+                    # eyes asks WHY, not WHERE DID IT GO. One line per
+                    # node per refresh — the refresh runs per gesture,
+                    # never per frame. EXEMPT BY DESIGN: sketch-kind
+                    # nodes (2D data, no 3D mesh, ADR-0030 D2) — their
+                    # emptiness is the design, not a defect, and
+                    # diagnosing it would be noise.
+                    if getattr(node, "kind", "sdf") == "sketch":
+                        continue
+                    print(
+                        f"[viewport] node {node.id} ({node.name!r}) is "
+                        "visible but carries no display mesh after the "
+                        "refresh - its tessellation cache is empty (kind "
+                        f"{getattr(node, 'kind', '?')}); it is excluded "
+                        "from this frame. A valid node never lands here "
+                        "(the dirty-flag discipline derives every visible "
+                        "body): this is a defect to report, not a silence "
+                        "to trust.")
+                    continue
+                # Shading normals come from the field, not the mesh
+                # (the graphics-sprint display pipeline — see
+                # _display_normals). Positions/indices are still the
+                # node's own mesh: exports and the bridge read those
+                # from the node, byte-identically.
+                nor = _display_normals(node)
+                level_of_entry = LOD_FINE
             pos = np.ascontiguousarray(pos, dtype="<f4")
             idx = np.ascontiguousarray(idx, dtype="<u4")
             if nor is not None and len(nor) == len(pos):
@@ -239,10 +482,10 @@ class ViewportWidget(QWidget):
             digest = _display_mesh_digest(pos, nor, idx)
             n_tris = len(idx) // 3
             node_ranges[node.id] = (0, n_tris)
-            entries.append(_NodeDrawEntry(node.id, pos, nor, idx, digest))
+            entries.append(_NodeDrawEntry(
+                node.id, pos, nor, idx, digest, level_of_entry))
         self._draw_nodes = entries
         self._node_ranges = node_ranges
-        self._request_update()
 
     def set_camera_target(self, x: float, y: float, z: float) -> None:
         self._cam_target = (x, y, z)
@@ -742,40 +985,56 @@ class _ViewportWindow(QOpenGLWindow):
         self._drop_absent_buffers(set(live))
 
     def _ensure_node_buffers(self, entry: "_NodeDrawEntry") -> "_NodeGpuBuffers":
-        """THE INVALIDATION CONTRACT (PERF 1) — every rule named, with
-        its perché:
+        """THE INVALIDATION CONTRACT (PERF 1, its PERF 4 amendment) —
+        every rule named, with its perché:
 
-        1. THE DIGEST IS THE ONLY KEY. A feature's buffers are reused
-           iff the digest of the mesh they HOLD equals the digest of
-           the mesh the mirror DECLARES — never age, never the scene's
-           dirty flag, never object identity. The comparison is at the
-           point of service (here), so a stale buffer cannot be drawn
-           without the digest having certified the bytes in it.
+        1. THE KEY IS THE (LEVEL, DIGEST) PAIR (PERF 4's amendment —
+           the digest alone was PERF 1's key, and the bytes' identity
+           it still certifies; the LEVEL joined it because the bytes
+           are an ANSWER TO A DECLARATION: a draft's coarse triangles
+           and a fine's full ones are different contracts even in the
+           one pathological case their BYTES coincide (a body whose
+           mesh is empty at every resolution). A feature's buffers are
+           reused iff the pair of what they HOLD equals the pair the
+           mirror DECLARES — never age, never the scene's dirty flag,
+           never object identity. The comparison is at the point of
+           service (here), so a stale buffer cannot be drawn without
+           the pair having certified the bytes in it — and a bozza
+           mesh can never be served where the fine one is declared:
+           the pair refuses it by construction, the permanent test's
+           own assertion.
 
         2. AN EDIT TOUCHES ONE FEATURE -> ONE FEATURE RE-UPLOADS. The
            scene's own dirty-flag discipline re-tessellates only the
            touched features (and the declared dependents — the operand
            edit that invalidates a consumer re-derives the consumer's
            mesh); untouched features keep byte-identical meshes, their
-           digests match, their buffers are served with ZERO upload.
+           pairs match, their buffers are served with ZERO upload.
            There is NO whole-scene flush here — per-feature buffers ARE
            the granularity, and a courtesy flush is what this cache
            exists to refuse.
 
         3. THE UPLOAD IS THE EXCEPTION, NOT THE RULE. glBufferData runs
-           exactly when a digest differs (a re-derived mesh, a first
-           sight) — the stable path (orbit, selection, visibility —
-           any frame that changes no mesh bytes) uploads NOTHING.
+           exactly when the pair differs (a re-derived mesh, a LOD
+           switch, a first sight) — the stable path (orbit, selection,
+           visibility — any frame that changes no mesh bytes) uploads
+           NOTHING. The LOD ladder's switches re-upload the ONE edited
+           feature per level (draft -> medium -> fine): three uploads
+           of one feature through a gesture, the untouched features at
+           zero — PERF 1's granularity carrying the levels for free.
 
         Why glBufferData and not glBufferSubData: a re-derived mesh can
-        change SIZE (a fillet at a new radius, a resolution bump);
-        glBufferData re-specifies the storage wholesale — one call, the
-        old bytes gone, the entry's digest replaced by the mesh's own.
+        change SIZE (a fillet at a new radius, a resolution bump — and
+        every LOD switch by construction); glBufferData re-specifies
+        the storage wholesale — one call, the old bytes gone, the
+        entry's pair replaced by the mirror's own.
         """
         cached = self._node_buffers.get(entry.node_id)
-        if cached is not None and cached.digest == entry.digest:
-            # The bytes in these buffers ARE the mesh's — verified by
-            # the digest, the only witness the cache trusts.
+        if cached is not None and cached.digest == entry.digest \
+                and cached.level == entry.level:
+            # The bytes in these buffers ARE the mesh's, serving the
+            # declared level — verified by the pair, the only witness
+            # the cache trusts.
             return cached
         if cached is None:
             pos_buf, nor_buf, idx_buf = (int(b) for b in glGenBuffers(3))
@@ -790,6 +1049,7 @@ class _ViewportWindow(QOpenGLWindow):
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, entry.indices,
                      GL_STATIC_DRAW)
         cached.digest = entry.digest
+        cached.level = entry.level
         cached.vertex_count = entry.vertex_count
         cached.triangle_count = entry.triangle_count
         return cached
@@ -903,30 +1163,38 @@ def _display_mesh_digest(positions, normals, indices) -> str:
 class _NodeDrawEntry:
     """One visible feature's display mesh, mirrored for the draw.
 
-    Built by _refresh_meshes (the wrapper — no GL): the arrays are the
-    node's own derived mesh (positions/indices the scene's cache, the
-    display normals the field's), typed contiguous, with the mesh's
-    digest. The paint uploads NOTHING the mirror did not declare.
+    Built by _rebuild_mirror (the one builder both roads share): the
+    arrays are the node's freshest derived mesh — the async road's
+    landed derivation (a draft/medium of the current generation) or
+    the sync road's cached_mesh (the fine/clean contractual mesh) —
+    typed contiguous, with the payload's digest and the LOD LEVEL the
+    bytes serve (PERF 4: the level travels WITH the digest; the VBO
+    cache's key is the pair). The paint uploads NOTHING the mirror did
+    not declare.
     """
 
     __slots__ = ("node_id", "positions", "normals", "indices",
-                 "digest", "vertex_count", "triangle_count")
+                 "digest", "level", "vertex_count", "triangle_count")
 
-    def __init__(self, node_id, positions, normals, indices, digest):
+    def __init__(self, node_id, positions, normals, indices, digest,
+                 level):
         self.node_id = node_id
         self.positions = positions
         self.normals = normals
         self.indices = indices
         self.digest = digest
+        self.level = level
         self.vertex_count = len(positions)
         self.triangle_count = len(indices) // 3
 
 
 class _NodeGpuBuffers:
     """The GL buffer objects holding ONE feature's display mesh, with
-    the digest of the bytes they hold — the cache's own entry."""
+    the digest of the bytes they hold AND the level those bytes serve
+    — the cache's own entry (PERF 4: the level joined the key; a
+    buffer is served iff the pair matches, never the digest alone)."""
 
-    __slots__ = ("pos_buf", "nor_buf", "idx_buf", "digest",
+    __slots__ = ("pos_buf", "nor_buf", "idx_buf", "digest", "level",
                  "vertex_count", "triangle_count")
 
     def __init__(self, pos_buf, nor_buf, idx_buf):
@@ -934,6 +1202,7 @@ class _NodeGpuBuffers:
         self.nor_buf = nor_buf
         self.idx_buf = idx_buf
         self.digest = None          # set at the first upload
+        self.level = None           # set beside the digest (PERF 4)
         self.vertex_count = 0
         self.triangle_count = 0
 
