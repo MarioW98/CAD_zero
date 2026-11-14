@@ -430,6 +430,14 @@ ChainGateVerdict chain_gate(const ChainStep& step) {
         // (ADR-0036 D4's queue), said in the header where it bites.
         for (const auto& row : tav.rows) {
             if (row.entity == EntityKind::Vertex) continue;
+            // The UNNAMED rows are skipped TOO (the corner act's
+            // cap arc — the first unnamed entity a fillet step ever
+            // kills, G5 m3): a depth-0 stamp answers on nothing by
+            // construction, and the by-name check has no hold to
+            // verify; the death is booked by the ADDRESS closure
+            // above and the cause verbatim — said here, never a
+            // false "still answers" on the unnamed.
+            if (row.shape_id.subshape.depth == 0) continue;
             if (row.relation == Descent::Vanished) {
                 const bool answers =
                     row.entity == EntityKind::Edge

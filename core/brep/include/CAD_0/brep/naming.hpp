@@ -648,21 +648,51 @@ inline constexpr OperandSlot kFilIsectWallSlots[2] = {
     {1, false, RoleForm::ArgIndex},  // the wall landing (lat(i))
     {2, false, RoleForm::Bare},      // the flank (the same feature)
 };
+// THE COAXIAL WIRE'S SLOTS (G5 m3, ADR-0043 D2.5: 'fil#F:isect[
+// fil#F:corner[...] x fil#F:flank[...]]' — the corner sphere's
+// contact arcs): BOTH legs are the fillet's OWN born faces (the
+// corner and the flank ride the same-feature operand, never the
+// body's tables) — the level absent like every isect (the coaxial
+// tangency IS the level). The row APPENDS after the rim's.
+inline constexpr OperandSlot kFilIsectCoaxSlots[2] = {
+    {1, false, RoleForm::Bare},  // the corner sphere (the same
+                                 // feature's born face)
+    {1, false, RoleForm::Bare},  // the flank (the same feature)
+};
 inline constexpr OperandSlot kFilSeamSlots[1] = {
     {2, false, RoleForm::Bare},  // the flank itself — the seam
                                  // is the flank's own (G2-u3 m3: the
                                  // periodic closure the box class's
                                  // bounded patch never carries)
 };
-inline constexpr RoleEntry kFilletFaceRoles[2] = {
+// THE CORNER SPHERE'S SLOTS (G5 m3, ADR-0043 D2.5 — "l'estensione è
+// UN ruolo nuovo"): the corner act's born sphere names its THREE
+// adjacent planes in the picker's own order — the first the
+// reference edge's first face, then its second, then the corner's
+// third plane (the one the requested edge does not border). All
+// bare: the box family's faces are the factory's own (the m2
+// flank's own precedent), the row APPENDS after the rim's — the m2
+// indices stay frozen by the m2 goldens.
+inline constexpr OperandSlot kFilCornerSlots[3] = {
+    {0, false, RoleForm::Bare},  // the reference edge's first face
+    {0, false, RoleForm::Bare},  // its second (the co-edge order)
+    {0, false, RoleForm::Bare},  // the corner's third plane
+};
+inline constexpr RoleEntry kFilletFaceRoles[3] = {
     {"flank", RoleForm::Relational, nullptr, nullptr, kFilFlankSlots},
     // The rim flank (G2-u3 m3): the pierced face x the wall, the
     // same token, its own slots - the row APPENDS, the m2 index
     // frozen (the subtract's own four-isect pattern).
     {"flank", RoleForm::Relational, nullptr, nullptr,
      kFilFlankRimSlots},
+    // The corner sphere (G5 m3, ADR-0043 D2.5): 'fil#F:corner[<A> ×
+    // <B> × <C>]' — the three adjacent planes, the creator the
+    // fillet that birthed it. The row APPENDS; the flank rows'
+    // indices stay frozen by their own goldens.
+    {"corner", RoleForm::Relational, nullptr, nullptr,
+     kFilCornerSlots},
 };
-inline constexpr RoleEntry kFilletEdgeRoles[4] = {
+inline constexpr RoleEntry kFilletEdgeRoles[5] = {
     {"isect", RoleForm::Relational, nullptr, nullptr, kFilIsectSlots},
     {"seam", RoleForm::Relational, nullptr, nullptr,
      kFilSeamSlots},  // the flank's own seam (G2-u3 m3, ADR-0039
@@ -674,6 +704,11 @@ inline constexpr RoleEntry kFilletEdgeRoles[4] = {
      kFilIsectPlaneSlots},
     {"isect", RoleForm::Relational, nullptr, nullptr,
      kFilIsectWallSlots},
+    // The corner act's coaxial wires (G5 m3, ADR-0043 D2.5): the
+    // sphere's contact arcs, both legs the fillet's own (the
+    // level absent — the coaxial tangency IS the level).
+    {"isect", RoleForm::Relational, nullptr, nullptr,
+     kFilIsectCoaxSlots},
 };
 
 // The fillet's TYPE-level declaration: the operand bindings are
@@ -698,6 +733,14 @@ inline constexpr std::uint32_t kFilIsectPlaneRole = 2;  // edges: the
 // plane contact's wire (the pierced landing, bare)
 inline constexpr std::uint32_t kFilIsectWallRole = 3;   // edges: the
 // wall contact's wire (the wall landing, indexed)
+inline constexpr std::uint32_t kFilCornerRole = 2;  // faces: the corner
+// sphere (G5 m3, ADR-0043 D2.5: 'fil#F:corner[<A> × <B> × <C>]' —
+// the three adjacent planes in the picker's order; the flank rows'
+// indices stay frozen)
+inline constexpr std::uint32_t kFilIsectCoaxRole = 4;  // edges: the
+// corner act's coaxial wires (G5 m3: the sphere's contact arcs,
+// corner × flank, both the fillet's own — the rim rows' indices
+// stay frozen)
 
 // ---------------------------------------------------------------------------
 // THE ROOT REFERENCE — the authored roots the tavola's FROM names

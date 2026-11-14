@@ -416,22 +416,23 @@ TEST_CASE("G5 m2 the walls: the occupied corner refused with the "
         const auto one =
             b::fillet_edge(*box, vertical2, kR, vctx);
         REQUIRE(one != nullptr);
+        // THE RE-PIN (G5 m3, the corner act's landing): this call
+        // — the vertical-occupied corner, the very seat the m2 wall
+        // refused naming the act — now PERFORMS the corner act (the
+        // wall became the act's trigger, ADR-0043 D5.2/D9): the
+        // sphere, the two ring flanks already refined, the vertical
+        // re-windowed, 13/21/10. The act's own goldens (the
+        // tavola, the digests, the volume) are the m3 test's
+        // (test_g5_m3_corner_act.cpp); here the door's pin: the
+        // call lands, the counts are the act's own arithmetic.
         const b::FilletNaming rctx{FeatureId{3}, &n::kBoxNaming};
-        bool threw = false;
-        std::string msg;
-        try {
-            const auto dead =
-                b::fillet_ring_edge(*one, top1, kR, rctx);
-            (void)dead;
-        } catch (const std::invalid_argument& e) {
-            threw = true;
-            msg = e.what();
-        }
-        REQUIRE(threw);
-        CHECK(msg.find("occupied") != std::string::npos);
-        CHECK(msg.find("flank") != std::string::npos);
-        CHECK(msg.find("quartic") != std::string::npos);
-        CHECK(msg.find("Remedy") != std::string::npos);
+        const auto two =
+            b::fillet_ring_edge(*one, top1, kR, rctx);
+        REQUIRE(two != nullptr);
+        CHECK(two->vertices.size() == 13);
+        CHECK(two->edges.size() == 21);
+        CHECK(two->face_count() == 10);
+        CHECK(b::euler_characteristic(*two) == 2);
     }
 
     // (2) THE CORNER COLLISION, ring-then-ring: fil#2 on top1, then

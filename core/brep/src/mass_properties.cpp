@@ -1015,21 +1015,122 @@ MassProperties mass_properties(const BRepBody& body, math::Tolerance tol) {
             }
             total.accumulate(cylinder_contrib(fr, u0, u1, v0, v1));
         } else if (family == SurfaceFamily::Sphere) {
-            // The FULL sphere's closed form — the only sphere the
-            // exact world produces (trimmed spheres are G2's, D1).
-            if (faces.size() != 1)
-                throw std::invalid_argument(
-                    "mass_properties: face " + std::to_string(fi) +
-                    " is a sphere among " + std::to_string(faces.size()) +
-                    " faces - only the FULL sphere (the factory's "
-                    "seam-wired single-face body) is in the G1 class; a "
-                    "trimmed spherical region arises from sphere "
-                    "booleans (G2's table). Remedy: check the body's "
-                    "construction.");
-            total.accumulate(sphere_contrib(reader.sphere->origin().x,
-                                            reader.sphere->origin().y,
-                                            reader.sphere->origin().z,
-                                            reader.sphere->radius()));
+            // The FULL sphere's closed form when the body IS the
+            // sphere (the factory's seam-wired single-face body);
+            // otherwise the SPHERICAL WINDOW (G5 m3, ADR-0043
+            // D5.2): the corner act's ottanto — a trimmed patch
+            // whose loop is the rectangle-window class (the
+            // cylinders' own discipline, one family over: the
+            // bounding box of the Line2 endpoints, verified on the
+            // boundary). The integrals are the ellipsoid's own
+            // (a = c = R, the frame rides the surface as data) —
+            // the K1 m3 BForm recurrence, ZERO new machinery.
+            if (faces.size() == 1) {
+                total.accumulate(
+                    sphere_contrib(reader.sphere->origin().x,
+                                   reader.sphere->origin().y,
+                                   reader.sphere->origin().z,
+                                   reader.sphere->radius()));
+            } else {
+                double u0 = std::numeric_limits<double>::infinity();
+                double u1 = -std::numeric_limits<double>::infinity();
+                double v0 = std::numeric_limits<double>::infinity();
+                double v1 = -std::numeric_limits<double>::infinity();
+                std::vector<std::pair<double, double>> endpoints;
+                for (const auto& loop : f.loops())
+                    for (const auto& ce : loop.coedges()) {
+                        const auto* pc = ce.p_curve();
+                        if (pc == nullptr)
+                            throw std::invalid_argument(
+                                "mass_properties: face " +
+                                std::to_string(fi) +
+                                " is exact but a co-edge carries no "
+                                "p-curve - the exact world's invariant "
+                                "is violated. Remedy: report the "
+                                "body's construction.");
+                        if (pc->kind != PCurve::Kind::Segment)
+                            throw std::invalid_argument(
+                                "mass_properties: face " +
+                                std::to_string(fi) +
+                                "'s spherical loop carries a "
+                                "non-Line2 p-curve - outside the "
+                                "rectangle-window class (the ottanto's "
+                                "meridians and equator are param "
+                                "lines, ADR-0043 D5.2). Remedy: "
+                                "report the body's construction.");
+                        endpoints.push_back(
+                            {pc->segment.a.x, pc->segment.a.y});
+                        endpoints.push_back(
+                            {pc->segment.b.x, pc->segment.b.y});
+                    }
+                for (const auto& e : endpoints) {
+                    u0 = std::min(u0, e.first);
+                    u1 = std::max(u1, e.first);
+                    v0 = std::min(v0, e.second);
+                    v1 = std::max(v1, e.second);
+                }
+                if (u1 - u0 <= tol.value || v1 - v0 <= tol.value)
+                    throw std::invalid_argument(
+                        "mass_properties: face " + std::to_string(fi) +
+                        "'s spherical window is degenerate ([" +
+                        std::to_string(u0) + ", " + std::to_string(u1) +
+                        "] x [" + std::to_string(v0) + ", " +
+                        std::to_string(v1) + "]) - a zero-area patch. "
+                        "Remedy: report the body's construction.");
+                if (u1 - u0 > 2.0 * M_PI + tol.value)
+                    throw std::invalid_argument(
+                        "mass_properties: face " + std::to_string(fi) +
+                        "'s spherical window spans " +
+                        std::to_string(u1 - u0) +
+                        " > 2pi - the patch would double-cover the "
+                        "sphere. Remedy: report the body's "
+                        "construction.");
+                for (const auto& e : endpoints) {
+                    const bool on_u =
+                        std::abs(e.first - u0) <= tol.value ||
+                        std::abs(e.first - u1) <= tol.value;
+                    const bool on_v =
+                        std::abs(e.second - v0) <= tol.value ||
+                        std::abs(e.second - v1) <= tol.value;
+                    if (!(on_u || on_v))
+                        throw std::invalid_argument(
+                            "mass_properties: face " +
+                            std::to_string(fi) +
+                            "'s spherical loop leaves the window "
+                            "boundary (the point (" +
+                            std::to_string(e.first) + ", " +
+                            std::to_string(e.second) +
+                            ") is strictly inside) - a non-rectangular "
+                            "patch is outside the window class. "
+                            "Remedy: report the body's construction.");
+                }
+                EllipsoidFrame fr{};
+                fr.C[0] = reader.sphere->origin().x;
+                fr.C[1] = reader.sphere->origin().y;
+                fr.C[2] = reader.sphere->origin().z;
+                fr.e0[0] = reader.sphere->azimuth().x;
+                fr.e0[1] = reader.sphere->azimuth().y;
+                fr.e0[2] = reader.sphere->azimuth().z;
+                fr.e1[0] = reader.sphere->azimuth().y *
+                               reader.sphere->pole().z -
+                           reader.sphere->azimuth().z *
+                               reader.sphere->pole().y;
+                fr.e1[1] = reader.sphere->azimuth().z *
+                               reader.sphere->pole().x -
+                           reader.sphere->azimuth().x *
+                               reader.sphere->pole().z;
+                fr.e1[2] = reader.sphere->azimuth().x *
+                               reader.sphere->pole().y -
+                           reader.sphere->azimuth().y *
+                               reader.sphere->pole().x;
+                fr.n[0] = reader.sphere->pole().x;
+                fr.n[1] = reader.sphere->pole().y;
+                fr.n[2] = reader.sphere->pole().z;
+                fr.a = reader.sphere->radius();
+                fr.c = reader.sphere->radius();
+                total.accumulate(
+                    ellipsoid_contrib(fr, u0, u1, v0, v1));
+            }
         } else if (family == SurfaceFamily::Torus) {
             // THE TOROIDAL PATCH (G2-u3 m3, ADR-0039 D1.2): the
             // (u, v) rectangle integrals — the family that landed

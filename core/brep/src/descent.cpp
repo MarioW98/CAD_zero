@@ -2003,7 +2003,55 @@ DescentTable fillet_descent(const BRepBody& result,
             else
                 booked_f[static_cast<std::size_t>(ref.address)] = true;
         }
-        const char* cause = "replaced by the flank";
+        // THE CAUSE, per death (the K1 m6 discipline, the corner
+        // act's own leg, G5 m3, ADR-0043 D5.4): a dead EDGE that
+        // carried an ARC p-curve died to the corner sphere's
+        // tangency (the vertical flank's cap arc — the death
+        // D5.4's own words name) — but ONLY when the act ran (the
+        // result carries a born sphere; the vertical walk's own cap
+        // arcs die to the FLANK, their class's own cause, the
+        // m2/m3 goldens' pins); a dead STRAIGHT edge died to the
+        // flank it made room for. The vertices ride their edges'
+        // causes.
+        const char* cause_flank = "replaced by the flank";
+        const char* cause_sphere =
+            "replaced by the corner sphere's tangent arc";
+        bool act_ran = false;
+        {
+            struct SphereReader : SurfaceVisitor {
+                const SphereSurface* sphere{nullptr};
+                void visit(const SphereSurface& s) override {
+                    sphere = &s;
+                }
+            };
+            const auto& rfaces = result.solid.shell().faces();
+            for (std::size_t i = 0; i < rfaces.size() && !act_ran;
+                 ++i) {
+                SphereReader sr;
+                rfaces[i].surface()->accept(sr);
+                act_ran = sr.sphere != nullptr;
+            }
+        }
+        const auto edge_died_to_sphere = [&](std::size_t i) {
+            if (!act_ran) return false;
+            for (const CoEdge* ce : operand.edges[i].coedges()) {
+                const auto* pc = ce->p_curve();
+                if (pc == nullptr) continue;
+                if (pc->kind != PCurve::Kind::Segment) return true;
+            }
+            return false;
+        };
+        const auto vertex_died_to_sphere = [&](std::size_t i) {
+            for (std::size_t ei = 0; ei < operand.edges.size();
+                 ++ei) {
+                const auto& e = operand.edges[ei];
+                if (e.vertex(0) != static_cast<VertexId>(i) &&
+                    e.vertex(1) != static_cast<VertexId>(i))
+                    continue;
+                if (edge_died_to_sphere(ei)) return true;
+            }
+            return false;
+        };
         for (std::size_t i = 0; i < operand.vertices.size(); ++i)
             if (!booked_v[i])
                 table.rows.push_back(
@@ -2011,7 +2059,9 @@ DescentTable fillet_descent(const BRepBody& result,
                      static_cast<std::uint64_t>(i),
                      {{0, EntityKind::Vertex,
                        static_cast<std::uint64_t>(i)}},
-                     "", {}, cause});
+                     "", {},
+                     vertex_died_to_sphere(i) ? cause_sphere
+                                              : cause_flank});
         for (std::size_t i = 0; i < operand.edges.size(); ++i)
             if (!booked_e[i])
                 table.rows.push_back(
@@ -2019,7 +2069,9 @@ DescentTable fillet_descent(const BRepBody& result,
                      static_cast<std::uint64_t>(i),
                      {{0, EntityKind::Edge,
                        static_cast<std::uint64_t>(i)}},
-                     operand.edges[i].name(), {}, cause});
+                     operand.edges[i].name(), {},
+                     edge_died_to_sphere(i) ? cause_sphere
+                                            : cause_flank});
         const auto& ofaces = operand.solid.shell().faces();
         for (std::size_t i = 0; i < ofaces.size(); ++i)
             if (!booked_f[i])
@@ -2028,7 +2080,7 @@ DescentTable fillet_descent(const BRepBody& result,
                      static_cast<std::uint64_t>(i),
                      {{0, EntityKind::Face,
                        static_cast<std::uint64_t>(i)}},
-                     ofaces[i].name(), {}, cause});
+                     ofaces[i].name(), {}, cause_flank});
     }
 
 #ifndef NDEBUG
