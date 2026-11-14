@@ -1794,18 +1794,23 @@ inline std::unique_ptr<BRepBody> fillet_ring_edge(
         return a;
     };
     const double uA = az(n2_A), uB = az(n2_B);
-    bool a_at_u0;
-    if (std::abs(mod2pi(uB - uA) - kPi / 2.0) <=
-        kFilletArcSpanDefectBand)
-        a_at_u0 = true;   // B rides u1 = u0 + pi/2
-    else if (std::abs(mod2pi(uA - uB) - kPi / 2.0) <=
-             kFilletArcSpanDefectBand)
-        a_at_u0 = false;  // A rides u1, B the u0
-    else
+    // The perpendicular pair's own discrimination, both flags read
+    // BEFORE the refusal: every path to the use below is
+    // initialized (the refuse branch throws and never falls
+    // through — the structure answers the clang column's
+    // -Wsometimes-uninitialized, never a flag).
+    const bool uA_leads =
+        std::abs(mod2pi(uB - uA) - kPi / 2.0) <=
+        kFilletArcSpanDefectBand;  // B rides u1 = u0 + pi/2
+    const bool uB_leads =
+        std::abs(mod2pi(uA - uB) - kPi / 2.0) <=
+        kFilletArcSpanDefectBand;  // A rides u1, B the u0
+    if (!uA_leads && !uB_leads)
         refuse("the tangent azimuths are not a perpendicular pair "
                "(the class's own are a quarter apart) - the closed "
                "forms and the walk disagree; report this as a "
                "kernel bug.");
+    const bool a_at_u0 = uA_leads;
     const double u0 = a_at_u0 ? uA : uB;
     const double u1 = u0 + kPi / 2.0;
     // The corner-facing quarter, guarded: the bisector's azimuth
