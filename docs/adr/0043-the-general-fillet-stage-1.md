@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-14) — in revisione, zero codice. Questo ADR è la
+Accepted (2026-11-14) — the flip is the maintainer's own act. Questo ADR è la
 proposta che apre la linea G5; nessun morso di implementazione parte
 prima dell'accettazione del maintainer. Il metodo è quello di casa
 (ADR-0031 D5): l'ambito è ciò che i guide cases e la scala raggiungono
