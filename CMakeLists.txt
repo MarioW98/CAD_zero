@@ -45,7 +45,15 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(CAD_0_BUILD_TESTING  "Build unit + regression tests" ON)
-option(CAD_0_BUILD_BENCHMARKS "Build benchmarks" OFF)
+# The benchmark suite (the perf rows' code) is IN the build by
+# default (the 2026-11-15 correttiva's law: a claim of throughput
+# rests on code the CI compiles — the option was declared OFF and
+# consumed NOWHERE, a dead switch while the targets rode the
+# unguarded add_subdirectory; now it is REAL: ON by default, the
+# guard at tests/CMakeLists.txt's benchmarks subdirectory, so
+# turning it OFF is a deliberate act that removes the targets
+# from the graph — never a silent default).
+option(CAD_0_BUILD_BENCHMARKS "Build the benchmark suite (the perf rows' code — the compile discipline)" ON)
 option(CAD_0_BUILD_PYTHON   "Build Python bindings (nanobind)" ON)
 option(CAD_0_BUILD_EXAMPLES "Build C++ examples" ON)
 option(CAD_0_SANITIZE       "Enable ASan/UBSan (debug builds only)" OFF)

@@ -139,6 +139,40 @@ jobs:
       - name: Test
         run: ctest --preset ${{ matrix.preset }}
 
+      # THE BENCHMARK ROWS' CI SEAT (the 2026-11-15 correttiva, the
+      # false-green cure): the bench TARGETS have been in the
+      # all-targets build above since their landings (the unguarded
+      # add_subdirectory — nothing ever excluded them), but nothing
+      # ever RAN them here, and the maintainer's local GCC-13 red on
+      # perf3_evaluator's __has_feature idiom (cured at the source —
+      # the fallback macro, the CI's g++-14 having masked the defect
+      # by accepting the operator) showed the posture was INVISIBLE:
+      # green-on-the-runner proved nothing about the code any other
+      # compiler in the wild would see. THE LAW FROM NOW ON: a claim
+      # of throughput rests on code the CI COMPILES AND JUDGES —
+      # always, no target outside the CI's graph. The DETERMINISTIC
+      # half is the judged substance on every column (the digests
+      # verified every iteration, the drift refusal, the FNV-pinned
+      # verdict — column-invariant by design); the timing half rides
+      # along (within-run ratios only, generous bounds — measured
+      # 0/4/1 s for the three on a shared two-core sandbox; under
+      # the debug column's ASan/UBSan: 1 s (m8), 291 s (perf2 — the
+      # memory bench's shadow tax, the cost DECLARED here, bounded
+      # and paid for its deterministic half) and 8 s (perf3, whose
+      # sanitizer skip is its own DECLARED posture — the timing half
+      # silent, the digests and the pinned verdict the substance).
+      # If the debug column's window ever needs relief, dropping
+      # perf2 there is the maintainer's one-line declared call — the
+      # m8 posture's own words: his call, his push). The
+      # absolute numbers stay the measuring machine's — the
+      # register's law unchanged: indicative, the ratios the
+      # substance. A red here is a loud red, never a silent one.
+      - name: Benchmark verdicts (deterministic half, every column)
+        run: |
+          ./build/${{ matrix.preset }}/bin/CAD_0_benchmarks
+          ./build/${{ matrix.preset }}/bin/CAD_0_perf2_memory
+          ./build/${{ matrix.preset }}/bin/CAD_0_perf3_evaluator
+
       # UI smoke tests (BUG 1 invisible menubar + BUG 2 dead viewport
       # navigation + maximized startup): the camera-steering assertions
       # need a real GL context, which the offscreen QPA creates through

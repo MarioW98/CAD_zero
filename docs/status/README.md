@@ -14,7 +14,9 @@ CI testifies — no sentence may claim what the CI does not verify.
 Every push to `main` runs the full matrix on ubuntu-24.04 — GCC 14
 debug (ASan/UBSan, the C++ suite **and** the Python bindings under
 the preloaded sanitizer), GCC 14 release, Clang 19 — plus the
-Python 3.10 syntax-floor job and the subject lint. What follows is
+Python 3.10 syntax-floor job, the subject lint, and — since the
+2026-11-15 correttiva — THE BENCHMARK VERDICTS STEP (the perf rows'
+CI seat, its own bullet below). What follows is
 what those runs verify, day after day:
 
 - **The SDF side** — primitives, CSG booleans (union / subtract /
@@ -154,6 +156,51 @@ what those runs verify, day after day:
   (a v0.4-declaring file and a v0.5-declaring file are each refused
   at the version door with their remedies; the older files keep
   walking the chain).
+
+- **The benchmark verdicts — the perf rows' CI seat** (since the
+  2026-11-15 correttiva, the maintainer's local GCC-13 red): the
+  three bench binaries (`CAD_0_benchmarks`, `CAD_0_perf2_memory`,
+  `CAD_0_perf3_evaluator`) RUN on every column, their DETERMINISTIC
+  half the judged substance — the digests verified every iteration,
+  the drift refusal, the FNV-pinned verdict, column-invariant by
+  design — while the timing half rides along (within-run ratios
+  only, generous bounds, measured 0/4/1 s for the three on a shared
+  two-core sandbox — and under the debug column's ASan/UBSan 1/291/8
+  s, the memory bench's shadow tax the one heavy cost, DECLARED in
+  the workflow beside its seat; perf3's sanitizer skip its own
+  DECLARED posture, m8's and perf2's gates relative or
+  threshold-based, their thresholds already accounting the
+  sanitizers' shadow — all three green under the sanitizers too). THE TWO
+  DEFECTS THE CORRETTIVA CLOSED: (1) the preprocessor idiom
+  `defined(__has_feature) && __has_feature(...)` — an operator on
+  Clang and GCC 14, an UNDEFINED IDENTIFIER on the older GCCs, where
+  it died at tokenization ("missing binary operator before token"):
+  the CI's ubuntu-24.04 g++-14 accepted it, so the idiom rode green
+  on the runner while the maintainer's local build was red — a
+  portability defect masked by the runner's own novelty; cured with
+  the standard `#ifndef __has_feature / #define __has_feature(f) 0`
+  fallback (the substitution BEFORE the #if, the condition below it
+  untouched, character for character). (2) THE INVISIBLE POSTURE:
+  the bench TARGETS were always in the all-targets graph (the
+  unguarded `add_subdirectory(benchmarks)` — the CI compiled them
+  all along), but NOTHING ever ran them on the runner (not ctest
+  members, the m8 posture — the rite's own machine their only judge)
+  and the `CAD_0_BUILD_BENCHMARKS` option was a DEAD SWITCH
+  (declared OFF at the root, consumed nowhere), so "does the CI
+  build these?" had no queryable answer — the maintainer's honest
+  reading ("never compiled by the CI") was the truthful description
+  of a posture nobody could see. THE CURES: the step above (the
+  deterministic half judged on every column, the absolute numbers
+  staying the measuring machine's — indicative, the ratios the
+  substance, the register's law unchanged); the option made REAL (ON
+  by default, the guard at the subdirectory — turning it OFF now a
+  deliberate act, visible in any cache diff); and THE LAW: a claim
+  of throughput rests on code the CI compiles AND judges — always,
+  no target outside the CI's graph. The class lens: the repo grepped
+  for `__has_feature`/`__has_builtin`/`__has_attribute` — the single
+  exemplar was perf3's line 71; perf2 and m8 clean; the two Python
+  benches are not compiled code (the rite's own, GPU-bound).
+
 
 ## What does NOT exist yet — said, not hidden
 

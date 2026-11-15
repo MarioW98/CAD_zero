@@ -67,6 +67,27 @@
 // the slowed counterproof) judges only where times are the substance;
 // the digest identity, the drift refusal and the pinned verdict judge
 // EVERY column.
+//
+// THE __has_feature FALLBACK (the 2026-11-15 correttiva, the
+// maintainer's local GCC-13 red at this very line): `__has_feature`
+// is a PREPROCESSOR OPERATOR on Clang (and GCC 14+), but an UNDEFINED
+// IDENTIFIER on the older GCCs — there the classic idiom below died
+// at tokenization: the undefined identifier evaluates to 0 and the
+// parenthesized feature name follows it with no operator, the
+// preprocessor's own "missing binary operator before token" — and
+// the CI's ubuntu-24.04 g++-14 never saw it (the operator exists
+// there), so the idiom rode green on the runner while every older
+// GCC in the wild was red. THE CURE is the standard fallback: a
+// function-like macro expanding to 0, defined ONLY where no real
+// `__has_feature` exists — the substitution happens BEFORE the #if
+// below is evaluated, so the untouched condition reads a DEFINED
+// macro (defined(__has_feature) is true, its call expands to 0, the
+// && honest) and on Clang/GCC 14 the #ifndef finds the operator is
+// not a macro and defines nothing. The condition below is UNTOUCHED,
+// character for character.
+#ifndef __has_feature
+#define __has_feature(f) 0
+#endif
 #if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_UNDEFINED__) || \
     (defined(__has_feature) && __has_feature(address_sanitizer))
 #define CAD_0_BENCH_UNDER_SANITIZERS 1

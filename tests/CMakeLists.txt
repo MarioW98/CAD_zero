@@ -212,4 +212,13 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${CAD_0_TEST_SOURCES})
 # columns (the compile discipline holds for it too), run by the rite
 # — never a ctest member by default (its posture and its reasons
 # declared in tests/benchmarks/CMakeLists.txt's own header).
-add_subdirectory(benchmarks)
+# THE REAL GUARD (the 2026-11-15 correttiva): CAD_0_BUILD_BENCHMARKS
+# was a DEAD option — declared OFF at the root, consumed NOWHERE,
+# while this subdirectory rode unguarded and every preset built the
+# targets anyway. The guard makes the switch REAL: ON by default
+# (the law — the perf rows' code rides every CI column's build), and
+# turning it OFF removes the targets from the graph as a DELIBERATE
+# act, visible in any cache diff.
+if(CAD_0_BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
+endif()
