@@ -202,8 +202,14 @@ def _two_fillet_chain(win, radius=0.5):
 @pytest.mark.skipif(not _pyside6_available(), reason="PySide6 not installed")
 def test_the_twelve_edges_declared_at_the_pick(workbench_app):
     """The enumeration the maintainer's hands ran, with the
-    expectations pinned: the 4 verticals IN CLASS, the 8 ring edges
-    OUTSIDE with the family named — SAID ON THE ROW, never silent."""
+    expectations pinned — RE-PINNED AT THE WALL'S FALL (G5 m5, the m4
+    register's own promise: the vertical-only wall is down for the
+    cube): ALL TWELVE IN CLASS — the verticals through the class-1
+    walk, the ring edges through the m2 walk one axis over (the
+    widened dispatch), SAID ON THE ROW, never silent. The original
+    pin (the 4-in/8-out split, the m6-correttiva-ter cure) lives in
+    the register's own history: the wall it pinned is the wall this
+    morso demolished."""
     from PySide6.QtCore import Qt
     win = workbench_app
     box_id = _make_guide_box(win)
@@ -216,20 +222,16 @@ def test_the_twelve_edges_declared_at_the_pick(workbench_app):
         ["top{}".format(i) for i in range(4)] +
         ["vertical{}".format(i) for i in range(4)])
 
-    in_class, outside = [], []
+    in_class = []
     for i in range(dlg._edges.count()):
         item = dlg._edges.item(i)
         name = item.data(Qt.UserRole)
         text = item.text()
-        if ":vertical" in name:
-            assert "IN CLASS" in text, (name, text)
-            in_class.append(name)
-        else:
-            assert "OUT" in text, (name, text)
-            # the family NAMED — the kernel's own words on the row
-            assert "not vertical" in text, (name, text)
-            outside.append(name)
-    assert len(in_class) == 4 and len(outside) == 8
+        # THE WALL DOWN: every one of the twelve IN CLASS (the m2
+        # walk one axis over for the ring — the widened dispatch).
+        assert "IN CLASS" in text, (name, text)
+        in_class.append(name)
+    assert len(in_class) == 12
 
 
 @pytest.mark.skipif(not _pyside6_available(), reason="PySide6 not installed")
@@ -246,10 +248,14 @@ def test_the_admission_door_says_the_wall(workbench_app):
     assert a["reason"] == ""
     assert a["operand_id"] == box_id
 
+    # THE WALL DOWN (G5 m5): the ring edge admitted through the
+    # m2 walk one axis over — the original pin (the vertical-only
+    # refusal, "not vertical") is the wall this morso demolished.
     a = win._scene.fillet_admission(
         "box#{}:bottom0".format(box_id), 0.5)
-    assert a["admitted"] is False
-    assert "not vertical" in a["reason"]
+    assert a["admitted"] is True
+    assert a["reason"] == ""
+    assert a["operand_id"] == box_id
 
     # the band speaks too (the typed bound inside the words)
     a = win._scene.fillet_admission(v2, 5.0)

@@ -227,6 +227,40 @@ struct FilletRecipe {
     double radius{0.0};            // the ball radius r (> 0, finite)
 };
 
+// ---------------------------------------------------------------------------
+// THE MULTI RECIPE — G5 m5 (ADR-0043 D6.5, D9's fifth morso: "la ricetta
+// multi-spigolo e la porta v0.8.0 (la mappa spigolo→raggio, i campi
+// nominali, il migrator, i golden del formato)"): the many-edge record
+// the FILE carries — the EDGE→RADIUS MAP, one entry per consumed spigolo,
+// named fields, never a raw struct (the m4 padding doctrine one recipe
+// over: a memcpy'd entry image would carry the string's heap address and
+// the tail padding, the ABI, never the characters). The entry's two
+// fields are the single recipe's own, verbatim: the edge-reference as
+// the STRING (the grammar's form, matched whole, never parsed) and the
+// radius its own TYPED field. THE LAW THE MAP OBEYS is not the struct's
+// — it is the ANGLES LAW (D6.6/D1: the connected edge-corner graph
+// forces one radius per component), read by the doors that carry the
+// body (creation, the loader's pass 2, the save door's resolution) and
+// NEVER by the kernel: the kernel's own admission (the body-state
+// gates, fillet_ring_act's signature among them) stays the last line,
+// its words unchanged.
+// ---------------------------------------------------------------------------
+struct MultiFilletEntry {
+    std::string edge_reference{};  // the grammar's form, character for character
+    double radius{0.0};            // the ball radius r (> 0, finite)
+};
+
+struct MultiFilletRecipe {
+    // The consumed spigoli, one entry each, in the AUTHORED order (the
+    // vertical passage replays in this order — the derivation's freedom
+    // among the verticals, D5.1: "sequenziali o in un atto solo,
+    // libertà dell'implementazione"; the ring's consumption is the ACT,
+    // orderless by construction). The SAME reference twice is a loud
+    // refusal at every door (the map's uniqueness — an edge consumed
+    // twice is not a map).
+    std::vector<MultiFilletEntry> entries{};
+};
+
 // fillet_reference_find — THE STRING'S OWN DOOR (G2-u3 m4): the
 // recipe's edge-reference resolved against a body's stamps by RENDER
 // equality — the whole string matched against the entity's own name,

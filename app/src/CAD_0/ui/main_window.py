@@ -543,8 +543,75 @@ class MainWindow(QMainWindow):
         from .fillet_dialog import FilletDialog
         dialog = FilletDialog(
             self._scene, self._selected_node_id,
-            apply_route=self._apply_fillet, parent=self)
+            apply_route=self._apply_fillet,
+            apply_route_multi=self._apply_fillet_multi, parent=self)
         dialog.exec()
+
+    def _apply_fillet_multi(self, entries, name_hint: str = "") -> int:
+        """The dialog's CONTEMPORANEA Apply route (G5 m5, ADR-0043
+        D6.5): the multi fillet node created from the edge->radius
+        map, ONE undo command — id-stable on the redo (the
+        restore_fillet_multi_node door, the single's own pattern).
+        A refusal raises THROUGH the command (nothing pushed, nothing
+        written, the scene untouched); the dialog quotes the words.
+        The operand's mesh steps aside (the single's own pattern).
+        """
+        state = {"node_id": None, "operand_id": None}
+
+        def execute():
+            if state["node_id"] is None:
+                nid = self._scene.add_fillet_multi_node(
+                    "", entries)
+            else:
+                # Redo: the feature returns with its ORIGINAL id
+                # (id-stable, ADR-0027 D2 — references never rebind).
+                nid = self._scene.restore_fillet_multi_node(
+                    state["node_id"], "", entries)
+            state["node_id"] = nid
+            node = self._scene.get_node(nid)
+            name = node.name if node is not None else "FilletMulti"
+            # The operand steps aside — the contemporanea's own body
+            # shown (the single's hiding pattern; the discovery's own
+            # answer).
+            operand_id = node.fillet_operand_id if node is not None else 0
+            if operand_id:
+                state["operand_id"] = operand_id
+                self._scene.set_visible(operand_id, False)
+            radius = entries[0][1] if entries else 0.0
+            self._node_params[nid] = {"radius": float(radius)}
+            self._node_types[nid] = "feat_fillet_multi"
+            item = QTreeWidgetItem([name, "FIL×"])
+            item.setData(0, Qt.UserRole, nid)
+            self._feature_tree.addTopLevelItem(item)
+            # The new feature is the selection (the panel shows the
+            # recipe's surface — the radius editor rides the row).
+            self._feature_tree.setCurrentItem(item)
+            self._refresh_viewport()
+            self._status.showMessage(
+                f"Created {name} — {len(entries)} spigoli in "
+                "contemporanea", 3000)
+
+        def undo():
+            nid = state["node_id"]
+            if nid is not None and self._scene.remove_node(nid):
+                self._node_params.pop(nid, None)
+                self._node_types.pop(nid, None)
+                self._remove_tree_row(nid)
+                # The operand returns (the single's undo pattern).
+                if state["operand_id"] is not None:
+                    self._scene.set_visible(state["operand_id"], True)
+                self._property_panel.clear()
+                self._refresh_viewport()
+
+        label = ("FilletMulti {} edge(s)".format(len(entries))
+                 if not name_hint else
+                 "FilletMulti {} edge(s) [{}]".format(
+                     len(entries), name_hint))
+        if self._command_stack:
+            self._command_stack.push(execute, undo, label)
+        else:
+            execute()
+        return state["node_id"]
 
     def _apply_fillet(self, edge_reference: str, radius: float) -> int:
         """The dialog's Apply route: the fillet node created from the
@@ -805,6 +872,13 @@ class MainWindow(QMainWindow):
                 type_label = "FIL" + (
                     "!" if node.fillet_refusal else "")
                 type_key = "feat_fillet"
+            elif node.kind == "fillet_multi":
+                # The contemporanea's own row (G5 m5): the multi
+                # recipe — the edge->radius map, the FIL× label (the
+                # many edges' own mark), the refusal flag the single's.
+                type_label = "FIL×" + (
+                    "!" if node.fillet_refusal else "")
+                type_key = "feat_fillet_multi"
             else:
                 type_label = "Mesh" if node.kind == "mesh" else "SDF"
                 type_key = None
@@ -825,6 +899,15 @@ class MainWindow(QMainWindow):
                 self._node_types[node.id] = "feat_fillet"
                 self._node_params[node.id] = {
                     "radius": float(node.fillet_radius)}
+                continue
+            if node.kind == "fillet_multi":
+                # The contemporanea's own fields (G5 m5): the uniform
+                # radius the panel edits (the uniform edit's contract
+                # — set_fillet_multi_radius), the entries read-only
+                # context.
+                self._node_types[node.id] = "feat_fillet_multi"
+                self._node_params[node.id] = {
+                    "radius": float(node.fillet_multi_radius)}
                 continue
             if op is not None:
                 self._node_types[node.id] = type_key
@@ -1734,6 +1817,7 @@ class MainWindow(QMainWindow):
         is_mesh = False
         is_sketch = False
         is_fillet = False
+        fillet_multi = False
         node = self._scene.get_node(node_id)
         if node is not None and node.kind == "mesh":
             is_mesh = True
@@ -1745,6 +1829,14 @@ class MainWindow(QMainWindow):
             is_fillet = True
             fillet_edge = node.fillet_edge
             fillet_radius = float(node.fillet_radius)
+            fillet_name = node.name
+        if node is not None and node.kind == "fillet_multi":
+            # The contemporanea's recipe is the whole node (G5 m5):
+            # the edge->radius map — the body derived state, the
+            # re-creation's own find re-materializes it.
+            is_fillet = True
+            fillet_multi = True
+            fillet_entries = list(node.fillet_multi_entries)
             fillet_name = node.name
         if node is not None and node.kind == "sketch":
             # A sketch's recipe is its entity payload AND its
@@ -1794,6 +1886,26 @@ class MainWindow(QMainWindow):
                 # Imported meshes are not re-creatable parametrically
                 # (pre-existing gap, unchanged by Phase F: delete of a
                 # mesh node is not undoable today).
+                return
+            if is_fillet and fillet_multi:
+                # The contemporanea returns WITH ITS ORIGINAL ID and
+                # its full map (the restore_fillet_multi_node door,
+                # G5 m5): the re-materialization runs through the
+                # find, the id the tree and the stacked commands know
+                # is the id back.
+                try:
+                    new_fid = self._scene.restore_fillet_multi_node(
+                        nid, fillet_name, fillet_entries)
+                except (ValueError, RuntimeError):
+                    return  # the operand died meanwhile: honest, the
+                            # delete stands
+                self._node_params[new_fid] = {
+                    "radius": float(fillet_entries[0][1])}
+                self._node_types[new_fid] = "feat_fillet_multi"
+                item = QTreeWidgetItem([fillet_name, "FIL×"])
+                item.setData(0, Qt.UserRole, new_fid)
+                self._feature_tree.addTopLevelItem(item)
+                self._refresh_viewport()
                 return
             if is_fillet:
                 # The fillet returns WITH ITS ORIGINAL ID and its full
@@ -2747,6 +2859,13 @@ class MainWindow(QMainWindow):
             # mutation), never a UI-side rebuild of the body.
             self._push_fillet_radius_command(node_id, value)
             return
+        if node_type == "feat_fillet_multi" and name == "radius":
+            # The contemporanea's uniform radius edit (G5 m5, D5.4's
+            # m6 leg): every entry set to the same value, the whole
+            # map re-run through set_fillet_multi_radius — the same
+            # silent-edit road, one scene mutation.
+            self._push_fillet_multi_radius_command(node_id, value)
+            return
 
         old_value = self._node_params[node_id].get(name, 0.0)
 
@@ -2835,6 +2954,56 @@ class MainWindow(QMainWindow):
                 f"Set radius = {radius}")
         else:
             apply(radius, True)
+
+    def _push_fillet_multi_radius_command(self, node_id: int,
+                                          radius: float) -> None:
+        """The contemporanea's UNIFORM radius edit as ONE undo command
+        (G5 m5, D5.4's m6 leg): set_fillet_multi_radius — every
+        entry's radius set to the same value, the whole derived chain
+        re-run (the counts fixed for every in-band r, the volume the
+        closed form at the new r), the downstream chain re-running
+        with it. The verdict is the VALUE (reference_resolved or the
+        refusal text) — the same contract the single's edit pays."""
+        node = self._scene.get_node(node_id)
+        if node is None or node.kind != "fillet_multi":
+            return
+        if not (radius > 0.0) or radius != radius:
+            self._status.showMessage(
+                f"radius must be finite and > 0, got {radius} — "
+                "the previous value stands", 4000)
+            return
+        old_value = float(node.fillet_multi_radius)
+
+        def apply(v: float, gesture: bool = False) -> None:
+            answer = self._scene.set_fillet_multi_radius(node_id, v)
+            self._node_params[node_id]["radius"] = float(v)
+            self._refresh_operation_rows()
+            if gesture:
+                self._refresh_viewport_edit()
+            else:
+                self._refresh_viewport()
+            if answer == "reference_resolved":
+                self._mark_modified()
+                self._status.showMessage(
+                    f"Set radius = {v} — the contemporanea re-ran on "
+                    "the new radius (the whole map, one mutation)",
+                    3000)
+            else:
+                self._mark_modified()
+                self._status.showMessage(answer, 8000)
+
+        def execute():
+            apply(radius, gesture=False)
+
+        def undo():
+            apply(old_value, gesture=False)
+
+        if self._command_stack:
+            self._command_stack.push(
+                execute, undo, f"FilletMulti radius {node_id}")
+        else:
+            execute()
+
 
     def _deferred_fillet_panel_refresh(self) -> None:
         """The next-pass panel rebuild for the selected fillet node

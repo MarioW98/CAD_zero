@@ -216,18 +216,28 @@ inline OperationRebuildResult rebuild_operations_core(
         }
     }
 
-    // THE FILLET NODES (G2-u3 m4, ADR-0039 D6 rung 4): re-run AFTER
-    // the operations — the operands' exact sides are current, and the
-    // captured lodgings serve the class-4 answer (the generation the
-    // reference was made against, the value the resolution reads).
-    // Document order (the array IS the construction order: each
-    // recipe reads only what precedes it — a forward reference finds
-    // nothing and the refusal names it). One node's refusal never
-    // kills the pass (the Phase F philosophy): the last good body is
-    // KEPT and the actionable reason rides `fillet_refusal`.
+    // THE FILLET FEATURES (G2-u3 m4, ADR-0039 D6 rung 4 — and the
+    // CONTEMPORANEA, G5 m5: one family, ONE leg, document order
+    // across both kinds): re-run AFTER the operations — the
+    // operands' exact sides are current, and the captured lodgings
+    // serve the class-4 answer (the generation the reference was
+    // made against, the value the resolution reads). Document order
+    // (the array IS the construction order: each recipe reads only
+    // what precedes it — a forward reference finds nothing and the
+    // refusal names it; the two kinds share the chain, so ONE leg
+    // keeps the order honest across them — a downstream single
+    // reads the contemporanea's re-run body, never a stale one).
+    // One node's refusal never kills the pass (the Phase F
+    // philosophy): the last good body is KEPT and the actionable
+    // reason rides `fillet_refusal`.
     for (SceneNode* n : nodes) {
-        if (!n->fillet.has_value()) continue;
-        attach_fillet(*n, nodes, &old_tavole);
+        if (n->fillet_multi.has_value()) {
+            attach_fillet_multi(*n, nodes, &old_tavole);
+        } else if (n->fillet.has_value()) {
+            attach_fillet(*n, nodes, &old_tavole);
+        } else {
+            continue;
+        }
         if (notify) notify(n->id);
     }
 

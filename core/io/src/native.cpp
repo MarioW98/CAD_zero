@@ -169,6 +169,30 @@ const bool kMigrator0607Registered [[maybe_unused]] = [] {
     return true;
 }();
 
+// The 0.7.0 -> 0.8.0 migrator (G5 m5, ADR-0043 D6.5 — THE
+// CAPABILITY BUMP'S SECOND RITE, the ADDITIVITY LAW): a deliberate
+// CONTENT no-op, the step exists for the WALK and NO door stands
+// before it — the reason named (ADR-0043 D6.5): "every byte of
+// v0.7 travels whole" — the v0.7 era carried NO unpersisted
+// multi-fillet content (no fillet_multi node existed), so a v0.7
+// file loses NOTHING at v0.8 — the capability-adding bump of the
+// v0.3→v0.4 and v0.6→v0.7 precedent, NOT the silent-loss doors of
+// v0.4/v0.5. The v0.7-DECLARING file walks this step WHOLE (the
+// additivity law's own golden: the frozen v0_7 document's every
+// byte preserved verbatim by the no-op, only the version field
+// moving); the anachronism gate at the payload refuses a
+// fillet_multi node in any file declaring < 0.8 (the hand-edited
+// lie, the fillet's own gate form). The entry exists so the chain
+// 0.1.0 → … → 0.8.0 is explicit, registered, and exercised by the
+// frozen goldens on every CI run.
+const bool kMigrator0708Registered [[maybe_unused]] = [] {
+    register_migrator(NativeVersion{0, 7, 0}, NativeVersion{0, 8, 0},
+                      [](json::JsonValue&) {
+                          // no-op by design — see ADR-0043 D6.5.
+                      });
+    return true;
+}();
+
 std::string version_to_string(const NativeVersion& v) {
     return std::to_string(v.major) + "." + std::to_string(v.minor) + "." +
            std::to_string(v.patch);
@@ -1298,6 +1322,53 @@ std::string serialize_document(const scene::Scene& s, const NativeCamera& cam,
                     .set("polar_semiaxis",
                          JsonValue(static_cast<double>(
                              node.ellipsoid->polar_semiaxis))));
+        } else if (node.kind == scene::NodeKind::FilletMulti) {
+            // v0.8.0 (G5 m5, ADR-0043 D6.5): the fillet
+            // CONTEMPORANEA — the multi-edge recipe, the EDGE→RADIUS
+            // MAP. The entries ride NAMED FIELDS (the single
+            // recipe's own two, one map over: the edge-reference as
+            // the STRING verbatim, the radius its own typed field —
+            // never an address, never a struct image: the m4 padding
+            // doctrine one recipe over), the order the AUTHORED
+            // order (the vertical passage replays in it). The
+            // materialized exact body is DERIVED state, never
+            // serialized (the recipe is the source of truth; the
+            // loader's pass 2 re-materializes deterministically
+            // through the machine). The kind is guaranteed to carry
+            // the payload (add_fillet_multi_node's own invariant).
+            //
+            // THE SAVE DOOR (D6.5/D6.6, the law read at the WRITE —
+            // the write and the re-materialization, two doors one
+            // law): the recipe's ANGLES LAW read through the scene's
+            // own resolution (the same discovery the machine walks,
+            // the resolvable subset — a dead reference is the Phase
+            // F state and rides the file), and a map whose entries
+            // disagree at a shared corner is REFUSED at the write
+            // with D6.6's own name: this build never blesses a
+            // self-incoherent map with a file.
+            {
+                const std::string law =
+                    s.fillet_multi_save_law(*node.fillet_multi);
+                if (!law.empty())
+                    throw std::runtime_error(
+                        "native format: node " +
+                        std::to_string(node.id) +
+                        " (fillet_multi) - " + law);
+            }
+            JsonArray edges;
+            edges.reserve(node.fillet_multi->entries.size());
+            for (const brep::MultiFilletEntry& e :
+                 node.fillet_multi->entries) {
+                edges.emplace_back(JsonValue(JsonObject{})
+                    .set("edge", JsonValue(e.edge_reference))
+                    .set("radius",
+                         JsonValue(static_cast<double>(e.radius))));
+            }
+            n.emplace_back("kind", JsonValue("fillet_multi"));
+            n.emplace_back(
+                "fillet_multi",
+                JsonValue(JsonObject{})
+                    .set("edges", JsonValue(std::move(edges))));
         } else {
             if (!node.builder.empty())
                 n.emplace_back("builder", JsonValue(node.builder));
@@ -1646,17 +1717,36 @@ ParsedDocument parse_document(std::string_view text,
                         version_to_string(file_version) +
                         " writer ever emitted one: the file is not what "
                         "its version claims");
+            } else if (kind == "fillet_multi") {
+                node.kind = scene::NodeKind::FilletMulti;
+                // The v0.8.0 payload (G5 m5, ADR-0043 D6.5). The same
+                // anachronism discipline: a file whose ORIGINAL
+                // version predates 0.8.0 cannot carry a fillet_multi
+                // node — no earlier writer ever emitted one: the file
+                // is not what its version claims.
+                if (file_version.major == 0 && file_version.minor < 8)
+                    throw std::runtime_error(
+                        "native format: node " + std::to_string(node.id) +
+                        " is a \"fillet_multi\" node but the file "
+                        "declares " + version_to_string(file_version) +
+                        " — fillet_multi nodes are the v0.8.0 payload "
+                        "(G5 m5, ADR-0043 D6.5) and no " +
+                        version_to_string(file_version) +
+                        " writer ever emitted one: the file is not what "
+                        "its version claims");
             } else {
                 throw std::runtime_error(
                     "native format: unknown node \"kind\" \"" + kind +
                     "\" (this build reads Sdf, \"mesh\", \"sketch\", "
-                    "\"fillet\" and \"ellipsoid\" nodes; the file was "
+                    "\"fillet\", \"fillet_multi\" and \"ellipsoid\" "
+                    "nodes; the file was "
                     "likely written by a newer CAD_0 version)");
             }
         }
 
         if (node.kind == scene::NodeKind::Sdf ||
             node.kind == scene::NodeKind::Fillet ||
+            node.kind == scene::NodeKind::FilletMulti ||
             node.kind == scene::NodeKind::Ellipsoid) {
             node.mesh_dirty = true; // re-tessellate SDF caches after load;
                                     // the fillet's and the ellipsoid's
@@ -1681,6 +1771,8 @@ ParsedDocument parse_document(std::string_view text,
                 node.name = "Sketch_" + std::to_string(node.id); break;
             case scene::NodeKind::Fillet:
                 node.name = "Fillet_" + std::to_string(node.id); break;
+            case scene::NodeKind::FilletMulti:
+                node.name = "FilletMulti_" + std::to_string(node.id); break;
             case scene::NodeKind::Ellipsoid:
                 node.name = "Ellipsoid_" + std::to_string(node.id); break;
             default:
@@ -1781,7 +1873,8 @@ ParsedDocument parse_document(std::string_view text,
             // answers it (the visible refusal state, the class-4
             // payload when the old tavola can speak).
             for (const char* leftover :
-                 {"builder", "params", "body", "operation", "mesh"})
+                 {"builder", "params", "body", "operation", "mesh",
+                  "fillet_multi"})
                 if (node_v.find(leftover))
                     throw std::runtime_error(
                         std::string("native format: node ") +
@@ -1821,6 +1914,115 @@ ParsedDocument parse_document(std::string_view text,
                         "value in the file.");
                 recipe.radius = r;
                 node.fillet = std::move(recipe);
+            }
+            doc.nodes.push_back(std::move(node));
+            continue;
+        }
+
+        if (node.kind == scene::NodeKind::FilletMulti) {
+            // v0.8.0 (G5 m5, ADR-0043 D6.5): the fillet
+            // CONTEMPORANEA payload — the multi-edge recipe, the
+            // EDGE→RADIUS MAP. The entries ride NAMED FIELDS (the
+            // single's own two, one map over). No builder, no
+            // params, no body, no operation, no mesh — the
+            // representations never mix. THE VALUE CLASS is the
+            // loader's (the same doctrine as the single's): the
+            // entries array non-empty, each edge non-empty, each
+            // radius finite and > 0, and THE MAP'S UNIQUENESS (the
+            // same edge string twice is not a map) — corruption of
+            // this class is a loud load error, never a default,
+            // never a best-effort guess. THE ANGLES LAW and the
+            // references' own aliveness are NOT the parse's to
+            // judge: the law is read where the body is (the pass-2
+            // machine — the visible refusal state — and the save
+            // door's own reading), the dead reference is the Phase F
+            // state the pass-2 answers.
+            for (const char* leftover :
+                 {"builder", "params", "body", "operation", "mesh",
+                  "fillet"})
+                if (node_v.find(leftover))
+                    throw std::runtime_error(
+                        std::string("native format: node ") +
+                        std::to_string(node.id) +
+                        " is a \"fillet_multi\" node but carries a "
+                        "non-multi field \"" + leftover +
+                        "\" — the representations never mix (ADR-0002 "
+                        "honest dispatch; the contemporanea's payload "
+                        "is the edge->radius map alone)");
+            {
+                const JsonValue& fm = node_v.at("fillet_multi");
+                if (!fm.is_object())
+                    type_error("object for node \"fillet_multi\"", fm);
+                const JsonValue& edges = fm.at("edges");
+                if (!edges.is_array())
+                    type_error("array for fillet_multi \"edges\"",
+                               edges);
+                if (edges.as_array().empty())
+                    throw std::runtime_error(
+                        "native format: node " +
+                        std::to_string(node.id) +
+                        " fillet_multi \"edges\" is empty — the "
+                        "contemporanea consumes at least one spigolo "
+                        "(the edge->radius map, one entry per "
+                        "consumed edge). Remedy: fix the value in the "
+                        "file.");
+                brep::MultiFilletRecipe recipe{};
+                recipe.entries.reserve(edges.as_array().size());
+                for (const JsonValue& entry :
+                     edges.as_array()) {
+                    if (!entry.is_object())
+                        type_error("object for fillet_multi entry",
+                                   entry);
+                    brep::MultiFilletEntry e{};
+                    const JsonValue& edge = entry.at("edge");
+                    if (!edge.is_string())
+                        type_error("string for fillet_multi \"edge\"",
+                                   edge);
+                    e.edge_reference = edge.as_string();
+                    if (e.edge_reference.empty())
+                        throw std::runtime_error(
+                            "native format: node " +
+                            std::to_string(node.id) +
+                            " fillet_multi \"edge\" is empty — the "
+                            "reference is the grammar's own form (the "
+                            "pick's own answer, never an address); an "
+                            "empty string names no edge. Remedy: fix "
+                            "the value in the file.");
+                    const JsonValue& rad = entry.at("radius");
+                    if (!rad.is_number())
+                        type_error(
+                            "number for fillet_multi \"radius\"", rad);
+                    const double r = rad.as_number();
+                    if (!std::isfinite(r) || !(r > 0.0))
+                        throw std::runtime_error(
+                            "native format: node " +
+                            std::to_string(node.id) +
+                            " fillet_multi \"radius\" must be finite "
+                            "and > 0, got " + std::to_string(r) +
+                            " — a non-positive or non-finite ball "
+                            "radius degenerates the rolling ball (the "
+                            "ADR-0029 family, the typed value class). "
+                            "Remedy: fix the value in the file.");
+                    e.radius = r;
+                    recipe.entries.push_back(std::move(e));
+                }
+                for (std::size_t i = 0;
+                     i < recipe.entries.size(); ++i)
+                    for (std::size_t j = i + 1;
+                         j < recipe.entries.size(); ++j)
+                        if (recipe.entries[i].edge_reference ==
+                            recipe.entries[j].edge_reference)
+                            throw std::runtime_error(
+                                "native format: node " +
+                                std::to_string(node.id) +
+                                " fillet_multi \"edges\" declares "
+                                "the edge '" +
+                                recipe.entries[i].edge_reference +
+                                "' twice — the edge->radius map is a "
+                                "MAP: one entry per spigolo, the "
+                                "radius one field. Remedy: fix the "
+                                "value in the file.");
+                node.fillet_multi = std::move(recipe);
             }
             doc.nodes.push_back(std::move(node));
             continue;
@@ -2037,7 +2239,8 @@ ParsedDocument parse_document(std::string_view text,
     {
         bool has_ops = false;
         for (const auto& n : doc.nodes)
-            if (n.operation || n.fillet || n.ellipsoid) {
+            if (n.operation || n.fillet || n.fillet_multi ||
+                n.ellipsoid) {
                 has_ops = true;
                 break;
             }

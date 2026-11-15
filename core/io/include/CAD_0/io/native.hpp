@@ -124,18 +124,40 @@ struct NativeVersion {
 // anachronism gate at the payload refuses an ellipsoid node in any
 // file declaring < 0.7 (the hand-edited lie, the fillet's own gate
 // form); a NEWER file is refused by name.
-// The migrator chain upgrades older documents: 0.1.0 → 0.2.0
+// 0.8.0 (G5 m5, ADR-0043 D6.5 — THE CAPABILITY BUMP'S SECOND RITE,
+// the additivity law the ADR's own words registered): the document
+// gains the FILLET CONTEMPORANEA — the multi-edge recipe, the
+// EDGE→RADIUS MAP (each entry the NAMED FIELDS `edge` and `radius`,
+// the single recipe's own two one map over; the node kind
+// "fillet_multi"). EVERY BYTE OF v0.7 TRAVELS WHOLE (the
+// additivity law, D6.5): the bump adds the payload, moves no
+// field, renames nothing — a v0.7 file loses NOTHING at v0.8 (no
+// fillet_multi node existed in the v0.7 era), so a
+// v0.7-DECLARING file WALKS the chain's seventh step (the
+// v0.3→v0.4 and v0.6→v0.7 capability-bump precedent — NOT the
+// v0.4/v0.5 silent-loss doors); the anachronism gate at the
+// payload refuses a fillet_multi node in any file declaring
+// < 0.8 (the hand-edited lie, the fillet's own gate form); a NEWER
+// file is refused by name. THE ANGLES LAW (D6.6/D1, the connected
+// edge-corner graph forces one radius) is read at the doors that
+// carry the body — the loader's pass 2 (the visible refusal state,
+// the last good body kept) and THE SAVE DOOR (the write refused
+// with D6.6's own name when the map's resolvable entries disagree
+// at a shared corner) — never by the kernel. The migrator chain upgrades older documents: 0.1.0 → 0.2.0
 // (ADR-0007a), 0.2.0 → 0.3.0 (ADR-0027 D4), 0.3.0 → 0.4.0
 // (ADR-0030 D4), 0.4.0 → 0.5.0 (ADR-0040 D6 — the step the
 // pre-sketch goldens walk THROUGH; the v0.4-DECLARING file never
 // reaches it, the door above refuses it first), 0.5.0 → 0.6.0
 // (ADR-0039 D6 — the step the v0.1–v0.3 goldens walk through on
 // their way to the current number; the v0.5-DECLARING file never
-// reaches it, the v0.6 door refuses it first) and 0.6.0 → 0.7.0
+// reaches it, the v0.6 door refuses it first), 0.6.0 → 0.7.0
 // (ADR-0042 D6 — the step the v0.6-DECLARING golden now WALKS
 // whole, its fillet recipe preserved by the no-op: no door stands
-// before it, the era lost nothing).
-inline constexpr NativeVersion kNativeVersion{0, 7, 0};
+// before it, the era lost nothing) and 0.7.0 → 0.8.0 (ADR-0043
+// D6.5 — the step the v0.7-DECLARING golden now WALKS whole, the
+// additivity law's own promise: every byte travels, only the
+// version field moves).
+inline constexpr NativeVersion kNativeVersion{0, 8, 0};
 
 // A Migrator transforms a parsed JSON document from `from_version` to
 // `to_version`. Registered in a chain indexed by the version pair. The
@@ -143,7 +165,9 @@ inline constexpr NativeVersion kNativeVersion{0, 7, 0};
 // the no-op 0.2.0 → 0.3.0 upgrade (ADR-0027 D4), the no-op
 // 0.3.0 → 0.4.0 upgrade (ADR-0030 D4), the no-op 0.4.0 → 0.5.0
 // upgrade (ADR-0040 D6), the no-op 0.5.0 → 0.6.0 upgrade
-// (ADR-0039 D6) and the no-op 0.6.0 → 0.7.0 upgrade (ADR-0042 D6).
+// (ADR-0039 D6), the no-op 0.6.0 → 0.7.0 upgrade (ADR-0042 D6) and
+// the no-op 0.7.0 → 0.8.0 upgrade (ADR-0043 D6.5, the additivity
+// law: every v0.7 byte travels whole).
 // Any file whose MAJOR.MINOR differs from the
 // current version and has no registered chain of steps fails with an
 // explicit error — except a v0.4-declaring file (the v0.5 door's
@@ -152,7 +176,7 @@ inline constexpr NativeVersion kNativeVersion{0, 7, 0};
 using Migrator = std::function<void(json::JsonValue&)>;
 
 void register_migrator(NativeVersion from, NativeVersion to, Migrator m);
-std::size_t migrator_count() noexcept; // test hook: 6 (0.1→0.2, 0.2→0.3, 0.3→0.4, 0.4→0.5, 0.5→0.6, 0.6→0.7)
+std::size_t migrator_count() noexcept; // test hook: 7 (0.1→0.2, 0.2→0.3, 0.3→0.4, 0.4→0.5, 0.5→0.6, 0.6→0.7, 0.7→0.8)
 
 // Parse "MAJOR.MINOR.PATCH" (e.g. "0.1.0"). Throws std::runtime_error
 // with an explicit message on malformed input.

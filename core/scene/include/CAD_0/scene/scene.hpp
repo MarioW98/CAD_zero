@@ -211,6 +211,21 @@ enum class NodeKind : std::uint8_t {
             // special render of the fillet). FeatureKind `fil` in the naming plane
             // (the grammar's three-letter token); "fillet" here in
             // the scene's own dispatch vocabulary.
+    FilletMulti, // the exact-side feature's CONTEMPORANEA (G5 m5,
+            // ADR-0043 D6.5/D9's fifth morso): the payload is the
+            // MULTI RECIPE (the edge→radius map, one entry per
+            // consumed spigolo, named fields), the materialization
+            // REPLAYS THE DERIVED CHAIN (D5.1: the vertical passage
+            // first — each entry its own walk, gated at every step —
+            // then, when the map declares the ring, THE RING AND
+            // CORNERS ACT, indivisible) landing the partials
+            // (8+2k/12+3k/6+k, D7.3's mixed radii free among the
+            // verticals — no two verticals share a corner) or the
+            // rounded cube (24/48/26). The ANGLES LAW (the connected
+            // edge-corner graph forces one radius per component,
+            // D6.6/D1) is the DOORS' own — read BEFORE any kernel
+            // call, never by the kernel. "fillet_multi" in the
+            // dispatch; the naming plane rides the single's `fil`.
     Ellipsoid // the exact-side PRIMITIVE (K1 m3, ADR-0042 D6): the
               // probe's family rides the file as its own node kind —
               // the recipe the sphere never paid, paid here (the
@@ -227,6 +242,7 @@ inline std::string node_kind_name(NodeKind k) {
     case NodeKind::Mesh:   return "mesh";
     case NodeKind::Sketch: return "sketch";
     case NodeKind::Fillet: return "fillet";
+    case NodeKind::FilletMulti: return "fillet_multi";
     case NodeKind::Ellipsoid: return "ellipsoid";
     }
     return "?";
@@ -361,6 +377,18 @@ struct SceneNode {
     // pattern) and the panel read it, never a file.
     std::uint32_t fillet_operand_id{0};
 
+    // ---- The fillet CONTEMPORANEA feature (G5 m5, ADR-0043 D6.5) --
+    // The many-edge recipe: the EDGE→RADIUS MAP (brep::
+    // MultiFilletRecipe — one entry per consumed spigolo, named
+    // fields). The derived state below is the SINGLE'S OWN, shared
+    // by kind-design (the materialized exact body, the visible
+    // refusal, the consumed operand): the display, the panel and
+    // the chain walk read ONE shape of state for both fillet kinds,
+    // the dispatch below this comment decides which recipe drives
+    // it. The ANGLES LAW is read at the DOORS (creation, the
+    // loader's pass 2, the save door), never by the kernel.
+    std::optional<brep::MultiFilletRecipe> fillet_multi;
+
     // ---- The ellipsoid primitive (K1 m3, ADR-0042 D6) -------------
     // The exact-side PRIMITIVE: the payload is the RECIPE alone
     // (brep::EllipsoidRecipe — the semiaxes, named fields), the
@@ -443,6 +471,7 @@ struct SceneNode {
           hybrid_refusal(other.hybrid_refusal),
           fillet(other.fillet), fillet_refusal(other.fillet_refusal),
           fillet_operand_id(other.fillet_operand_id),
+          fillet_multi(other.fillet_multi),
           ellipsoid(other.ellipsoid),
           tavola(other.tavola),
           operation_pending(other.operation_pending),
@@ -491,6 +520,7 @@ struct SceneNode {
         fillet = other.fillet;
         fillet_refusal = other.fillet_refusal;
         fillet_operand_id = other.fillet_operand_id;
+        fillet_multi = other.fillet_multi;
         ellipsoid = other.ellipsoid;
         tavola = other.tavola;
         if (other.fillet_body) {
@@ -586,10 +616,12 @@ inline DisplaySourceSnapshot snapshot_display_source(const SceneNode& n) {
         s.body = n.body;
         break;
     case NodeKind::Fillet:
+    case NodeKind::FilletMulti:
     case NodeKind::Ellipsoid: {
         const brep::BRepBody* src =
-            n.kind == NodeKind::Fillet ? n.fillet_body.get()
-                                       : n.ellipsoid_body.get();
+            n.kind == NodeKind::Ellipsoid
+                ? n.ellipsoid_body.get()
+                : n.fillet_body.get();
         if (src != nullptr) {
             s.exact = std::make_unique<brep::BRepBody>(*src);
             brep::link_radial_edges(*s.exact);
@@ -635,6 +667,7 @@ inline DisplayDerivation derive_display_mesh(
         break;
     }
     case NodeKind::Fillet:
+    case NodeKind::FilletMulti:
     case NodeKind::Ellipsoid: {
         if (s.exact == nullptr)
             break; // the refused/null body: the update_meshes skip
@@ -907,6 +940,14 @@ inline std::unique_ptr<brep::BRepBody> operand_exact_brep_quiet(
         brep::link_radial_edges(*c);
         return c;
     }
+    if (n.kind == NodeKind::FilletMulti && n.fillet_body != nullptr) {
+        // The contemporanea answers its own materialized body — the
+        // chain's CURRENT STATE (the single's own rule one kind
+        // over; the copy relinks its radial edges at the source).
+        auto c = std::make_unique<brep::BRepBody>(*n.fillet_body);
+        brep::link_radial_edges(*c);
+        return c;
+    }
     if (n.kind != NodeKind::Sdf) return nullptr;
     return bridge::sdf_to_brep_primitive(
         n.body, geometry::FeatureId{n.id});
@@ -922,7 +963,9 @@ inline std::unique_ptr<brep::BRepBody> operand_exact_brep_quiet(
 inline const SceneNode* fillet_chain_root(
     const std::vector<SceneNode*>& nodes, const SceneNode* n) {
     std::size_t guard = 0;
-    while (n != nullptr && n->kind == NodeKind::Fillet &&
+    while (n != nullptr &&
+           (n->kind == NodeKind::Fillet ||
+            n->kind == NodeKind::FilletMulti) &&
            n->fillet_operand_id != 0 &&
            guard++ <= nodes.size()) {
         const SceneNode* up = find_node(nodes, n->fillet_operand_id);
@@ -1054,6 +1097,84 @@ inline void attach_ellipsoid(SceneNode& n) {
         {}, geometry::FeatureId{n.id});
 }
 
+// fillet_box_class_call — THE BOX CLASS'S THREE DOORS (G5 m5,
+// ADR-0043 D2.2/D5.1 and the Consequences' own register: "il picker
+// passa da 4-in a 12-in"): the single recipe's dispatch, widened one
+// morso over — the edge the reference names decides, and the DECIDER
+// IS THE OPERAND'S OWN GEOMETRY (the resolved edge's two adjacent
+// faces and its endpoints), never a name parsed:
+//   * PLANE × PLANE, the endpoints sharing (x, y) — the VERTICAL
+//     spigolo: fillet_edge (the class-1 walk, the landed world);
+//   * PLANE × PLANE, the endpoints sharing z — the RING spigolo:
+//     fillet_ring_edge (the m2 walk one axis over; its own admission
+//     guards the corner freedom, and the m3 CORNER TRIGGER lives
+//     inside it — a ring edge at a corner occupied by a CylinderZ
+//     flank fires the corner act, the indivisible pair consumed
+//     whole);
+//   * anything else — the VERTICAL door answers (its own admission
+//     refuses with its own words: the born tangent lines and cap
+//     arcs are not filletable spigoli, the rim class stays at its
+//     own leg). THE VERTICAL-ONLY WALL IS DOWN FOR THE CUBE — the
+//     m4 register's own promise, kept here at the dispatch.
+inline std::unique_ptr<brep::BRepBody> fillet_box_class_call(
+    const brep::BRepBody& body, const geometry::ShapeId& reference,
+    double radius, const brep::FilletNaming& naming) {
+    // The resolved edge's index (the discovery already matched the
+    // reference whole — here the geometry is read, nothing parsed).
+    for (brep::EdgeId k = 0; k < body.edge_count(); ++k) {
+        const brep::EdgeInfo info = brep::query_edge(body, k);
+        if (info.id != reference) continue;
+        const auto& e = body.edges[k];
+        if (e.coedges().size() != 2) break;  // the vertical door answers
+        // The two adjacent faces' indices.
+        const auto face_of = [&](const brep::CoEdge* ce)
+            -> std::size_t {
+            for (std::size_t f = 0; f < body.face_count(); ++f)
+                for (const auto& loop :
+                     body.solid.shell().faces()[f].loops())
+                    for (const auto& other : loop.coedges())
+                        if (&other == ce) return f;
+            return body.face_count();
+        };
+        const std::size_t f0 = face_of(e.coedges()[0]);
+        const std::size_t f1 = face_of(e.coedges()[1]);
+        if (f0 >= body.face_count() || f1 >= body.face_count())
+            break;  // the vertical door answers
+        // The two faces' surface kinds (plane vs the rest — the ring
+        // door needs plane × plane, the box's own ring spigoli).
+        struct KindReader : brep::SurfaceVisitor {
+            const brep::PlaneSurface* p{nullptr};
+            void visit(const brep::PlaneSurface& s) override {
+                p = &s;
+            }
+        };
+        const auto is_plane = [&](std::size_t f) {
+            KindReader r;
+            const auto* s = body.solid.shell().faces()[f].surface();
+            if (s != nullptr) s->accept(r);
+            return r.p != nullptr;
+        };
+        const math::Vec3d& pa =
+            body.vertices[static_cast<std::size_t>(e.vertex(0))]
+                .position();
+        const math::Vec3d& pb =
+            body.vertices[static_cast<std::size_t>(e.vertex(1))]
+                .position();
+        const double geo_tol = 1e-9;
+        const bool vertical =
+            std::abs(pa.x - pb.x) <= geo_tol &&
+            std::abs(pa.y - pb.y) <= geo_tol;
+        if (is_plane(f0) && is_plane(f1) && !vertical) {
+            // THE RING SPIGOLO — the m2 walk one axis over (the m3
+            // corner trigger inside it at an occupied corner).
+            return brep::fillet_ring_edge(body, reference, radius,
+                                          naming);
+        }
+        break;  // the vertical door answers (its own refusals ride)
+    }
+    return brep::fillet_edge(body, reference, radius, naming);
+}
+
 // attach_fillet — THE FILLET'S OWN attach_operation_hybrid: ONE
 // definition for creation, the DAG pass and the loader's pass 2. The
 // discovery, the class dispatch (the operand's own kind — a subtract
@@ -1173,11 +1294,14 @@ inline bool attach_fillet(
         // the operand node (the scene fact; the kernel's own
         // admission does the rest, by name, with the remedy).
         std::unique_ptr<brep::BRepBody> result;
-        if (operand->kind == NodeKind::Fillet) {
+        if (operand->kind == NodeKind::Fillet ||
+            operand->kind == NodeKind::FilletMulti) {
             // THE CHAIN (m6-correttiva-ter): the operand is a
             // previous fillet's body — the box class ONE LINK OVER
             // (the chain's current state, the discovery's newest
-            // carrier). The naming context binds the chain's ROOT
+            // carrier; a FilletMulti operand rides the same leg —
+            // the contemporanea's body IS a chain state). The
+            // naming context binds the chain's ROOT
             // table: the adjacent faces' stamps are the root's (the
             // kept stamp copies ride every link), so the flank's
             // operands render through the root's own vocabulary.
@@ -1198,7 +1322,10 @@ inline bool attach_fillet(
             }
             const brep::FilletNaming naming{
                 geometry::FeatureId{n.id}, body_table};
-            result = brep::fillet_edge(
+            // THE BOX CHAIN, THREE CLASS DOORS (G5 m5, the picker's
+            // 12-in reach — the geometric dispatch below reads the
+            // RESOLVED edge's adjacency, never a name parsed).
+            result = fillet_box_class_call(
                 operand_body, reference, recipe.radius, naming);
         } else if (operand->operation.has_value() &&
             operand->operation->type == OperationType::Subtract) {
@@ -1231,8 +1358,14 @@ inline bool attach_fillet(
             result = brep::fillet_rim_edge(
                 operand_body, reference, recipe.radius, naming);
         } else if (operand->kind == NodeKind::Sdf) {
-            // THE BOX CLASS (fillet_edge): a fitted primitive — the
-            // m2 naming {feature, the body's own table}.
+            // THE BOX CLASS: a fitted primitive — the m2 naming
+            // {feature, the body's own table}, and G5 m5's THREE
+            // CLASS DOORS (the picker's 12-in reach: the verticals
+            // through fillet_edge, the ring edges through the m2
+            // walk — its own admission guards the corner freedom —
+            // with the m3 CORNER TRIGGER inside it at an occupied
+            // corner; the geometric dispatch reads the resolved
+            // edge's adjacency, never a name parsed).
             const brep::naming::OperationNaming* body_table =
                 operand_naming_of(*operand);
             if (body_table == nullptr) {
@@ -1247,7 +1380,7 @@ inline bool attach_fillet(
             }
             const brep::FilletNaming naming{
                 geometry::FeatureId{n.id}, body_table};
-            result = brep::fillet_edge(
+            result = fillet_box_class_call(
                 operand_body, reference, recipe.radius, naming);
         } else {
             throw std::invalid_argument(
@@ -1266,6 +1399,562 @@ inline bool attach_fillet(
         // THE LODGING: the fillet's own tavola (fillet_descent), the
         // same site rule as the operations'.
         n.tavola = brep::fillet_descent(*n.fillet_body, operand_body);
+        n.fillet_refusal.clear();
+        return true;
+    } catch (const std::invalid_argument& e) {
+        // The visible refusal state: the last good body KEPT (display
+        // and the numbers continue), the actionable reason carried.
+        n.fillet_refusal = e.what();
+        return false;
+    }
+}
+
+// fillet_multi_corner_law — THE ANGLES LAW'S ONE DEFINITION (G5 m5,
+// ADR-0043 D6.6/D1: "the connected edge-corner graph forces one
+// radius"), shared by every door that carries the body: the
+// machine's pre-kernel check (creation, the DAG pass, the loader's
+// pass 2) and the SAVE DOOR's own reading. The corner graph: two
+// entries are connected when their resolved edges SHARE an endpoint
+// vertex (the corner); within each connected component the radii
+// must agree. Returns "" when the law holds, the loud refusal —
+// D6.6's own name, the two entries and their radii, the remedy —
+// when it does not. NEVER a kernel question: the law is the doors'
+// own, the kernel's body-state gates stay, their words unchanged.
+inline std::string fillet_multi_corner_law(
+    const brep::BRepBody& body,
+    const std::vector<geometry::ShapeId>& references,
+    const std::vector<double>& radii,
+    const std::vector<std::string>& texts) {
+    const std::size_t m = references.size();
+    if (m == 0 || radii.size() != m || texts.size() != m)
+        return "";  // nothing to judge (the other doors' business)
+    // The endpoint vertex pairs, read from the body's own edges (a
+    // reference that finds no edge here is the other doors'
+    // business — dead references are the Phase F state, not a law
+    // violation).
+    constexpr std::size_t kNone = static_cast<std::size_t>(-1);
+    std::vector<std::pair<std::size_t, std::size_t>> ends(
+        m, {kNone, kNone});
+    for (std::size_t i = 0; i < m; ++i) {
+        for (brep::EdgeId k = 0; k < body.edge_count(); ++k) {
+            if (brep::query_edge(body, k).id != references[i])
+                continue;
+            const auto& e = body.edges[k];
+            ends[i] = {static_cast<std::size_t>(e.vertex(0)),
+                       static_cast<std::size_t>(e.vertex(1))};
+            break;
+        }
+    }
+    // The union-find over the corner graph.
+    std::vector<std::size_t> parent(m);
+    for (std::size_t i = 0; i < m; ++i) parent[i] = i;
+    const auto find = [&](std::size_t x) {
+        while (parent[x] != x)
+            x = parent[x] = parent[parent[x]];
+        return x;
+    };
+    const auto unite = [&](std::size_t a, std::size_t b) {
+        a = find(a); b = find(b);
+        if (a != b) parent[a] = b;
+    };
+    for (std::size_t i = 0; i < m; ++i) {
+        if (ends[i].first == kNone) continue;
+        for (std::size_t j = i + 1; j < m; ++j) {
+            if (ends[j].first == kNone) continue;
+            const bool shared =
+                ends[i].first == ends[j].first ||
+                ends[i].first == ends[j].second ||
+                ends[i].second == ends[j].first ||
+                ends[i].second == ends[j].second;
+            if (shared) unite(i, j);
+        }
+    }
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = i + 1; j < m; ++j)
+            if (find(i) == find(j) && radii[i] != radii[j])
+                return "the corner radii disagree "
+                       "(fillet_corner_radii_mismatch): the edges '" +
+                       texts[i] + "' (r=" + std::to_string(radii[i]) +
+                       ") and '" + texts[j] + "' (r=" +
+                       std::to_string(radii[j]) +
+                       ") meet at a common corner - the corner "
+                       "sphere is tangent to its three flanks only "
+                       "at their COMMON radius (the connected "
+                       "edge-corner graph forces one radius, "
+                       "ADR-0043 D6.6/D1). Remedy: author the whole "
+                       "corner's edges at the same radius, or split "
+                       "the map (the partial world of D7.3 keeps the "
+                       "verticals free - no two verticals share a "
+                       "corner).";
+    return "";
+}
+
+// ---------------------------------------------------------------------------
+// THE CONTEMPORANEA'S MACHINE (G5 m5, ADR-0043 D5.1's derived chain
+// replayed scene-side, D6.5/D6.6's doors): attach_fillet_multi — ONE
+// definition for creation, the DAG pass and the loader's pass 2, the
+// attach_fillet pattern one recipe over. The machine:
+//
+//   1. THE UNANIMITY OF THE OPERAND — every entry's reference must
+//      resolve on the SAME operand (the derived chain replays ONE
+//      body; a map spanning two operands is not a contemporanea).
+//   2. THE ANGLES LAW, BEFORE ANY KERNEL CALL (D6.6/D1: "the
+//      connected edge-corner graph forces one radius"): the resolved
+//      edges' SHARED ENDPOINT VERTICES are the corners — within each
+//      connected component of the edge-corner graph the radii must
+//      agree, else the loud fillet_corner_radii_mismatch with the
+//      two entries and the shared corner named, and the remedy. THE
+//      LAW IS THE DOORS' OWN — the kernel is never asked a question
+//      the map itself already answers (the kernel's body-state gates
+//      stay, its words unchanged).
+//   3. THE GEOMETRIC DISPATCH — each resolved edge is VERTICAL (its
+//      endpoints share (x, y)) or RING (they share z), read from
+//      the operand's own geometry, never a name parsed.
+//   4. THE REPLAY, THE DERIVATION'S OWN ORDER (D5.1): the vertical
+//      passage first — each entry its own walk, the kernel's chain
+//      admission gating every step, the states the formula
+//      8+2k/12+3k/6+k (the CONTEGGI verified after every step — a
+//      mismatch is an implementation defect, loud); then, when the
+//      map declares the ring, THE RING AND CORNERS ACT, INDIVISIBLE
+//      — the act's whole declaration demanded first (the map's ring
+//      set must be the body's complete ring set and the vertical
+//      passage must land 16/24/10, the formula's own numbers in the
+//      refusal), then fillet_ring_act once, the verdict 24/48/26
+//      with χ = 2 verified after.
+//   5. THE LODGING — the single's own: the body beside the recipe,
+//      the operand's id, the tavola (the whole diff, one feature).
+//
+// THE PARTIAL WORLD (D7.3) is the map without ring entries: 1..4
+// verticals, the radii FREE among them (no two verticals share a
+// corner — the law's own arithmetic). The refused states are the
+// visible ones (the last good body kept), the creation door excepted
+// (the caller refuses before installing anything).
+// ---------------------------------------------------------------------------
+inline bool attach_fillet_multi(
+    SceneNode& n, const std::vector<SceneNode*>& nodes,
+    const std::map<std::uint32_t, brep::DescentTable>* old_tavole) {
+    const brep::MultiFilletRecipe& recipe = *n.fillet_multi;
+    // THE DAG IN FILE (the m4 discipline, the single's own): each
+    // recipe reads only what PRECEDES it.
+    std::size_t until = nodes.size();
+    for (std::size_t k = 0; k < nodes.size(); ++k)
+        if (nodes[k] == &n) { until = k; break; }
+    try {
+        if (recipe.entries.empty())
+            throw std::invalid_argument(
+                "attach_fillet_multi: the recipe's map is empty - the "
+                "contemporanea consumes at least one spigolo (the "
+                "edge->radius map, one entry per consumed edge). "
+                "Remedy: pick the edges from the operand body's own "
+                "query (the by-name surface) and re-run.");
+        // The map's own uniqueness (the belt every door wears): an
+        // edge consumed twice is not a map.
+        for (std::size_t i = 0; i < recipe.entries.size(); ++i)
+            for (std::size_t j = i + 1;
+                 j < recipe.entries.size(); ++j)
+                if (recipe.entries[i].edge_reference ==
+                    recipe.entries[j].edge_reference)
+                    throw std::invalid_argument(
+                        "attach_fillet_multi: the map declares the "
+                        "edge '" + recipe.entries[i].edge_reference +
+                        "' twice - the edge->radius map is a MAP: one "
+                        "entry per spigolo, the radius one field. "
+                        "Remedy: author one entry per edge.");
+        // ---- 1. THE DISCOVERY, PER ENTRY, and THE UNANIMITY OF THE
+        // OPERAND (all entries resolve on ONE body).
+        struct Resolved {
+            std::string reference_text;
+            geometry::ShapeId reference{};
+            double radius{0.0};
+            bool vertical{false};
+            bool ring{false};
+            std::size_t va{0}, vb{0};  // the endpoint vertex indices
+        };
+        std::vector<Resolved> resolved;
+        resolved.reserve(recipe.entries.size());
+        const SceneNode* operand = nullptr;
+        for (const brep::MultiFilletEntry& entry :
+             recipe.entries) {
+            const FilletDiscovery disc =
+                discover_fillet_operand(
+                    nodes, entry.edge_reference, until);
+            if (disc.superseded != nullptr) {
+                n.fillet_refusal =
+                    "attach_fillet_multi: the entry '" +
+                    entry.edge_reference + "' - " +
+                    fillet_vanished_words(
+                        disc, entry.edge_reference);
+                return false;
+            }
+            if (disc.operand == nullptr) {
+                // The dead reference: the single's own answer one
+                // entry over (the old tavola's class-4 leg when the
+                // pass carries it, the honest door otherwise).
+                if (old_tavole != nullptr) {
+                    for (const auto& [oid, tav] : *old_tavole) {
+                        for (const brep::DescentRow& row :
+                             tav.rows) {
+                            if (row.name.empty() ||
+                                row.name != entry.edge_reference)
+                                continue;
+                            const SceneNode* op =
+                                find_node(nodes, oid);
+                            if (op == nullptr ||
+                                !op->operation.has_value() ||
+                                op->hybrid == nullptr ||
+                                op->hybrid->brep == nullptr)
+                                continue;
+                            const brep::naming::OperandBinding
+                                bindings[2] = {
+                                    {geometry::FeatureId{
+                                         op->operation->target},
+                                     operand_naming_of(
+                                         *find_node(
+                                             nodes,
+                                             op->operation->target)),
+                                     false},
+                                    {geometry::FeatureId{
+                                         op->operation->tool},
+                                     operand_naming_of(
+                                         *find_node(
+                                             nodes,
+                                             op->operation->tool)),
+                                     false}};
+                            const brep::naming::OperationNaming
+                                decl{
+                                    brep::naming::FeatureKind::
+                                        Subtract,
+                                    {},
+                                    brep::naming::kSubEdgeRoles,
+                                    {bindings, 2}};
+                            const brep::Generation old_gen{
+                                nullptr, &tav, &decl, false};
+                            const brep::Generation new_gen{
+                                op->hybrid->brep.get(), nullptr,
+                                &decl, false};
+                            const brep::EditContext ectx{};
+                            const brep::Resolution res =
+                                brep::resolve(row.shape_id, old_gen,
+                                              new_gen, ectx);
+                            n.fillet_refusal =
+                                "attach_fillet_multi: the entry '" +
+                                entry.edge_reference + "' - " +
+                                brep::resolution_text(res);
+                            return false;
+                        }
+                    }
+                }
+                throw std::invalid_argument(
+                    "attach_fillet_multi: the entry's edge-reference "
+                    "'" + entry.edge_reference +
+                    "' names no edge among the features' exact "
+                    "sides - the reference is the grammar's own "
+                    "form, matched whole against the entity names "
+                    "(never parsed, never an address). Remedy: pick "
+                    "the edge from the operand body's own query (the "
+                    "by-name surface) and re-run.");
+            }
+            if (operand == nullptr) operand = disc.operand;
+            else if (operand->id != disc.operand->id)
+                throw std::invalid_argument(
+                    "attach_fillet_multi: the map spans TWO operands "
+                    "('" + operand->name + "' and '" +
+                    disc.operand->name +
+                    "') - the contemporanea replays the derived "
+                    "chain of ONE body (the act is indivisible, "
+                    "D5.1). Remedy: author the map against a single "
+                    "operand (the box or its chain).");
+            Resolved r;
+            r.reference_text = entry.edge_reference;
+            r.reference = disc.reference;
+            r.radius = entry.radius;
+            resolved.push_back(std::move(r));
+        }
+        // ---- The operand's exact body (the same door, once).
+        std::unique_ptr<brep::BRepBody> owned =
+            operand_exact_brep_quiet(*operand);
+        if (owned == nullptr)
+            throw std::invalid_argument(
+                "attach_fillet_multi: the operand's exact side is "
+                "not available (its materialization refused) - the "
+                "contemporanea consumes the exact body. Remedy: fix "
+                "the operand's own refusal first (its "
+                "hybrid_refusal carries the reason).");
+        // ---- 3. THE GEOMETRIC DISPATCH, per entry, on the
+        // operand's own body (never a name parsed).
+        const brep::BRepBody& body = *owned;
+        for (Resolved& r : resolved) {
+            bool found = false;
+            for (brep::EdgeId k = 0; k < body.edge_count(); ++k) {
+                const brep::EdgeInfo info = brep::query_edge(body, k);
+                if (info.id != r.reference) continue;
+                const auto& e = body.edges[k];
+                r.va = static_cast<std::size_t>(e.vertex(0));
+                r.vb = static_cast<std::size_t>(e.vertex(1));
+                const math::Vec3d& pa =
+                    body.vertices[r.va].position();
+                const math::Vec3d& pb =
+                    body.vertices[r.vb].position();
+                const double geo_tol = 1e-9;
+                const bool vertical =
+                    std::abs(pa.x - pb.x) <= geo_tol &&
+                    std::abs(pa.y - pb.y) <= geo_tol;
+                const bool horizontal =
+                    std::abs(pa.z - pb.z) <= geo_tol;
+                if (!vertical && !horizontal)
+                    throw std::invalid_argument(
+                        "attach_fillet_multi: the entry '" +
+                        r.reference_text + "' is neither a vertical "
+                        "nor a ring spigolo of the box (its "
+                        "endpoints share neither (x, y) nor z) - the "
+                        "contemporanea's world is the cube's twelve "
+                        "spigoli (ADR-0043 D1). Remedy: pick from "
+                        "the box's own edges; the general dihedral "
+                        "is stage 2's seat (D1-OUT).");
+                r.vertical = vertical;
+                r.ring = !vertical;  // horizontal on the box class
+                found = true;
+                break;
+            }
+            if (!found)
+                throw std::invalid_argument(
+                    "attach_fillet_multi: the entry '" +
+                    r.reference_text +
+                    "' resolves to no edge of the operand body - "
+                    "the discovery's answer and the body disagree "
+                    "(an implementation defect, loud by design).");
+        }
+        // ---- 2. THE ANGLES LAW, BEFORE ANY KERNEL CALL (D6.6/D1):
+        // the law's ONE definition (fillet_multi_corner_law below,
+        // shared with the save door) — the corner graph on the
+        // resolved edges' shared endpoint vertices, one radius per
+        // connected component.
+        {
+            std::vector<geometry::ShapeId> refs;
+            std::vector<double> radii;
+            std::vector<std::string> texts;
+            refs.reserve(resolved.size());
+            radii.reserve(resolved.size());
+            texts.reserve(resolved.size());
+            for (const Resolved& r : resolved) {
+                refs.push_back(r.reference);
+                radii.push_back(r.radius);
+                texts.push_back(r.reference_text);
+            }
+            const std::string law = fillet_multi_corner_law(
+                body, refs, radii, texts);
+            if (!law.empty())
+                throw std::invalid_argument(
+                    "attach_fillet_multi: " + law);
+        }
+        // ---- THE NAMING CONTEXT: the chain's ROOT table (the
+        // single chain leg's own rule — the stamps ride the root).
+        const SceneNode* root = fillet_chain_root(nodes, operand);
+        const brep::naming::OperationNaming* body_table =
+            root == nullptr ? nullptr : operand_naming_of(*root);
+        if (body_table == nullptr)
+            throw std::invalid_argument(
+                "attach_fillet_multi: the operand carries no naming "
+                "table (the unnamed mode) - the born entities would "
+                "read honestly empty and the references would not "
+                "survive the file. Remedy: model the operand as a "
+                "fitted primitive (the box), or accept the unnamed "
+                "kernel path (CAD_0.brep).");
+        const brep::FilletNaming naming{
+            geometry::FeatureId{n.id}, body_table};
+        // ---- 4. THE REPLAY — the vertical passage first (the
+        // authored order among the verticals, the derivation's own
+        // freedom, D5.1), each step gated by the kernel's own chain
+        // admission, the CONTEGGI verified after every step. The
+        // operand's own chain state k0 is read from its counts (the
+        // naked box k0=0; a chain operand k0 = its landed verticals
+        // — the map completes the passage); a body outside the
+        // chain family never reaches the conteggio (the kernel's
+        // own signature refuses it first, its own words).
+        const std::size_t V0 = body.vertices.size();
+        const std::size_t E0 = body.edges.size();
+        const std::size_t F0 = body.face_count();
+        std::size_t k0 = 0;
+        {
+            const std::size_t k_guess =
+                F0 >= 6 ? F0 - 6 : 0;
+            if (F0 >= 6 && V0 == 8 + 2 * k_guess &&
+                E0 == 12 + 3 * k_guess)
+                k0 = k_guess;
+        }
+        std::unique_ptr<brep::BRepBody> cur =
+            std::make_unique<brep::BRepBody>(body);
+        brep::link_radial_edges(*cur);  // the copy's own hazard,
+                                        // closed at the source (the
+                                        // quiet door's own rule)
+        std::size_t verticals = 0;
+        bool ring_declared = false;
+        for (const Resolved& r : resolved) {
+            if (!r.vertical) { ring_declared = true; continue; }
+            const std::size_t k_before = k0 + verticals;
+            cur = brep::fillet_edge(*cur, r.reference, r.radius,
+                                    naming);
+            ++verticals;
+            const std::size_t k_now = k0 + verticals;
+            const std::size_t V = cur->vertices.size();
+            const std::size_t E = cur->edges.size();
+            const std::size_t F = cur->face_count();
+            const std::size_t wantV = 8 + 2 * k_now;
+            const std::size_t wantE = 12 + 3 * k_now;
+            const std::size_t wantF = 6 + k_now;
+            if (V != wantV || E != wantE || F != wantF)
+                throw std::invalid_argument(
+                    "attach_fillet_multi: the vertical passage's "
+                    "conteggio broke at entry '" +
+                    r.reference_text + "' (k=" +
+                    std::to_string(k_before) + " -> " +
+                    std::to_string(k_now) + ": V=" +
+                    std::to_string(V) + "/E=" + std::to_string(E) +
+                    "/F=" + std::to_string(F) +
+                    " where the chain formula 8+2k/12+3k/6+k reads " +
+                    std::to_string(wantV) + "/" +
+                    std::to_string(wantE) + "/" +
+                    std::to_string(wantF) +
+                    ") - an implementation defect, loud by design. "
+                    "Remedy: report the construction (never "
+                    "re-authored silently).");
+        }
+        // ---- THE ACT'S OWN DECLARATION, verified whole before the
+        // call (the indivisibility is the DOOR's to guard here: the
+        // map must declare the ring COMPLETE and land the act's own
+        // signature 16/24/10 — the kernel's gates stay, this is the
+        // recipe's honesty about what the act consumes).
+        if (ring_declared) {
+            // (a) The ring completeness: the map's ring set must be
+            // the body's COMPLETE ring set (the plane x plane
+            // horizontal edges at the act's door state).
+            std::vector<geometry::ShapeId> body_ring;
+            struct PlaneRingReader : brep::SurfaceVisitor {
+                const brep::PlaneSurface* p{nullptr};
+                void visit(const brep::PlaneSurface& s) override {
+                    p = &s;
+                }
+            };
+            for (brep::EdgeId k = 0; k < cur->edge_count(); ++k) {
+                const auto& e = cur->edges[k];
+                if (e.coedges().size() != 2) continue;
+                const auto face_of = [&](const brep::CoEdge* ce)
+                    -> std::size_t {
+                    for (std::size_t f = 0;
+                         f < cur->face_count(); ++f)
+                        for (const auto& loop :
+                             cur->solid.shell().faces()[f].loops())
+                            for (const auto& other :
+                                 loop.coedges())
+                                if (&other == ce) return f;
+                    return cur->face_count();
+                };
+                const std::size_t f0 = face_of(e.coedges()[0]);
+                const std::size_t f1 = face_of(e.coedges()[1]);
+                if (f0 >= cur->face_count() ||
+                    f1 >= cur->face_count())
+                    continue;
+                PlaneRingReader r0, r1;
+                const auto* s0 =
+                    cur->solid.shell().faces()[f0].surface();
+                const auto* s1 =
+                    cur->solid.shell().faces()[f1].surface();
+                if (s0 != nullptr) s0->accept(r0);
+                if (s1 != nullptr) s1->accept(r1);
+                if (r0.p == nullptr || r1.p == nullptr) continue;
+                const math::Vec3d& pa =
+                    cur->vertices[static_cast<std::size_t>(
+                        e.vertex(0))]
+                        .position();
+                const math::Vec3d& pb =
+                    cur->vertices[static_cast<std::size_t>(
+                        e.vertex(1))]
+                        .position();
+                const double geo_tol = 1e-9;
+                if (std::abs(pa.z - pb.z) <= geo_tol)
+                    body_ring.push_back(
+                        brep::query_edge(*cur, k).id);
+            }
+            std::size_t declared_ring = 0;
+            for (const Resolved& r : resolved)
+                if (r.ring) ++declared_ring;
+            const bool complete =
+                declared_ring == body_ring.size() &&
+                [&]() {
+                    for (const Resolved& r : resolved) {
+                        if (!r.ring) continue;
+                        bool hit = false;
+                        for (const geometry::ShapeId& id : body_ring)
+                            if (id == r.reference) { hit = true; break; }
+                        if (!hit) return false;
+                    }
+                    return true;
+                }();
+            if (!complete)
+                throw std::invalid_argument(
+                    "attach_fillet_multi: the map declares " +
+                    std::to_string(declared_ring) + " of the "
+                    "body's " + std::to_string(body_ring.size()) +
+                    " ring spigoli - the ring is consumed by THE "
+                    "ACT, indivisible (D5.1: mezzo atto e' un corpo "
+                    "che la gate rifiuta). Remedy: declare the "
+                    "whole ring (the contemporanea: every remaining "
+                    "vertical and all eight ring spigoli), or keep "
+                    "the partial world (the verticals alone, D7.3) "
+                    "- the single ring spigolo stays the "
+                    "sequential door (the one-edge recipe, the m2 "
+                    "walk).");
+            // (b) The act's own signature, the formula's numbers
+            // (16/24/10 — the kernel's gate stays; this is the
+            // recipe's own conteggio, the honest pre-verification).
+            {
+                const std::size_t V = cur->vertices.size();
+                const std::size_t E = cur->edges.size();
+                const std::size_t F = cur->face_count();
+                if (V != 16 || E != 24 || F != 10)
+                    throw std::invalid_argument(
+                        "attach_fillet_multi: the map declares the "
+                        "act without the complete vertical passage - "
+                        "the state is V=" + std::to_string(V) +
+                        "/E=" + std::to_string(E) + "/F=" +
+                        std::to_string(F) +
+                        " where the act's own signature (the chain "
+                        "formula 8+2k/12+3k/6+k at k=4) reads "
+                        "16/24/10 - the act takes the cube after "
+                        "the FOUR VERTICAL FILLETS (the consumption "
+                        "order of D5.1). Remedy: complete the "
+                        "verticals in the map (or through the "
+                        "chain), or keep the partial world (the "
+                        "verticals alone).");
+            }
+            // (c) THE ACT — the ring's radius (the law's own: one
+            // radius for the whole connected map).
+            double act_radius = 0.0;
+            for (const Resolved& r : resolved)
+                if (r.ring) { act_radius = r.radius; break; }
+            cur = brep::fillet_ring_act(*cur, act_radius, naming);
+            {
+                const std::size_t V = cur->vertices.size();
+                const std::size_t E = cur->edges.size();
+                const std::size_t F = cur->face_count();
+                if (V != 24 || E != 48 || F != 26 ||
+                    brep::euler_characteristic(*cur) != 2)
+                    throw std::invalid_argument(
+                        "attach_fillet_multi: the act's conteggio "
+                        "broke (V=" + std::to_string(V) + "/E=" +
+                        std::to_string(E) + "/F=" +
+                        std::to_string(F) +
+                        " where the derivation reads 24/48/26 with "
+                        "chi=2, D7.1) - an implementation defect, "
+                        "loud by design. Remedy: report the "
+                        "construction (never re-authored "
+                        "silently).");
+            }
+        }
+        // ---- 5. THE LODGING — the single's own, one feature.
+        n.fillet_body = std::move(cur);
+        n.fillet_operand_id = operand->id;
+        n.tavola = brep::fillet_descent(*n.fillet_body, body);
         n.fillet_refusal.clear();
         return true;
     } catch (const std::invalid_argument& e) {
@@ -1843,12 +2532,16 @@ public:
             // reference needs) is its own node's VISIBLE state: the
             // last good body kept, the reason on its own row.
             for (SceneNode& m : nodes_) {
-                if (!m.fillet.has_value() || &m == n) continue;
+                const bool m_fillet_feature =
+                    m.fillet.has_value() ||
+                    m.fillet_multi.has_value();
+                if (!m_fillet_feature || &m == n) continue;
                 bool reaches = false;
                 std::size_t guard = 0;
                 const SceneNode* cur = &m;
                 while (cur != nullptr &&
-                       cur->fillet.has_value() &&
+                       (cur->fillet.has_value() ||
+                        cur->fillet_multi.has_value()) &&
                        cur->fillet_operand_id != 0 &&
                        guard++ <= nodes_.size()) {
                     if (cur->fillet_operand_id == id) {
@@ -1858,7 +2551,191 @@ public:
                     cur = find_node(live, cur->fillet_operand_id);
                 }
                 if (!reaches) continue;
-                attach_fillet(m, live, nullptr);
+                if (m.fillet_multi.has_value())
+                    attach_fillet_multi(m, live, nullptr);
+                else
+                    attach_fillet(m, live, nullptr);
+                mark_dirty(m.id);
+            }
+            return "reference_resolved";
+        }
+        mark_dirty(id);
+        return n->fillet_refusal;
+    }
+
+    // THE FILLET CONTEMPORANEA NODE (G5 m5, ADR-0043 D6.5): the
+    // many-edge recipe — the EDGE→RADIUS MAP. Creation refuses
+    // loudly on every door's law (the value class, the map's
+    // uniqueness, the ANGLES LAW, the operand's unanimity, the
+    // indivisibility — no node, no id consumed); the body is
+    // DERIVED state, rebuilt by the same pass from the recipe. The
+    // name defaults to "FilletMulti_<id>" (the fillet's own
+    // pattern).
+    std::uint32_t add_fillet_multi_node(
+        const std::string& name, brep::MultiFilletRecipe recipe) {
+        if (recipe.entries.empty())
+            throw std::invalid_argument(
+                "Scene::add_fillet_multi_node: the recipe's map is "
+                "empty - the contemporanea consumes at least one "
+                "spigolo (the edge->radius map). Remedy: pick the "
+                "edges from the operand body's own query.");
+        for (const brep::MultiFilletEntry& e : recipe.entries) {
+            if (e.edge_reference.empty())
+                throw std::invalid_argument(
+                    "Scene::add_fillet_multi_node: an entry's "
+                    "edge-reference is empty - the reference is the "
+                    "grammar's own form, the pick's own answer.");
+            if (!(e.radius > 0.0) || !std::isfinite(e.radius))
+                throw std::invalid_argument(
+                    "Scene::add_fillet_multi_node: the entry '"
+                    + e.edge_reference + "' radius must be finite "
+                    "and > 0, got " + std::to_string(e.radius) +
+                    " (the typed value class, the loader's own "
+                    "door).");
+        }
+        for (std::size_t i = 0; i < recipe.entries.size(); ++i)
+            for (std::size_t j = i + 1;
+                 j < recipe.entries.size(); ++j)
+                if (recipe.entries[i].edge_reference ==
+                    recipe.entries[j].edge_reference)
+                    throw std::invalid_argument(
+                        "Scene::add_fillet_multi_node: the map "
+                        "declares the edge '" +
+                        recipe.entries[i].edge_reference +
+                        "' twice - the edge->radius map is a MAP. "
+                        "Remedy: author one entry per spigolo.");
+        std::vector<SceneNode*> live;
+        live.reserve(nodes_.size());
+        for (SceneNode& n : nodes_) live.push_back(&n);
+        // Materialize FIRST, install after (the single's contract:
+        // a refused creation leaves the scene untouched).
+        SceneNode node;
+        node.id = next_id_;
+        node.kind = NodeKind::FilletMulti;
+        node.fillet_multi = std::move(recipe);
+        if (!attach_fillet_multi(node, live, nullptr))
+            throw std::invalid_argument(node.fillet_refusal);
+        node.id = next_id_++;
+        node.name = name.empty()
+                        ? ("FilletMulti_" +
+                           std::to_string(node.id))
+                        : name;
+        nodes_.push_back(std::move(node));
+        notify(SceneChange::NodeAdded, nodes_.back().id);
+        return nodes_.back().id;
+    }
+
+    // Id-stable re-creation of a FILLET CONTEMPORANEA node (the
+    // command redo and the delete-undo's other half — the restore
+    // pattern, the single's own contract one recipe over).
+    std::uint32_t restore_fillet_multi_node(
+        std::uint32_t id, const std::string& name,
+        brep::MultiFilletRecipe recipe) {
+        if (recipe.entries.empty())
+            throw std::invalid_argument(
+                "Scene::restore_fillet_multi_node: the recipe's map "
+                "is empty - the contemporanea consumes at least one "
+                "spigolo.");
+        for (const brep::MultiFilletEntry& e : recipe.entries) {
+            if (e.edge_reference.empty())
+                throw std::invalid_argument(
+                    "Scene::restore_fillet_multi_node: an entry's "
+                    "edge-reference is empty - the reference is the "
+                    "grammar's own form.");
+            if (!(e.radius > 0.0) || !std::isfinite(e.radius))
+                throw std::invalid_argument(
+                    "Scene::restore_fillet_multi_node: the entry '"
+                    + e.edge_reference + "' radius must be finite "
+                    "and > 0 (the typed value class).");
+        }
+        for (std::size_t i = 0; i < recipe.entries.size(); ++i)
+            for (std::size_t j = i + 1;
+                 j < recipe.entries.size(); ++j)
+                if (recipe.entries[i].edge_reference ==
+                    recipe.entries[j].edge_reference)
+                    throw std::invalid_argument(
+                        "Scene::restore_fillet_multi_node: the map "
+                        "declares the edge '" +
+                        recipe.entries[i].edge_reference +
+                        "' twice - the map's uniqueness.");
+        if (get_node(id) != nullptr)
+            throw std::runtime_error(
+                "Scene::restore_fillet_multi_node: id " +
+                std::to_string(id) +
+                " is already in use - restore-style insertion never "
+                "rebinds (ADR-0027 D2)");
+        std::vector<SceneNode*> live;
+        live.reserve(nodes_.size());
+        for (SceneNode& n : nodes_) live.push_back(&n);
+        SceneNode node;
+        node.id = id;
+        node.kind = NodeKind::FilletMulti;
+        node.fillet_multi = std::move(recipe);
+        if (!attach_fillet_multi(node, live, nullptr))
+            throw std::invalid_argument(node.fillet_refusal);
+        node.name = name.empty()
+                        ? ("FilletMulti_" +
+                           std::to_string(node.id))
+                        : name;
+        nodes_.push_back(std::move(node));
+        if (next_id_ <= id) next_id_ = id + 1;
+        notify(SceneChange::NodeAdded, id);
+        return id;
+    }
+
+    // THE UNIFORM RADIUS EDIT (the m6 silent edit one recipe over,
+    // D5.4's own leg): ONE scene mutation, EVERY entry's radius set
+    // to the same value, the whole contemporanea re-run — the
+    // partials keep their shape (the counts fixed for every
+    // in-band r), the full cube lands the same 24/48/26 with the
+    // volume at the new radius. Returns "reference_resolved" or the
+    // refusal text (the visible state, the last good body kept).
+    std::string set_fillet_multi_radius(std::uint32_t id,
+                                        double radius) {
+        SceneNode* n = get_node_mut(id);
+        if (n == nullptr || !n->fillet_multi.has_value())
+            throw std::invalid_argument(
+                "Scene::set_fillet_multi_radius: node " +
+                std::to_string(id) +
+                " is not a fillet contemporanea feature");
+        if (!(radius > 0.0) || !std::isfinite(radius))
+            throw std::invalid_argument(
+                "Scene::set_fillet_multi_radius: the radius must be "
+                "finite and > 0");
+        for (brep::MultiFilletEntry& e : n->fillet_multi->entries)
+            e.radius = radius;
+        std::vector<SceneNode*> live;
+        live.reserve(nodes_.size());
+        for (SceneNode& m : nodes_) live.push_back(&m);
+        if (attach_fillet_multi(*n, live, nullptr)) {
+            mark_dirty(id);
+            // THE DOWNSTREAM CHAIN (the single's own discipline):
+            // every later fillet feature whose operand chain reaches
+            // the edited node re-runs.
+            for (SceneNode& m : nodes_) {
+                const bool m_fillet_feature =
+                    m.fillet.has_value() ||
+                    m.fillet_multi.has_value();
+                if (!m_fillet_feature || &m == n) continue;
+                bool reaches = false;
+                std::size_t guard = 0;
+                const SceneNode* cur = &m;
+                while (cur != nullptr &&
+                       (cur->fillet.has_value() ||
+                        cur->fillet_multi.has_value()) &&
+                       cur->fillet_operand_id != 0 &&
+                       guard++ <= nodes_.size()) {
+                    if (cur->fillet_operand_id == id) {
+                        reaches = true;
+                        break;
+                    }
+                    cur = find_node(live, cur->fillet_operand_id);
+                }
+                if (!reaches) continue;
+                if (m.fillet_multi.has_value())
+                    attach_fillet_multi(m, live, nullptr);
+                else
+                    attach_fillet(m, live, nullptr);
                 mark_dirty(m.id);
             }
             return "reference_resolved";
@@ -1919,9 +2796,133 @@ public:
         probe.kind = NodeKind::Fillet;
         probe.fillet = brep::FilletRecipe{edge_reference, radius};
         if (attach_fillet(probe, live, nullptr))
-            return {true, "", disc.operand->id, disc.operand->name};
-        return {false, probe.fillet_refusal, disc.operand->id,
-                disc.operand->name};
+             return {true, "", disc.operand->id, disc.operand->name};
+         return {false, probe.fillet_refusal, disc.operand->id,
+                 disc.operand->name};
+     }
+
+    // fillet_admission_multi — THE CONTEMPORANEA'S OWN DRY RUN
+    // (G5 m5, the picker's declaration door, the single's pattern
+    // one recipe over): the same discovery, the same angles law,
+    // the same machine the Apply walks — WITHOUT the install (a
+    // scratch node, nothing written, no id consumed, no notify).
+    // The verdict is the machine's own words verbatim (the law's
+    // corner named, the indivisibility's counts, the kernel's
+    // refusals with their bounds), the operand named — THE LAW
+    // DECLARED BEFORE EVERY APPLY (the ADR's own register: "il
+    // picker passa da 4-in a 12-in con la legge degli angoli
+    // dichiarata prima di ogni Apply").
+    FilletAdmission fillet_admission_multi(
+        const std::vector<std::pair<std::string, double>>&
+            entries) {
+        if (entries.empty())
+            return {false,
+                    "the admission needs at least one entry (the "
+                    "edge->radius map, one pair per spigolo).",
+                    0, ""};
+        for (const auto& [ref, radius] : entries) {
+            if (ref.empty() || !(radius > 0.0) ||
+                !std::isfinite(radius))
+                return {false,
+                        "the admission needs non-empty references "
+                        "and finite positive radii (the dialog's "
+                        "own fields).",
+                        0, ""};
+        }
+        for (std::size_t i = 0; i < entries.size(); ++i)
+            for (std::size_t j = i + 1; j < entries.size(); ++j)
+                if (entries[i].first == entries[j].first)
+                    return {false,
+                            "the map declares the edge '" +
+                                entries[i].first +
+                                "' twice - the edge->radius map is "
+                                "a MAP: one entry per spigolo.",
+                            0, ""};
+        std::vector<SceneNode*> live;
+        live.reserve(nodes_.size());
+        for (SceneNode& m : nodes_) live.push_back(&m);
+        // The operand named from the FIRST resolvable entry (the
+        // verdict's own courtesy; the machine names any
+        // disagreement itself).
+        const FilletDiscovery d0 = discover_fillet_operand(
+            live, entries.front().first);
+        const std::uint32_t op_id =
+            d0.superseded != nullptr
+                ? d0.superseded->id
+                : (d0.operand != nullptr ? d0.operand->id : 0);
+        const std::string op_name =
+            d0.superseded != nullptr
+                ? d0.superseded->name
+                : (d0.operand != nullptr ? d0.operand->name
+                                         : "");
+        SceneNode probe;  // the scratch — never installed
+        probe.id = next_id_;
+        probe.kind = NodeKind::FilletMulti;
+        brep::MultiFilletRecipe recipe;
+        recipe.entries.reserve(entries.size());
+        for (const auto& [ref, radius] : entries)
+            recipe.entries.push_back(
+                brep::MultiFilletEntry{ref, radius});
+        probe.fillet_multi = std::move(recipe);
+        if (attach_fillet_multi(probe, live, nullptr))
+            return {true, "", op_id, op_name};
+        return {false, probe.fillet_refusal, op_id, op_name};
+     }
+
+    // fillet_multi_save_law — THE SAVE DOOR'S OWN READING of the
+    // contemporanea's recipe law (G5 m5, ADR-0043 D6.5/D6.6 — the
+    // law read at TWO points, the write and the re-materialization:
+    // two doors, one law): the resolvable entries resolved through the SAME discovery
+    // the machine walks, the operand's unanimity among them, then
+    // THE ANGLES LAW'S one definition (fillet_multi_corner_law) on
+    // the operand's own corners. An entry that resolves on nothing
+    // (the dead reference) is the Phase F state, not a law
+    // violation — it rides the file, the load reproduces the
+    // refusal; the LAW (the recipe's own incoherence through the
+    // box's corners) is refused at the write, D6.6's own name.
+    // Returns "" when the law holds, the refusal text when it does
+    // not. The discovery is a READ-ONLY walk (the bridge fit is
+    // pure, the quiet door is const) — the one const_cast below is
+    // the vector's own type, documented here and here alone.
+    std::string fillet_multi_save_law(
+        const brep::MultiFilletRecipe& recipe) const {
+        if (recipe.entries.empty()) return "";
+        auto& nodes_mut = const_cast<std::vector<SceneNode>&>(
+            nodes_);
+        std::vector<SceneNode*> live;
+        live.reserve(nodes_mut.size());
+        for (SceneNode& n : nodes_mut) live.push_back(&n);
+        const SceneNode* operand = nullptr;
+        std::unique_ptr<brep::BRepBody> owned;
+        std::vector<geometry::ShapeId> refs;
+        std::vector<double> radii;
+        std::vector<std::string> texts;
+        for (const brep::MultiFilletEntry& entry :
+             recipe.entries) {
+            const FilletDiscovery disc = discover_fillet_operand(
+                live, entry.edge_reference);
+            if (disc.operand == nullptr)
+                continue;  // the Phase F state rides the file
+            if (operand == nullptr) {
+                operand = disc.operand;
+                owned = operand_exact_brep_quiet(*operand);
+                if (owned == nullptr)
+                    continue;  // not the save's to judge
+            } else if (operand->id != disc.operand->id) {
+                return "the map spans TWO operands ('" +
+                       operand->name + "' and '" +
+                       disc.operand->name +
+                       "') - the contemporanea replays the derived "
+                       "chain of ONE body (the act is indivisible, "
+                       "D5.1). Remedy: author the map against a "
+                       "single operand (the box or its chain).";
+            }
+            refs.push_back(disc.reference);
+            radii.push_back(entry.radius);
+            texts.push_back(entry.edge_reference);
+        }
+        if (owned == nullptr) return "";
+        return fillet_multi_corner_law(*owned, refs, radii, texts);
     }
 
     // Next id that add_node() will hand out. Persisted by the native
@@ -1975,6 +2976,7 @@ public:
                 continue;
             if (!n.mesh_dirty || !n.visible) continue;
             if (n.kind == NodeKind::Fillet ||
+                n.kind == NodeKind::FilletMulti ||
                 n.kind == NodeKind::Ellipsoid) {
                 // THE EXACT BODIES' DISPLAY MESH (G2-u3 m6-correttiva,
                 // the click-test's defect 1 — "the fillet applied does
@@ -1988,9 +2990,9 @@ public:
                 // installed in practice — creation refuses before
                 // installing) is a clean skip, never a guess.
                 const brep::BRepBody* exact =
-                    n.kind == NodeKind::Fillet
-                        ? n.fillet_body.get()
-                        : n.ellipsoid_body.get();
+                    n.kind == NodeKind::Ellipsoid
+                        ? n.ellipsoid_body.get()
+                        : n.fillet_body.get();
                 if (exact != nullptr) {
                     brep::TessellationOptions opts;
                     opts.resolution = resolution;

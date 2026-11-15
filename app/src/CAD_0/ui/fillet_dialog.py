@@ -1,6 +1,8 @@
 """CAD_0.ui.fillet_dialog — the fillet's edge picker (G2-u3 m5,
 ADR-0039 D6 rung 5: Feature -> Fillet, "select an edge, set the
-radius").
+radius"; G5 m5: the picker passes from 4-in to 12-in — the
+CONTEMPORANEA's multi-selection and the wall's demolition DECLARED
+at the pick surface, ADR-0043's own Consequences).
 
 THE SELECTION IS THE BY-NAME SURFACE, never a parse of the render: the
 dialog enumerates the operand's NAMED edges through the kernel's own
@@ -11,6 +13,27 @@ recipe CHARACTER FOR CHARACTER. The viewport has no edge rendering to
 click (the fillet node itself carries no display mesh — the m4 design)
 and the endpoints ride the rows only as an identification aid, never
 as the reference.
+
+THE VERTICAL-ONLY WALL IS DOWN FOR THE CUBE (G5 m5, the m4 register's
+own promise kept here): every row's verdict is the kernel's own
+admission through the WIDENED dispatch — the verticals say IN CLASS
+(the class-1 walk), the ring edges say IN CLASS too (the m2 walk one
+axis over, the m3 corner trigger inside it at an occupied corner).
+The rows OUT of the box's twelve are DECLARED with their family (the
+skewed dihedral is stage 2's seat, D1-OUT/D8 — never a silent
+refusal), the same m6-correttiva-ter discipline.
+
+THE CONTEMPORANEA (G5 m5, ADR-0043 D5.1/D6.6): two or more selected
+rows apply as the MULTI RECIPE — the edge->radius map, the ANGLES LAW
+DECLARED BEFORE EVERY APPLY (the ADR's own register): as the
+selection changes the dialog speaks the law's own verdict on the
+map (``fillet_admission_multi`` — the same discovery, the same law,
+the same machine the Apply walks, nothing installed): one radius per
+corner-connected component (the connected edge-corner graph forces
+one radius), the ring consumed by THE ACT indivisible (the whole
+cube or the partial world of the verticals), the operand ONE body.
+One selected row applies as the single recipe (the sequential
+world, the corner-freedom the kernel's own admission guards).
 
 The operand's exact side comes from the same doors the scene's
 discovery runs: the node's own hybrid (``exact_brep`` — the subtract
@@ -30,7 +53,7 @@ status area, never a paraphrase that invents, never a bare "error".
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Callable, List, Optional, Tuple
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -116,23 +139,30 @@ def _verdict_text(verdict: dict) -> str:
 class FilletDialog(QDialog):
     """Feature -> Fillet: the edge picker and the radius field.
 
-    The Apply route is INJECTED (the window's own command-wrapped
-    ``_apply_fillet``): the dialog never touches the scene itself — it
-    collects the selection (the edge's NAME, character for character)
-    and the radius, and hands them to the one route that owns the
-    write. A refusal (RuntimeError) is quoted in the status area and
-    the dialog STAYS OPEN — the user adjusts the radius; a success
+    The Apply routes are INJECTED (the window's own command-wrapped
+    ``_apply_fillet`` and ``_apply_fillet_multi``): the dialog never
+    touches the scene itself — it collects the selection (the edges'
+    NAMES, character for character) and the radius, and hands them to
+    the one route that owns the write. ONE selected row applies as the
+    single recipe (the sequential world); TWO OR MORE as the
+    contemporanea (the edge->radius map, the derived chain replayed).
+    A refusal (RuntimeError/ValueError) is quoted in the status area
+    and the dialog STAYS OPEN — the user adjusts the radius; a success
     closes the dialog (the feature is on the tree).
     """
 
     def __init__(self, scene, selected_node_id: Optional[int],
                  apply_route: Callable[[str, float], int],
+                 apply_route_multi: Optional[
+                     Callable[[List[Tuple[str, float]], str], int]] = None,
                  parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Fillet — select an edge, set the radius")
+        self.setWindowTitle(
+            "Fillet — select edges, set the radius")
         self._scene = scene
         self._selected_node_id = selected_node_id
         self._apply_route = apply_route
+        self._apply_route_multi = apply_route_multi
         self._bodies = {}          # node id -> the operand's exact body
         self._edge_names = {}      # node id -> [the named edges' strings]
 
@@ -147,10 +177,16 @@ class FilletDialog(QDialog):
         layout.addWidget(self._combo)
 
         # ---- The edge list — the kernel's own names ------------------
+        # MULTI-SELECTABLE (G5 m5): two or more rows apply as the
+        # contemporanea (the edge->radius map).
         layout.addWidget(QLabel(
             "Edges — the kernel's own names (the reference the recipe "
-            "stores, character for character):", self))
+            "stores, character for character). Select one edge for "
+            "the single fillet, two or more for the contemporanea "
+            "(the derived chain: the verticals, then the ring's act):",
+            self))
         self._edges = QListWidget(self)
+        self._edges.setSelectionMode(QListWidget.ExtendedSelection)
         self._edges.itemSelectionChanged.connect(self._on_edge_selected)
         layout.addWidget(self._edges)
         self._unnamed = QLabel("", self)
@@ -281,14 +317,19 @@ class FilletDialog(QDialog):
         """Every row carries the kernel's own verdict — the admission
         DRY RUN, the Apply's own path without the install (the same
         discovery, the same dispatch, the same admission the Apply
-        walks). The class wall is DECLARED at the pick surface,
-        never silent until the Apply: the verticals say IN CLASS, the
-        ring edges say OUT with the family named (the derivation is
-        tied to the vertical axis — the CylinderZ flank's own world),
-        the dead references say VANISHED with the killer, the bands
-        speak with their bounds at the CURRENT radius. The operand
-        the reference resolves on is named too — the chain's current
-        state (defect B declared at the same surface)."""
+        walks). THE WALL IS DOWN FOR THE CUBE (G5 m5, the m4
+        register's own promise kept here): the verticals say IN
+        CLASS (the class-1 walk), the RING edges say IN CLASS TOO
+        (the m2 walk one axis over through the widened dispatch, the
+        m3 corner trigger inside it) — the vertical-only wall's
+        demolition DECLARED at the pick surface, never silent; the
+        rows OUT of the box's twelve speak their family (the skewed
+        dihedral is stage 2's seat, D1-OUT/D8 — DICHIARATO, never a
+        mute refusal), the dead references say VANISHED with the
+        killer, the bands speak with their bounds at the CURRENT
+        radius. The operand the reference resolves on is named too —
+        the chain's current state (defect B declared at the same
+        surface)."""
         if self._scene is None or not hasattr(
                 self._scene, "fillet_admission"):
             return
@@ -310,50 +351,120 @@ class FilletDialog(QDialog):
     def _on_edge_selected(self) -> None:
         items = self._edges.selectedItems()
         if not items:
-            self._reference.setText("Reference: — (pick an edge)")
+            self._reference.setText(
+                "Reference: — (pick an edge)")
             return
-        # The NAME, character for character — the same string the
-        # recipe will store and the kernel will resolve.
+        if len(items) == 1:
+            # The NAME, character for character — the same string the
+            # recipe will store and the kernel will resolve.
+            self._reference.setText(
+                "Reference: {}".format(
+                    items[0].data(_ROLE_REFERENCE)))
+            # The verdict's own words in the status area (the row
+            # carries the short form; the selection carries the
+            # kernel's FULL text — the bound, the remedy —
+            # m6-correttiva-ter).
+            verdict = items[0].data(_ROLE_VERDICT)
+            if isinstance(verdict, dict):
+                if verdict.get("admitted"):
+                    self._status.setText(
+                        "In class — resolves on {!r} (the chain's "
+                        "current state).".format(
+                            verdict.get("operand_name")))
+                else:
+                    self._status.setText(verdict.get("reason") or "")
+            return
+        # TWO OR MORE — THE LAW DECLARED BEFORE EVERY APPLY (ADR-0043's
+        # own register: "il picker passa da 4-in a 12-in con la legge
+        # degli angoli dichiarata prima di ogni Apply"): the map's own
+        # verdict spoken as the selection changes — the same discovery,
+        # the same angles law, the same machine the Apply walks,
+        # nothing installed (the admission's own dry run).
+        refs = [i.data(_ROLE_REFERENCE) for i in items]
         self._reference.setText(
-            "Reference: {}".format(items[0].data(_ROLE_REFERENCE)))
-        # The verdict's own words in the status area (the row carries
-        # the short form; the selection carries the kernel's FULL
-        # text — the bound, the remedy — m6-correttiva-ter).
-        verdict = items[0].data(_ROLE_VERDICT)
-        if isinstance(verdict, dict):
-            if verdict.get("admitted"):
-                self._status.setText(
-                    "In class — resolves on {!r} (the chain's current "
-                    "state).".format(verdict.get("operand_name")))
-            else:
-                self._status.setText(verdict.get("reason") or "")
+            "References: {} spigolo(i) — the contemporanea "
+            "(the edge->radius map)".format(len(refs)))
+        verdict = self._multi_verdict(refs)
+        if verdict.get("admitted"):
+            self._status.setText(
+                "In class — the contemporanea of {} spigoli resolves "
+                "on {!r} (the angles law green at this radius: one "
+                "radius per corner-connected component).".format(
+                    len(refs), verdict.get("operand_name")))
+        else:
+            self._status.setText(verdict.get("reason") or "")
+
+    def _multi_verdict(self, refs) -> dict:
+        """The map's admission — the verdict the VALUE, never a throw
+        (the binding's own contract; the absent surface answered as
+        the honest not-admitted)."""
+        if self._scene is None or not hasattr(
+                self._scene, "fillet_admission_multi"):
+            return {"admitted": False,
+                    "reason": "the multi admission is not available "
+                              "in this build",
+                    "operand_id": 0, "operand_name": ""}
+        radius = self.selected_radius()
+        return self._scene.fillet_admission_multi(
+            [(r, radius) for r in refs])
+
+    def selected_references(self):
+        """The selected rows' references, in ROW ORDER (the authored
+        order — the vertical passage replays in it)."""
+        return [self._edges.item(i).data(_ROLE_REFERENCE)
+                for i in range(self._edges.count())
+                if self._edges.item(i).isSelected()]
 
     def selected_reference(self) -> Optional[str]:
-        items = self._edges.selectedItems()
-        if not items:
-            return None
-        return items[0].data(_ROLE_REFERENCE)
+        refs = self.selected_references()
+        return refs[0] if refs else None
 
     def selected_radius(self) -> float:
         return float(self._radius.value())
 
     def _on_apply(self) -> None:
-        reference = self.selected_reference()
-        if reference is None:
+        refs = self.selected_references()
+        if not refs:
             self._status.setText(
                 "Pick an edge first — the reference is the recipe's own "
                 "field (the grammar's form, matched whole).")
             return
         radius = self.selected_radius()
+        if len(refs) == 1:
+            # The single recipe (the sequential world, the m2/m3
+            # kernel doors through the widened dispatch).
+            try:
+                self._apply_route(refs[0], radius)
+            except (ValueError, RuntimeError) as exc:
+                # The kernel's refusal, QUOTED verbatim — the band's
+                # bound is already inside the message (the offending
+                # number and the limit); the dialog stays open for the
+                # next try. (Both exception kinds cross the binding:
+                # the class refusals as ValueError, the scene's own
+                # doors as RuntimeError — the bridge's documented
+                # contract.)
+                self._status.setText(str(exc))
+                return
+            self.accept()
+            return
+        # THE CONTEMPORANEA (two or more): the multi route — the law
+        # declared first (the dry run's own words, never a silent
+        # kernel refusal), then the apply.
+        if self._apply_route_multi is None:
+            self._status.setText(
+                "The contemporanea is not available in this build — "
+                "the multi recipe needs the v0.8 kernel surface.")
+            return
+        verdict = self._multi_verdict(refs)
+        if not verdict.get("admitted"):
+            self._status.setText(
+                verdict.get("reason") or
+                "the map's admission refused")
+            return
         try:
-            self._apply_route(reference, radius)
+            self._apply_route_multi(
+                [(r, radius) for r in refs], "FilletMulti")
         except (ValueError, RuntimeError) as exc:
-            # The kernel's refusal, QUOTED verbatim — the band's bound
-            # is already inside the message (the offending number and
-            # the limit); the dialog stays open for the next try.
-            # (Both exception kinds cross the binding: the class
-            # refusals as ValueError, the scene's own doors as
-            # RuntimeError — the bridge's documented contract.)
             self._status.setText(str(exc))
             return
         self.accept()

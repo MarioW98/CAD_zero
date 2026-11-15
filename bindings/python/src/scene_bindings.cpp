@@ -6,6 +6,7 @@
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/function.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/unique_ptr.h>
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
@@ -252,7 +253,39 @@ void bind_scene(nb::module_& m) {
             },
             "The actionable reason the fillet's re-run refused (empty\n"
             "string when it did not): the class-4 payload verbatim —\n"
-            "what died, why, the remedy — never a mute 'not found'.");
+            "what died, why, the remedy — never a mute 'not found'.")
+        // ---- The contemporanea's recipe surface (G5 m5) --------------
+        // The multi recipe read as VALUES: the entries list (the
+        // edge-reference STRING verbatim + the radius, one pair per
+        // consumed spigolo, the authored order) and the uniform
+        // radius the panel edits (the FIRST entry's own — the
+        // uniform edit's subject, the set_fillet_multi_radius door).
+        .def_prop_ro("fillet_multi_entries",
+            [](const scene::SceneNode& n) {
+                std::vector<std::pair<std::string, double>> out;
+                if (n.fillet_multi)
+                    for (const brep::MultiFilletEntry& e :
+                         n.fillet_multi->entries)
+                        out.emplace_back(e.edge_reference, e.radius);
+                return out;
+            },
+            "The contemporanea's entries — a list of (edge, radius)\n"
+            "pairs, the references the grammar's own form verbatim,\n"
+            "the authored order (the vertical passage replays in it).\n"
+            "Empty for non-multi nodes.")
+        .def_prop_ro("fillet_multi_radius",
+            [](const scene::SceneNode& n) {
+                if (!n.fillet_multi ||
+                    n.fillet_multi->entries.empty())
+                    return 0.0;
+                return n.fillet_multi->entries.front().radius;
+            },
+            "The uniform radius edit's subject: the FIRST entry's\n"
+            "radius (0.0 for non-multi nodes). The uniform edit\n"
+            "(set_fillet_multi_radius) sets EVERY entry to the same\n"
+            "value — the authored map's mixed radii (the partial\n"
+            "world of D7.3) are the file's own; the editor speaks\n"
+            "the uniform contract.");;
 
     // ---- Parametric builder registry (single source of truth) -----------
     //
@@ -1047,6 +1080,113 @@ void bind_scene(nb::module_& m) {
              "back. Raises RuntimeError if the id is in use (never a "
              "silent rebind) and ValueError/RuntimeError for every "
              "kernel refusal (diagnosis + remedy verbatim).")
+        // ---- The fillet contemporanea's scene surface (G5 m5) -----
+        // add_fillet_multi_node creates the many-edge feature from
+        // the recipe (the edge->radius map, one (edge, radius) pair
+        // per consumed spigolo): the operand is DISCOVERED by the
+        // find (one body — the unanimity is the door's own law), the
+        // ANGLES LAW read BEFORE any kernel call (the connected
+        // edge-corner graph forces one radius per component,
+        // ADR-0043 D6.6/D1), the derived chain REPLAYED (the
+        // verticals first, then — when the map declares the ring —
+        // THE ACT, indivisible). Creation refuses loudly (RuntimeError
+        // or ValueError) on every door's law — no node, no id
+        // consumed. set_fillet_multi_radius is the UNIFORM silent
+        // edit: every entry's radius set to the same value, the
+        // whole contemporanea re-run.
+        .def("add_fillet_multi_node",
+             [](scene::Scene& s, const std::string& name,
+                const std::vector<std::pair<std::string, double>>&
+                    entries) {
+                 brep::MultiFilletRecipe r;
+                 r.entries.reserve(entries.size());
+                 for (const auto& [edge, radius] : entries)
+                     r.entries.push_back(
+                         brep::MultiFilletEntry{edge, radius});
+                 return s.add_fillet_multi_node(name, std::move(r));
+             },
+             nb::arg("name"), nb::arg("entries"),
+             "Create a fillet contemporanea feature node from the "
+             "recipe (the edge->radius map: a list of (edge, radius) "
+             "pairs, the references the grammar's own form verbatim). "
+             "The angles law is read BEFORE any kernel call; the "
+             "derived chain replays (the verticals first, then the "
+             "ring and corners act when the map declares the ring). "
+             "Returns the new node id; raises ValueError/RuntimeError "
+             "for every refusal (diagnosis + remedy).")
+        .def("restore_fillet_multi_node",
+             [](scene::Scene& s, std::uint32_t node_id,
+                const std::string& name,
+                const std::vector<std::pair<std::string, double>>&
+                    entries) {
+                 brep::MultiFilletRecipe r;
+                 r.entries.reserve(entries.size());
+                 for (const auto& [edge, radius] : entries)
+                     r.entries.push_back(
+                         brep::MultiFilletEntry{edge, radius});
+                 return s.restore_fillet_multi_node(
+                     node_id, name, std::move(r));
+             },
+             nb::arg("node_id"), nb::arg("name"), nb::arg("entries"),
+             "Re-create a fillet contemporanea feature node with a "
+             "PINNED id (command redo, the restore pattern): the "
+             "recipe re-materializes through the find, the id the "
+             "tree and the stacked commands know is the id back. "
+             "Raises RuntimeError if the id is in use and "
+             "ValueError/RuntimeError for every refusal.")
+        .def("set_fillet_multi_radius",
+             [](scene::Scene& s, std::uint32_t node_id,
+                double radius) {
+                 return s.set_fillet_multi_radius(node_id, radius);
+             },
+             nb::arg("node_id"), nb::arg("radius"),
+             "Edit the contemporanea's radius — the UNIFORM silent "
+             "edit (every entry's radius set to the same value, the "
+             "whole map re-run): returns 'reference_resolved' when "
+             "the feature re-ran, or the refusal text when it did "
+             "not (the last good body kept, the visible state). The "
+             "downstream chain re-runs with it.")
+        .def("fillet_admission_multi",
+             [](scene::Scene& s,
+                const std::vector<std::pair<std::string, double>>&
+                    entries) {
+                 // THE VERDICT IS THE VALUE, never a throw (the
+                 // rows' own contract — the picker calls this on
+                 // every selection change): even an unexpected
+                 // exception is ANSWERED as the verdict, its own
+                 // words carried, never raised across the binding.
+                 try {
+                     const auto a =
+                         s.fillet_admission_multi(entries);
+                     nb::dict out;
+                     out["admitted"] = a.admitted;
+                     out["reason"] = a.reason;
+                     out["operand_id"] = a.operand_id;
+                     out["operand_name"] = a.operand_name;
+                     return out;
+                 } catch (const std::exception& e) {
+                     nb::dict out;
+                     out["admitted"] = false;
+                     out["reason"] = std::string(
+                         "fillet_admission_multi: the dry run itself "
+                         "refused (an implementation defect, loud by "
+                         "design) - ") + e.what();
+                     out["operand_id"] = 0;
+                     out["operand_name"] = std::string("");
+                     return out;
+                 }
+             },
+             nb::arg("entries"),
+             "The contemporanea's Apply path as a DRY RUN (the "
+             "picker's declaration door, the law said BEFORE every "
+             "Apply): the same discovery, the same angles law, the "
+             "same machine — nothing installed. Returns "
+             "{admitted, reason, operand_id, operand_name}: the "
+             "machine's own words verbatim when refused (the "
+             "corner's radii named, the indivisibility's counts, the "
+             "kernel's bounds), the operand the map resolves on "
+             "either way. Never raises — the verdict is the value "
+             "(the rows' own contract).")
         // ---- The ellipsoid primitive's scene surface (K1 m3) -------
         // add_ellipsoid_node creates the exact-side primitive from
         // the recipe (the semiaxes, named fields — the recipe the
