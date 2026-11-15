@@ -357,6 +357,17 @@ inline std::unique_ptr<BRepBody> fillet_ring_edge(
     double radius, const FilletNaming& naming = FilletNaming{},
     double tol = kFilletTolerance);
 
+// fillet_ring_act — THE RING AND CORNERS ACT, INDIVISIBLE (G5 m4,
+// ADR-0043 D5.1's second passage): the cube's eight ring edges and
+// eight corner spheres consumed in ONE transaction, from the
+// four-vertical state (16/24/10) to the fully rounded cube
+// (24/48/26). The order of consumption is the derivation (D5.1):
+// the verticals first, then this act — never the naked sequential.
+inline std::unique_ptr<BRepBody> fillet_ring_act(
+    const BRepBody& body, double radius,
+    const FilletNaming& naming = FilletNaming{},
+    double tol = kFilletTolerance);
+
 // fillet_rim_edge — THE FILLET, CLASS 2: IL RIM CIRCOLARE DEL FORO
 // (ADR-0039 D1.2, G2-u3 m3): the rolling ball on the blind hole's
 // top rim (plane x cylinder perpendicular, the CONVEX corner), the
@@ -4014,6 +4025,1304 @@ inline std::unique_ptr<BRepBody> fillet_ring_edge(
             "fillet_ring_edge: postcondition failed - chi moved (the "
             "fillet is chi-flat by construction, Delta-chi = "
             "+2 -3 +1 = 0; report this as a kernel bug)");
+    return R;
+}
+
+// ---------------------------------------------------------------------------
+// fillet_ring_act — THE RING AND CORNERS ACT, INDIVISIBLE (G5 m4,
+// ADR-0043 D5.1's second passage, D9's fourth morso): the cube's
+// eight ring edges and eight corner spheres consumed in ONE
+// transaction. The order of consumption is the derivation (D5.1):
+// the vertical passage MUST come first (the vertical walk's
+// capitelli are the living top/bottom planes), and the ring CANNOT
+// be taken sequentially — the second flank at an occupied corner
+// would refine cylinder against PERPENDICULAR cylinder (the
+// Steinmetz quartic, D6.1's wall) — while a corner sphere without
+// its three flanks has an unbounded patch and a ring flank without
+// its two spheres has untyped ends: the HALF act is a body the gate
+// refuses, and that IS the indivisibility. So this act lands the
+// whole remaining cube at once:
+//
+//   * THE EIGHT SPHERES (D5.2) at the centers (±(1−r), ±(1−r),
+//     ±(1−r)) — the octant windows on the EXISTING SphereSurface
+//     family, the SAME frame class the m3 act landed (pole the
+//     shared plane's outward normal — the equator is the vertical
+//     flank's coaxial circle — azimuth the x-plane's normal, the
+//     second axis the product; the walk CLOCKWISE in the domain,
+//     the family's inward cross-product normal mirrored, the m3
+//     pin), the three arcs per sphere: the equator (the vertical
+//     flank's coaxial quarter) and the two meridians (the ring
+//     flanks' coaxial quarters), the three tangency points (the
+//     feet of the perpendiculars from C to the three planes —
+//     D7.4's golden positions).
+//   * THE EIGHT RING FLANKS born REFINED AT BOTH ENDS (D5.1): the
+//     m2/m3 closed forms one axis over, the azimuth window the
+//     quarter facing the corner, the axial window the FULL
+//     [−(1−r), (1−r)] — never a cap arc: both ends close at the
+//     coaxial planes where the spheres take over.
+//   * THE SIX PLANES re-authored as the RECTANGLES of the tangent
+//     lines (D5.3): [−(1−r), (1−r)]² in each plane, the four
+//     corners the spheres' tangency points (the dead cap arcs'
+//     centers — the closure of the construction).
+//   * THE FOUR VERTICAL FLANKS re-windowed AGAIN (D6.3): both cap
+//     arcs dead (replaced by the corner spheres' equators — the
+//     cause verbatim), the two tangent lines shortened to the
+//     coaxial planes z = ±(1−r): the face SURVIVES with its name
+//     and its stamp, the tavola's row Absorbed, never
+//     Born-sotto-falso.
+//
+// THE ARITHMETIC (D7.1's pre-pinned verdict): from the four-vertical
+// state 16/24/10 (the formula 8+2k/12+3k/6+k at k=4): the sixteen
+// junction vertices all die (the tangent lines' ends on the
+// capitelli), the eight ring edges and the eight cap arcs die, the
+// eight vertical tangent lines are absorbed, the ten faces are
+// absorbed; born: twenty-four tangency vertices, sixteen tangent
+// lines, twenty-four arcs, eight ring flanks, eight spheres —
+// 24/48/26, H = 0, χ = 2 (D2.3's own census: 96 incidences / 2).
+//
+// THE WITNESS (D3's thesis): every quantity above is a CLOSED FORM
+// of the stored operands — the sphere centers from the three
+// planes, the tangency points as the feet of the perpendiculars,
+// the arcs as the quarters of the coaxial contact circles, the
+// planes' rectangles from the tangent lines. ZERO intersection
+// solves, ZERO SSI consults (the quartic never touched, zero
+// ssi.hpp/ssi.cpp lines in the diff), the windows stop at the
+// coaxial planes and the flanks never meet each other.
+// ---------------------------------------------------------------------------
+inline std::unique_ptr<BRepBody> fillet_ring_act(
+    const BRepBody& body, double radius,
+    const FilletNaming& naming, double tol) {
+    const std::size_t V0 = body.vertices.size();
+    const std::size_t E0 = body.edges.size();
+    const std::size_t F0 = body.face_count();
+
+    const auto refuse = [](const std::string& what) {
+        throw std::invalid_argument("fillet_ring_act: " + what);
+    };
+
+    // ---- THE RADIUS'S OWN GATE, then THE STATE'S (the order of
+    // consumption is the derivation: this act takes the cube AFTER
+    // the four vertical fillets — the formula 8+2k/12+3k/6+k at
+    // k = 4; anything else is the naked sequential that dies at the
+    // corner, and the refusal names the door it came from).
+    if (!(radius > 0.0) || !std::isfinite(radius))
+        refuse("the radius must be finite and > 0, got " +
+               std::to_string(radius) +
+               " — a non-positive ball has no envelope and no "
+               "tangent lines. Remedy: author a positive radius.");
+    if (V0 != 16 || E0 != 24 || F0 != 10)
+        refuse("the ring act takes the cube after the FOUR VERTICAL "
+               "FILLETS (the consumption order of D5.1): the state "
+               "is V=" +
+               std::to_string(V0) + " / E=" + std::to_string(E0) +
+               " / F=" + std::to_string(F0) +
+               " where the chain formula 8+2k/12+3k/6+k at k=4 "
+               "reads 16/24/10 — the naked sequential on the ring "
+               "dies at the occupied corner (the Steinmetz quartic, "
+               "D6.1) and the corner act of m3 takes ONE corner "
+               "only. Remedy: fillet the four verticals first "
+               "(fillet_edge, gated at every step), then this act; "
+               "for a single corner use fillet_ring_edge (the m3 "
+               "door).");
+    // ---- THE TANGENTIAL COLLAPSE (D7.2's own wall): at r = 1 the
+    // core degenerates (a = 0), the strips die and the closed form
+    // sees the inscribed sphere — the LIMIT is the formula's
+    // coherence, never a body: the strips must survive.
+    if (2.0 * radius >= 2.0 - tol)
+        refuse("the tangential collapse: the radius " +
+               std::to_string(radius) +
+               " empties the strips (the core's side a = 2-2r "
+               "degenerates and the six planes die with it) — the "
+               "closed form of D7.2 sees the limit r=1 as the "
+               "inscribed SPHERE (4/3)*pi, the BODY does not (the "
+               "plane faces would have no interior). Remedy: author "
+               "a radius below 1 (the strip condition r_i + r_j < "
+               "the face's extension, D2.4).");
+
+    // ---- THE STRUCTURAL CENSUS (the box family at k = 4, the
+    // same trust the vertical walk places in its own signature:
+    // the producers are the factory and the gated chain).
+    {
+        bool all_exact = true;
+        for (const auto& v : body.vertices)
+            if (!v.provenance().is_exact()) all_exact = false;
+        for (const auto& e : body.edges)
+            if (!e.provenance().is_exact()) all_exact = false;
+        for (const auto& f : body.solid.shell().faces())
+            if (!f.provenance().is_exact()) all_exact = false;
+        if (!all_exact)
+            refuse("the body carries approximated entities (the "
+                   "Layer-2 record says so) - the exact fillet "
+                   "consumes EXACT bodies only. Remedy: author the "
+                   "body on the exact path (the factories).");
+        if (euler_characteristic(body) != 2 ||
+            !is_closed_orientable(body) || !loops_are_closed(body))
+            refuse("the body is not a closed orientable "
+                   "single-shell body - the act's signature is the "
+                   "box family chain. Remedy: report the body's "
+                   "construction.");
+        for (const auto& f : body.solid.shell().faces())
+            if (f.loops().size() != 1)
+                refuse("a face carries more than one loop - the "
+                       "box family chain's faces are simply "
+                       "connected. Remedy: report the body's "
+                       "construction.");
+    }
+    const auto vpos = [&](std::size_t v) -> const math::Vec3d& {
+        return body.vertices[v].position();
+    };
+    const auto face_of_coedge = [&](const CoEdge* ce) -> std::size_t {
+        for (std::size_t f = 0; f < F0; ++f)
+            for (const auto& loop :
+                 body.solid.shell().faces()[f].loops())
+                for (const auto& other : loop.coedges())
+                    if (&other == ce) return f;
+        return F0;
+    };
+    const auto plane_of = [&](std::size_t f) -> const PlaneSurface* {
+        fillet_detail::PlaneReader rd;
+        const auto* s = body.solid.shell().faces()[f].surface();
+        if (s != nullptr) s->accept(rd);
+        return rd.plane;
+    };
+    const auto z_flank_of = [&](std::size_t f)
+        -> const CylinderZSurface* {
+        fillet_detail::FlankReader fr;
+        const auto* s = body.solid.shell().faces()[f].surface();
+        if (s != nullptr) s->accept(fr);
+        return fr.z;
+    };
+
+    // ---- THE FACE CENSUS: six planes + four CylinderZ, the radii
+    // COHERENT (D6.6's own name: the eight spheres exist only at
+    // the common radius).
+    std::vector<std::size_t> z_faces, plane_faces;
+    for (std::size_t f = 0; f < F0; ++f) {
+        if (plane_of(f) != nullptr) plane_faces.push_back(f);
+        else if (z_flank_of(f) != nullptr) z_faces.push_back(f);
+        else
+            refuse("face " + std::to_string(f) +
+                   " is neither a plane nor a CylinderZ flank - "
+                   "the signature is the box family chain at k=4. "
+                   "Remedy: report the body's construction.");
+    }
+    if (plane_faces.size() != 6 || z_faces.size() != 4)
+        refuse("the face census reads " +
+               std::to_string(plane_faces.size()) + " planes and " +
+               std::to_string(z_faces.size()) +
+               " CylinderZ flanks (the class's own are six and "
+               "four). Remedy: report the body's construction.");
+    for (const std::size_t f : z_faces) {
+        const CylinderZSurface* z = z_flank_of(f);
+        if (z->radius() != radius)
+            refuse("the corner radii disagree "
+                   "(fillet_corner_radii_mismatch): the requested " +
+                   std::to_string(radius) +
+                   " against the vertical flank's " +
+                   std::to_string(z->radius()) +
+                   " - the corner spheres are tangent to the three "
+                   "flanks only at their COMMON radius (the coaxial "
+                   "circles close the windows exactly there, "
+                   "D6.6/D2.4). Remedy: fillet the whole cube at "
+                   "the same radius (the mixed-radius chain is the "
+                   "partial world of D7.3, never this act).");
+    }
+
+    // ---- THE EDGE CENSUS: eight vertical tangent lines, eight
+    // cap arcs, eight ring edges — every edge classified, the
+    // counts pinned (the classification itself the wall against
+    // the counts-matching impostors).
+    std::vector<std::size_t> ring_edges, cap_arcs, z_tangents;
+    for (std::size_t ei = 0; ei < E0; ++ei) {
+        const auto& e = body.edges[ei];
+        const std::size_t a = static_cast<std::size_t>(e.vertex(0));
+        const std::size_t b = static_cast<std::size_t>(e.vertex(1));
+        const math::Vec3d& pa = vpos(a);
+        const math::Vec3d& pb = vpos(b);
+        // The co-users' kinds.
+        const auto& ces = e.coedges();
+        if (ces.size() != 2)
+            refuse("edge " + std::to_string(ei) + " carries " +
+                   std::to_string(ces.size()) +
+                   " co-edges - the chain's edges are radial "
+                   "twos. Remedy: report the body's construction.");
+        const std::size_t f0 = face_of_coedge(ces[0]);
+        const std::size_t f1 = face_of_coedge(ces[1]);
+        const bool f0_z = z_flank_of(f0) != nullptr;
+        const bool f1_z = z_flank_of(f1) != nullptr;
+        const bool f0_plane = plane_of(f0) != nullptr;
+        const bool f1_plane = plane_of(f1) != nullptr;
+        const bool vertical =
+            std::abs(pa.x - pb.x) <= tol &&
+            std::abs(pa.y - pb.y) <= tol;
+        const bool horizontal =
+            std::abs(pa.z - pb.z) <= tol;
+        if (f0_z && f1_plane && vertical) z_tangents.push_back(ei);
+        else if (f0_plane && f1_z && vertical)
+            z_tangents.push_back(ei);
+        else if ((f0_z && f1_plane) || (f0_plane && f1_z))
+            cap_arcs.push_back(ei);
+        else if (f0_plane && f1_plane && horizontal &&
+                 (std::abs(pa.x - pb.x) <= tol ||
+                  std::abs(pa.y - pb.y) <= tol))
+            ring_edges.push_back(ei);
+        else
+            refuse("edge " + std::to_string(ei) +
+                   " is outside the chain's three kinds (the "
+                   "vertical tangent, the cap arc, the ring edge) "
+                   "- the signature is the box family chain at "
+                   "k=4. Remedy: report the body's construction.");
+    }
+    if (z_tangents.size() != 8 || cap_arcs.size() != 8 ||
+        ring_edges.size() != 8)
+        refuse("the edge census reads " +
+               std::to_string(z_tangents.size()) + " tangent " +
+               "lines, " + std::to_string(cap_arcs.size()) +
+               " cap arcs and " + std::to_string(ring_edges.size()) +
+               " ring edges (the class's own are eight each). "
+               "Remedy: report the body's construction.");
+
+    // ---- THE CLOSED FORMS' OWN TABLES. The eight corners in a
+    // deterministic order (the sign triples, + first); the six
+    // planes indexed by (axis, sign); the ring edges read with
+    // their two planes and their axis.
+    const double s = 1.0 - radius;
+    const auto sgn = [](double v) -> int {
+        return v >= 0.0 ? 1 : -1;
+    };
+    // The corners: c = 4*(σx<0) + 2*(σy<0) + (σz<0).
+    struct CornerInfo {
+        int sx, sy, sz;
+        math::Vec3d C{};
+        math::Vec3d T_x{}, T_y{}, T_z{};
+        std::size_t v_Tx{0}, v_Ty{0}, v_Tz{0};
+        std::size_t face_x{0}, face_y{0}, face_z{0};
+        std::size_t e_eq{0}, e_mer_x{0}, e_mer_y{0};
+        std::size_t f_sphere{0};
+        double u_third{0.0}, u_s0{0.0}, u_s1{0.0};
+    };
+    CornerInfo corners[8];
+    for (int c = 0; c < 8; ++c) {
+        CornerInfo& ci = corners[c];
+        ci.sx = (c & 4) ? -1 : 1;
+        ci.sy = (c & 2) ? -1 : 1;
+        ci.sz = (c & 1) ? -1 : 1;
+        ci.C = {ci.sx * s, ci.sy * s, ci.sz * s};
+        ci.T_x = {static_cast<double>(ci.sx), ci.sy * s, ci.sz * s};
+        ci.T_y = {ci.sx * s, static_cast<double>(ci.sy), ci.sz * s};
+        ci.T_z = {ci.sx * s, ci.sy * s, static_cast<double>(ci.sz)};
+    }
+    // The planes indexed (axis, sign): plane_at[axis][si].
+    std::size_t plane_at[3][2] = {{F0, F0}, {F0, F0}, {F0, F0}};
+    for (const std::size_t f : plane_faces) {
+        const PlaneSurface* pl = plane_of(f);
+        const math::Vec3d n = pl->normal_vec();
+        const int axis = std::abs(n.x) > 0.5
+                             ? 0
+                             : (std::abs(n.y) > 0.5 ? 1 : 2);
+        const int si = (n[axis] > 0.0) ? 1 : 0;
+        if (plane_at[axis][si] != F0)
+            refuse("two planes share the same axis and side - the "
+                   "signature is the box family. Remedy: report "
+                   "the body's construction.");
+        plane_at[axis][si] = f;
+    }
+    for (int k = 0; k < 3; ++k)
+        if (plane_at[k][0] == F0 || plane_at[k][1] == F0)
+            refuse("a plane's axis census is incomplete - the "
+                   "signature is the box family. Remedy: report "
+                   "the body's construction.");
+    for (int c = 0; c < 8; ++c) {
+        CornerInfo& ci = corners[c];
+        ci.face_x = plane_at[0][ci.sx > 0 ? 1 : 0];
+        ci.face_y = plane_at[1][ci.sy > 0 ? 1 : 0];
+        ci.face_z = plane_at[2][ci.sz > 0 ? 1 : 0];
+    }
+    // The ring edges read: the axis, the two planes (one ⊥z, one
+    // lateral), the corners at the two ends (the sign along the
+    // axis), the flank's placement data.
+    struct RingInfo {
+        std::size_t edge{0};
+        int axis{-1};  // 0: x̂-parallel, 1: ŷ-parallel
+        std::size_t face_z{0}, face_lat{0};
+        int sz{0}, slat{0};       // the planes' signs
+        int s_lat_axis{0};        // which axis the lateral is (0/1)
+        std::size_t corner_lo{0}, corner_hi{0};
+        std::size_t e_tan_z{0}, e_tan_lat{0};
+        std::size_t f_flank{0};
+        double u0{0.0}, u1{0.0};
+        bool a_at_u0{false};      // the ⊥z plane rides u0
+    };
+    RingInfo rings[8];
+    const auto mod2pi = [](double a) {
+        while (a < 0.0) a += 2.0 * kPi;
+        while (a >= 2.0 * kPi) a -= 2.0 * kPi;
+        return a;
+    };
+    if (ring_edges.size() != 8)
+        refuse("the ring census is not eight - report this as a "
+               "kernel bug.");
+    for (std::size_t ri = 0; ri < 8; ++ri) {
+        RingInfo& r = rings[ri];
+        r.edge = ring_edges[ri];
+        const auto& e = body.edges[r.edge];
+        const math::Vec3d& pa =
+            vpos(static_cast<std::size_t>(e.vertex(0)));
+        const math::Vec3d& pb =
+            vpos(static_cast<std::size_t>(e.vertex(1)));
+        const bool x_par = std::abs(pa.y - pb.y) <= tol &&
+                           std::abs(pa.z - pb.z) <= tol;
+        r.axis = x_par ? 0 : 1;
+        const auto& ces = e.coedges();
+        const std::size_t fa = face_of_coedge(ces[0]);
+        const std::size_t fb = face_of_coedge(ces[1]);
+        for (const std::size_t f : {fa, fb}) {
+            const PlaneSurface* pl = plane_of(f);
+            if (pl == nullptr)
+                refuse("a ring edge borders a non-planar face - "
+                       "the signature is the box family. Remedy: "
+                       "report the body's construction.");
+            const math::Vec3d n = pl->normal_vec();
+            if (std::abs(n.z) > 0.5) {
+                r.face_z = f;
+                r.sz = static_cast<int>(n.z > 0.0 ? 1 : -1);
+            } else if (std::abs(n.x) > 0.5) {
+                r.face_lat = f;
+                r.slat = static_cast<int>(n.x > 0.0 ? 1 : -1);
+                r.s_lat_axis = 0;
+            } else {
+                r.face_lat = f;
+                r.slat = static_cast<int>(n.y > 0.0 ? 1 : -1);
+                r.s_lat_axis = 1;
+            }
+        }
+        if (r.axis == r.s_lat_axis)
+            refuse("a ring edge's lateral plane is parallel to its "
+                   "own axis - the signature is the box family. "
+                   "Remedy: report the body's construction.");
+        // The corners at the ends: the sign along the axis at each
+        // endpoint (the endpoints sit at ±(1−r) along the axis).
+        // The corner index at each endpoint, from the signs of the
+        // endpoint's POSITION (the junction's three signs ARE the
+        // corner's, the junctions being the re-spanned tips).
+        const auto corner_index_of_pos =
+            [&](const math::Vec3d& p) -> int {
+            return (sgn(p.x) < 0 ? 4 : 0) +
+                   (sgn(p.y) < 0 ? 2 : 0) +
+                   (sgn(p.z) < 0 ? 1 : 0);
+        };
+        // The edge's own direction: the endpoint on the axis'
+        // NEGATIVE side is the walk's first (a deterministic
+        // corner_lo/corner_hi for the born geometry).
+        const math::Vec3d& p_lo =
+            (r.axis == 0 ? pa.x : pa.y) < 0.0 ? pa : pb;
+        const math::Vec3d& p_hi =
+            (r.axis == 0 ? pb.x : pb.y) < 0.0 ? pa : pb;
+        r.corner_lo = corner_index_of_pos(p_lo);
+        r.corner_hi = corner_index_of_pos(p_hi);
+        // The azimuth window (the m2/m3 discrimination: the ⊥z
+        // plane and the lateral are a perpendicular pair in the
+        // flank's cross-plane).
+        const auto az = [&](int axis_, double dx, double dy) {
+            return axis_ == 0 ? std::atan2(-dx, dy)
+                              : std::atan2(-dy, dx);
+        };
+        double n2_zx, n2_zy, n2_lx, n2_ly;
+        if (r.axis == 0) {
+            // cross-plane (y, z): the z-plane's normal is ±ẑ →
+            // (0, ±1); the lateral (⊥y) → (±1, 0).
+            n2_zx = 0.0;
+            n2_zy = r.sz > 0 ? 1.0 : -1.0;
+            n2_lx = r.s_lat_axis == 1 ? static_cast<double>(r.slat)
+                                      : 0.0;
+            n2_ly = 0.0;
+        } else {
+            // cross-plane (x, z).
+            n2_zx = 0.0;
+            n2_zy = r.sz > 0 ? 1.0 : -1.0;
+            n2_lx = r.s_lat_axis == 0 ? static_cast<double>(r.slat)
+                                      : 0.0;
+            n2_ly = 0.0;
+        }
+        const double uA = az(r.axis, n2_zx, n2_zy);
+        const double uB = az(r.axis, n2_lx, n2_ly);
+        const bool uA_leads =
+            std::abs(mod2pi(uB - uA) - kPi / 2.0) <=
+            kFilletArcSpanDefectBand;
+        const bool uB_leads =
+            std::abs(mod2pi(uA - uB) - kPi / 2.0) <=
+            kFilletArcSpanDefectBand;
+        if (!uA_leads && !uB_leads)
+            refuse("a ring flank's tangent azimuths are not a "
+                   "perpendicular pair - the closed forms and the "
+                   "walk disagree; report this as a kernel bug.");
+        r.a_at_u0 = uA_leads;
+        r.u0 = uA_leads ? uA : uB;
+        r.u1 = r.u0 + kPi / 2.0;
+    }
+
+    // ---- THE MAPS: no vertex survives (the sixteen junctions all
+    // die at the spheres' tangent points), the eight vertical
+    // tangent lines survive (absorbed, shortened), the eight ring
+    // edges and the eight cap arcs die.
+    std::vector<std::size_t> vmap(V0, V0), emap(E0, E0);
+    {
+        std::size_t next = 0;
+        for (std::size_t i = 0; i < E0; ++i) {
+            bool dead = false;
+            for (const std::size_t r : ring_edges)
+                if (r == i) dead = true;
+            for (const std::size_t a : cap_arcs)
+                if (a == i) dead = true;
+            if (!dead) emap[i] = next++;
+        }
+    }
+    // The born ids: 24 vertices (three tangency points per corner),
+    // 40 edges (16 ring tangent lines + 24 arcs), 16 faces (8 ring
+    // flanks + 8 spheres).
+    for (int c = 0; c < 8; ++c) {
+        corners[c].v_Tx = static_cast<std::size_t>(3 * c + 0);
+        corners[c].v_Ty = static_cast<std::size_t>(3 * c + 1);
+        corners[c].v_Tz = static_cast<std::size_t>(3 * c + 2);
+    }
+    const std::size_t e_tan_base = E0 - 16;
+    for (std::size_t ri = 0; ri < 8; ++ri) {
+        rings[ri].e_tan_z = e_tan_base + 2 * ri;
+        rings[ri].e_tan_lat = e_tan_base + 2 * ri + 1;
+    }
+    const std::size_t e_arc_base = E0 - 16 + 16;
+    for (int c = 0; c < 8; ++c) {
+        corners[c].e_eq = e_arc_base + 3 * c + 0;
+        corners[c].e_mer_x = e_arc_base + 3 * c + 1;
+        corners[c].e_mer_y = e_arc_base + 3 * c + 2;
+    }
+    for (std::size_t ri = 0; ri < 8; ++ri)
+        rings[ri].f_flank = F0 + ri;
+    for (int c = 0; c < 8; ++c)
+        corners[c].f_sphere = F0 + 8 + static_cast<std::size_t>(c);
+    // The tangency-point vertex OF A PLANE at a corner: the foot on
+    // the plane with the given axis.
+    const auto t_of_plane_axis = [&](int c, int axis)
+        -> std::size_t {
+        return axis == 0 ? corners[c].v_Tx
+               : (axis == 1 ? corners[c].v_Ty : corners[c].v_Tz);
+    };
+    // The corner index of a JUNCTION (the old endpoint's three
+    // signs ARE the corner's).
+    const auto corner_of_pos = [&](const math::Vec3d& p) -> int {
+        return (sgn(p.x) < 0 ? 4 : 0) + (sgn(p.y) < 0 ? 2 : 0) +
+               (sgn(p.z) < 0 ? 1 : 0);
+    };
+    // The NEW endpoint of an old junction: the tangency point on
+    // the axis' plane of the junction's corner (the junction on
+    // the plane (axis, σ) maps to T_axis(corner(junction))).
+    const auto new_end = [&](std::size_t old_v, int axis) {
+        const int c = corner_of_pos(vpos(old_v));
+        return t_of_plane_axis(c, axis);
+    };
+
+    auto R = std::make_unique<BRepBody>();
+    auto& shell = R->solid.shell_mut();
+    shell.set_closed(true);
+    const ProvenanceInfo prov = ProvenanceInfo::exact();
+
+    // ---- THE VERTICES: the twenty-four tangency points (D7.4's
+    // golden positions, the feet of the perpendiculars).
+    for (int c = 0; c < 8; ++c) {
+        const math::Vec3d born[3] = {corners[c].T_x, corners[c].T_y,
+                                     corners[c].T_z};
+        const std::size_t ids[3] = {corners[c].v_Tx,
+                                    corners[c].v_Ty,
+                                    corners[c].v_Tz};
+        for (int k = 0; k < 3; ++k) {
+            Vertex v{born[k]};
+            v.set_id(static_cast<VertexId>(ids[k]));
+            v.set_provenance(prov);
+            R->vertices.push_back(v);
+        }
+    }
+
+    // ---- THE EDGES: the eight vertical tangent lines SURVIVE,
+    // their ends re-spanned from the capitelli junctions (z = ±1)
+    // to the coaxial planes' tangency points (z = ±(1−r)) — the
+    // same edge, the same two co-edges, the window edit read here
+    // on the stored pairs. Then the forty born.
+    for (std::size_t i = 0; i < E0; ++i) {
+        if (emap[i] == E0) continue;
+        R->edges.push_back(body.edges[i]);
+        auto& e = R->edges.back();
+        e.set_id(static_cast<EdgeId>(emap[i]));
+        for (int side = 0; side < 2; ++side) {
+            const std::size_t old_end = static_cast<std::size_t>(
+                e.vertex(side));
+            // The junction's re-spanning axis: the Z tangent lies
+            // on ONE lateral plane (read through the radial
+            // structure); its ends map to the lateral's own
+            // tangency points.
+            std::size_t lateral = F0;
+            for (const CoEdge* ce : body.edges[i].coedges()) {
+                const std::size_t f = face_of_coedge(ce);
+                if (plane_of(f) != nullptr &&
+                    std::abs(plane_of(f)->normal_vec().z) < 0.5)
+                    lateral = f;
+            }
+            if (lateral == F0)
+                refuse("a vertical tangent line borders no lateral "
+                       "plane - report this as a kernel bug.");
+            const PlaneSurface* pl = plane_of(lateral);
+            const int axis = std::abs(pl->normal_vec().x) > 0.5
+                                 ? 0
+                                 : 1;
+            e.set_vertex(side, static_cast<VertexId>(
+                                    new_end(old_end, axis)));
+        }
+    }
+    {
+        // The sixteen ring tangent lines: per ring edge, the line
+        // on the ⊥z plane and the line on the lateral (the stored
+        // pairs run from the axis' − side to its + side).
+        for (std::size_t ri = 0; ri < 8; ++ri) {
+            const RingInfo& r = rings[ri];
+            const std::pair<std::size_t, std::size_t> born[2] = {
+                {t_of_plane_axis(static_cast<int>(r.corner_lo), 2),
+                 t_of_plane_axis(static_cast<int>(r.corner_hi), 2)},
+                {t_of_plane_axis(static_cast<int>(r.corner_lo),
+                                 r.s_lat_axis),
+                 t_of_plane_axis(static_cast<int>(r.corner_hi),
+                                 r.s_lat_axis)}};
+            const std::size_t ids[2] = {r.e_tan_z, r.e_tan_lat};
+            for (int k = 0; k < 2; ++k) {
+                Edge e{static_cast<VertexId>(born[k].first),
+                       static_cast<VertexId>(born[k].second)};
+                e.set_id(static_cast<EdgeId>(ids[k]));
+                e.set_provenance(prov);
+                R->edges.push_back(e);
+            }
+        }
+        // The twenty-four arcs: per corner the equator (T_x ↔ T_y,
+        // the vertical flank's coaxial quarter) and the two
+        // meridians (T_z ↔ T_y coassiale with the x̂-parallel
+        // flank, T_z ↔ T_x with the ŷ-parallel one — the m3 act's
+        // own stored-pair convention).
+        for (int c = 0; c < 8; ++c) {
+            const CornerInfo& ci = corners[c];
+            const std::pair<std::size_t, std::size_t> born[3] = {
+                {ci.v_Tx, ci.v_Ty},
+                {ci.v_Tz, ci.v_Ty},
+                {ci.v_Tz, ci.v_Tx}};
+            const std::size_t ids[3] = {ci.e_eq, ci.e_mer_x,
+                                        ci.e_mer_y};
+            for (int k = 0; k < 3; ++k) {
+                Edge e{static_cast<VertexId>(born[k].first),
+                       static_cast<VertexId>(born[k].second)};
+                e.set_id(static_cast<EdgeId>(ids[k]));
+                e.set_provenance(prov);
+                R->edges.push_back(e);
+            }
+        }
+    }
+
+    // ---- THE SIX PLANES RE-AUTHORED (D5.3): each walk follows the
+    // OLD loop's own order with the edges substituted in place —
+    // every ring edge becomes ITS tangent line on this plane, every
+    // cap arc becomes the vertical tangent of the flank it
+    // belonged to (the line that closes the rectangle's side), the
+    // junctions become the spheres' tangency points (the dead arcs'
+    // centers — the closure of D5.3's own derivation).
+    const auto pos3 = [&](std::size_t v) -> const math::Vec3d& {
+        return R->vertices[v].position();
+    };
+    const auto emit_planar = [&](Loop& loop,
+                                 const PlaneSurface& pl,
+                                 std::size_t e_id, std::size_t a,
+                                 std::size_t b) {
+        const auto& stored = R->edges[e_id];
+        const bool fwd =
+            stored.vertex(0) == static_cast<VertexId>(a) &&
+            stored.vertex(1) == static_cast<VertexId>(b);
+        const bool rev =
+            stored.vertex(0) == static_cast<VertexId>(b) &&
+            stored.vertex(1) == static_cast<VertexId>(a);
+        if (!fwd && !rev)
+            refuse("the re-authored plane walk lost the chaining: "
+                   "the edge " + std::to_string(e_id) +
+                   " (stored " +
+                   std::to_string(static_cast<std::size_t>(
+                       stored.vertex(0))) + " -> " +
+                   std::to_string(static_cast<std::size_t>(
+                       stored.vertex(1))) +
+                   ") does not run between the walk's points (" +
+                   std::to_string(a) + " -> " +
+                   std::to_string(b) + ") - report this as a "
+                   "kernel bug.");
+        CoEdge ce{static_cast<EdgeId>(e_id), rev};
+        ce.set_p_curve(pcurve_segment(
+            fillet_detail::dom_of(pl, pos3(a)),
+            fillet_detail::dom_of(pl, pos3(b)),
+            /*interior_left=*/true));
+        loop.add_coedge(ce);
+    };
+
+    for (int k = 0; k < 3; ++k) {
+        for (int si = 0; si < 2; ++si) {
+            const std::size_t pf = plane_at[k][si];
+            const Face& src =
+                body.solid.shell().faces()[pf];
+            const PlaneSurface& pl = *plane_of(pf);
+            Loop loop;
+            for (const auto& ce : src.loops()[0].coedges()) {
+                const std::size_t e_old = ce.edge();
+                const std::size_t s_old = static_cast<std::size_t>(
+                    ce.reversed()
+                        ? body.edges[e_old].vertex(1)
+                        : body.edges[e_old].vertex(0));
+                const std::size_t e_old_end =
+                    static_cast<std::size_t>(
+                        ce.reversed()
+                            ? body.edges[e_old].vertex(0)
+                            : body.edges[e_old].vertex(1));
+                const int c_from = corner_of_pos(vpos(s_old));
+                const int c_to = corner_of_pos(vpos(e_old_end));
+                bool is_ring = false;
+                const RingInfo* ring = nullptr;
+                for (const RingInfo& r : rings)
+                    if (r.edge == e_old) {
+                        is_ring = true;
+                        ring = &r;
+                    }
+                if (is_ring) {
+                    // The ring's tangent on THIS plane: the ⊥z
+                    // line on a z-plane, the lateral line on a
+                    // lateral.
+                    const std::size_t e_new =
+                        (k == 2) ? ring->e_tan_z
+                                 : ring->e_tan_lat;
+                    const int t_axis =
+                        (k == 2) ? 2 : ring->s_lat_axis;
+                    emit_planar(loop, pl, e_new,
+                                t_of_plane_axis(c_from, t_axis),
+                                t_of_plane_axis(c_to, t_axis));
+                    continue;
+                }
+                bool is_z_tan = false;
+                for (const std::size_t t : z_tangents)
+                    if (t == e_old) is_z_tan = true;
+                bool is_cap = false;
+                for (const std::size_t a : cap_arcs)
+                    if (a == e_old) is_cap = true;
+                if (is_cap) {
+                    // On the z-planes the cap arc COLLAPSES at the
+                    // tangency point: the two neighboring ring
+                    // tangents MEET there (D5.3's rectangle corner
+                    // — the m3 act's own pattern); on the laterals
+                    // a cap arc cannot appear (the capitelli are
+                    // the z-planes' own loops).
+                    if (k != 2)
+                        refuse("a lateral plane's loop carries a "
+                               "cap arc - the capitelli live on "
+                               "the z-planes; report this as a "
+                               "kernel bug.");
+                    continue;
+                }
+                if (!is_z_tan)
+                    refuse("a plane's co-edge is outside the act's "
+                           "kinds - report this as a kernel bug.");
+                if (k == 2)
+                    refuse("a z-plane's loop carries a vertical "
+                           "tangent - report this as a kernel "
+                           "bug.");
+                // The tangent IS its own survivor: the window edit
+                // (the shortened line) read on the stored pair.
+                if (emap[e_old] == E0)
+                    refuse("the vertical tangent died in the map - "
+                           "report this as a kernel bug.");
+                const int lat_axis = k;
+                emit_planar(loop, pl, emap[e_old],
+                            t_of_plane_axis(c_from, lat_axis),
+                            t_of_plane_axis(c_to, lat_axis));
+            }
+            Face face(std::make_shared<PlaneSurface>(pl));
+            face.add_loop(std::move(loop));
+            face.set_id(static_cast<FaceId>(pf));
+            face.set_shape_id(src.shape_id());
+            face.set_name(src.name());
+            face.set_provenance(src.provenance());
+            auto& faces_mut = shell.faces_mut();
+            if (faces_mut.size() <= pf) faces_mut.resize(pf + 1);
+            faces_mut[pf] = std::move(face);
+        }
+    }
+
+    // ---- THE FOUR VERTICAL FLANKS RE-WINDOWED (D6.3, the m3
+    // edit both ends over): the face SURVIVES with its name and
+    // stamp; both cap arcs die (replaced by the corner spheres'
+    // equators), the two tangent lines shorten to the coaxial
+    // planes z = ±(1−r). The p-curves ride the flank's own
+    // parametrization: the tangents keep their u (read from the
+    // stored p-curves), the equators take the dead arcs' u-span at
+    // the coaxial v — the closed forms' own agreement.
+    for (const std::size_t zf : z_faces) {
+        const CylinderZSurface* vz = z_flank_of(zf);
+        const Face& src =
+            body.solid.shell().faces()[zf];
+        const auto& ces = src.loops()[0].coedges();
+        if (ces.size() != 4)
+            refuse("a vertical flank's loop carries " +
+                   std::to_string(ces.size()) +
+                   " co-edges (the class's own are four) - report "
+                   "this as a kernel bug.");
+        const int sx = sgn(vz->axis_center().x);
+        const int sy = sgn(vz->axis_center().y);
+        Loop loop;
+        for (const auto& ce : ces) {
+            const std::size_t e_old = ce.edge();
+            const std::size_t s_old = static_cast<std::size_t>(
+                ce.reversed()
+                    ? body.edges[e_old].vertex(1)
+                    : body.edges[e_old].vertex(0));
+            const std::size_t e_old_end =
+                static_cast<std::size_t>(
+                    ce.reversed()
+                        ? body.edges[e_old].vertex(0)
+                        : body.edges[e_old].vertex(1));
+            bool is_cap = false;
+            for (const std::size_t a : cap_arcs)
+                if (a == e_old) is_cap = true;
+            if (is_cap) {
+                // The equator of the corner this arc belongs to
+                // (the arc's junctions sit on ONE z side).
+                const int szc = sgn(vpos(s_old).z);
+                const int c = (sx < 0 ? 4 : 0) +
+                              (sy < 0 ? 2 : 0) +
+                              (szc < 0 ? 1 : 0);
+                if (ce.p_curve() == nullptr ||
+                    ce.p_curve()->kind != PCurve::Kind::Segment)
+                    refuse("the vertical flank's cap arc carries "
+                           "no segment p-curve - report this as a "
+                           "kernel bug.");
+                const double ua = ce.p_curve()->segment.a.x;
+                const double ub = ce.p_curve()->segment.b.x;
+                const double v_eq =
+                    static_cast<double>(szc) * s - vz->z_base();
+                // The walk's OWN direction: each arc endpoint sits
+                // on ONE lateral plane (the ±1 coordinate that is
+                // not z) and maps to THAT plane's tangency point —
+                // the equator is emitted along the old walk's
+                // sense, never blindly forward.
+                const auto touch_of_junction =
+                    [&](const math::Vec3d& pj) -> std::size_t {
+                    const int ax =
+                        std::abs(std::abs(pj.x) - 1.0) <= tol ? 0
+                                                              : 1;
+                    return t_of_plane_axis(c, ax);
+                };
+                const std::size_t from =
+                    touch_of_junction(vpos(s_old));
+                const std::size_t to =
+                    touch_of_junction(vpos(e_old_end));
+                const auto& stored =
+                    R->edges[corners[c].e_eq];
+                const bool fwd =
+                    stored.vertex(0) ==
+                            static_cast<VertexId>(from) &&
+                    stored.vertex(1) ==
+                        static_cast<VertexId>(to);
+                const bool rev =
+                    stored.vertex(0) ==
+                            static_cast<VertexId>(to) &&
+                    stored.vertex(1) ==
+                        static_cast<VertexId>(from);
+                if (!fwd && !rev)
+                    refuse("the equator's stored pair does not run "
+                           "between the tangency points - report "
+                           "this as a kernel bug.");
+                CoEdge out{static_cast<EdgeId>(corners[c].e_eq),
+                           rev};
+                out.set_p_curve(pcurve_segment(
+                    fwd ? math::Vec2d{ua, v_eq}
+                        : math::Vec2d{ub, v_eq},
+                    fwd ? math::Vec2d{ub, v_eq}
+                        : math::Vec2d{ua, v_eq},
+                    /*interior_left=*/true));
+                loop.add_coedge(out);
+                continue;
+            }
+            // A tangent line: shortened to the coaxial planes,
+            // the u the stored p-curve's own, the ends the two
+            // corners' tangency points on the tangent's lateral.
+            if (ce.p_curve() == nullptr ||
+                ce.p_curve()->kind != PCurve::Kind::Segment ||
+                ce.p_curve()->segment.a.x !=
+                    ce.p_curve()->segment.b.x)
+                refuse("the vertical flank's tangent line carries "
+                       "no u-const segment p-curve - report this "
+                       "as a kernel bug.");
+            const double u_t = ce.p_curve()->segment.a.x;
+            const double v_lo =
+                std::min(ce.p_curve()->segment.a.y,
+                         ce.p_curve()->segment.b.y);
+            const bool a_low =
+                ce.p_curve()->segment.a.y <=
+                ce.p_curve()->segment.b.y;
+            // The lateral this tangent lies on (its plane
+            // co-user).
+            std::size_t lateral = F0;
+            for (const CoEdge* c2 :
+                 body.edges[e_old].coedges()) {
+                const std::size_t f = face_of_coedge(c2);
+                if (plane_of(f) != nullptr)
+                    lateral = f;
+            }
+            if (lateral == F0)
+                refuse("a vertical tangent line borders no plane "
+                       "- report this as a kernel bug.");
+            const int lat_axis =
+                std::abs(plane_of(lateral)->normal_vec().x) > 0.5
+                    ? 0
+                    : 1;
+            const int c_from = corner_of_pos(vpos(s_old));
+            const int c_to = corner_of_pos(vpos(e_old_end));
+            if (emap[e_old] == E0)
+                refuse("a vertical tangent died in the map - "
+                       "report this as a kernel bug.");
+            const auto& stored = R->edges[emap[e_old]];
+            const std::size_t from =
+                t_of_plane_axis(c_from, lat_axis);
+            const std::size_t to =
+                t_of_plane_axis(c_to, lat_axis);
+            const bool fwd =
+                stored.vertex(0) ==
+                        static_cast<VertexId>(from) &&
+                stored.vertex(1) ==
+                    static_cast<VertexId>(to);
+            const bool rev =
+                stored.vertex(0) ==
+                        static_cast<VertexId>(to) &&
+                stored.vertex(1) ==
+                    static_cast<VertexId>(from);
+            if (!fwd && !rev)
+                refuse("the shortened tangent's stored pair does "
+                       "not run between the tangency points - "
+                       "report this as a kernel bug.");
+            CoEdge out{static_cast<EdgeId>(emap[e_old]), rev};
+            // The v-span: the direction the old p-curve's own
+            // (the walk's sense preserved), the ends at the
+            // coaxial planes z = ±(1−r).
+            const double v_lo_new =
+                -s - vz->z_base();
+            const double v_hi_new = s - vz->z_base();
+            out.set_p_curve(pcurve_segment(
+                a_low ? math::Vec2d{u_t, v_lo_new}
+                      : math::Vec2d{u_t, v_hi_new},
+                a_low ? math::Vec2d{u_t, v_hi_new}
+                      : math::Vec2d{u_t, v_lo_new},
+                /*interior_left=*/true));
+            (void)v_lo;
+            loop.add_coedge(out);
+        }
+        Face face(std::make_shared<CylinderZSurface>(*vz));
+        face.add_loop(std::move(loop));
+        face.set_id(static_cast<FaceId>(zf));
+        face.set_shape_id(src.shape_id());
+        face.set_name(src.name());
+        face.set_provenance(src.provenance());
+        auto& faces_mut = shell.faces_mut();
+        if (faces_mut.size() <= zf) faces_mut.resize(zf + 1);
+        faces_mut[zf] = std::move(face);
+    }
+
+    // ---- THE NAMING CONTEXT (the m2/m3 grammar verbatim: the
+    // fillet's declaration with the body's binding and the
+    // same-feature extension).
+    const bool named =
+        naming.body != nullptr &&
+        body.solid.shell()
+                .faces()[plane_at[0][0]]
+                .shape_id()
+                .subshape.depth > 0;
+    naming::OperandBinding fil_operands[2] = {
+        {body.solid.shell()
+             .faces()[plane_at[0][0]]
+             .shape_id()
+             .feature,
+         naming.body},
+        {naming.feature, nullptr}};
+    const naming::OperationNaming fil_decl{
+        naming::FeatureKind::Fillet,
+        naming::kFilletFaceRoles, naming::kFilletEdgeRoles,
+        fil_operands};
+    fil_operands[1].naming = &fil_decl;
+    const auto leg = [](geometry::SubshapeRef ref,
+                        const Face& operand) {
+        for (std::uint8_t k = 0;
+             k < operand.shape_id().subshape.depth; ++k)
+            ref = ref.push(
+                operand.shape_id().subshape.path[k]);
+        return ref;
+    };
+    const auto flank_ref_of = [&](const Face& fa,
+                                  const Face& fb) {
+        geometry::SubshapeRef ref =
+            geometry::SubshapeRef{}.push(
+                naming::kFilFlankRole);
+        ref = leg(ref, fa);
+        ref = leg(ref, fb);
+        return ref;
+    };
+    const auto corner_ref_of = [&](const Face& fz,
+                                   const Face& fx,
+                                   const Face& fy) {
+        geometry::SubshapeRef ref =
+            geometry::SubshapeRef{}.push(
+                naming::kFilCornerRole);
+        ref = leg(ref, fz);
+        ref = leg(ref, fx);
+        ref = leg(ref, fy);
+        return ref;
+    };
+    const Face& F0_face = body.solid.shell().faces()[0];
+
+    // ---- THE EIGHT RING FLANKS BORN (the m2/m3 closed forms, the
+    // axial window the FULL [−(1−r), (1−r)] — both ends close at
+    // the coaxial planes where the spheres take over, never a cap
+    // arc). The walk CCW in the flank's own domain, the material
+    // on the left: (u0, vA) → (u1, vA) the low arc, the tangent at
+    // u1, the high arc, the tangent at u0.
+    const double v_lo = -s, v_hi = s;
+    for (std::size_t ri = 0; ri < 8; ++ri) {
+        const RingInfo& r = rings[ri];
+        std::shared_ptr<SurfaceGeometry> surf;
+        if (r.axis == 0)
+            surf = std::make_shared<CylinderXSurface>(
+                radius, v_lo, static_cast<double>(r.slat) * s,
+                static_cast<double>(r.sz) * s);
+        else
+            surf = std::make_shared<CylinderYSurface>(
+                radius, v_lo, static_cast<double>(r.slat) * s,
+                static_cast<double>(r.sz) * s);
+        // The low/high arc edges and the tangent edges at the two
+        // azimuth ends: the walk maps the u0-side tangent to the
+        // plane that rides u0 (a_at_u0: the ⊥z plane at u0).
+        const int z_axis_of_flank = 2;
+        const std::size_t e_u0_tan =
+            r.a_at_u0 ? r.e_tan_z : r.e_tan_lat;
+        const std::size_t e_u1_tan =
+            r.a_at_u0 ? r.e_tan_lat : r.e_tan_z;
+        const std::size_t v_u0_lo =
+            r.a_at_u0
+                ? t_of_plane_axis(static_cast<int>(r.corner_lo), 2)
+                : t_of_plane_axis(static_cast<int>(r.corner_lo),
+                                 r.s_lat_axis);
+        const std::size_t v_u1_lo =
+            r.a_at_u0
+                ? t_of_plane_axis(static_cast<int>(r.corner_lo),
+                                 r.s_lat_axis)
+                : t_of_plane_axis(static_cast<int>(r.corner_lo), 2);
+        const std::size_t v_u0_hi =
+            r.a_at_u0
+                ? t_of_plane_axis(static_cast<int>(r.corner_hi), 2)
+                : t_of_plane_axis(static_cast<int>(r.corner_hi),
+                                 r.s_lat_axis);
+        const std::size_t v_u1_hi =
+            r.a_at_u0
+                ? t_of_plane_axis(static_cast<int>(r.corner_hi),
+                                 r.s_lat_axis)
+                : t_of_plane_axis(static_cast<int>(r.corner_hi), 2);
+        // The arc edges at the two axial ends: which corner's
+        // meridian runs at vA (lo) and vB (hi) — the arc at the
+        // axis' − end belongs to corner_lo, the + end to corner_hi;
+        // the u0-side meridian is the one on the plane that rides
+        // u0 (m3's convention: the meridian at the seam's azimuth
+        // is the flank's coaxial arc on the ⊥z plane).
+        const int c_lo = static_cast<int>(r.corner_lo);
+        const int c_hi = static_cast<int>(r.corner_hi);
+        const std::size_t e_arc_lo =
+            r.axis == 0 ? corners[c_lo].e_mer_x
+                        : corners[c_lo].e_mer_y;
+        const std::size_t e_arc_hi =
+            r.axis == 0 ? corners[c_hi].e_mer_x
+                        : corners[c_hi].e_mer_y;
+        Loop loop;
+        const auto emit = [&](std::size_t e_id, std::size_t a,
+                              std::size_t b, double ua, double va,
+                              double ub, double vb) {
+            const auto& stored = R->edges[e_id];
+            const bool fwd =
+                stored.vertex(0) == static_cast<VertexId>(a) &&
+                stored.vertex(1) == static_cast<VertexId>(b);
+            const bool rev =
+                stored.vertex(0) == static_cast<VertexId>(b) &&
+                stored.vertex(1) == static_cast<VertexId>(a);
+            if (!fwd && !rev)
+                refuse("the born ring flank's walk lost the "
+                       "chaining - report this as a kernel bug.");
+            CoEdge ce{static_cast<EdgeId>(e_id), rev};
+            ce.set_p_curve(pcurve_segment(
+                math::Vec2d{ua, va}, math::Vec2d{ub, vb},
+                /*interior_left=*/true));
+            loop.add_coedge(ce);
+        };
+        (void)z_axis_of_flank;
+        emit(e_arc_lo, v_u0_lo, v_u1_lo, r.u0, v_lo, r.u1, v_lo);
+        emit(e_u1_tan, v_u1_lo, v_u1_hi, r.u1, v_lo, r.u1, v_hi);
+        emit(e_arc_hi, v_u1_hi, v_u0_hi, r.u1, v_hi, r.u0, v_hi);
+        emit(e_u0_tan, v_u0_hi, v_u0_lo, r.u0, v_hi, r.u0, v_lo);
+        Face face(std::move(surf));
+        face.add_loop(std::move(loop));
+        face.set_id(static_cast<FaceId>(r.f_flank));
+        face.set_provenance(prov);
+        if (named) {
+            const Face& fz =
+                body.solid.shell().faces()[r.face_z];
+            const Face& fl =
+                body.solid.shell().faces()[r.face_lat];
+            const geometry::SubshapeRef ref =
+                flank_ref_of(fz, fl);
+            face.set_shape_id({naming.feature, ref, {}});
+            face.set_name(naming::render_name(
+                naming.feature, ref, fil_decl.faces()));
+            const struct {
+                std::size_t edge;
+                const Face* landing;
+            } wires[2] = {
+                {r.e_tan_lat, &fl}, {r.e_tan_z, &fz}};
+            for (const auto& w : wires) {
+                geometry::SubshapeRef wref =
+                    geometry::SubshapeRef{}.push(
+                        naming::kFilIsectRole);
+                wref = leg(wref, *w.landing);
+                wref = wref.push(naming::kFilFlankRole);
+                wref = leg(wref, fl);
+                wref = leg(wref, fz);
+                R->edges[w.edge].set_shape_id(
+                    {naming.feature, wref, {}});
+                R->edges[w.edge].set_name(
+                    naming::render_name(naming.feature, wref,
+                                        fil_decl.edges()));
+            }
+        }
+        shell.add_face(std::move(face));
+    }
+
+    // ---- THE EIGHT SPHERES BORN (D5.2, the m3 act's own class):
+    // the octant windows, the frame DERIVED (pole the z-plane's
+    // outward normal — the equator is the vertical flank's coaxial
+    // circle — azimuth the x-plane's outward normal, the second
+    // axis the product), the walk CLOCKWISE in the domain (the
+    // family's inward cross-product normal mirrored — the m3 pin).
+    for (int c = 0; c < 8; ++c) {
+        CornerInfo& ci = corners[c];
+        const Face& fz = body.solid.shell().faces()[ci.face_z];
+        const Face& fx = body.solid.shell().faces()[ci.face_x];
+        const Face& fy = body.solid.shell().faces()[ci.face_y];
+        const math::Vec3d pole =
+            plane_of(ci.face_z)->normal_vec();
+        const math::Vec3d e0_axis =
+            plane_of(ci.face_x)->normal_vec();
+        const math::Vec3d e1_axis = e0_axis.cross(pole);
+        // The y-plane's tangency azimuth (a quarter from the
+        // seam).
+        const math::Vec3d n_y = plane_of(ci.face_y)->normal_vec();
+        ci.u_third = std::atan2(n_y.dot(e1_axis),
+                                n_y.dot(e0_axis));
+        if (std::abs(std::abs(ci.u_third) - kPi / 2.0) >
+            kFilletArcSpanDefectBand)
+            refuse("the corner sphere's tangency azimuths are not "
+                   "a perpendicular pair - report this as a "
+                   "kernel bug.");
+        ci.u_s0 = std::min(0.0, ci.u_third);
+        ci.u_s1 = std::max(0.0, ci.u_third);
+        auto surf = std::make_shared<SphereSurface>(
+            radius, ci.C, pole, e0_axis);
+        const bool third_is_low = ci.u_third < 0.0;
+        // The meridians' seats: u = 0 (the seam, the x-plane's
+        // side — the ŷ-parallel flank's coaxial arc) and u =
+        // u_third (the x̂-parallel flank's).
+        const std::size_t e_mer_low =
+            third_is_low ? ci.e_mer_x : ci.e_mer_y;
+        const std::size_t e_mer_high =
+            third_is_low ? ci.e_mer_y : ci.e_mer_x;
+        const std::size_t v_base_low =
+            third_is_low ? ci.v_Ty : ci.v_Tx;
+        const std::size_t v_base_high =
+            third_is_low ? ci.v_Tx : ci.v_Ty;
+        Loop loop;
+        const auto emit = [&](std::size_t e_id, std::size_t a,
+                              std::size_t b, double ua, double va,
+                              double ub, double vb) {
+            const auto& stored = R->edges[e_id];
+            const bool fwd =
+                stored.vertex(0) == static_cast<VertexId>(a) &&
+                stored.vertex(1) == static_cast<VertexId>(b);
+            const bool rev =
+                stored.vertex(0) == static_cast<VertexId>(b) &&
+                stored.vertex(1) == static_cast<VertexId>(a);
+            if (!fwd && !rev)
+                refuse("the sphere's walk lost the chaining - "
+                       "report this as a kernel bug.");
+            CoEdge ce{static_cast<EdgeId>(e_id), rev};
+            ce.set_p_curve(pcurve_segment(
+                math::Vec2d{ua, va}, math::Vec2d{ub, vb},
+                /*interior_left=*/true));
+            loop.add_coedge(ce);
+        };
+        emit(ci.e_eq, v_base_high, v_base_low, ci.u_s1, kPi / 2.0,
+             ci.u_s0, kPi / 2.0);
+        emit(e_mer_low, v_base_low, ci.v_Tz, ci.u_s0, kPi / 2.0,
+             ci.u_s0, 0.0);
+        emit(e_mer_high, ci.v_Tz, v_base_high, ci.u_s1, 0.0,
+             ci.u_s1, kPi / 2.0);
+        Face face(std::move(surf));
+        face.add_loop(std::move(loop));
+        face.set_id(static_cast<FaceId>(ci.f_sphere));
+        face.set_provenance(prov);
+        if (named) {
+            const geometry::SubshapeRef cref =
+                corner_ref_of(fz, fx, fy);
+            face.set_shape_id({naming.feature, cref, {}});
+            face.set_name(naming::render_name(
+                naming.feature, cref, fil_decl.faces()));
+            const struct {
+                std::size_t edge;
+                const Face* f_a;
+                const Face* f_b;
+                bool vertical;
+            } coax[3] = {
+                {ci.e_mer_x, &fx, &fy, false},
+                {ci.e_mer_y, &fx, &fy, false},
+                {ci.e_eq, nullptr, nullptr, true}};
+            for (const auto& w : coax) {
+                geometry::SubshapeRef wref =
+                    geometry::SubshapeRef{}.push(
+                        naming::kFilIsectCoaxRole);
+                for (std::uint8_t k = 0; k < cref.depth; ++k)
+                    wref = wref.push(cref.path[k]);
+                if (w.vertical) {
+                    // The equator's second leg: the vertical
+                    // flank's own stored path.
+                    std::size_t vflank_here = F0;
+                    for (const std::size_t zf : z_faces) {
+                        const CylinderZSurface* z2 =
+                            z_flank_of(zf);
+                        const int zx =
+                            sgn(z2->axis_center().x);
+                        const int zy =
+                            sgn(z2->axis_center().y);
+                        if (zx == ci.sx && zy == ci.sy)
+                            vflank_here = zf;
+                    }
+                    if (vflank_here == F0)
+                        refuse("the corner's vertical flank was "
+                               "not found - report this as a "
+                               "kernel bug.");
+                    const geometry::SubshapeRef vf =
+                        body.solid.shell()
+                            .faces()[vflank_here]
+                            .shape_id()
+                            .subshape;
+                    for (std::uint8_t k = 0; k < vf.depth; ++k)
+                        wref = wref.push(vf.path[k]);
+                } else {
+                    wref = wref.push(naming::kFilFlankRole);
+                    wref = leg(wref, *w.f_a);
+                    wref = leg(wref, *w.f_b);
+                }
+                R->edges[w.edge].set_shape_id(
+                    {naming.feature, wref, {}});
+                R->edges[w.edge].set_name(
+                    naming::render_name(naming.feature, wref,
+                                        fil_decl.edges()));
+            }
+        }
+        shell.add_face(std::move(face));
+    }
+    (void)F0_face;
+
+    // ---- THE OUTPUT GATE (the act's own arithmetic, hard
+    // postconditions, the named diagnosis the house's culture).
+    link_radial_edges(*R);
+    if (!loops_are_closed(*R)) {
+        std::string diag;
+        for (std::size_t f = 0;
+             f < R->solid.shell().faces().size() && diag.empty();
+             ++f) {
+            const auto& loop =
+                R->solid.shell().faces()[f].loops()[0];
+            const auto& ces = loop.coedges();
+            for (std::size_t j = 0; j < ces.size(); ++j) {
+                const auto& ce = ces[j];
+                const auto& e =
+                    R->edges[static_cast<std::size_t>(
+                        ce.edge())];
+                const std::size_t end_a = static_cast<std::size_t>(
+                    ce.reversed() ? e.vertex(0) : e.vertex(1));
+                const auto& next = ces[(j + 1) % ces.size()];
+                const auto& e2 =
+                    R->edges[static_cast<std::size_t>(
+                        next.edge())];
+                const std::size_t start_b =
+                    static_cast<std::size_t>(
+                        next.reversed() ? e2.vertex(1)
+                                        : e2.vertex(0));
+                if (end_a != start_b) {
+                    diag = " face " + std::to_string(f) + " ('" +
+                           R->solid.shell().faces()[f].name() +
+                           "'): co-edge " + std::to_string(j) +
+                           " ends at " + std::to_string(end_a) +
+                           " but the next starts at " +
+                           std::to_string(start_b);
+                    break;
+                }
+            }
+        }
+        throw std::runtime_error(
+            "fillet_ring_act: the postcondition failed - a loop "
+            "does not chain (" +
+            (diag.empty() ? std::string("an assembly defect")
+                          : diag) +
+            "; report this as a kernel bug)");
+    }
+    if (!is_closed_orientable(*R)) {
+        std::string diag;
+        for (std::size_t i = 0; i < R->edges.size(); ++i) {
+            const std::size_t n = R->edges[i].coedges().size();
+            if (n == 2) {
+                const bool r0 =
+                    R->edges[i].coedges()[0]->reversed();
+                const bool r1 =
+                    R->edges[i].coedges()[1]->reversed();
+                if (r0 != r1) continue;
+                diag += " edge " + std::to_string(i) +
+                        " (two " +
+                        std::string(r0 ? "reversed"
+                                       : "forward") +
+                        " co-edges)";
+            } else {
+                diag += " edge " + std::to_string(i) + " (" +
+                        std::to_string(n) + " co-edges)";
+            }
+            break;
+        }
+        throw std::runtime_error(
+            "fillet_ring_act: the postcondition failed - the "
+            "closed-orientable contract broke (" +
+            (diag.empty() ? std::string("the orientation walk")
+                          : diag) +
+            "; report this as a kernel bug)");
+    }
+    if (R->vertex_count() != 24 || R->edge_count() != 48 ||
+        R->face_count() != 26)
+        throw std::runtime_error(
+            "fillet_ring_act: the postcondition failed - the "
+            "counts moved (the act's own arithmetic is "
+            "V-16+24 / E-16+40 / F+16 from 16/24/10; report "
+            "this as a kernel bug)");
+    if (euler_characteristic(*R) != 2)
+        throw std::runtime_error(
+            "fillet_ring_act: the postcondition failed - chi "
+            "moved (the act is chi-flat by construction, "
+            "Delta-chi = +8 -16 +8 = 0; report this as a kernel "
+            "bug)");
     return R;
 }
 
