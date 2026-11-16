@@ -231,24 +231,39 @@ std::vector<FaceId> faces_around_edge(const BRepBody& body, EdgeId edge_id) {
     // back from the CoEdge to the FaceId that contains its loop. Since
     // we don't store a parent pointer on Loop, we scan faces/loops and
     // match by pointer identity.
+    //
+    // T1 follow-up (2026-11-16, the register's T row): the membership
+    // test is OBJECT-ADDRESS EQUALITY, never a relational range. The
+    // old `ce >= base && ce < end` compared pointers that may belong
+    // to DIFFERENT allocations — unspecified ordering across objects,
+    // and a foreign pointer whose numeric address happened to fall
+    // inside a loop's storage would have been CLAIMED as owned (a
+    // silent false positive: an unregistered co-edge resolving to a
+    // face it never touched). Equality cannot claim: a CoEdge of this
+    // body IS one of this body's CoEdge objects, exactly. The radial
+    // pointer is never dereferenced here — only its VALUE is
+    // compared, and only after a match is the owning face recorded
+    // (an unresolvable pointer — stale or foreign — is skipped, the
+    // query's own documented semantics). Manifold edges carry two
+    // radials, so this no-extra-allocation search is the right first
+    // cure; a faster lookup structure would need measured evidence
+    // to pay for its memory (the register's own rule). Ordering and
+    // duplicates are the radial list's own: one result entry per
+    // resolving radial pointer, in radial order.
     const auto& shell = body.solid.shell();
     for (const CoEdge* ce : radial) {
         bool found = false;
         for (FaceId fid = 0; fid < shell.faces().size(); ++fid) {
             const auto& face = shell.faces()[fid];
             for (const auto& loop : face.loops()) {
-                const auto& coedges = loop.coedges();
-                // A CoEdge* in the radial list points into the storage
-                // of `loop.coedges_`. Match by pointer range.
-                if (!coedges.empty()) {
-                    const CoEdge* base = coedges.data();
-                    const CoEdge* end   = base + coedges.size();
-                    if (ce >= base && ce < end) {
+                for (const auto& co : loop.coedges()) {
+                    if (&co == ce) {
                         result.push_back(fid);
                         found = true;
                         break;
                     }
                 }
+                if (found) break;
             }
             if (found) break;
         }
