@@ -74,6 +74,7 @@ set(CAD_0_TEST_SOURCES
     unit/brep/test_h2_u6_m5_resolver.cpp
     unit/brep/test_h2_u6_m6_d5_quartet.cpp
     unit/brep/test_t1_m1_topology_lifecycle.cpp
+    unit/brep/test_t1_m2_clone_body.cpp
     unit/bridge/test_bridge.cpp
     unit/bridge/test_h2_u4_m2_bvh.cpp
     main.cpp

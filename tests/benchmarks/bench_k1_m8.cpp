@@ -497,12 +497,8 @@ struct LoadedChain {
                 "the loaded world: the blind's re-run digest drift");
         require(b::chain_digest(*rfil->fillet_body) == fil_digest,
                 "the loaded world: the fillet's re-run digest drift");
-        rerun_blind =
-            std::make_unique<b::BRepBody>(*rsub->hybrid->brep);
-        b::link_radial_edges(*rerun_blind);
-        rerun_fil =
-            std::make_unique<b::BRepBody>(*rfil->fillet_body);
-        b::link_radial_edges(*rerun_fil);
+        rerun_blind = b::clone_body(*rsub->hybrid->brep);
+        rerun_fil = b::clone_body(*rfil->fillet_body);
     }
 
     ~LoadedChain() {
@@ -948,9 +944,7 @@ MemberOutcome run_member3(const CorpusWorld& w) {
     if (rsub == nullptr || rsub->hybrid == nullptr ||
         rr.rebuilt == 0)
         return {};
-    auto rerun_blind =
-        std::make_unique<b::BRepBody>(*rsub->hybrid->brep);
-    b::link_radial_edges(*rerun_blind);
+    auto rerun_blind = b::clone_body(*rsub->hybrid->brep);
 
     b::SurvivalMember m;
     m.kind = b::SurvivalEditKind::LoadBooleanRerun;

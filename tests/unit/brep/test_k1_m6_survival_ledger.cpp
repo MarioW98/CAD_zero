@@ -421,12 +421,8 @@ struct LoadedChain {
         REQUIRE(rfil->fillet_body != nullptr);
         REQUIRE(b::chain_digest(*rsub->hybrid->brep) == blind_digest);
         REQUIRE(b::chain_digest(*rfil->fillet_body) == fil_digest);
-        rerun_blind =
-            std::make_unique<b::BRepBody>(*rsub->hybrid->brep);
-        b::link_radial_edges(*rerun_blind);
-        rerun_fil =
-            std::make_unique<b::BRepBody>(*rfil->fillet_body);
-        b::link_radial_edges(*rerun_fil);
+        rerun_blind = b::clone_body(*rsub->hybrid->brep);
+        rerun_fil = b::clone_body(*rfil->fillet_body);
     }
 };
 

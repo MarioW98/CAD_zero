@@ -400,6 +400,26 @@ private:
 class BRepBody {
 public:
     BRepBody() = default;
+    // T1 m2 (ADR-0044 D3.4/D7-m2, accepted 2026-11-16): the body is a
+    // GENERATION, and a generation has exactly ONE sanctioned producer
+    // of a copy — clone_body() below. The implicit members were the
+    // audited hazard: the user-declared destructor below suppressed
+    // the implicit moves, so std::move on a body silently selected the
+    // COPY — every Edge::coedges_ pointer aliasing the SOURCE's loops,
+    // dangling the moment the moved-from temporary died — and the
+    // implicit copy assignment could mint unlinked bodies the same
+    // way. All four are DELETED, loudly, at compile time: a body is
+    // born from a factory or from clone_body(), travels by unique_ptr
+    // (the scene's, the fillet chain's, the subtract's own idiom),
+    // and dies whole with its node (D3.1). The moves are deleted too,
+    // deliberately: a value-move would be a second producer of "the
+    // same" generation under a different address, no call site in the
+    // tree needs one (bodies move at the pointer level), and rejecting
+    // it here turns the audited silent fallback into a compile error.
+    BRepBody(const BRepBody&) = delete;
+    BRepBody& operator=(const BRepBody&) = delete;
+    BRepBody(BRepBody&&) = delete;
+    BRepBody& operator=(BRepBody&&) = delete;
     Solid solid;
     std::vector<Vertex> vertices;
     std::vector<Edge> edges;
@@ -440,6 +460,26 @@ inline VertexId CoEdge::end_vertex(const std::vector<Edge>& edges) const {
 // not reallocated (ADR-0021 §3). After this call returns, factories must
 // not add further co-edges to existing loops.
 void link_radial_edges(BRepBody& body);
+
+// clone_body — THE SANCTIONED COPY (ADR-0044 D3.4, T1 m2): a fully
+// independent topology generation in ONE call — the copy-plus-relink
+// idiom the scene's copy ctor and the fillet chain have always
+// practiced, promoted from a comment to a name. Every value is
+// preserved verbatim: geometry, vertex/edge/face ids, ShapeIds,
+// names, provenance, p-curves, the solid's own bookkeeping; the
+// analytic surfaces stay SHARED (the shared_ptr of immutable values,
+// D1's own row). The radial links are rebuilt into the CLONE's own
+// Loop storage — no pointer in the clone aliases the source, and the
+// source is never touched. The source is VALIDATED first: a co-edge
+// referencing an EdgeId outside the source's edge storage is refused
+// loudly (std::invalid_argument) — the silent omission of
+// link_radial_edges is not inherited by the sanctioned copy, and a
+// partially linked body is never returned. Strong guarantee: on
+// failure nothing escapes (the exception fires before the clone
+// exists). Returns by unique_ptr so the return itself cannot invoke
+// any implicit copy or move of the value (they are deleted at the
+// class).
+std::unique_ptr<BRepBody> clone_body(const BRepBody& src);
 
 // euler_characteristic — χ = V − E + F − H for the body's single
 // shell, with H the INNER-LOOP count (inner_loop_count below): every

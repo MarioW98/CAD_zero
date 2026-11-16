@@ -447,15 +447,17 @@ struct SceneNode {
         rebuild_body();
     }
 
-    // ---- Copy semantics (G1 unit 3) --------------------------------
+    // ---- Copy semantics (G1 unit 3; the B-Rep side rides the
+    // sanctioned clone since T1 m2) -------------------------------
     // The node was copyable before the HybridBody landed (SDFBody's
     // deep-cloning copy ctor; the ParsedDocument and command-stack
     // paths rely on the deep clone) and stays copyable: the hybrid
     // member is DEEP-CLONED — the SDF twin through its own copy
-    // ctor, the exact B-Rep copied and its radial edges RELINKED
-    // (the copied Edge::coedges_ pointers point into the SOURCE's
-    // loops — the one shallow hazard of copying a BRepBody;
-    // link_radial_edges rebuilds them into the copy, closing it).
+    // ctor, the exact B-Rep through brep::clone_body (the sanctioned
+    // copy, ADR-0044 D3.4/T1 m2: the radial links rebuilt into the
+    // clone's own storage in the one call; the raw BRepBody copy is
+    // DELETED at the class, so the shallow hazard the copy sites
+    // once compensated for cannot be reached at all).
     // The move operations stay the implicit ones (ownership
     // transfers whole), and the default construction stays default.
     SceneNode() = default;
@@ -477,20 +479,15 @@ struct SceneNode {
           operation_pending(other.operation_pending),
           operation_pending_error(other.operation_pending_error) {
         if (other.fillet_body) {
-            fillet_body = std::make_unique<brep::BRepBody>(*other.fillet_body);
-            brep::link_radial_edges(*fillet_body);
+            fillet_body = brep::clone_body(*other.fillet_body);
         }
         if (other.ellipsoid_body) {
-            ellipsoid_body =
-                std::make_unique<brep::BRepBody>(*other.ellipsoid_body);
-            brep::link_radial_edges(*ellipsoid_body);
+            ellipsoid_body = brep::clone_body(*other.ellipsoid_body);
         }
         if (other.hybrid) {
             auto sdf_clone =
                 std::make_unique<sdf::SDFBody>(*other.hybrid->sdf);
-            auto brep_clone =
-                std::make_unique<brep::BRepBody>(*other.hybrid->brep);
-            brep::link_radial_edges(*brep_clone);
+            auto brep_clone = brep::clone_body(*other.hybrid->brep);
             hybrid = std::make_unique<geometry::HybridBody>(
                 std::move(sdf_clone), std::move(brep_clone),
                 other.hybrid->role, other.hybrid->bridge_tolerance);
@@ -524,24 +521,19 @@ struct SceneNode {
         ellipsoid = other.ellipsoid;
         tavola = other.tavola;
         if (other.fillet_body) {
-            fillet_body = std::make_unique<brep::BRepBody>(*other.fillet_body);
-            brep::link_radial_edges(*fillet_body);
+            fillet_body = brep::clone_body(*other.fillet_body);
         } else {
             fillet_body.reset();
         }
         if (other.ellipsoid_body) {
-            ellipsoid_body =
-                std::make_unique<brep::BRepBody>(*other.ellipsoid_body);
-            brep::link_radial_edges(*ellipsoid_body);
+            ellipsoid_body = brep::clone_body(*other.ellipsoid_body);
         } else {
             ellipsoid_body.reset();
         }
         if (other.hybrid) {
             auto sdf_clone =
                 std::make_unique<sdf::SDFBody>(*other.hybrid->sdf);
-            auto brep_clone =
-                std::make_unique<brep::BRepBody>(*other.hybrid->brep);
-            brep::link_radial_edges(*brep_clone);
+            auto brep_clone = brep::clone_body(*other.hybrid->brep);
             hybrid = std::make_unique<geometry::HybridBody>(
                 std::move(sdf_clone), std::move(brep_clone),
                 other.hybrid->role, other.hybrid->bridge_tolerance);
@@ -623,8 +615,7 @@ inline DisplaySourceSnapshot snapshot_display_source(const SceneNode& n) {
                 ? n.ellipsoid_body.get()
                 : n.fillet_body.get();
         if (src != nullptr) {
-            s.exact = std::make_unique<brep::BRepBody>(*src);
-            brep::link_radial_edges(*s.exact);
+            s.exact = brep::clone_body(*src);
         }
         break;
     }
@@ -788,16 +779,14 @@ inline const brep::naming::OperationNaming* operand_naming_of(
 inline std::unique_ptr<brep::BRepBody> operand_exact_brep(
     const SceneNode& n, const char* what) {
     if (n.hybrid != nullptr && n.hybrid->brep != nullptr) {
-        // The copy's radial edges are RELINKED into the copy (the
-        // one shallow hazard of copying a BRepBody: the copied
-        // Edge::coedges_ pointers point into the SOURCE's loops —
-        // link_radial_edges rebuilds them, closing it). G2-u3 m4: the
-        // fillet's operand reads the rim's ADJACENT FACES through
-        // these pointers; an unlinked copy dangles and the class
-        // admission reads garbage.
-        auto c = std::make_unique<brep::BRepBody>(*n.hybrid->brep);
-        brep::link_radial_edges(*c);
-        return c;
+        // The clone is the SANCTIONED copy (brep::clone_body, T1 m2:
+        // the radial links rebuilt into the clone's own storage in
+        // the one call — the raw copy is deleted at the class, the
+        // hazard unreachable). G2-u3 m4: the fillet's operand reads
+        // the rim's ADJACENT FACES through these pointers; an
+        // unlinked body dangles and the class admission reads
+        // garbage.
+        return brep::clone_body(*n.hybrid->brep);
     }
     auto prim = bridge::sdf_to_brep_primitive(
         n.body, geometry::FeatureId{n.id});
@@ -929,24 +918,19 @@ inline const SceneNode* find_node(
 // best-effort guess: the find answers only for bodies that exist).
 // m6-correttiva-ter: a FILLET node answers its own materialized
 // body — the chain's CURRENT STATE (a refused re-run keeps the
-// last good body, the visible state; the copy relinks its radial
-// edges, the body copy's own hazard closed at the source).
+// last good body, the visible state; the clone is the sanctioned
+// copy, radial links rebuilt in the call — T1 m2).
 inline std::unique_ptr<brep::BRepBody> operand_exact_brep_quiet(
     const SceneNode& n) {
     if (n.hybrid != nullptr && n.hybrid->brep != nullptr)
         return operand_exact_brep(n, "quiet");  // linked, see above
-    if (n.kind == NodeKind::Fillet && n.fillet_body != nullptr) {
-        auto c = std::make_unique<brep::BRepBody>(*n.fillet_body);
-        brep::link_radial_edges(*c);
-        return c;
-    }
+    if (n.kind == NodeKind::Fillet && n.fillet_body != nullptr)
+        return brep::clone_body(*n.fillet_body);
     if (n.kind == NodeKind::FilletMulti && n.fillet_body != nullptr) {
         // The contemporanea answers its own materialized body — the
         // chain's CURRENT STATE (the single's own rule one kind
-        // over; the copy relinks its radial edges at the source).
-        auto c = std::make_unique<brep::BRepBody>(*n.fillet_body);
-        brep::link_radial_edges(*c);
-        return c;
+        // over; the clone is the sanctioned copy, links included).
+        return brep::clone_body(*n.fillet_body);
     }
     if (n.kind != NodeKind::Sdf) return nullptr;
     return bridge::sdf_to_brep_primitive(
@@ -1782,11 +1766,11 @@ inline bool attach_fillet_multi(
                 E0 == 12 + 3 * k_guess)
                 k0 = k_guess;
         }
-        std::unique_ptr<brep::BRepBody> cur =
-            std::make_unique<brep::BRepBody>(body);
-        brep::link_radial_edges(*cur);  // the copy's own hazard,
-                                        // closed at the source (the
-                                        // quiet door's own rule)
+        // The chain's entry body: the SANCTIONED CLONE of the
+        // operand (T1 m2 — the radial links rebuilt into the clone's
+        // own storage in the one call; the raw copy is deleted at
+        // the class).
+        std::unique_ptr<brep::BRepBody> cur = brep::clone_body(body);
         std::size_t verticals = 0;
         bool ring_declared = false;
         for (const Resolved& r : resolved) {

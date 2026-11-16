@@ -1057,8 +1057,7 @@ TEST_CASE("K1 closure controprova — column 2: the open census bites") {
     // (9 - 12 + 6 = 3), the census broken. The gate must answer
     // pass = FALSE with the named message (a value, never a throw),
     // the honest control green beside it.
-    auto corrupt = std::make_unique<b::BRepBody>(*c.box);
-    b::link_radial_edges(*corrupt);
+    auto corrupt = b::clone_body(*c.box);
     corrupt->vertices.push_back(b::Vertex({9.0, 9.0, 9.0}));
     const auto tav_c = b::factory_descent(*corrupt);
     const auto g = gate_step(corrupt.get(), &tav_c, nullptr, nullptr,
@@ -1128,8 +1127,7 @@ TEST_CASE("K1 closure controprova — column 5: the laundered name bites") {
     // laundered — the mismatch IS the catch; a tavola derived from
     // the corrupted body would agree with it and prove nothing.
     const auto tav = b::subtract_descent(*c.blind, *c.box, *c.prism);
-    auto corrupt = std::make_unique<b::BRepBody>(*c.blind);
-    b::link_radial_edges(*corrupt);
+    auto corrupt = b::clone_body(*c.blind);
     // The wall (the tool's lateral, absorbed) — found BY NAME, never
     // by a magic index; the stamp AND the name wiped together (the
     // m5 kit's own shape, mirrored verbatim).

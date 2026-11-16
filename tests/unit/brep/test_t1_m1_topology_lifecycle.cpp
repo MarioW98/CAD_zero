@@ -31,6 +31,12 @@
 //   * the copy's Edge::coedges_ ALIAS the source's loops — the one
 //     shallow member of an otherwise deep copy — and
 //     link_radial_edges(copy) closes it (the scene's own pattern);
+//     [AMENDED in T1 m2, 2026-11-16 — ADR-0044 D3.4/D7-m2, accepted:
+//     the raw copy is DELETED at the class and clone_body() is the
+//     one sanctioned producer; scenario 1 re-pins the law below,
+//     and the measured aliasing stays recorded here as the history
+//     it now is — the pin updated in the bite that changed it, the
+//     new measurement beside it, D5's own rule];
 //   * the mutation replaces the body WHOLE (a fresh allocation,
 //     built while the old is still alive); the NAME survives and
 //     the feature re-runs ("reference_resolved"), raw handles do
@@ -107,12 +113,18 @@ const b::Face* cylinder_face(const b::BRepBody& body) {
 TEST_SUITE("brep topology lifecycle (T1 m1)") {
 
 // ---------------------------------------------------------------------------
-// SCENARIO 1 — THE COPY. The raw brep-level contract (the scene's
-// copy ctor is the sanctioned consumer; this pin is the raw fact it
-// compensates for).
+// SCENARIO 1 — THE COPY. [AMENDED in T1 m2, 2026-11-16 — ADR-0044
+// D3.4/D7-m2, accepted: the raw copy that measured as "one shallow
+// member, aliasing the source" is DELETED at the class; the ONE
+// sanctioned producer of an independent body is clone_body(). The
+// pin updates in the bite that changed it, the new measurement
+// beside the old (D5): what was "the copy aliases, the relink
+// closes" is now "the copy does not exist; the clone is born
+// closed".]
 // ---------------------------------------------------------------------------
-TEST_CASE("T1 m1 scenario 1 — the copy: the radial links are the "
-          "ONE shallow member; the relink is the sanctioned close") {
+TEST_CASE("T1 m1 scenario 1 — the copy (as amended by T1 m2): the "
+          "raw copy is GONE; clone_body is the one sanctioned "
+          "producer, born closed") {
     auto src = b::make_box({1.0, 1.0, 1.0}, FeatureId{1});
     REQUIRE(src != nullptr);
     // OBSERVED: the factory links (every edge radial == 2, closed,
@@ -121,78 +133,64 @@ TEST_CASE("T1 m1 scenario 1 — the copy: the radial links are the "
     REQUIRE(b::euler_characteristic(*src) == 2);
     for (const auto& e : src->edges) REQUIRE(e.coedges().size() == 2);
 
-    // A raw handle into the SOURCE, held across the copy.
-    const b::CoEdge* const src_handle =
-        src->edges[0].coedges()[0];
+    // A raw handle into the SOURCE, held across the clone — the
+    // m1-era witness, still meaningful: the clone must never
+    // contain it.
+    const b::CoEdge* const src_handle = src->edges[0].coedges()[0];
+    const std::set<const b::CoEdge*> src_storage =
+        all_coedge_addresses(*src);
 
-    // THE COPY — the implicit copy constructor, the raw contract.
-    b::BRepBody dst = *src;
+    // THE LAW (T1 m2, ADR-0044 D3.4): BRepBody's copy and move are
+    // DELETED at the class — compile-time rejected (the m2 suite
+    // pins the four static_asserts) — and the ONE sanctioned
+    // producer of an independent body is clone_body: the copy and
+    // the relink in a single call.
+    std::unique_ptr<b::BRepBody> dst = b::clone_body(*src);
 
-    // OBSERVED AND PINNED: the copy's radial links ALIAS the
-    // source's loops — the copied Edge::coedges_ point at the
-    // SOURCE's coedges (the same address), not at the copy's own.
-    // The copy is NOT self-contained until the relink: this is the
-    // one shallow member of an otherwise deep copy (topology.hpp's
-    // own ADR-0021 §3 ownership note; scene.hpp's copy ctor calls
-    // it "the one shallow hazard of copying a BRepBody").
-    REQUIRE(dst.edges[0].coedges().size() == 2);
-    CHECK(dst.edges[0].coedges()[0] == src_handle);
-    // The aliasing is TOTAL: none of the copy's own coedge
-    // addresses appears in its radial links before the relink.
+    // OBSERVED AND PINNED: the clone's radial links resolve INSIDE
+    // the clone — every one of them, from birth (the m1-era raw
+    // copy aliased the source; the sanctioned clone never does).
     {
         const std::set<const b::CoEdge*> own =
-            all_coedge_addresses(dst);
-        bool any_own = false;
-        for (const auto& e : dst.edges)
-            for (const b::CoEdge* ce : e.coedges())
-                if (own.count(ce) != 0) any_own = true;
-        // OBSERVED: before the relink the radial links hold NO
-        // address of the copy's own storage.
-        CHECK_FALSE(any_own);
-    }
-
-    // OBSERVED: the surface is SHARED between source and copy —
-    // the same immutable analytic object (shared_ptr, by design:
-    // analytic surfaces are values, never mutated in place).
-    CHECK(dst.solid.shell().faces()[0].surface() ==
-          src->solid.shell().faces()[0].surface());
-
-    // OBSERVED: the address plan is untouched by the copy — ids
-    // ride the deep-copied vectors verbatim (ADR-0036 D1's split:
-    // the address is the body's own bookkeeping).
-    CHECK(dst.edges[0].id() == src->edges[0].id());
-    CHECK(dst.vertex_count() == src->vertex_count());
-    CHECK(dst.edge_count() == src->edge_count());
-    CHECK(dst.face_count() == src->face_count());
-
-    // THE SANCTIONED CLOSE — link_radial_edges on the copy (the
-    // scene's own pattern, scene.hpp's copy ctor).
-    b::link_radial_edges(dst);
-    // OBSERVED AND PINNED: after the relink the copy's radial
-    // links point at the COPY's own loops (the source handle is
-    // gone from them), every link resolves inside the copy, and
-    // the copy passes the structural invariants on its own.
-    CHECK(dst.edges[0].coedges()[0] != src_handle);
-    {
-        const std::set<const b::CoEdge*> own =
-            all_coedge_addresses(dst);
-        REQUIRE(own.size() == dst.edge_count() * 2);
-        for (const auto& e : dst.edges)
+            all_coedge_addresses(*dst);
+        REQUIRE(own.size() == dst->edge_count() * 2);
+        for (const auto& e : dst->edges)
             for (const b::CoEdge* ce : e.coedges())
                 CHECK(own.count(ce) == 1);
     }
-    CHECK(b::is_closed_orientable(dst));
-    CHECK(b::euler_characteristic(dst) == 2);
+    // And NONE of them aliases the source's storage — the m1-era
+    // measured aliasing (dst.edges[0].coedges()[0] == src_handle,
+    // pinned here before T1 m2) is now impossible by construction.
+    for (const auto& e : dst->edges)
+        for (const b::CoEdge* ce : e.coedges())
+            CHECK(src_storage.count(ce) == 0);
+    CHECK(dst->edges[0].coedges()[0] != src_handle);
 
-    // THE DECLARED HAZARD, documented not dereferenced: if the
-    // SOURCE dies before the relink, the copy's radial links
-    // DANGLE into the freed storage — using them is the UB the
-    // debug column's ASan catches loudly (use-after-free), and
-    // the release column would read silently stale memory. This
-    // test keeps both bodies alive and pins the aliasing itself;
-    // the ownership contract ADR-0044 proposes is exactly the
-    // discipline that makes this hazard impossible to reach
-    // without seeing it.
+    // OBSERVED: the surface is SHARED between source and clone —
+    // the same immutable analytic object (shared_ptr, by design:
+    // analytic surfaces are values, never mutated in place).
+    CHECK(dst->solid.shell().faces()[0].surface() ==
+          src->solid.shell().faces()[0].surface());
+
+    // OBSERVED: the address plan is untouched by the clone — ids
+    // ride the copied vectors verbatim (ADR-0036 D1's split: the
+    // address is the body's own bookkeeping).
+    CHECK(dst->edges[0].id() == src->edges[0].id());
+    CHECK(dst->vertex_count() == src->vertex_count());
+    CHECK(dst->edge_count() == src->edge_count());
+    CHECK(dst->face_count() == src->face_count());
+    CHECK(b::is_closed_orientable(*dst));
+    CHECK(b::euler_characteristic(*dst) == 2);
+
+    // THE SOURCE DIES, THE CLONE STANDS: the m1-era hazard — the
+    // copy's radial links dangling into the freed source — cannot
+    // exist any more (no pointer of the clone ever pointed there).
+    // The death of the source's storage changes nothing in the
+    // clone; the check reads only the clone's own storage.
+    src.reset();
+    CHECK(b::is_closed_orientable(*dst));
+    CHECK(b::euler_characteristic(*dst) == 2);
+    CHECK(dst->edges[0].coedges().size() == 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -225,9 +223,7 @@ TEST_CASE("T1 m1 scenario 2 — the mutation: set_fillet_radius "
     // scene itself applies it). It keeps the old body's world
     // alive for the after-the-edit comparisons — every address
     // below is backed by a live allocation.
-    auto before =
-        std::make_unique<b::BRepBody>(*f->fillet_body);
-    b::link_radial_edges(*before);
+    auto before = b::clone_body(*f->fillet_body);
 
     // HANDLES TAKEN BEFORE THE EDIT:
     const b::BRepBody* const old_body = f->fillet_body.get();

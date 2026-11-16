@@ -97,6 +97,50 @@ void link_radial_edges(BRepBody& body) {
     }
 }
 
+std::unique_ptr<BRepBody> clone_body(const BRepBody& src) {
+    // VALIDATE FIRST (T1 m2, ADR-0044 D3.4): every co-edge's EdgeId
+    // must resolve inside the source's edge storage. link_radial_edges
+    // SILENTLY omits the out-of-range ones (the audited omission,
+    // above); the sanctioned copy refuses instead — a partially
+    // linked clone is never returned. The check runs before any
+    // allocation is made: the strong guarantee, nothing escapes on
+    // failure and the source is never touched on any path.
+    for (const auto& face : src.solid.shell().faces()) {
+        for (const auto& loop : face.loops()) {
+            for (const auto& ce : loop.coedges()) {
+                if (ce.edge() >= src.edges.size()) {
+                    throw std::invalid_argument(
+                        "clone_body: a co-edge references edge " +
+                        std::to_string(ce.edge()) +
+                        " outside the source's edge storage (" +
+                        std::to_string(src.edges.size()) +
+                        " edges) - the source topology is invalid and "
+                        "the clone refuses rather than come back "
+                        "partially linked (ADR-0044 D3.4, T1 m2). "
+                        "Remedy: fix the producer that built the body; "
+                        "a valid body clones whole or not at all.");
+                }
+            }
+        }
+    }
+    // The copy itself, member by member, all values: the Vertex and
+    // Edge vectors, and the Solid's Face/Loop/CoEdge tree (the
+    // analytic surfaces ride their shared_ptrs — immutable by
+    // convention, SHARED with the source by design, D1's own row).
+    // The copied Edge::coedges_ pointers still alias the SOURCE's
+    // loops in the moment between the member copies and the relink;
+    // they are never dereferenced there, and the relink below
+    // rebuilds every one of them into the clone's own storage —
+    // the same close the scene's copy ctor has always practiced,
+    // now inside the one sanctioned producer.
+    auto dst = std::make_unique<BRepBody>();
+    dst->vertices = src.vertices;
+    dst->edges = src.edges;
+    dst->solid = src.solid;
+    link_radial_edges(*dst);
+    return dst;
+}
+
 ProvenanceInfo combined_provenance(const BRepBody& a, const BRepBody& b) {
     // The worst-of rule (ADR-0032 D2.4 + D8, unit 1's boolean
     // discipline, hoisted here by unit 4 so every exact consumer

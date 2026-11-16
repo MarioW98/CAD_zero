@@ -133,7 +133,7 @@ BlindGuide blind_guide() {
 // domain, the disc's bits).
 // ---------------------------------------------------------------------------
 std::unique_ptr<b::BRepBody> build_variant_a(const BlindGuide& g) {
-    auto R = std::make_unique<b::BRepBody>(*g.box);
+    auto R = b::clone_body(*g.box);
     auto& shell = R->solid.shell_mut();
     shell.set_closed(true);
     const std::size_t v_base = R->vertices.size();   // 8
@@ -444,7 +444,7 @@ TEST_CASE("G2-U2 m2 the wall's guide: the INTRA-TOOL SSI consultation "
     // The translated tool (z in [-0.5, 1.5]): the same body twice —
     // the cap(lo) face and the wall face, read from the body the
     // walk itself would read.
-    auto tool = std::make_unique<b::BRepBody>(*g.tool);
+    auto tool = b::clone_body(*g.tool);
     b::translate_body(*tool, g.offset);
 
     const b::PlaneSurface* cap_lo = nullptr;

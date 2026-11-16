@@ -2401,8 +2401,12 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
 
     // ==== THE PIPELINE (D7.2) ==========================================
 
-    // B' = the translated tool (the recipe's world offset).
-    auto bp = std::make_unique<BRepBody>(B);
+    // B' = the translated tool (the recipe's world offset). The
+    // sanctioned clone (T1 m2): the tool copy's radial links live in
+    // the copy's own storage — the old raw-copy-plus-nothing left
+    // them aliasing the caller's B, legal only while B outlived the
+    // call; the clone closes that door too.
+    auto bp = clone_body(B);
     translate_body(*bp, tool_offset);
 
     // The walk (the canonical cycle) + the caps' z.
@@ -2480,10 +2484,9 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
     const double z_lo = w.z_lo;  // the translated caps
     const double z_hi = w.z_hi;
     if (z_hi <= t.z_bot + tol || z_lo >= t.z_top - tol) {
-        // The EXACT COPY of A (see below — the same code path).
-        auto r = std::make_unique<BRepBody>(A);
-        link_radial_edges(*r);
-        return r;
+        // The EXACT COPY of A (see below — the same code path): the
+        // sanctioned clone, links rebuilt in the call (T1 m2).
+        return clone_body(A);
     }
 
     // (2) The footprint relation: the SAT over the canonical axes,
@@ -2518,10 +2521,9 @@ inline std::unique_ptr<BRepBody> exact_subtract(const BRepBody& A,
         }
         if (best_gap > -tol) {
             // Separated, or touching within the band: nothing (above
-            // the tolerance) is removed — the exact copy.
-            auto r = std::make_unique<BRepBody>(A);
-            link_radial_edges(*r);
-            return r;
+            // the tolerance) is removed — the exact copy, the
+            // sanctioned clone (T1 m2).
+            return clone_body(A);
         }
 
         // The swallow: every footprint vertex inside the profile.
