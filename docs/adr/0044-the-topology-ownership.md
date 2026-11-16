@@ -200,6 +200,24 @@ consegna):
    esistenti (SceneNode, la catena del fillet, il subtract) —
    meccanica, nessun golden si muove. La porta smette di essere un
    commento.
+   **LANDED 2026-11-16** — l'accettazione ricevuta in review, la
+   porta consegnata: `clone_body` valida la sorgente PRIMA di
+   allocare (il co-edge fuori range rifiutato ad alta voce —
+   l'omissione silenziosa di `link_radial_edges` non ereditata),
+   copia e relink in una chiamata, garanzia forte; la copia E la
+   move grezze CANCELLATE alla classe (l'hazard misurato in m1 —
+   il dtor user-declared che sopprimeva i move impliciti, lo
+   std::move che silenziosamente selezionava la copia shallow —
+   ora un errore di compilazione, pinnato da quattro
+   static_assert); i 14 siti di copia di produzione e i 8 dei test
+   migrati; il pin dello scenario-1 di m1 aggiornato per D5 (la
+   misura nuova accanto alla storia misurata); la suite m2: i
+   dodici mandati, il mondo faceted misurato (il corpo da 26.504
+   triangoli del ponte), 987 casi e 823.589 asserzioni verdi su
+   release E debug ASan/UBSan, i golden e i digest intatti; il
+   clone LINEARE col costo memory-bound: 22-28 ns/entità sui
+   corpi analitici, 84-111 ns/entità lungo la scala faceted 17×
+   (res 24/48/96).
 2. **T1 m3 — la finestra imposta** (se il maintainer la vuole): un
    timbro di generazione debug-only sul corpo, invalidato dalle
    mutazioni strutturali, letto da un assertion helper; il costo è
