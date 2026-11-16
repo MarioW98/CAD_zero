@@ -225,5 +225,12 @@ vuoto.
   ADR-0036 D1/D3 (nome/indirizzo, le quattro classi), ADR-0039
   (il walk del fillet), ADR-0043 D5/D6.3 (l'atto del ring, l'Absorbed).
 - `tests/unit/brep/test_t1_m1_topology_lifecycle.cpp` — l'evidenza.
-- `scripts/probe_t1_m1.cpp` — la sonda che misurò i numeri prima
-  dei pin.
+  **AMENDED (2026-11-16, il rilievo del maintainer sulla
+  proposta):** questa sezione citava `scripts/probe_t1_m1.cpp`
+  («la sonda che misurò i numeri prima dei pin») — uno strumento
+  di misura usa-e-getta mai consegnato nell'albero: il pattern
+  dichiarato-ma-non-consegnato che questo contratto rifiuta,
+  colto nel contratto stesso. La citazione è rimossa; i numeri
+  misurati vivono già pinnati in D2 e nelle asserzioni dei test —
+  l'evidenza consegnata È il test, non lo strumento che l'ha
+  preceduta.
