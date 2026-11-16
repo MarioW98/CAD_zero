@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-15) — the flip is the maintainer's own act. Questo
+Accepted (2026-11-16) — the flip is the maintainer's own act. Questo
 ADR è la proposta che apre la linea T1 (la caratterizzazione del
 ciclo di vita della topologia); NESSUN morso di implementazione
 parte prima dell'accettazione. Il morso m1 che lo consegna è
