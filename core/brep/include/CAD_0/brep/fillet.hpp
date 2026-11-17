@@ -2510,15 +2510,20 @@ inline std::unique_ptr<BRepBody> fillet_ring_edge_corner_act(
                        "no u-const segment p-curve on the flank's "
                        "domain - report this as a kernel bug.");
             const double u_t = ce.p_curve()->segment.a.x;
-            // The v-span: the far (bottom) end unchanged, the
-            // corner end the coaxial v — the direction the old
-            // p-curve's own (the walk's sense preserved).
-            const double v_bot =
-                std::min(ce.p_curve()->segment.a.y,
-                         ce.p_curve()->segment.b.y);
-            const bool a_low =
-                ce.p_curve()->segment.a.y <=
-                ce.p_curve()->segment.b.y;
+            // The v-span: the FAR end unchanged, the CORNER end the
+            // coaxial v — and which end is the corner's is a fact of
+            // the TOPOLOGY (the walk's start sits on the occupied
+            // vertex), never of the v-ordering: at a top corner the
+            // far end is the span's minimum, at a bottom corner its
+            // maximum, and the act owes BOTH orientations the same
+            // closed form (the eight-corner sweep's own catch — the
+            // min/max reading authored [0, v_coax] at the bottom,
+            // the corner's own dead span, instead of [v_coax, far]).
+            const bool a_is_corner =
+                (s_old == v_occ || s_old == v_occ2);
+            const double v_span_far =
+                a_is_corner ? ce.p_curve()->segment.b.y
+                            : ce.p_curve()->segment.a.y;
             const std::size_t s_new =
                 new_end(s_old, e_old);
             const std::size_t e_new =
@@ -2527,23 +2532,23 @@ inline std::unique_ptr<BRepBody> fillet_ring_edge_corner_act(
             const bool fwd =
                 stored.vertex(0) ==
                         static_cast<VertexId>(s_new) &&
-                stored.vertex(1) ==
-                    static_cast<VertexId>(e_new);
+                    stored.vertex(1) ==
+                        static_cast<VertexId>(e_new);
             const bool rev =
                 stored.vertex(0) ==
                         static_cast<VertexId>(e_new) &&
-                stored.vertex(1) ==
-                    static_cast<VertexId>(s_new);
+                    stored.vertex(1) ==
+                        static_cast<VertexId>(s_new);
             if (!fwd && !rev)
                 refuse("the shortened tangent line's stored pair "
                        "does not run between the walk's endpoints - "
                        "report this as a kernel bug.");
             CoEdge out{static_cast<EdgeId>(emap[e_old]), rev};
             out.set_p_curve(pcurve_segment(
-                a_low ? math::Vec2d{u_t, v_bot}
-                      : math::Vec2d{u_t, v_coax},
-                a_low ? math::Vec2d{u_t, v_coax}
-                      : math::Vec2d{u_t, v_bot},
+                a_is_corner ? math::Vec2d{u_t, v_coax}
+                            : math::Vec2d{u_t, v_span_far},
+                a_is_corner ? math::Vec2d{u_t, v_span_far}
+                            : math::Vec2d{u_t, v_coax},
                 /*interior_left=*/true));
             loop.add_coedge(out);
         }
