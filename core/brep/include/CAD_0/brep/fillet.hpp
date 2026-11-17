@@ -4325,7 +4325,6 @@ inline std::unique_ptr<BRepBody> fillet_ring_act(
     // deterministic order (the sign triples, + first); the six
     // planes indexed by (axis, sign); the ring edges read with
     // their two planes and their axis.
-    const double s = 1.0 - radius;
     const auto sgn = [](double v) -> int {
         return v >= 0.0 ? 1 : -1;
     };
@@ -4346,13 +4345,10 @@ inline std::unique_ptr<BRepBody> fillet_ring_act(
         ci.sx = (c & 4) ? -1 : 1;
         ci.sy = (c & 2) ? -1 : 1;
         ci.sz = (c & 1) ? -1 : 1;
-        ci.C = {ci.sx * s, ci.sy * s, ci.sz * s};
-        ci.T_x = {static_cast<double>(ci.sx), ci.sy * s, ci.sz * s};
-        ci.T_y = {ci.sx * s, static_cast<double>(ci.sy), ci.sz * s};
-        ci.T_z = {ci.sx * s, ci.sy * s, static_cast<double>(ci.sz)};
     }
     // The planes indexed (axis, sign): plane_at[axis][si].
     std::size_t plane_at[3][2] = {{F0, F0}, {F0, F0}, {F0, F0}};
+    double plane_coord[3][2] = {{0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}};
     for (const std::size_t f : plane_faces) {
         const PlaneSurface* pl = plane_of(f);
         const math::Vec3d n = pl->normal_vec();
@@ -4365,12 +4361,52 @@ inline std::unique_ptr<BRepBody> fillet_ring_act(
                    "signature is the box family. Remedy: report "
                    "the body's construction.");
         plane_at[axis][si] = f;
+        // The plane's own coordinate on its axis (the payload's,
+        // never the world's: a translated or resized cube is the
+        // same cube to the closed forms).
+        plane_coord[axis][si] = n.dot(pl->origin()) / n[axis];
     }
     for (int k = 0; k < 3; ++k)
         if (plane_at[k][0] == F0 || plane_at[k][1] == F0)
             refuse("a plane's axis census is incomplete - the "
                    "signature is the box family. Remedy: report "
                    "the body's construction.");
+    // ---- THE BOX'S OWN FRAME, derived from the six planes (the
+    // m3 act's own derivation, one act over): the center and the
+    // half-extent per axis, the cube checked (the family's law,
+    // D1: the cube, all of it, nothing else). The closed forms
+    // below ride THESE — the world origin is nobody's coordinate
+    // (the acceptance's translated-cube audit caught the old
+    // ±1/±s readings: every corner sat at the unit box's spots).
+    math::Vec3d center{0.0, 0.0, 0.0};
+    for (int k = 0; k < 3; ++k)
+        center[k] =
+            0.5 * (plane_coord[k][0] + plane_coord[k][1]);
+    const double ext_half[3] = {
+        0.5 * (plane_coord[0][1] - plane_coord[0][0]),
+        0.5 * (plane_coord[1][1] - plane_coord[1][0]),
+        0.5 * (plane_coord[2][1] - plane_coord[2][0])};
+    if (std::abs(ext_half[0] - ext_half[1]) > tol ||
+        std::abs(ext_half[1] - ext_half[2]) > tol)
+        refuse("the six planes are not a cube's (the half-extents "
+               "read " + std::to_string(ext_half[0]) + ", " +
+               std::to_string(ext_half[1]) + ", " +
+               std::to_string(ext_half[2]) +
+               ") - the act's family is the CUBE (ADR-0043 D1), "
+               "the box of equal sides. Remedy: fillet a cube.");
+    const double ext = ext_half[0];
+    const double s = ext - radius;
+    // The corners' closed forms, payload-derived: the sphere at
+    // the corner offset r inward along each plane's outward
+    // normal, the tangency points the feet of the perpendiculars.
+    for (int c = 0; c < 8; ++c) {
+        CornerInfo& ci = corners[c];
+        ci.C = {center.x + ci.sx * s, center.y + ci.sy * s,
+                center.z + ci.sz * s};
+        ci.T_x = {center.x + ci.sx * ext, ci.C.y, ci.C.z};
+        ci.T_y = {ci.C.x, center.y + ci.sy * ext, ci.C.z};
+        ci.T_z = {ci.C.x, ci.C.y, center.z + ci.sz * ext};
+    }
     for (int c = 0; c < 8; ++c) {
         CornerInfo& ci = corners[c];
         ci.face_x = plane_at[0][ci.sx > 0 ? 1 : 0];
@@ -4440,23 +4476,30 @@ inline std::unique_ptr<BRepBody> fillet_ring_act(
                    "own axis - the signature is the box family. "
                    "Remedy: report the body's construction.");
         // The corners at the ends: the sign along the axis at each
-        // endpoint (the endpoints sit at ±(1−r) along the axis).
+        // endpoint (the endpoints sit at center ± (ext−r) along
+        // the axis — the payload's frame, never the world's).
         // The corner index at each endpoint, from the signs of the
         // endpoint's POSITION (the junction's three signs ARE the
         // corner's, the junctions being the re-spanned tips).
         const auto corner_index_of_pos =
             [&](const math::Vec3d& p) -> int {
-            return (sgn(p.x) < 0 ? 4 : 0) +
-                   (sgn(p.y) < 0 ? 2 : 0) +
-                   (sgn(p.z) < 0 ? 1 : 0);
+            return (sgn(p.x - center.x) < 0 ? 4 : 0) +
+                   (sgn(p.y - center.y) < 0 ? 2 : 0) +
+                   (sgn(p.z - center.z) < 0 ? 1 : 0);
         };
         // The edge's own direction: the endpoint on the axis'
         // NEGATIVE side is the walk's first (a deterministic
         // corner_lo/corner_hi for the born geometry).
         const math::Vec3d& p_lo =
-            (r.axis == 0 ? pa.x : pa.y) < 0.0 ? pa : pb;
+            (r.axis == 0 ? pa.x - center.x : pa.y - center.y)
+                    < 0.0
+                ? pa
+                : pb;
         const math::Vec3d& p_hi =
-            (r.axis == 0 ? pb.x : pb.y) < 0.0 ? pa : pb;
+            (r.axis == 0 ? pb.x - center.x : pb.y - center.y)
+                    < 0.0
+                ? pa
+                : pb;
         r.corner_lo = corner_index_of_pos(p_lo);
         r.corner_hi = corner_index_of_pos(p_hi);
         // The azimuth window (the m2/m3 discrimination: the ⊥z
@@ -4549,8 +4592,9 @@ inline std::unique_ptr<BRepBody> fillet_ring_act(
     // The corner index of a JUNCTION (the old endpoint's three
     // signs ARE the corner's).
     const auto corner_of_pos = [&](const math::Vec3d& p) -> int {
-        return (sgn(p.x) < 0 ? 4 : 0) + (sgn(p.y) < 0 ? 2 : 0) +
-               (sgn(p.z) < 0 ? 1 : 0);
+        return (sgn(p.x - center.x) < 0 ? 4 : 0) +
+               (sgn(p.y - center.y) < 0 ? 2 : 0) +
+               (sgn(p.z - center.z) < 0 ? 1 : 0);
     };
     // The NEW endpoint of an old junction: the tangency point on
     // the axis' plane of the junction's corner (the junction on
@@ -4810,8 +4854,8 @@ inline std::unique_ptr<BRepBody> fillet_ring_act(
                    std::to_string(ces.size()) +
                    " co-edges (the class's own are four) - report "
                    "this as a kernel bug.");
-        const int sx = sgn(vz->axis_center().x);
-        const int sy = sgn(vz->axis_center().y);
+        const int sx = sgn(vz->axis_center().x - center.x);
+        const int sy = sgn(vz->axis_center().y - center.y);
         Loop loop;
         for (const auto& ce : ces) {
             const std::size_t e_old = ce.edge();
@@ -4830,7 +4874,8 @@ inline std::unique_ptr<BRepBody> fillet_ring_act(
             if (is_cap) {
                 // The equator of the corner this arc belongs to
                 // (the arc's junctions sit on ONE z side).
-                const int szc = sgn(vpos(s_old).z);
+                const int szc =
+                    sgn(vpos(s_old).z - center.z);
                 const int c = (sx < 0 ? 4 : 0) +
                               (sy < 0 ? 2 : 0) +
                               (szc < 0 ? 1 : 0);
@@ -4842,7 +4887,8 @@ inline std::unique_ptr<BRepBody> fillet_ring_act(
                 const double ua = ce.p_curve()->segment.a.x;
                 const double ub = ce.p_curve()->segment.b.x;
                 const double v_eq =
-                    static_cast<double>(szc) * s - vz->z_base();
+                    center.z + static_cast<double>(szc) * s
+                    - vz->z_base();
                 // The walk's OWN direction: each arc endpoint sits
                 // on ONE lateral plane (the ±1 coordinate that is
                 // not z) and maps to THAT plane's tangency point —
@@ -4851,8 +4897,10 @@ inline std::unique_ptr<BRepBody> fillet_ring_act(
                 const auto touch_of_junction =
                     [&](const math::Vec3d& pj) -> std::size_t {
                     const int ax =
-                        std::abs(std::abs(pj.x) - 1.0) <= tol ? 0
-                                                              : 1;
+                        std::abs(std::abs(pj.x - center.x) - ext)
+                                <= tol
+                            ? 0
+                            : 1;
                     return t_of_plane_axis(c, ax);
                 };
                 const std::size_t from =
@@ -4948,8 +4996,9 @@ inline std::unique_ptr<BRepBody> fillet_ring_act(
             // (the walk's sense preserved), the ends at the
             // coaxial planes z = ±(1−r).
             const double v_lo_new =
-                -s - vz->z_base();
-            const double v_hi_new = s - vz->z_base();
+                center.z - s - vz->z_base();
+            const double v_hi_new =
+                center.z + s - vz->z_base();
             out.set_p_curve(pcurve_segment(
                 a_low ? math::Vec2d{u_t, v_lo_new}
                       : math::Vec2d{u_t, v_hi_new},
@@ -5030,15 +5079,30 @@ inline std::unique_ptr<BRepBody> fillet_ring_act(
     const double v_lo = -s, v_hi = s;
     for (std::size_t ri = 0; ri < 8; ++ri) {
         const RingInfo& r = rings[ri];
+        // THE SURFACE'S AXIAL BASE IS THE BOX'S OWN ORIGIN on the
+        // flank's axis (the edge's midpoint, v = 0) — the window's
+        // ±s bounds are written in THAT coordinate, and the coaxial
+        // planes at x = ±s are where the arcs close. A base at v_lo
+        // would double-shift the window (evaluate maps v to base + v:
+        // [−2s, 0] instead of [−s, +s]) — the p-curves coherent in
+        // their own domain but landing HALF A SPAN off the 3D edges,
+        // invisible to the divergence-volume (it walks the 3D curves,
+        // which are placed right) and fatal to every domain reader
+        // (the tessellation, the SSI's p-curve matching, the chain
+        // consumers). The eight-corner acceptance's boundary audit
+        // caught it: every ring flank's evaluated midpoint sat r·â
+        // off its edge's true midpoint.
         std::shared_ptr<SurfaceGeometry> surf;
         if (r.axis == 0)
             surf = std::make_shared<CylinderXSurface>(
-                radius, v_lo, static_cast<double>(r.slat) * s,
-                static_cast<double>(r.sz) * s);
+                radius, center.x,
+                center.y + static_cast<double>(r.slat) * s,
+                center.z + static_cast<double>(r.sz) * s);
         else
             surf = std::make_shared<CylinderYSurface>(
-                radius, v_lo, static_cast<double>(r.slat) * s,
-                static_cast<double>(r.sz) * s);
+                radius, center.y,
+                center.x + static_cast<double>(r.slat) * s,
+                center.z + static_cast<double>(r.sz) * s);
         // The low/high arc edges and the tangent edges at the two
         // azimuth ends: the walk maps the u0-side tangent to the
         // plane that rides u0 (a_at_u0: the ⊥z plane at u0).
@@ -5244,9 +5308,9 @@ inline std::unique_ptr<BRepBody> fillet_ring_act(
                         const CylinderZSurface* z2 =
                             z_flank_of(zf);
                         const int zx =
-                            sgn(z2->axis_center().x);
+                            sgn(z2->axis_center().x - center.x);
                         const int zy =
-                            sgn(z2->axis_center().y);
+                            sgn(z2->axis_center().y - center.y);
                         if (zx == ci.sx && zy == ci.sy)
                             vflank_here = zf;
                     }
