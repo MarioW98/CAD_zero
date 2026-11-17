@@ -1000,12 +1000,14 @@ TEST_CASE("P×P the plus-shaped coplanar crossing — the walk's own "
     // strictly inside in x and sticking out in ±y; A the converse),
     // the tops EXACTLY flush — the cleanest coplanar crossing there
     // is. THE REGISTERED DEFECT: the overlay's GH walk returns a
-    // WRONG single fragment on this pattern (observed: a pentagon of
-    // area 5.48 against the plus's 6.72 — the AREA INVARIANT catches
-    // it: no silently wrong body leaves the door) and the pair
-    // refuses with the honest overlay_region_irregular. The cure is
-    // its own bite (the register's K row carries the seat); this pin
-    // flips to the honest plus-union the day it lands.
+    // WRONG single fragment on this pattern (observed at the
+    // cohort's run: a pentagon of area 5.48 against the plus's
+    // 6.72 — the AREA INVARIANT caught it: no silently wrong body
+    // left the door) and the pair refused with the honest
+    // overlay_region_irregular — the registered defect D2, CURED BY
+    // K1 C2a (2026-11-18): the crossing insertion orders
+    // geometrically along the edge, the edge's far end reads past
+    // the inserted crossings, and the plus walks its own outline.
     const Vec3d eA{1.209195, 1.312911, 1.215093};
     const Vec3d eB{0.855096, 1.420279, 0.714009};
     const Vec3d cB{-0.023041630, 0.033909082, eA.z - eB.z};
@@ -1019,15 +1021,37 @@ TEST_CASE("P×P the plus-shaped coplanar crossing — the walk's own "
     REQUIRE(cB.x + eB.x < eA.x);
     REQUIRE(cB.y - eB.y < -eA.y);
     REQUIRE(cB.y + eB.y > eA.y);
-    expect_output_refusal([&] {
-        b::bool_union(*A, *B, b::kBooleanHouseTolerance);
-    }, "overlay_region_irregular", "the plus crossing");
-    CHECK(refused_leaves_source(*A, [&] {
-        b::bool_union(*A, *B, b::kBooleanHouseTolerance);
-    }));
-    CHECK(refused_leaves_source(*B, [&] {
-        b::bool_union(*A, *B, b::kBooleanHouseTolerance);
-    }));
+    // THE PIN FLIPPED (K1 C2a, 2026-11-18: the walk's crossing
+    // insertion now orders geometrically along the edge and the
+    // edge's far end reads past the inserted crossings — the plus
+    // closes in its own twelve-vertex outline, the area invariant
+    // satisfied, the union admitted; this member was the cure's own
+    // red, preserved verbatim). The full contract — the independent
+    // area oracle, the boundary ownership, the rotations, the
+    // scales, the digest — lives in the correction's own suite
+    // (test_k1_c2a_plus_crossing.cpp); this pin keeps the member's
+    // admission honest here.
+    {
+        auto U = b::bool_union(*A, *B, b::kBooleanHouseTolerance);
+        REQUIRE(U != nullptr);
+        CHECK(b::is_closed_orientable(*U));
+        CHECK(b::loops_are_closed(*U));
+        CHECK(radial_opposite(*U));
+        CHECK(b::euler_characteristic(*U) == 2);
+        // The volume by this file's own AABB inclusion-exclusion
+        // (the plus geometry's exact form, computed inline — the
+        // counterproof block below carries its own locals).
+        const double v_oracle =
+            aabb_volume(Aabb{{-eA.x, -eA.y, -eA.z}, {eA.x, eA.y, eA.z}})
+          + aabb_volume(Aabb{{cB.x - eB.x, cB.y - eB.y, cB.z - eB.z},
+                             {cB.x + eB.x, cB.y + eB.y, cB.z + eB.z}})
+          - aabb_intersection_volume(
+                Aabb{{-eA.x, -eA.y, -eA.z}, {eA.x, eA.y, eA.z}},
+                Aabb{{cB.x - eB.x, cB.y - eB.y, cB.z - eB.z},
+                     {cB.x + eB.x, cB.y + eB.y, cB.z + eB.z}});
+        CHECK(std::abs(poly_volume(*U) - v_oracle) <= 1e-9);
+        CHECK(U->face_count() > 6);   // the plus is real geometry
+    }
     // THE COUNTERPROOF THE OTHER WAY: the same rectangles, the tops
     // δ = 2·ε_L beyond the band (no coplanar pair at all) — the pure
     // transversal path answers the honest stepped plus, closed,
@@ -1567,9 +1591,14 @@ TEST_CASE("C×T the wall band — the thinnest admissible wall, the tie "
 // ---------------------------------------------------------------------------
 std::string g_fuzz_digest;
 
-// The pinned FNV-1a of the accumulated fuzz digest (this cohort's
-// own run, 2026-11-17; never moves again).
-constexpr std::uint64_t kPinnedFuzzHash = 0x5d656db2d8513e3bull;
+// The pinned FNV-1a of the accumulated fuzz digest. This cohort's
+// own run (2026-11-17) pinned 5d656db2d8513e3b; K1 C2a's correction
+// (2026-11-18: the walk's geometric crossing order + the far-end
+// reads) flipped the plus-shaped members from their registered
+// refusals to their honest unions, and the digest carries the cure's
+// own signature — re-pinned at the correction's green run, the old
+// value cited here, never silently.
+constexpr std::uint64_t kPinnedFuzzHash = 0x584f94508c0d5a1cull;
 
 TEST_CASE("fuzz P×P — the ε_C bands and the regular regions, both "
           "orders, seeded") {

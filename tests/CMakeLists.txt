@@ -77,6 +77,7 @@ set(CAD_0_TEST_SOURCES
     unit/brep/test_t1_m2_clone_body.cpp
     unit/brep/test_t1_followup_ownership_lookup.cpp
     unit/brep/test_k1_cohort2_consumer_zoo.cpp
+    unit/brep/test_k1_c2a_plus_crossing.cpp
     unit/bridge/test_bridge.cpp
     unit/bridge/test_h2_u4_m2_bvh.cpp
     main.cpp

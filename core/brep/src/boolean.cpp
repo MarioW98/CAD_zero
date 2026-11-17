@@ -522,35 +522,79 @@ bool point_in_polygon(Vec2 p, const Polygon2D& poly, double eps_l) {
     return c == PointClass::Inside || c == PointClass::OnBoundary;
 }
 
-// Insert an intersection vertex into `list` after `v`. Returns pointer
-// to the inserted vertex.
+// Insert an intersection vertex into `list` after `it`, IN THE
+// EDGE'S OWN GEOMETRIC ORDER — the K1 C2a correction (the
+// plus-shaped crossing's registered defect, the second cohort's
+// catch): the crossing's parameter along the edge (from `*it` to
+// the edge's far end — the first original vertex in the chain)
+// decides the position, so TWO crossings on ONE edge (the plus's
+// own case: A's top edge against B's left and right edges) sit
+// along the edge as the geometry lays them, never in computation
+// order — the head insertion inverted their sequence, the entry/exit
+// alternation flipped on the edge, and the walk paired the wrong
+// crossings (the observed pentagon of 5.48 against the plus's
+// 6.72, caught by the area invariant, never a silent wrong body).
+// A point whose parameter reads BEFORE the edge's start (the
+// overlap branch's far-end insert, one edge over) falls to the
+// chain's head — the position the flush-edge goldens pinned. Ties
+// (coincident parameters, the same point from different edge pairs)
+// keep the computation order: deterministic for the same inputs,
+// zero new tolerances.
 GHVertex* insert_intersection(
     GHList& list,
     GHList::iterator it,
     Vec2 pos
 ) {
+    // The edge's far end: the first original (non-intersection)
+    // node in the manual chain after `*it` — the inserted crossings
+    // never displace it.
+    const GHVertex* far = (*it).next;
+    while (far != nullptr && far->is_intersection) far = far->next;
+    double dx = 0.0, dy = 0.0, inv_len2 = 0.0;
+    if (far != nullptr) {
+        dx = far->pos.x - (*it).pos.x;
+        dy = far->pos.y - (*it).pos.y;
+        const double len2 = dx * dx + dy * dy;
+        if (len2 > 0.0) inv_len2 = 1.0 / len2;
+    }
+    const auto param = [&](const Vec2& p) {
+        return ((p.x - (*it).pos.x) * dx
+                + (p.y - (*it).pos.y) * dy) * inv_len2;
+    };
+    const double t_new = param(pos);
+    // The insertion point: the first inserted crossing whose
+    // parameter exceeds the new one.
+    GHVertex* prev_node = &*it;
+    GHVertex* at_node = (*it).next;
+    while (at_node != nullptr && at_node->is_intersection) {
+        if (t_new < param(at_node->pos)) break;
+        prev_node = at_node;
+        at_node = at_node->next;
+    }
     GHVertex new_v;
     new_v.pos = pos;
     new_v.is_intersection = true;
     new_v.is_entry = false;
     new_v.visited = false;
     new_v.neighbor = nullptr;
-    auto inserted_it = list.insert(std::next(it), new_v);
+    // The std::list position matching the manual chain (the
+    // fragment order stays the chain's own — never the container's
+    // accident).
+    GHList::iterator at_it = list.end();
+    if (at_node != nullptr) {
+        for (auto scan = list.begin(); scan != list.end(); ++scan) {
+            if (&*scan == at_node) { at_it = scan; break; }
+        }
+    }
+    auto inserted_it = list.insert(at_it, new_v);
     GHVertex* inserted = &*inserted_it;
-    // H2-u5 (ADR-0037 D3): the successor is the one that held the
-    // position BEFORE this insertion — read from the ORIGINAL node,
-    // never from the fresh copy (whose next is nullptr: the list
-    // insert copies the value, it does not splice pointers). The
-    // overlay's union walk is the first consumer this arm ever had —
-    // the broken relink severed the chain at the first crossing and
-    // the walk died silently (the GH wrapper was seam-dead code until
-    // now; the overlay consumes the arms and the defect surfaced).
-    GHVertex* orig_next = (*it).next;
-    // Re-link: orig -> inserted -> orig_next
-    inserted->prev = &*it;
-    inserted->next = orig_next;
-    if (orig_next) orig_next->prev = inserted;
-    (*it).next = inserted;
+    // The manual relink (H2-u5's own law, one correction over: the
+    // insert copies the value, it does not splice pointers):
+    // prev_node → inserted → at_node.
+    inserted->prev = prev_node;
+    inserted->next = at_node;
+    prev_node->next = inserted;
+    if (at_node != nullptr) at_node->prev = inserted;
     return inserted;
 }
 
@@ -574,11 +618,21 @@ void compute_intersections(
     }
     for (auto s_it : subject_iters) {
         GHVertex* s = &*s_it;
+        // THE EDGE'S FAR END — the first ORIGINAL vertex in the
+        // chain, never the first inserted crossing (the C2a
+        // dissection's second half: reading s->next directly tested
+        // the segment to whatever crossing an earlier pairing had
+        // already inserted — the plus's fourth crossing went
+        // unfound and the walk mis-closed on three).
         GHVertex* s_next = s->next;
+        while (s_next != nullptr && s_next->is_intersection)
+            s_next = s_next->next;
         if (!s_next) continue;
         for (auto c_it : clip_iters) {
             GHVertex* c = &*c_it;
             GHVertex* c_next = c->next;
+            while (c_next != nullptr && c_next->is_intersection)
+                c_next = c_next->next;
             if (!c_next) continue;
             double t_lo, t_hi;
             const auto itype = segment_intersection(
@@ -621,12 +675,20 @@ void compute_intersections(
                 // Find the iterator for s_next (the original next vertex)
                 // by walking forward from s_lo. We expect it to be
                 // s_lo->next (the original s_next, untouched).
+                // The ORIGINAL far vertices (the ordered chain may
+                // carry further crossings between the inserted end
+                // and the original next — walk past them, the same
+                // far-end law as the point branch).
                 GHVertex* cursor = s_lo->next;
+                while (cursor != nullptr && cursor->is_intersection)
+                    cursor = cursor->next;
                 GHList::iterator s_hi_it = subject.end();
                 for (auto it = subject.begin(); it != subject.end(); ++it) {
                     if (&*it == cursor) { s_hi_it = it; break; }
                 }
                 GHVertex* c_cursor = c_lo->next;
+                while (c_cursor != nullptr && c_cursor->is_intersection)
+                    c_cursor = c_cursor->next;
                 GHList::iterator c_hi_it = clip.end();
                 for (auto it = clip.begin(); it != clip.end(); ++it) {
                     if (&*it == c_cursor) { c_hi_it = it; break; }
@@ -1561,6 +1623,94 @@ Polygon2D union_walk_2d(
     return keep[0];
 }
 
+// THE SLAB REFINEMENT (the C2a extension, the rotated corpus's own
+// seat): the first pass's slab cuts can create NEW reflex corners in
+// the pieces themselves — a vertical cut through a rotated merged
+// region bends the piece's boundary at the cut. The SAME discipline
+// refined: every non-convex piece is split at ITS OWN reflex
+// vertices' BOTH coordinates (the orthogonal cross at each reflex),
+// iterated until every piece is convex. The rectilinear corpus
+// never fires this (the first pass's pieces are already convex —
+// the H2-u5 goldens' censuses unmoved, bit for bit); the split
+// values come from the finite set of the pieces' own vertex
+// coordinates, the loop terminates, and the bound is the defensive
+// guard with the honest refusal beyond it (never reached by the
+// union-of-two-convex class, kept for the unproven beyond).
+void refine_pieces_to_convex(std::vector<Polygon2D>& pieces,
+                             double eps_l) {
+    for (int guard = 0; guard < 64; ++guard) {
+        bool refined = false;
+        std::vector<Polygon2D> next_pieces;
+        next_pieces.reserve(pieces.size());
+        for (auto& piece : pieces) {
+            if (piece.size() < 3
+                || is_convex2d(piece, eps_l)) {
+                next_pieces.push_back(std::move(piece));
+                continue;
+            }
+            refined = true;
+            // The piece's own reflex vertices (both coordinates).
+            struct ReflexPt { double x, y; };
+            std::vector<ReflexPt> reflex;
+            const std::size_t pn = piece.size();
+            for (std::size_t i = 0; i < pn; ++i) {
+                const Vec2& prv = piece[(i + pn - 1) % pn];
+                const Vec2& cur = piece[i];
+                const Vec2& nxt = piece[(i + 1) % pn];
+                const double cross =
+                    (cur.x - prv.x) * (nxt.y - cur.y)
+                    - (cur.y - prv.y) * (nxt.x - cur.x);
+                if (cross < -eps_l) reflex.push_back({cur.x, cur.y});
+            }
+            if (reflex.empty()) {   // non-convex without a reflex:
+                next_pieces.push_back(std::move(piece));
+                continue;            // the final check refuses it
+            }
+            // Split by each reflex vertex's orthogonal cross: the
+            // vertical line at x, then the horizontal at y — the
+            // existing clip discipline, both sides kept with the
+            // shared-boundary band (adjacent pieces share their cut
+            // points bit-identically).
+            std::vector<Polygon2D> sub{std::move(piece)};
+            for (const ReflexPt& r : reflex) {
+                for (int axis = 0; axis < 2; ++axis) {
+                    const Vec2 origin =
+                        axis == 0 ? Vec2{r.x, 0.0} : Vec2{0.0, r.y};
+                    const Vec2 dir =
+                        axis == 0 ? Vec2{1.0, 0.0} : Vec2{0.0, 1.0};
+                    std::vector<Polygon2D> split;
+                    split.reserve(sub.size() * 2);
+                    for (auto& s : sub) {
+                        for (const int side : {0, 1}) {
+                            Polygon2D part = clip_2d_halfspace(
+                                s, origin,
+                                side == 0 ? dir
+                                          : Vec2{-dir.x, -dir.y},
+                                true, eps_l);
+                            dedup_consecutive2d(part, eps_l);
+                            part = collapse_spikes(std::move(part),
+                                                   eps_l);
+                            dedup_consecutive2d(part, eps_l);
+                            if (part.size() < 3) continue;
+                            if (std::abs(signed_area2(part))
+                                <= eps_l * eps_l)
+                                continue;
+                            if (signed_area2(part) < 0.0)
+                                std::reverse(part.begin(), part.end());
+                            split.push_back(std::move(part));
+                        }
+                    }
+                    sub = std::move(split);
+                }
+            }
+            for (auto& s : sub)
+                next_pieces.push_back(std::move(s));
+        }
+        pieces = std::move(next_pieces);
+        if (!refined) return;
+    }
+}
+
 // The overlay proper: the merged region of the (aligned, coplanar,
 // area-overlapping) pair set, emitted as convex fragments in 3D.
 // `merged[k]` reports whether partner k actually contributed (the
@@ -1768,6 +1918,12 @@ std::vector<Polygon> overlay_union_fragments(
         }
         pieces.push_back(std::move(piece));
     }
+
+    // 4b. THE REFINEMENT — the pieces that survived the first pass
+    //     non-convex (the rotated corpus's own seat) refined by the
+    //     same slab discipline until convex; the rectilinear corpus
+    //     passes through untouched.
+    refine_pieces_to_convex(pieces, eps_l);
 
     // 5. THE SEWING + the honest walls: every fragment convex (the
     //    emission discipline — the composed chain stays in-class),
