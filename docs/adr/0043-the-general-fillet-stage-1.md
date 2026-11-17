@@ -11,6 +11,20 @@ qualità è la classe CGM/CATIA: il raccordo costante come apertura
 morfologica del solido (la strada di Steiner), il vertice come atto
 atomico, mai una superficie procedurale spacciata per esatta.
 
+**Stato d'implementazione (post-hoc; la cronaca completa è la riga G
+del registro)**: lo stadio 1 è LANDED per intero (G5 M1–M5,
+2026-11-14/15). La correttiva M3 del 2026-11-17 chiude il difetto che
+lo sweep oracolo indipendente a OTTO angoli (48 catene — la
+ri-emissione del contratto M3, Fasi 4–5) ha catturato: il
+ri-finestramento del fianco verticale agli angoli INFERIORI leggeva il
+lontano come il minimo del v-span (vero solo col corner in alto) —
+ora l'estremo del corner è un fatto della TOPOLOGIA (la walk su
+entrambe le giunzioni), le otto orientazioni una sola forma chiusa.
+D5.2's derivazione (il centro comune degli assi, i tre grandi cerchi
+coassiali, l'ottanto, la chiralità) è verificata indipendentemente su
+tutte le otto orientazioni, entrambe le scelte di ruolo del ring e tre
+raggi, con controprove e degeneri pinnati.
+
 ## Context — il muro che questo stadio abbatte, e quello che non tocca
 
 Il click-test del 2026-11-08 (ADR-0039, verbalizzato alla riga m6 del
