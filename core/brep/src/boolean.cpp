@@ -1664,7 +1664,26 @@ std::vector<Polygon> overlay_union_fragments(
             continue;
         }
         const double target = area_region + area_pk - area_overlap;
-        const double check_tol = kAreaRelTol * scale * scale * 8.0;
+        // The candidates' check tolerance, DERIVED from the
+        // machinery's own ε-band (the K1 second cohort's catch, the
+        // band-edge member δ = 0.5·ε_L of the ε_C corpus): the walk's
+        // degenerate-edge guard drops sub-ε_L edges and the hull's
+        // dedup merges sub-ε_L points, so a sliver of thickness ≤ ε_L
+        // along the domain's whole perimeter (area ≤ ε_L · 8·scale,
+        // the box perimeter's own bound) can be legitimately absent
+        // from the candidate while the pair itself is EXACTLY
+        // coplanar (the planes coincide — the ε_C admission's own
+        // case; the partner merely extends past the region's rim by
+        // a sub-band extent). Demanding that sub-band area in the
+        // invariant made the walk and the hull BOTH unreachable and
+        // the pair fell to overlay_region_irregular — a refusal the
+        // door's own message calls a kernel defect. The widened band
+        // admits exactly the ε-world's own resolution: features an
+        // ε_L-thick or thinner are beneath the operation's declared
+        // linear tolerance, and every REAL discrepancy (≥ ε_L-thick
+        // geometry) still exceeds the band by construction.
+        const double check_tol = kAreaRelTol * scale * scale * 8.0
+                               + eps_l * scale * 8.0;
         Polygon2D walked = union_walk_2d(region, pk, eps_l, eps_p);
         if (!walked.empty() &&
             std::abs(std::abs(signed_area2(walked)) - target) <= check_tol) {
