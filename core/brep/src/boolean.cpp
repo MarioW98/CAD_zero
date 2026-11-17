@@ -57,6 +57,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <list>
 #include <map>
 #include <set>
@@ -81,6 +82,10 @@ using Polygon = std::vector<math::Vec3d>;
 // gates are green and relative — already this taxonomy's spirit).
 constexpr double kVolumeRelTol = 1e-9;
 constexpr double kAreaRelTol   = 1e-9;
+// π — the Steiner caps' own constant (the tube formula's corner disks,
+// K1 C2a's derived area band below); a literal of mathematics, never a
+// tunable.
+constexpr double kPi          = 3.14159265358979323846;
 // Degenerate-denominator guard for the edge/plane crossing
 // interpolation in IntersectionTable: below this |d0 − d1| the crossing
 // point is not computed and the edge start vertex is reused. Purely a
@@ -1711,6 +1716,59 @@ void refine_pieces_to_convex(std::vector<Polygon2D>& pieces,
     }
 }
 
+// THE AREA INVARIANT'S DERIVED BAND (K1 C2a's D1 reassessment,
+// 2026-11-18 — the audit of the second cohort's fixed-factor widening
+// ε_L·scale·8): every candidate the door's invariant compares against
+// the target (A_R + A_P − A_O) carries an ε-world budget, and the
+// budget is a THEOREM, not a factor. The error model: the clip's
+// keep-window (d ≤ ε_L keeps), the walk's degenerate-edge guard and
+// the dedups displace a COMPUTED rim by at most ε_L from its exact
+// counterpart, while every original vertex rides exact (the exact
+// map, the frame's own isometry — no quantizer); and the exact rims
+// of both the overlap (which builds the target) and the union (which
+// the candidate approximates) are submultisets of ∂R ∪ ∂P
+// (∂(R∩P), ∂(R∪P) ⊆ ∂R ∪ ∂P — length ≤ P_R + P_P, both perimeters
+// exactly computable, the operands convex by the input gate, the
+// accumulated region grown only by whole merged partners). The tube
+// lemma: a Hausdorff-ε_L pair of closed rims bounds the area between
+// its regions by the full tube over the exact rim — 2·ε_L·L + π·ε_L²
+// (Steiner). TWO such pairs (the overlap's, the candidate's) give the
+// linear term 4·ε_L·(P_R + P_P) and the caps 2π·ε_L². The relative
+// term kAreaRelTol·(A_R+A_P+A_C) is the three shoelace sums' own
+// floor (the existing area constant, no new number), and the FP term
+// n²·ε_mach·s² charges the sequential summation explicitly (n =
+// n_R+n_P+n_O+n_C+4 terms each ≤ s_pair²; ~2e-11·s² at the domain's
+// n ≈ 30 — fifty-fold under the relative floor, and no longer
+// lucky). The old fixed band charged ONE half-tube over ONE rim at
+// the ENTRY scale — under-derived on three counts (the target's and
+// the candidate's tubes are separate charges; the entry scale goes
+// stale when a partner extends past the region's coordinates or the
+// region grows across merges; the vertex/FP count rode uncovered) —
+// and the exact red's own numbers put the honest budget 7.3× above
+// it. This band NEVER widens the ε_C/ε_L admission gates: it is the
+// area postcondition's own displacement budget, derived from the
+// linear world's typed constants, never confused with them — a
+// candidate is accepted only within what the ε-world can legitimately
+// displace, and every fragment-scale discrepancy (the 5.48 against
+// 6.72 the invariant was built to catch) exceeds it by four orders of
+// magnitude.
+double overlay_area_check_tol(
+    double area_region, double area_partner, double area_candidate,
+    double perim_region, double perim_partner,
+    std::size_t n_region, std::size_t n_partner,
+    std::size_t n_overlap, std::size_t n_candidate,
+    double pair_scale, double area_rel_tol, double eps_l
+) {
+    const double n_tot = static_cast<double>(
+        n_region + n_partner + n_overlap + n_candidate) + 4.0;
+    return area_rel_tol * (area_region + area_partner + area_candidate)
+         + 4.0 * eps_l * (perim_region + perim_partner)
+         + 2.0 * kPi * eps_l * eps_l
+         + n_tot * n_tot
+           * std::numeric_limits<double>::epsilon()
+           * pair_scale * pair_scale;
+}
+
 // The overlay proper: the merged region of the (aligned, coplanar,
 // area-overlapping) pair set, emitted as convex fragments in 3D.
 // `merged[k]` reports whether partner k actually contributed (the
@@ -1814,31 +1872,43 @@ std::vector<Polygon> overlay_union_fragments(
             continue;
         }
         const double target = area_region + area_pk - area_overlap;
-        // The candidates' check tolerance, DERIVED from the
-        // machinery's own ε-band (the K1 second cohort's catch, the
-        // band-edge member δ = 0.5·ε_L of the ε_C corpus): the walk's
-        // degenerate-edge guard drops sub-ε_L edges and the hull's
-        // dedup merges sub-ε_L points, so a sliver of thickness ≤ ε_L
-        // along the domain's whole perimeter (area ≤ ε_L · 8·scale,
-        // the box perimeter's own bound) can be legitimately absent
-        // from the candidate while the pair itself is EXACTLY
-        // coplanar (the planes coincide — the ε_C admission's own
-        // case; the partner merely extends past the region's rim by
-        // a sub-band extent). Demanding that sub-band area in the
-        // invariant made the walk and the hull BOTH unreachable and
-        // the pair fell to overlay_region_irregular — a refusal the
-        // door's own message calls a kernel defect. The widened band
-        // admits exactly the ε-world's own resolution: features an
-        // ε_L-thick or thinner are beneath the operation's declared
-        // linear tolerance, and every REAL discrepancy (≥ ε_L-thick
-        // geometry) still exceeds the band by construction.
-        const double check_tol = kAreaRelTol * scale * scale * 8.0
-                               + eps_l * scale * 8.0;
+        // The candidates' check tolerance — THE DERIVED BAND above
+        // (the D1 reassessment): every quantity FRESH per partner
+        // (the entry scale never rides stale into a pair whose
+        // partner extends past the region's coordinates), the band
+        // recomputed per CANDIDATE (the candidate's own area and
+        // vertex count enter its own budget).
+        double pair_scale = scale;
+        for (const auto& q : pk) {
+            pair_scale = std::max({pair_scale, std::abs(q.x),
+                                          std::abs(q.y)});
+        }
+        double perim_region = 0.0, perim_pk = 0.0;
+        for (std::size_t i = 0; i < region.size(); ++i) {
+            const Vec2& u = region[i];
+            const Vec2& v = region[(i + 1) % region.size()];
+            perim_region += std::sqrt((v.x - u.x) * (v.x - u.x)
+                                    + (v.y - u.y) * (v.y - u.y));
+        }
+        for (std::size_t i = 0; i < pk.size(); ++i) {
+            const Vec2& u = pk[i];
+            const Vec2& v = pk[(i + 1) % pk.size()];
+            perim_pk += std::sqrt((v.x - u.x) * (v.x - u.x)
+                                + (v.y - u.y) * (v.y - u.y));
+        }
         Polygon2D walked = union_walk_2d(region, pk, eps_l, eps_p);
-        if (!walked.empty() &&
-            std::abs(std::abs(signed_area2(walked)) - target) <= check_tol) {
-            region = std::move(walked);
-            continue;
+        if (!walked.empty()) {
+            const double tol_w = overlay_area_check_tol(
+                area_region, area_pk,
+                std::abs(signed_area2(walked)),
+                perim_region, perim_pk,
+                region.size(), pk.size(), overlap.size(),
+                walked.size(), pair_scale, kAreaRelTol, eps_l);
+            if (std::abs(std::abs(signed_area2(walked)) - target)
+                <= tol_w) {
+                region = std::move(walked);
+                continue;
+            }
         }
         // The hull candidate — only when BOTH operands are convex
         // (the hull of a non-convex region would swallow the stair).
@@ -1846,10 +1916,18 @@ std::vector<Polygon> overlay_union_fragments(
             std::vector<Vec2> hv(region.begin(), region.end());
             hv.insert(hv.end(), pk.begin(), pk.end());
             Polygon2D hull = convex_hull_2d(std::move(hv));
-            if (!hull.empty() &&
-                std::abs(std::abs(signed_area2(hull)) - target) <= check_tol) {
-                region = std::move(hull);
-                continue;
+            if (!hull.empty()) {
+                const double tol_h = overlay_area_check_tol(
+                    area_region, area_pk,
+                    std::abs(signed_area2(hull)),
+                    perim_region, perim_pk,
+                    region.size(), pk.size(), overlap.size(),
+                    hull.size(), pair_scale, kAreaRelTol, eps_l);
+                if (std::abs(std::abs(signed_area2(hull)) - target)
+                    <= tol_h) {
+                    region = std::move(hull);
+                    continue;
+                }
             }
         }
         throw std::runtime_error(
@@ -3234,6 +3312,30 @@ std::vector<std::vector<math::Vec3d>> overlay_union_fragments_for_tests(
         out.emplace_back(f.begin(), f.end());
     }
     return out;
+}
+
+// The derived area band itself, exposed for the suite's audit (K1
+// C2a's D1 reassessment): the pure form of the tolerance the door's
+// invariant compares |A(candidate) − target| against, so the tests
+// can pin the band's arithmetic and its admit/reject contract
+// independently of any geometric construction. The house ε_L rides
+// the typed bundle; the area-relative floor arrives from the CALLER
+// (the seam's own law — no hidden house value: the door passes
+// kAreaRelTol, the tests declare their own and any drift between the
+// two becomes visible in the corpus, never silent).
+double overlay_area_check_tol_for_tests(
+    double area_region, double area_partner, double area_candidate,
+    double perim_region, double perim_partner,
+    std::size_t n_region, std::size_t n_partner,
+    std::size_t n_overlap, std::size_t n_candidate,
+    double pair_scale, double area_rel_tol,
+    const BooleanTolerance& tol
+) {
+    return overlay_area_check_tol(
+        area_region, area_partner, area_candidate,
+        perim_region, perim_partner,
+        n_region, n_partner, n_overlap, n_candidate,
+        pair_scale, area_rel_tol, eps_l_of(tol));
 }
 
 } // namespace CAD_0::brep

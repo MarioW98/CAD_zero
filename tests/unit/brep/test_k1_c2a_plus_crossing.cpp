@@ -56,6 +56,7 @@
 
 #include "CAD_0/brep/boolean.hpp"
 #include "CAD_0/brep/chain_gate.hpp"
+#include "CAD_0/brep/detail/boolean_test_hooks.hpp"
 #include "CAD_0/brep/factory.hpp"
 #include "CAD_0/brep/topology.hpp"
 #include "CAD_0/math/tolerance.hpp"
@@ -152,6 +153,19 @@ double my_union_area(const std::vector<Vec2d>& a,
                      const std::vector<Vec2d>& b) {
     return std::abs(my_shoelace(a)) + std::abs(my_shoelace(b))
          - my_intersection_area(a, b);
+}
+
+// The perimeter — the audit's own tube charge (the derived band's
+// linear term rides the EXACT rims: the operands' vertices are
+// original bytes, no canonicalization ever touches them).
+double my_perimeter(const std::vector<Vec2d>& p) {
+    double l = 0.0;
+    for (std::size_t i = 0; i < p.size(); ++i) {
+        const Vec2d& u = p[i];
+        const Vec2d& v = p[(i + 1) % p.size()];
+        l += std::hypot(v.x - u.x, v.y - u.y);
+    }
+    return l;
 }
 
 // The boundary ownership: every point of the merged region lies on
@@ -627,7 +641,7 @@ TEST_CASE("C2a the δ band both sides — the plus inside, the step "
                   == 2);
         }
     }
-    for (const double k : {-0.5, 0.5}) {
+    for (const double k : {-0.9, -0.5, 0.5, 0.9}) {
         const double d = k * kEpsL;
         const Vec3d cB{-0.023041630, 0.033909082,
                        eA.z - eB.z + d};
@@ -834,6 +848,200 @@ TEST_CASE("C2a the coincident corner — the vertex-on-edge degenerate, "
     CHECK(refused_leaves_source(*B, [&] {
         b::bool_union(*A, *B, b::kBooleanHouseTolerance);
     }));
+}
+
+TEST_CASE("C2a the D1 reassessment — the area invariant's derived "
+          "band, audited and pinned") {
+    // THE AUDIT (2026-11-18): the second cohort's D1 widening charged
+    // ONE half-tube (ε_L·8·scale) over ONE rim at the ENTRY scale —
+    // underivable on three counts (the target's overlap error and the
+    // candidate's own error are SEPARATE full-tube charges over rims
+    // ⊆ ∂R ∪ ∂P; the entry scale goes stale when a partner extends
+    // past the region's coordinates; the vertex/FP count rode
+    // uncovered). THE REASSESSED BAND, every term derived:
+    //   area_rel_tol·(A_R+A_P+A_C)  the three shoelace sums' floor
+    // + 4·ε_L·(P_R+P_P)             the two ε_L-tubes (the overlap's
+    //                                and the candidate's), Steiner
+    // + 2π·ε_L²                     the tubes' caps
+    // + n²·ε_mach·s_pair²           the FP summation charge
+    // THE PINS: the arithmetic (the seam's pure form against this
+    // file's own recomputation), the admit side (the exact red and
+    // the D1 red's own sliver — the member that forced the widening),
+    // the reject side (the 5.48-class miss and the coincident
+    // corner's hull dent, both orders of magnitude above), and the
+    // under-charge window (the old fixed band against the honest
+    // budget on this very member).
+    const double kRelArea = 1e-9;   // the caller's own declaration
+    const double eps_mach =
+        std::numeric_limits<double>::epsilon();
+
+    // (a) THE ARITHMETIC — the seam's value equals this file's own
+    // instantiation of the derivation, bit for bit (the same
+    // expression, the same doubles: any drift in the production
+    // formula breaks this pin visibly).
+    {
+        const Vec3d eA{1.209195, 1.312911, 1.215093};
+        const Vec3d eB{0.855096, 1.420279, 0.714009};
+        const Vec3d cB{-0.023041630, 0.033909082, eA.z - eB.z};
+        const auto a2d = rect2d(eA.x, eA.y, 0, 0);
+        const auto b2d = rect2d(eB.x, eB.y, cB.x, cB.y);
+        const auto inter = my_convex_clip(a2d, b2d);
+        const double aA = std::abs(my_shoelace(a2d));
+        const double aB = std::abs(my_shoelace(b2d));
+        const double aU = my_union_area(a2d, b2d);
+        const double pR = my_perimeter(a2d), pP = my_perimeter(b2d);
+        double s = 1.0;
+        for (const auto& q : a2d)
+            s = std::max({s, std::abs(q.x), std::abs(q.y)});
+        for (const auto& q : b2d)
+            s = std::max({s, std::abs(q.x), std::abs(q.y)});
+        const double n_tot = double(a2d.size() + b2d.size()
+                                    + inter.size() + 12) + 4.0;
+        const double mine = kRelArea * (aA + aB + aU)
+                          + 4.0 * kEpsL * (pR + pP)
+                          + 2.0 * kPi * kEpsL * kEpsL
+                          + n_tot * n_tot * eps_mach * s * s;
+        const double seam =
+            b::overlay_area_check_tol_for_tests(
+                aA, aB, aU, pR, pP, a2d.size(), b2d.size(),
+                inter.size(), 12, s, kRelArea,
+                b::kBooleanHouseTolerance);
+        INFO("band arithmetic: mine " << mine << " seam " << seam);
+        CHECK(seam == mine);
+        // (d) THE UNDER-CHARGE WINDOW: the old fixed band on the same
+        // member (the entry scale = the region's own coordinates) —
+        // the honest budget exceeds it FOUR-fold at least (observed
+        // 7.3×): the audit's own finding, pinned.
+        const double s_entry = std::max(1.0, eA.y);
+        const double old_band = kRelArea * s_entry * s_entry * 8.0
+                              + kEpsL * s_entry * 8.0;
+        INFO("window: new " << seam << " old " << old_band
+                            << " ratio " << seam / old_band);
+        CHECK(seam > 4.0 * old_band);
+        // (c-reject) THE 5.48-CLASS MISS: the wrong pentagon the
+        // cohort observed against the honest 6.717501 — four orders
+        // of magnitude above the band (observed 16151×): the
+        // invariant still refuses it by construction.
+        const double miss = aU - 5.48;
+        INFO("the 5.48-class miss " << miss << " = "
+             << miss / seam << "x the band");
+        CHECK(miss > 1.0e4 * seam);
+    }
+
+    // (b-admit) THE D1 RED'S OWN SEAT: the member that forced the
+    // widening (the ε_C band-edge, δ = +0.5·ε_L) — its SIDE-face pair
+    // is where the invariant once read 4.000001: the partner extends
+    // past the region's rim by δ, the honest discrepancy is the
+    // sub-band sliver 1.5·δ, and the derived band must carry it with
+    // a wide margin (the D1 disposition — the welded 8/12/6 body —
+    // is pinned in the cohort-2 suite; this pin is the BUDGET's).
+    {
+        const double d = 0.5 * kEpsL;
+        // A's side face in its own (x,z) plane: 2×2 at the origin;
+        // B's side face: x ∈ [−0.5,1] (1.5 wide), z ∈ [δ, 1+δ]
+        // (1 tall — B's own half-extent 0.5, the cohort's build).
+        const auto face_A = rect2d(1.0, 1.0, 0.0, 0.0);
+        const auto face_B = rect2d(0.75, 0.5, 0.25, d + 0.5);
+        const double aA = std::abs(my_shoelace(face_A));
+        const double aB = std::abs(my_shoelace(face_B));
+        const double aI = my_intersection_area(face_A, face_B);
+        // the walk's candidate: the sliver ε-collapsed — A's face.
+        const double target = aA + aB - aI;
+        const double discrep = std::abs(target - aA);
+        const double band = b::overlay_area_check_tol_for_tests(
+            aA, aB, aA, my_perimeter(face_A), my_perimeter(face_B),
+            face_A.size(), face_B.size(), 8, face_A.size(),
+            /*pair_scale=*/1.0, kRelArea, b::kBooleanHouseTolerance);
+        INFO("D1 seat: sliver " << discrep << " band " << band
+                                << " margin " << band / discrep);
+        CHECK(std::abs(discrep - 1.5 * d) < 1e-12);  // the read's own
+        CHECK(band > 50.0 * discrep);               // 80× observed
+    }
+
+    // (c-reject) THE COINCIDENT CORNER'S HULL DENT: the pinned
+    // refusal's own margin — the hull candidate swallows a notch
+    // orders of magnitude above the band (the walk cannot close the
+    // endpoint degenerate, and the hull's dent is real geometry).
+    {
+        const double ang = 30.0 * kPi / 180.0;
+        const double hb = 0.5, kb = 0.35;
+        const double dy = hb * std::sin(ang) - kb * std::cos(ang);
+        const auto a2d = rect2d(1.2, 1.05, 0, 0);
+        const auto b2d = rot_rect2d(hb, kb, 0.2, 1.05 - dy, ang);
+        const double aU = my_union_area(a2d, b2d);
+        // the hull of the eight points — this file's own monotone
+        // chain, zero production code.
+        std::vector<Vec2d> all = a2d;
+        all.insert(all.end(), b2d.begin(), b2d.end());
+        std::sort(all.begin(), all.end(),
+                  [](const Vec2d& u, const Vec2d& v) {
+                      return u.x < v.x
+                          || (u.x == v.x && u.y < v.y);
+                  });
+        const auto cross3 = [](const Vec2d& o, const Vec2d& p,
+                               const Vec2d& q) {
+            return (p.x - o.x) * (q.y - o.y)
+                 - (p.y - o.y) * (q.x - o.x);
+        };
+        std::vector<Vec2d> hull;
+        for (const auto& p : all) {
+            while (hull.size() >= 2 && cross3(hull[hull.size() - 2],
+                                              hull.back(), p) <= 0)
+                hull.pop_back();
+            hull.push_back(p);
+        }
+        const std::size_t lower = hull.size() + 1;
+        for (auto it = all.rbegin(); it != all.rend(); ++it) {
+            while (hull.size() >= lower
+                   && cross3(hull[hull.size() - 2], hull.back(),
+                             *it) <= 0)
+                hull.pop_back();
+            hull.push_back(*it);
+        }
+        hull.pop_back();
+        const double aH = std::abs(my_shoelace(hull));
+        const double band = b::overlay_area_check_tol_for_tests(
+            std::abs(my_shoelace(a2d)), std::abs(my_shoelace(b2d)),
+            aH, my_perimeter(a2d), my_perimeter(b2d),
+            a2d.size(), b2d.size(), 8, hull.size(),
+            /*pair_scale=*/1.25, kRelArea, b::kBooleanHouseTolerance);
+        const double dent = std::abs(aH - aU);
+        INFO("corner dent " << dent << " band " << band
+                             << " margin " << dent / band);
+        CHECK(dent > 1.0e3 * band);   // 6372× observed
+    }
+
+    // (e) THE ORDER NOTE — the operand-order permutation: both
+    // orders answer the SAME census (28/46/20, χ = 2) with DIFFERENT
+    // vertex enumerations (observed: the digests differ — an
+    // enumeration fact, not a geometry fact, and NOT this contract's
+    // pin). The order independence that IS the contract lives in the
+    // walk's GEOMETRIC crossing order (the cure: the crossings sort
+    // along the edge, any computation order lands the same chain),
+    // exercised by the rotations and the tongue, and by each order's
+    // own bit-identical rebuild (the digest test below).
+    {
+        const Vec3d eA{1.209195, 1.312911, 1.215093};
+        const Vec3d eB{0.855096, 1.420279, 0.714009};
+        const Vec3d cB{-0.023041630, 0.033909082, eA.z - eB.z};
+        auto A = make_box_at(eA, {0, 0, 0});
+        auto B = make_box_at(eB, cB);
+        auto U1 = b::bool_union(*A, *B, b::kBooleanHouseTolerance);
+        auto U2 = b::bool_union(*B, *A, b::kBooleanHouseTolerance);
+        REQUIRE(U1 != nullptr);
+        REQUIRE(U2 != nullptr);
+        CHECK(U1->vertex_count() == U2->vertex_count());
+        CHECK(U1->edge_count() == U2->edge_count());
+        CHECK(U1->face_count() == U2->face_count());
+        CHECK(b::euler_characteristic(*U1) == 2);
+        CHECK(b::euler_characteristic(*U2) == 2);
+        CHECK(std::abs(poly_volume(*U1) - poly_volume(*U2)) < 1e-9);
+        // each order's rebuild: bit-identical (the digest law).
+        auto U1b = b::bool_union(*A, *B, b::kBooleanHouseTolerance);
+        auto U2b = b::bool_union(*B, *A, b::kBooleanHouseTolerance);
+        CHECK(b::chain_digest(*U1) == b::chain_digest(*U1b));
+        CHECK(b::chain_digest(*U2) == b::chain_digest(*U2b));
+    }
 }
 
 TEST_CASE("C2a the repeated execution — the corpus digest pinned, "

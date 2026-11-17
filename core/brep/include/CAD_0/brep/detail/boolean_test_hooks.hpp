@@ -76,4 +76,25 @@ std::vector<std::vector<math::Vec3d>> overlay_union_fragments_for_tests(
     math::Vec3d clip_normal,
     const BooleanTolerance& tol);
 
+// The door's area-invariant band in its PURE form (K1 C2a's D1
+// reassessment, 2026-11-18): the derived tolerance the overlay's
+// candidates are checked |A(candidate) − target| ≤ against —
+//   area_rel_tol·(A_R + A_P + A_C)          the shoelace floor
+// + 4·ε_L·(P_R + P_P)                       the two ε_L-tubes over
+//                                            rims ⊆ ∂R ∪ ∂P
+// + 2π·ε_L²                                  the tubes' Steiner caps
+// + n²·ε_mach·s_pair²                        the FP summation charge
+// with ε_L the bundle's own linear value and every count/perimeter/
+// area/scale a FRESH per-pair quantity (never a stale entry scale).
+// The area-relative floor arrives from the caller (the seam's law);
+// the unit under test is the BAND ITSELF — its arithmetic, and the
+// admit/reject contract at both sides of the derived boundary.
+double overlay_area_check_tol_for_tests(
+    double area_region, double area_partner, double area_candidate,
+    double perim_region, double perim_partner,
+    std::size_t n_region, std::size_t n_partner,
+    std::size_t n_overlap, std::size_t n_candidate,
+    double pair_scale, double area_rel_tol,
+    const BooleanTolerance& tol);
+
 } // namespace CAD_0::brep
