@@ -69,6 +69,7 @@ set(CAD_0_TEST_SOURCES
     unit/brep/test_g5_m3_corner_oracle.cpp
     unit/brep/test_g5_m6_acceptance.cpp
     unit/brep/test_g5_m4_ring_act.cpp
+    unit/brep/test_g6_m1_chamfer_edge.cpp
     unit/brep/test_h2_u3_pcurve_double.cpp
     unit/brep/test_h2_u6_m2_factory_names.cpp
     unit/brep/test_h2_u6_m3_extrude_names.cpp

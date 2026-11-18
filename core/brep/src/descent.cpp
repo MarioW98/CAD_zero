@@ -1741,16 +1741,31 @@ DescentTable subtract_descent(const BRepBody& result, const BRepBody& A,
 // by ShapeId (the survivors keep their stamps — the identity is
 // where a thing was born, not where it currently sits), the vertices
 // by exact position equality (the copies carry the doubles
-// bit-identical; the born tangent points are strictly inside the
-// faces, never on a surviving corner). The kept/absorbed split reads
-// the records' own content: an edge whose stored pair moved is
-// re-spanned (absorbed), a face whose walk's vertex sequence changed
-// is re-authored (absorbed) — the operation's mark IS this table, the
+// bit-identical; the born feet are strictly inside the faces, never
+// on a surviving corner). The kept/absorbed split reads the records'
+// own content: an edge whose stored pair moved is re-spanned
+// (absorbed), a face whose walk's vertex sequence changed is
+// re-authored (absorbed) — the operation's mark IS this table, the
 // vanished tail's cause the feature's own act ("replaced by the
 // flank" — the edge's death names a BIRTH, not a cut).
+//
+// THE SHARED CORE (G6 m1, ADR-0045 D3): the single-substituting-
+// feature walk's correspondence is ONE machinery — the fillet's
+// m2/m3/m6-ter evolutions and the chamfer's the same derivation, the
+// CAUSES and the closure's name the only per-feature facts. The core
+// lives in the anonymous namespace, parameterized by the vanished
+// causes and the caller's name; fillet_descent and chamfer_descent
+// are the two thin doors (the behavior bit-identical to the landed
+// m2/m3/m6 machinery — the fillet's own goldens the regression
+// proof, byte for byte).
 // ---------------------------------------------------------------------------
-DescentTable fillet_descent(const BRepBody& result,
-                            const BRepBody& operand) {
+namespace {
+
+DescentTable single_feature_descent(const BRepBody& result,
+                                    const BRepBody& operand,
+                                    const char* who,
+                                    const char* cause_feature,
+                                    const char* cause_act) {
     DescentTable table;
     table.rows.reserve(result.vertices.size() +
                        result.edges.size() +
@@ -2010,14 +2025,15 @@ DescentTable fillet_descent(const BRepBody& result,
         // D5.4's own words name) — but ONLY when the act ran (the
         // result carries a born sphere; the vertical walk's own cap
         // arcs die to the FLANK, their class's own cause, the
-        // m2/m3 goldens' pins); a dead STRAIGHT edge died to the
-        // flank it made room for. The vertices ride their edges'
-        // causes.
-        const char* cause_flank = "replaced by the flank";
-        const char* cause_sphere =
-            "replaced by the corner sphere's tangent arc";
+        // m2/m3 goldens' pins) — and ONLY for the feature whose
+        // act HAS a sphere cause (the chamfer's single-edge walk
+        // dies everything to its bevel, its own closed world). A
+        // dead STRAIGHT edge died to the feature's born face it
+        // made room for. The vertices ride their edges' causes.
+        const char* cause_flank = cause_feature;
+        const char* cause_sphere = cause_act;
         bool act_ran = false;
-        {
+        if (cause_act != nullptr) {
             struct SphereReader : SurfaceVisitor {
                 const SphereSurface* sphere{nullptr};
                 void visit(const SphereSurface& s) override {
@@ -2087,20 +2103,22 @@ DescentTable fillet_descent(const BRepBody& result,
     // The debug-build activation (the factory precedent): BOTH sides
     // of the closure, inside — a tavola that loses or double-books
     // an entity, on either generation, cannot pass silent. The old
-    // side takes the operand as A and an EMPTY B (the fillet has one
-    // operand; the empty body books nothing).
+    // side takes the operand as A and an EMPTY B (the single-feature
+    // walk has one operand; the empty body books nothing).
     {
         const BRepBody no_second{};
         std::string why;
         if (!descent_closed(result, table, &why)) {
             throw std::logic_error(
-                "fillet_descent: the tavola broke its own closure "
+                std::string(who) +
+                ": the tavola broke its own closure "
                 "(the result side) — " + why);
         }
         if (!old_generation_closed(operand, no_second, table,
                                    &why)) {
             throw std::logic_error(
-                "fillet_descent: the tavola broke its own closure "
+                std::string(who) +
+                ": the tavola broke its own closure "
                 "(the old generation) — " + why);
         }
     }
@@ -2113,6 +2131,31 @@ DescentTable fillet_descent(const BRepBody& result,
     stamp_rows(table, operand, /*vanished_rows=*/true);
 
     return table;
+}
+
+} // namespace
+
+DescentTable fillet_descent(const BRepBody& result,
+                            const BRepBody& operand) {
+    return single_feature_descent(
+        result, operand, "fillet_descent", "replaced by the flank",
+        "replaced by the corner sphere's tangent arc");
+}
+
+// chamfer_descent — THE CHAMFER'S TAVOLA (ADR-0045 D3, G6 m1): the
+// same 35-row shape, the same closure both sides, the same
+// structural correspondence — the vanished cause the chamfer's own
+// act: "replaced by the bevel" (the dead vertical and its two corner
+// vertices, the edge's death naming the BIRTH the fillet's own cause
+// named one family over). The chamfer's single-edge walk has NO
+// corner act (the miter is its own morsi's seat, ADR-0045 D4): every
+// death rides the one cause, the sphere clause asleep (the core's
+// null cause_act — the machinery identical, the causes the only
+// per-feature facts).
+DescentTable chamfer_descent(const BRepBody& result,
+                            const BRepBody& operand) {
+    return single_feature_descent(result, operand, "chamfer_descent",
+                                  "replaced by the bevel", nullptr);
 }
 
 } // namespace CAD_0::brep

@@ -355,4 +355,17 @@ DescentTable subtract_descent(const BRepBody& result, const BRepBody& A,
 DescentTable fillet_descent(const BRepBody& result,
                             const BRepBody& operand);
 
+// chamfer_descent — THE CHAMFER'S TAVOLA (ADR-0045 D3, G6 m1): the
+// same by-name diff, the same closure both sides, on the chamfer's
+// own walk — the box class's 35 rows (2 kept faces + 4 absorbed +
+// 1 born bevel; 7 kept edges + 4 absorbed re-spanned + 4 born lines;
+// 6 kept vertices + 4 born feet; the vanished tail the dead vertical
+// and its two corner vertices, the cause the chamfer's own act:
+// "replaced by the bevel"). DERIVED from the result's own topology
+// and the operand's own records, never stored — the shared core the
+// fillet's m2 landed (single_feature_descent, the correspondence
+// machinery), the causes the only per-feature facts.
+DescentTable chamfer_descent(const BRepBody& result,
+                            const BRepBody& operand);
+
 } // namespace CAD_0::brep

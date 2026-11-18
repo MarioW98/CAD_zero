@@ -129,10 +129,13 @@ enum class FeatureKind : std::uint8_t {
     Fillet,    // "fil" — the fillet operation (ADR-0039, G2-u3: the
                //         rolling ball — the first feature that
                //         substitutes instead of subtracting)
-    Ellipsoid  // "elp" — the ellipsoid of revolution (K1 m3, ADR-0042:
-               //         the probe's family, the first to enter under
-               //         ADR-0041's protocol — the exact-side primitive
-               //         whose recipe rides the file since v0.7)
+    Ellipsoid,  // "elp" — the ellipsoid of revolution (K1 m3, ADR-0042:
+                //         the probe's family, the first to enter under
+                //         ADR-0041's protocol — the exact-side primitive
+                //         whose recipe rides the file since v0.7)
+    Chamfer    // "che" — the chamfer operation (ADR-0045, G6: the flat
+               //         bevel — the second feature that substitutes
+               //         instead of subtracting, every contact a line)
 };
 
 // kind -> token, one switch, the single authority (the family_name
@@ -741,6 +744,53 @@ inline constexpr std::uint32_t kFilIsectCoaxRole = 4;  // edges: the
 // corner act's coaxial wires (G5 m3: the sphere's contact arcs,
 // corner × flank, both the fillet's own — the rim rows' indices
 // stay frozen)
+
+// ---------------------------------------------------------------------------
+// THE CHAMFER'S ROLE TABLES (ADR-0045 D3, G6 m1: the flat bevel — the
+// second feature that substitutes). The rows APPEND after the whole
+// fillet block: the fillet's indices stay frozen by its own goldens,
+// and the chamfer's tables live in their own section — one kind, its
+// own tables, the m2 flank's own pattern verbatim (the token BEVEL a
+// NEW role for a NEW geometry, never an overload of the cylinder's
+// flank: the same discipline that named the sphere's 'corner').
+//
+// The bevel's slots: BOTH legs the referenced edge's adjacent faces,
+// in the edge's own declared co-edge order (the shell's order) —
+// rendered through the OPERAND's binding (the carrier's tables, bare:
+// the box family's faces are the factory's own).
+inline constexpr OperandSlot kCheBevelSlots[2] = {
+    {0, false, RoleForm::Bare},  // the edge's first-co-edge face
+    {0, false, RoleForm::Bare},  // the second (the shell's order)
+};
+// The setback wires' slots (the isect form, the level ABSENT — the
+// setback IS the line, the m3/m4 elisions' own form): the landing
+// face (the adjacent the wire retires) via the carrier's binding,
+// the bevel via the SAME-FEATURE self-binding (the extension
+// ADR-0039 bought for the flank's wires, born earlier in the walk).
+inline constexpr OperandSlot kCheIsectSlots[2] = {
+    {0, false, RoleForm::Bare},  // the landing face (the adjacent)
+    {1, false, RoleForm::Bare},  // the bevel — the SAME feature's
+                                 // born face (the same-feature
+                                 // extension, born earlier)
+};
+inline constexpr RoleEntry kChamferFaceRoles[1] = {
+    {"bevel", RoleForm::Relational, nullptr, nullptr, kCheBevelSlots},
+};
+inline constexpr RoleEntry kChamferEdgeRoles[1] = {
+    {"isect", RoleForm::Relational, nullptr, nullptr, kCheIsectSlots},
+};
+
+// The chamfer's TYPE-level declaration: the operand bindings are
+// INSTANCE data (the carrier's feature id and table flow from the
+// caller's naming context; the bevel's self-binding is built by the
+// stamping site) — the fillet's own pattern.
+inline constexpr OperationNaming kChamferNaming{
+    FeatureKind::Chamfer, kChamferFaceRoles, kChamferEdgeRoles, {}};
+
+// The chamfer's own role-table indices, named for the stamping site.
+inline constexpr std::uint32_t kCheBevelRole = 0;  // faces: bevel
+inline constexpr std::uint32_t kCheIsectRole = 0;  // edges: isect (the
+// setback wires, the level absent — the setback IS the line)
 
 // ---------------------------------------------------------------------------
 // THE ROOT REFERENCE — the authored roots the tavola's FROM names

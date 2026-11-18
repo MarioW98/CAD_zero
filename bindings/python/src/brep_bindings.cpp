@@ -117,6 +117,7 @@
 // flank reachable from Python; the m6 click-test is the phase's
 // exit, declared and deferred).
 #include "CAD_0/brep/fillet.hpp"
+#include "CAD_0/brep/chamfer.hpp"
 #include "CAD_0/brep/chain_gate.hpp"
 #include "CAD_0/brep/survival_ledger.hpp"
 #include "CAD_0/sdf/sketch_profile.hpp"
@@ -419,14 +420,15 @@ const CAD_0::brep::naming::OperationNaming* naming_table_of(
     case n::FeatureKind::Sketch:
     case n::FeatureKind::Subtract:
     case n::FeatureKind::Fillet:
+    case n::FeatureKind::Chamfer:
         throw std::invalid_argument(
             "the naming-table selector: the operand kind has no "
             "naming table - the sketch's roots are authored data "
             "(named by the root reference, never a role table) and "
-            "the subtract and the fillet are CONSUMERS, not "
-            "operands; remedy: pass the CREATING operation's kind "
-            "(Box, Sphere, Cylinder, Ellipsoid or Extrude) - the one "
-            "that built the operand body.");
+            "the subtract, the fillet and the chamfer are CONSUMERS, "
+            "not operands; remedy: pass the CREATING operation's "
+            "kind (Box, Sphere, Cylinder, Ellipsoid or Extrude) - "
+            "the one that built the operand body.");
     }
     return nullptr;  // unreachable — all enum cases handled above
 }
@@ -703,6 +705,58 @@ void bind_brep(nb::module_& m) {
         "kernel makes (the band's bound carried, the class families\n"
         "by name - diagnosis + remedy verbatim).");
 
+    // THE CHAMFER, STAGE 1 MORSE 1 — LO SPIGOLO VERTICALE SINGOLO
+    // DEL BOX (G6 m1, ADR-0045 D1.2/D8.1): the flat bevel — the
+    // second feature that SUBSTITUTES instead of subtracting, every
+    // contact a LINE, zero intersection solves (the plane×plane row
+    // consumed as grammar, never run). The naming context: the
+    // chamfer's own DAG id (the born names' creator part, 'che#2')
+    // and the carrier's creating kind (its role tables — the
+    // bevel's operands render through them). With the context the
+    // bevel carries 'che#F:bevel[box#1:back × box#1:right]' and the
+    // setback wires 'che#F:isect[<the landing face> × <the bevel>]'
+    // (the level ABSENT — the setback IS the level); without it
+    // (the default, the unnamed mode) the born entities read
+    // honestly empty. The scene node and the picker are the final
+    // morse's own door (ADR-0045 D7.4) — this surface is the
+    // tests' own seat, nothing more.
+    brep_mod.def(
+        "chamfer_edge",
+        [](const BRepBody& body,
+           const CAD_0::geometry::ShapeId& edge, double setback,
+           std::uint64_t feature,
+           std::optional<CAD_0::brep::naming::FeatureKind> body_kind,
+           double tol) {
+            CAD_0::brep::ChamferNaming naming{};
+            if (body_kind.has_value()) {
+                naming = CAD_0::brep::ChamferNaming{
+                    CAD_0::geometry::FeatureId{feature},
+                    naming_table_of(*body_kind)};
+            }
+            return CAD_0::brep::chamfer_edge(body, edge, setback,
+                                            naming, tol);
+        },
+        nb::arg("body"), nb::arg("edge"), nb::arg("setback"),
+        nb::arg("feature") = 0, nb::arg("body_kind") = std::nullopt,
+        nb::arg("tol") = 1e-6,
+        "The constant-setback chamfer on a box's vertical edge\n"
+        "(ADR-0045 D1.2/D8.1, the flat bevel: every contact a line,\n"
+        "zero intersection solves - the guide case box#1:vertical2\n"
+        "at d=0.5 answers 10/15/7, chi=2, volume 8 - d^2 = 7.75,\n"
+        "the SAME counts as the fillet k=1 and the SAME four born\n"
+        "positions - the boundary between them the different\n"
+        "geometry). The `edge` is the structural ShapeId (the\n"
+        "by-name reference, never an address); the setback must sit\n"
+        "strictly inside the faces' reach (the typed Linear band,\n"
+        "tol the declared epsilon; the multi-edge strip law d < 1\n"
+        "is the ring act's own wall, never met here). With the\n"
+        "naming context (feature + body_kind=Box) the born face and\n"
+        "the two setback wires carry the relational names; the\n"
+        "shrink faces KEEP theirs. Raises ValueError for every\n"
+        "refusal the C++ kernel makes (the band's bound carried,\n"
+        "the class families by name - diagnosis + remedy\n"
+        "verbatim).");
+
     // THE FILLET, CLASS 2 — IL RIM CIRCOLARE DEL FORO (G2-u3 m3,
     // ADR-0039 D1.2): the rolling ball on the blind hole's convex
     // top rim, the toroidal flank born in the rim's place. The
@@ -949,6 +1003,21 @@ void bind_brep(nb::module_& m) {
         "consumed edge and its corners, the cause verbatim -\n"
         "'replaced by the flank'). Derived, never stored: recomputed\n"
         "deterministically from the bodies on every call.");
+
+    brep_mod.def(
+        "chamfer_descent",
+        [](const BRepBody& result, const BRepBody& operand) {
+            return CAD_0::brep::chamfer_descent(result, operand);
+        },
+        nb::arg("result"), nb::arg("operand"),
+        "The chamfer's descent table (ADR-0045 D3, G6 m1): the same\n"
+        "by-name diff one feature over - the kept, the absorbed (the\n"
+        "re-spanned ring edges, the re-windowed laterals and caps),\n"
+        "the born (the bevel, the setback wires - the segments\n"
+        "honestly unnamed) and the VANISHED tail (the consumed edge\n"
+        "and its corners, the cause verbatim - 'replaced by the\n"
+        "bevel'). Derived, never stored: recomputed deterministically\n"
+        "from the bodies on every call.");
 
     brep_mod.def(
         "extrude_descent",

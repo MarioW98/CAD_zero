@@ -25,6 +25,7 @@ const char* kind_token(FeatureKind k) noexcept {
     case FeatureKind::Subtract: return "sub";
     case FeatureKind::Fillet:   return "fil";
     case FeatureKind::Ellipsoid: return "elp";
+    case FeatureKind::Chamfer:  return "che";
     }
     return "box";  // unreachable — all enum cases handled above
 }
