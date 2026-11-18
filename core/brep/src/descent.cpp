@@ -21,6 +21,8 @@
 // consulted (tool_lateral_of — one opinion, one lookup).
 #include "CAD_0/brep/descent.hpp"
 
+#include "CAD_0/brep/naming.hpp"
+
 #include "CAD_0/brep/extrude.hpp"
 #include "CAD_0/brep/subtract.hpp"
 
@@ -1761,11 +1763,24 @@ DescentTable subtract_descent(const BRepBody& result, const BRepBody& A,
 // ---------------------------------------------------------------------------
 namespace {
 
+// The per-feature act discriminator (the causes' own law, G6 m3):
+// how a death is recognized as the CORNER ACT's own — the fillet's
+// dead ARC p-curve on the born sphere (G5 m3), the chamfer's dead
+// edge whose co-user is a BEVEL (the vertical bevel's cap segment,
+// re-windowed at the miter). None: the single walk, everything
+// dies to the feature's own face.
+enum class ActRule : std::uint8_t {
+    None,
+    ArcOnSphere,
+    BevelCoUser,
+};
+
 DescentTable single_feature_descent(const BRepBody& result,
                                     const BRepBody& operand,
                                     const char* who,
                                     const char* cause_feature,
-                                    const char* cause_act) {
+                                    const char* cause_act,
+                                    ActRule rule) {
     DescentTable table;
     table.rows.reserve(result.vertices.size() +
                        result.edges.size() +
@@ -2034,26 +2049,72 @@ DescentTable single_feature_descent(const BRepBody& result,
         const char* cause_sphere = cause_act;
         bool act_ran = false;
         if (cause_act != nullptr) {
-            struct SphereReader : SurfaceVisitor {
-                const SphereSurface* sphere{nullptr};
-                void visit(const SphereSurface& s) override {
-                    sphere = &s;
+            if (rule == ActRule::ArcOnSphere) {
+                struct SphereReader : SurfaceVisitor {
+                    const SphereSurface* sphere{nullptr};
+                    void visit(const SphereSurface& s) override {
+                        sphere = &s;
+                    }
+                };
+                const auto& rfaces = result.solid.shell().faces();
+                for (std::size_t i = 0; i < rfaces.size() && !act_ran;
+                     ++i) {
+                    SphereReader sr;
+                    rfaces[i].surface()->accept(sr);
+                    act_ran = sr.sphere != nullptr;
                 }
-            };
-            const auto& rfaces = result.solid.shell().faces();
-            for (std::size_t i = 0; i < rfaces.size() && !act_ran;
-                 ++i) {
-                SphereReader sr;
-                rfaces[i].surface()->accept(sr);
-                act_ran = sr.sphere != nullptr;
+            } else {
+                // The chamfer's corner act: the result carries a
+                // MITER-stamped edge (the bevel×bevel wire — the
+                // m1/m2 walks never write one, their causes their
+                // own closed world).
+                for (std::size_t i = 0; i < result.edges.size() &&
+                                       !act_ran;
+                     ++i) {
+                    const auto& sub =
+                        result.edges[i].shape_id().subshape;
+                    // (the depth guard: the box's own edge
+                    // roles share the index space — bottom1's
+                    // path[0] is 1 at depth 1; the miter wire's
+                    // form is deep)
+                    act_ran = sub.depth > 1 &&
+                              sub.path[0] ==
+                                  naming::kCheMiterRole;
+                }
             }
         }
         const auto edge_died_to_sphere = [&](std::size_t i) {
             if (!act_ran) return false;
+            if (rule == ActRule::ArcOnSphere) {
+                for (const CoEdge* ce : operand.edges[i].coedges()) {
+                    const auto* pc = ce->p_curve();
+                    if (pc == nullptr) continue;
+                    if (pc->kind != PCurve::Kind::Segment)
+                        return true;
+                }
+                return false;
+            }
+            // The chamfer's clause: the dead edge's co-user is a
+            // BEVEL-stamped face (the cap segment on the vertical
+            // bevel — the ring edges border planes only).
             for (const CoEdge* ce : operand.edges[i].coedges()) {
-                const auto* pc = ce->p_curve();
-                if (pc == nullptr) continue;
-                if (pc->kind != PCurve::Kind::Segment) return true;
+                for (std::size_t f = 0;
+                     f < operand.face_count(); ++f) {
+                    bool on_face = false;
+                    for (const auto& loop :
+                         operand.solid.shell().faces()[f].loops())
+                        for (const auto& other : loop.coedges())
+                            if (&other == ce) on_face = true;
+                    if (!on_face) continue;
+                    const auto& sub = operand.solid.shell()
+                                          .faces()[f]
+                                          .shape_id()
+                                          .subshape;
+                    if (sub.depth == 3 &&
+                        sub.path[0] == naming::kCheBevelRole &&
+                        sub.path[1] < 6 && sub.path[2] < 6)
+                        return true;
+                }
             }
             return false;
         };
@@ -2139,7 +2200,8 @@ DescentTable fillet_descent(const BRepBody& result,
                             const BRepBody& operand) {
     return single_feature_descent(
         result, operand, "fillet_descent", "replaced by the flank",
-        "replaced by the corner sphere's tangent arc");
+        "replaced by the corner sphere's tangent arc",
+        ActRule::ArcOnSphere);
 }
 
 // chamfer_descent — THE CHAMFER'S TAVOLA (ADR-0045 D3, G6 m1): the
@@ -2147,15 +2209,19 @@ DescentTable fillet_descent(const BRepBody& result,
 // structural correspondence — the vanished cause the chamfer's own
 // act: "replaced by the bevel" (the dead vertical and its two corner
 // vertices, the edge's death naming the BIRTH the fillet's own cause
-// named one family over). The chamfer's single-edge walk has NO
-// corner act (the miter is its own morsi's seat, ADR-0045 D4): every
-// death rides the one cause, the sphere clause asleep (the core's
-// null cause_act — the machinery identical, the causes the only
-// per-feature facts).
+// named one family over). The WALK's deaths (the single edge, the
+// chain) all ride the one cause; since G6 m3 the CORNER ACT's own
+// death — the vertical bevel's cap segment, a dead edge whose
+// co-user is a bevel — carries its verbatim cause, D4.2's own
+// words: "replaced by the miter line" (the clause asleep whenever
+// the result carries no miter-stamped edge — the m1/m2 goldens'
+// causes byte-identical, the additivity clause honored).
 DescentTable chamfer_descent(const BRepBody& result,
                             const BRepBody& operand) {
     return single_feature_descent(result, operand, "chamfer_descent",
-                                  "replaced by the bevel", nullptr);
+                                  "replaced by the bevel",
+                                  "replaced by the miter line",
+                                  ActRule::BevelCoUser);
 }
 
 } // namespace CAD_0::brep

@@ -776,8 +776,24 @@ inline constexpr OperandSlot kCheIsectSlots[2] = {
 inline constexpr RoleEntry kChamferFaceRoles[1] = {
     {"bevel", RoleForm::Relational, nullptr, nullptr, kCheBevelSlots},
 };
-inline constexpr RoleEntry kChamferEdgeRoles[1] = {
+// The corner act's miter wires (G6 m3, ADR-0045 D4.2/D3): the row
+// APPENDS after the isect — the m1/m2 indices stay frozen by their
+// own goldens, and the miter is a NEW animal (the bevel×bevel
+// concurrence at the corner vertex, never a landing face's
+// retreat). Both legs are BEVEL refs — the carrier's vertical
+// bevel and the act's own ring bevel (or the act's two ring
+// bevels) — rendered through the SAME-FEATURE binding (the
+// extension ADR-0039 bought, the fillet's coaxial wires' own
+// pattern: the nested bevel renders under the act's table, its
+// box-face legs through the carrier's binding).
+inline constexpr OperandSlot kCheMiterSlots[2] = {
+    {1, false, RoleForm::Bare},  // the first bevel of the pair
+    {1, false, RoleForm::Bare},  // the second (the act's own
+                                 // declared order)
+};
+inline constexpr RoleEntry kChamferEdgeRoles[2] = {
     {"isect", RoleForm::Relational, nullptr, nullptr, kCheIsectSlots},
+    {"miter", RoleForm::Relational, nullptr, nullptr, kCheMiterSlots},
 };
 
 // The chamfer's TYPE-level declaration: the operand bindings are
@@ -791,6 +807,9 @@ inline constexpr OperationNaming kChamferNaming{
 inline constexpr std::uint32_t kCheBevelRole = 0;  // faces: bevel
 inline constexpr std::uint32_t kCheIsectRole = 0;  // edges: isect (the
 // setback wires, the level absent — the setback IS the line)
+inline constexpr std::uint32_t kCheMiterRole = 1;  // edges: miter (the
+// corner act's bevel×bevel wires, G6 m3 — the concurrence at the
+// miter vertex, the level absent as ever)
 
 // ---------------------------------------------------------------------------
 // THE ROOT REFERENCE — the authored roots the tavola's FROM names

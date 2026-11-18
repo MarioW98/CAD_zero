@@ -757,6 +757,53 @@ void bind_brep(nb::module_& m) {
         "the class families by name - diagnosis + remedy\n"
         "verbatim).");
 
+    // THE CHAMFER'S CORNER ACT (G6 m3, ADR-0045 D4/D8.3, the heart
+    // of the stage): the miter as an atomic act at ONE corner —
+    // the reference a RING edge whose corner end carries a
+    // previous vertical chamfer's bevel; the act consumes the
+    // corner whole (the two convergent ring edges, the vertical
+    // bevel's cap segment — dead, the cause verbatim "replaced by
+    // the miter line" — the miter M a VERTEX, never a face, the
+    // three miter lines, the two ring bevels born GIÀ RIFINITI as
+    // PENTAGONS whose far ends close on the unmitered corners, the
+    // vertical bevel re-windowed in place, its stamp kept). The
+    // tests' own seat (the UI door is the final morse's).
+    brep_mod.def(
+        "chamfer_corner_act",
+        [](const BRepBody& body,
+           const CAD_0::geometry::ShapeId& edge, double setback,
+           std::uint64_t feature,
+           std::optional<CAD_0::brep::naming::FeatureKind> body_kind,
+           double tol) {
+            CAD_0::brep::ChamferNaming naming{};
+            if (body_kind.has_value()) {
+                naming = CAD_0::brep::ChamferNaming{
+                    CAD_0::geometry::FeatureId{feature},
+                    naming_table_of(*body_kind)};
+            }
+            return CAD_0::brep::chamfer_corner_act(body, edge,
+                                                   setback, naming,
+                                                   tol);
+        },
+        nb::arg("body"), nb::arg("edge"), nb::arg("setback"),
+        nb::arg("feature") = 0, nb::arg("body_kind") = std::nullopt,
+        nb::arg("tol") = 1e-6,
+        "The corner act at ONE corner (ADR-0045 D4: the miter as an\n"
+        "atomic act): the two ring edges convergent at the corner\n"
+        "die with the vertical bevel's cap segment (the cause\n"
+        "verbatim \"replaced by the miter line\"), the miter\n"
+        "M = corner - (d/2)(1,1,1) is born a VERTEX with the three\n"
+        "miter lines, the two ring bevels born already refined -\n"
+        "PENTAGONS whose far ends close on the unmitered corners\n"
+        "the same planes cut - and the vertical bevel re-windowed\n"
+        "in place (Absorbed, never Born-sotto-falso). The guide\n"
+        "chain box -> chamfer_edge(vertical2) -> the act at the\n"
+        "corner (1,1,1) answers 14/21/9, chi=2, volume\n"
+        "8 - 3d^2 + (3/4)d^3 = 7.34375 at d=0.5. The setbacks of\n"
+        "the three edges at the corner must AGREE (the mismatch is\n"
+        "the named refusal with both values); raises ValueError for\n"
+        "every refusal the C++ kernel makes.");
+
     // THE FILLET, CLASS 2 — IL RIM CIRCOLARE DEL FORO (G2-u3 m3,
     // ADR-0039 D1.2): the rolling ball on the blind hole's convex
     // top rim, the toroidal flank born in the rim's place. The
