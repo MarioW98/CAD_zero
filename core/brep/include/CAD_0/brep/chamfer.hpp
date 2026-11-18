@@ -2250,4 +2250,1098 @@ inline std::unique_ptr<BRepBody> chamfer_corner_act(
     return R;
 }
 
+// ---------------------------------------------------------------------------
+// chamfer_ring_act — THE RING AND MITER ACT, INDIVISIBLE (G6 m4,
+// ADR-0045 D4.1's second passage and D8.4, on the stamp of the fillet's
+// ring act G5 m4): the cube's eight ring edges and eight corner miters
+// consumed in ONE transaction, from the four-vertical state (16/24/10)
+// to the fully chamfered cube (32/48/18). The indivisibility, DERIVED
+// (D4.1): the miter is born from the THREE planes jointly — no
+// two-bevel state contains it — and any sequential order re-windows
+// faces born earlier in the same recipe (the third bevel at a corner
+// re-cuts the first two: the first miter line dies, replaced by the
+// one that closes the trio). The act lands the whole remaining cube
+// at once:
+//
+//   * THE EIGHT MITERS (D2.3) at M = corner − (d/2)(n_x+n_y+n_z),
+//     born VERTICES never faces (the three planes' concurrence, the
+//     normals' determinant 2 ≠ 0 — the closed form IS the
+//     concurrence's answer, ZERO intersection solves);
+//   * THE TWENTY-FOUR RETREATS: P_k = corner − d·(the two normals
+//     ≠ k) per corner, four per re-windowed plane;
+//   * THE TWENTY-FOUR MITER LINES (each from a retreat to M, each on
+//     exactly the two bevels whose planes contain it — every endpoint
+//     a closed form);
+//   * THE SIXTEEN RING SETBACK LINES (per ring edge two: on the cap
+//     and on the lateral, each between the two end corners' retreats
+//     on that face, the axis-negative corner the stored first);
+//   * THE EIGHT RING BEVELS born GIÀ RIFINITI as HEXAGONS (two
+//     setback lines, four miter lines — both ends mitred, never a
+//     cap segment: D4.1's own shape, the ADR's D4.2 hexagon whole);
+//   * THE FOUR VERTICAL BEVELS RE-WINDOWED in place (D4.2: the two
+//     cap segments dead with the cause verbatim "replaced by the
+//     miter line", the two setback wires RE-SPANNED to the retreats,
+//     the four miter lines born at its two corners — Absorbed, never
+//     Born-sotto-falso, the stamp and the name kept);
+//   * THE SIX PLANES re-windowed to the retreats' RECTANGLES (the
+//     caps' octagons and the laterals' strips both become four-edge
+//     windows bounded by the setback lines and the re-spanned wires).
+//
+// THE ARITHMETIC (D4.3, the tavola's closure from 16/24/10): dead 16
+// vertices (the cap tips — the m1 walks' feet) and 16 edges (the 8
+// ring edges + the 8 cap segments); born 32 vertices (the 8 miters +
+// the 24 retreats), 40 edges (the 24 miter lines + the 16 ring
+// setback lines) and 8 faces (the ring bevels); re-spanned 8 edges
+// (the vertical wires). V−16+32 / E−16+40 / F+8 -> 32/48/18, chi = 2
+// flat (Δχ = +16 − 24 + 8 = 0). The co-edge census: 12 bevels × 6 +
+// 6 planes × 4 = 96 incidences / 2 = 48; every retreat 3 faces (one
+// plane, two bevels) and 3 edges; every miter 3 faces (the three
+// bevels) and 3 edges (the three miter lines) — MANIFOLD everywhere.
+//
+// THE VOLUME, closed form (D6.3): the removed corner region
+// Rc = (3/4)d²(2−d) by inclusion-exclusion in the retreat
+// coordinates (three half-wedges 3·(d²/2), minus the three pairwise
+// wedges 3·(d³/3), plus the triple d³/4 — the five-vertex polyhedron
+// in THREE tetrahedra, det/6); eight congruent corners: V(d) =
+// 8 − 12d² + 6d³ at the factory cube, V(0.5) = 5.75, the limit
+// d -> 1 the rhombododecahedron's 2 — SEEN by the closed form,
+// REFUSED by the admission (the body is not the limit).
+//
+// THE ADMISSION, outer wall first (the m3 test's own law: the act IS
+// the multi-edge state, its face bands sit behind the stage wall):
+// the four-vertical state 16/24/10 (the chain's formula at k=4 — the
+// fresh box and the partial chains named to their own doors); the
+// shared structural census (admit_chain_carrier); the face census
+// (six planes by axis and side, four bevels by bisector octant); the
+// payload's own frame (a translated cube is the same cube to the
+// closed forms) with the equal-sides check (the twelve-edge mode's
+// law); THE STAGE BAND d < ext (the strips of the opposing chamfers
+// on every face must not meet, 2d < 2·ext; at d = ext the six planes
+// die to points — the tangential collapse); THE MISMATCH
+// (chamfer_corner_setback_mismatch, both values in the payload — the
+// miter closes inside the corner's octant only at the common
+// setback); the edge census (eight ring edges, eight cap segments,
+// eight wires — every edge classified, the classification itself the
+// wall). THE 17/11 LAW IS LAW (D4.4): every span end of every born
+// or re-windowed face is read from the TOPOLOGY (the junctions, the
+// stored pairs, the planes' own sides), NEVER from the coordinate
+// ordering.
+//
+// LOUD on every refusal (the bounds and the values NAMED). The
+// witness whole: zero SSI consults, zero new families (every born
+// face a PlaneSurface, the miter a vertex), the diff touches no
+// ssi.hpp/ssi.cpp line (D2's STOP criterion).
+// ---------------------------------------------------------------------------
+inline std::unique_ptr<BRepBody> chamfer_ring_act(
+    const BRepBody& body, double setback,
+    const ChamferNaming& naming = ChamferNaming{},
+    double tol = kChamferTolerance) {
+    const std::size_t V0 = body.vertices.size();
+    const std::size_t E0 = body.edges.size();
+    const std::size_t F0 = body.face_count();
+
+    const auto refuse = [](const std::string& what) {
+        throw std::invalid_argument("chamfer_ring_act: " + what);
+    };
+    const auto vpos = [&](std::size_t v) -> const math::Vec3d& {
+        return body.vertices[v].position();
+    };
+    const auto face_of_coedge = [&](const CoEdge* ce) -> std::size_t {
+        for (std::size_t f = 0; f < F0; ++f)
+            for (const auto& loop :
+                 body.solid.shell().faces()[f].loops())
+                for (const auto& other : loop.coedges())
+                    if (&other == ce) return f;
+        return F0;
+    };
+    const auto plane_of = [&](std::size_t f) -> const PlaneSurface* {
+        chamfer_detail::PlaneReader rd;
+        const auto* s = body.solid.shell().faces()[f].surface();
+        if (s != nullptr) s->accept(rd);
+        return rd.plane;
+    };
+
+    // ---- The setback's own gate.
+    if (!(setback > 0.0) || !std::isfinite(setback))
+        refuse("the setback must be finite and > 0, got " +
+               std::to_string(setback) +
+               " — a non-positive setback has no bevel plane and no "
+               "setback lines. Remedy: author a positive setback "
+               "within the stage's band (the admission derives).");
+
+    // ---- THE STATE (the consumption order is the derivation, D4.1:
+    // the vertical passage first — this act takes what remains).
+    if (V0 != 16 || E0 != 24 || F0 != 10)
+        refuse("the ring act takes the cube after the FOUR VERTICAL "
+               "CHAMFERS (the consumption order of D4.1): the state is "
+               "V=" + std::to_string(V0) + " / E=" +
+               std::to_string(E0) + " / F=" + std::to_string(F0) +
+               " where the chain formula 8+2k/12+3k/6+k at k=4 reads "
+               "16/24/10 — the fresh box is the vertical passage's own "
+               "door (chamfer_edge, gated at every step), the single "
+               "corner the m3 door (chamfer_corner_act), and the "
+               "complete operation the twelve-edge door "
+               "(chamfer_twelve_edges). Remedy: chamfer the four "
+               "verticals first, then this act.");
+    const std::size_t chain_k =
+        chamfer_detail::admit_chain_carrier(body, V0, E0, F0,
+                                            refuse);
+    if (chain_k != 4)
+        refuse("the carrier's bevel census reads k=" +
+               std::to_string(chain_k) +
+               " where the counts declare 4 - report this as a kernel "
+               "bug.");
+
+    // ---- THE FACE CENSUS: six planes by axis and side, four bevels
+    // by bisector octant (the payload's own classification — every
+    // face exactly one, doubles refused).
+    std::size_t plane_at[3][2] = {{F0, F0}, {F0, F0}, {F0, F0}};
+    double plane_coord[3][2] = {{0.0, 0.0}, {0.0, 0.0}, {0.0, 0.0}};
+    std::size_t bevel_at[2][2] = {{F0, F0}, {F0, F0}};
+    for (std::size_t f = 0; f < F0; ++f) {
+        const PlaneSurface* pl = plane_of(f);
+        if (pl == nullptr)
+            refuse("face " + std::to_string(f) +
+                   " is not a plane - the admission's families are the "
+                   "box's six planes and the chain's own flat bevels (a "
+                   "curved face is the mixed corner's family, D5.3, "
+                   "the crease merge's seat). Remedy: report the "
+                   "body's construction.");
+        const math::Vec3d n = pl->normal_vec();
+        const auto& sub =
+            body.solid.shell().faces()[f].shape_id().subshape;
+        const bool bevel_stamped =
+            sub.depth == 3 && sub.path[0] == naming::kCheBevelRole &&
+            sub.path[1] < 6 && sub.path[2] < 6;
+        if (bevel_stamped) {
+            if (std::abs(n.z) > 1e-9 ||
+                std::abs(std::abs(n.x) - std::abs(n.y)) > 1e-9 ||
+                std::abs(std::sqrt(n.x * n.x + n.y * n.y) - 1.0) >
+                    1e-9)
+                refuse("a bevel-stamped face's plane is not the "
+                       "vertical bisector's signature - the class "
+                       "signature is the chain's own. Remedy: report "
+                       "the body's construction.");
+            const int bxi = n.x > 0.0 ? 1 : 0;
+            const int byi = n.y > 0.0 ? 1 : 0;
+            if (bevel_at[bxi][byi] != F0)
+                refuse("two bevels share the same bisector octant - "
+                       "the signature is the box family chain at k=4. "
+                       "Remedy: report the body's construction.");
+            bevel_at[bxi][byi] = f;
+        } else {
+            const int axis = std::abs(n.x) > 0.5
+                                 ? 0
+                                 : (std::abs(n.y) > 0.5 ? 1 : 2);
+            const int si = n[axis] > 0.0 ? 1 : 0;
+            if (plane_at[axis][si] != F0)
+                refuse("two planes share the same axis and side - the "
+                       "signature is the box family. Remedy: report "
+                       "the body's construction.");
+            plane_at[axis][si] = f;
+            plane_coord[axis][si] = n.dot(pl->origin()) / n[axis];
+        }
+    }
+    for (int k = 0; k < 3; ++k)
+        if (plane_at[k][0] == F0 || plane_at[k][1] == F0)
+            refuse("a plane's axis census is incomplete - the "
+                   "signature is the box family. Remedy: report the "
+                   "body's construction.");
+    for (int a = 0; a < 2; ++a)
+        for (int b = 0; b < 2; ++b)
+            if (bevel_at[a][b] == F0)
+                refuse("the bevel census is incomplete (a bisector "
+                       "octant missing) - the signature is the chain "
+                       "at k=4. Remedy: report the body's "
+                       "construction.");
+    const auto is_bevel_face = [&](std::size_t f) {
+        return f == bevel_at[0][0] || f == bevel_at[0][1] ||
+               f == bevel_at[1][0] || f == bevel_at[1][1];
+    };
+
+    // ---- THE FRAME from the six planes (the payload's own, the m1
+    // lesson: a translated cube is the same cube to the closed forms)
+    // and THE EQUAL-SIDES CHECK (the twelve-edge family's law: the
+    // box of equal sides — the resized box's per-face bands are the
+    // recipe's world, D5.1/D7).
+    math::Vec3d center{0.0, 0.0, 0.0};
+    for (int k = 0; k < 3; ++k)
+        center[k] =
+            0.5 * (plane_coord[k][0] + plane_coord[k][1]);
+    const double ext_half[3] = {
+        0.5 * (plane_coord[0][1] - plane_coord[0][0]),
+        0.5 * (plane_coord[1][1] - plane_coord[1][0]),
+        0.5 * (plane_coord[2][1] - plane_coord[2][0])};
+    if (std::abs(ext_half[0] - ext_half[1]) > tol ||
+        std::abs(ext_half[1] - ext_half[2]) > tol)
+        refuse("the six planes are not a cube's (the half-extents "
+               "read " + std::to_string(ext_half[0]) + ", " +
+               std::to_string(ext_half[1]) + ", " +
+               std::to_string(ext_half[2]) +
+               ") - the twelve-edge mode's closed forms and band are "
+               "the CUBE's own (the box of equal sides, ADR-0045 "
+               "D1.1; the resized box's per-face law is the recipe's "
+               "world, D5.1/D7). Remedy: chamfer a cube.");
+    const double ext = ext_half[0];
+
+    // ---- THE STAGE BAND, the act's OUTER wall (the act IS the
+    // multi-edge state, its face bands sit behind it): the strips of
+    // the opposing chamfers on every face must not meet (2d < 2·ext),
+    // and at d = ext the six planes die to points — the tangential
+    // collapse, the rhombododecahedron the closed form SEES and the
+    // body does not (D5.1's derivation, the fillet's r=1 precedent).
+    if (setback >= ext - tol)
+        refuse("the setback crosses the STAGE band "
+               "(chamfer_setback_exceeds_face): the setback " +
+               std::to_string(setback) +
+               " against the stage's derived bound " +
+               std::to_string(ext) + " - " + std::to_string(tol) +
+               " (THE TWO READINGS: the faces' own current reach " +
+               std::to_string(2.0 * ext) +
+               " would admit it - the single edge's m1 band, "
+               "satisfied - but the multi-edge state's strips must "
+               "not meet, 2d < 2*ext with the payload's own "
+               "half-extent, and at d = ext the six planes die to "
+               "points - the tangential collapse, the rhombododecahedron "
+               "the closed form sees and the body does not; ADR-0045 "
+               "D5.1's derivation; the body is not the limit, the "
+               "fillet's r=1 precedent). Remedy: keep the twelve-edge "
+               "setback below " + std::to_string(ext - tol) + ".");
+
+    // ---- THE MISMATCH (D5.4's named wall, all four bevels read from
+    // their stored planes): the miter closes inside the corner's
+    // octant only at the common setback.
+    for (int bxi = 0; bxi < 2; ++bxi)
+        for (int byi = 0; byi < 2; ++byi) {
+            const std::size_t f = bevel_at[bxi][byi];
+            const PlaneSurface* pl = plane_of(f);
+            const math::Vec3d n = pl->normal_vec();
+            const double sx = bxi ? 1.0 : -1.0;
+            const double sy = byi ? 1.0 : -1.0;
+            const double rhs = sx * (center.x + sx * ext) +
+                               sy * (center.y + sy * ext);
+            const double d_v =
+                rhs - std::sqrt(2.0) * (n.x * pl->origin().x +
+                                        n.y * pl->origin().y);
+            if (!(d_v > 0.0 && d_v < 2.0 * ext))
+                refuse("a vertical bevel's plane is not the class's "
+                       "bisector (the offset read " +
+                       std::to_string(d_v) +
+                       ") - report this as a kernel bug.");
+            if (std::abs(d_v - setback) > tol)
+                refuse("the corner's setbacks disagree "
+                       "(chamfer_corner_setback_mismatch): the "
+                       "requested " + std::to_string(setback) +
+                       " against the vertical bevel's own " +
+                       std::to_string(d_v) +
+                       " - the miter is the THREE planes' concurrence "
+                       "and closes inside the corner's octant only at "
+                       "the COMMON setback (at unequal setbacks the "
+                       "concurrence point exits the octant save the "
+                       "triangular inequalities, and the closure "
+                       "degenerates into the asymmetric window — the "
+                       "flat vertex blend, out of the exact world, "
+                       "D5.4). Remedy: chamfer the whole cube at the "
+                       "same setback.");
+        }
+
+    // ---- THE EDGE CENSUS: eight ring edges, eight cap segments,
+    // eight wires — every edge classified (the classification itself
+    // the wall against the counts-matching impostors).
+    std::vector<std::size_t> ring_edges, cap_segs, wires;
+    for (std::size_t ei = 0; ei < E0; ++ei) {
+        const auto& e = body.edges[ei];
+        const math::Vec3d& pa =
+            vpos(static_cast<std::size_t>(e.vertex(0)));
+        const math::Vec3d& pb =
+            vpos(static_cast<std::size_t>(e.vertex(1)));
+        const auto& ces = e.coedges();
+        if (ces.size() != 2)
+            refuse("edge " + std::to_string(ei) + " carries " +
+                   std::to_string(ces.size()) +
+                   " co-edges - the chain's edges are radial twos. "
+                   "Remedy: report the body's construction.");
+        const std::size_t f0 = face_of_coedge(ces[0]);
+        const std::size_t f1 = face_of_coedge(ces[1]);
+        const bool b0 = is_bevel_face(f0);
+        const bool b1 = is_bevel_face(f1);
+        const bool vertical = std::abs(pa.x - pb.x) <= tol &&
+                              std::abs(pa.y - pb.y) <= tol;
+        const bool horizontal = std::abs(pa.z - pb.z) <= tol;
+        if (vertical && (b0 != b1))
+            wires.push_back(ei);
+        else if (horizontal && (b0 != b1))
+            cap_segs.push_back(ei);
+        else if (horizontal && !b0 && !b1 &&
+                 (std::abs(pa.x - pb.x) <= tol ||
+                  std::abs(pa.y - pb.y) <= tol))
+            ring_edges.push_back(ei);
+        else
+            refuse("edge " + std::to_string(ei) +
+                   " is outside the chain's three kinds (the wire, "
+                   "the cap segment, the ring edge) - the signature "
+                   "is the box family chain at k=4. Remedy: report "
+                   "the body's construction.");
+    }
+    if (wires.size() != 8 || cap_segs.size() != 8 ||
+        ring_edges.size() != 8)
+        refuse("the edge census reads " + std::to_string(wires.size()) +
+               " wires, " + std::to_string(cap_segs.size()) +
+               " cap segments and " + std::to_string(ring_edges.size()) +
+               " ring edges (the class's own are eight each). Remedy: "
+               "report the body's construction.");
+
+    // ---- THE CLOSED FORMS' OWN TABLES. The eight corners in the
+    // deterministic sign-triple order (the fillet ring act's own);
+    // the rings read with their two planes, their axis and their two
+    // end corners (THE ENDS FROM THE PLANES' OWN SIGNS — the 17/11
+    // law: the corner at each end a fact of the planes, never an
+    // ordering of coordinates); the cap segments' corners and the
+    // wires' identities read through the junctions.
+    const auto corner_index = [](int sx, int sy, int sz) {
+        return (sx < 0 ? 4 : 0) + (sy < 0 ? 2 : 0) + (sz < 0 ? 1 : 0);
+    };
+    struct CornerInfo {
+        int sx{0}, sy{0}, sz{0};
+        math::Vec3d C{}, M{}, P[3]{};
+        std::size_t face[3]{};
+        std::size_t v_M{0}, v_P[3]{};
+        std::size_t e_m[3]{};
+        std::size_t vert_bevel{0};
+        std::size_t ring[2]{};
+    };
+    CornerInfo corners[8];
+    for (int c = 0; c < 8; ++c) {
+        CornerInfo& ci = corners[c];
+        ci.sx = (c & 4) ? -1 : 1;
+        ci.sy = (c & 2) ? -1 : 1;
+        ci.sz = (c & 1) ? -1 : 1;
+        ci.C = {center.x + ci.sx * ext, center.y + ci.sy * ext,
+                center.z + ci.sz * ext};
+        const math::Vec3d n[3] = {
+            {static_cast<double>(ci.sx), 0.0, 0.0},
+            {0.0, static_cast<double>(ci.sy), 0.0},
+            {0.0, 0.0, static_cast<double>(ci.sz)}};
+        ci.M = ci.C - (n[0] + n[1] + n[2]) * (0.5 * setback);
+        for (int k = 0; k < 3; ++k)
+            ci.P[k] =
+                ci.C - (n[(k + 1) % 3] + n[(k + 2) % 3]) * setback;
+        ci.face[0] = plane_at[0][ci.sx > 0 ? 1 : 0];
+        ci.face[1] = plane_at[1][ci.sy > 0 ? 1 : 0];
+        ci.face[2] = plane_at[2][ci.sz > 0 ? 1 : 0];
+        ci.vert_bevel =
+            bevel_at[ci.sx > 0 ? 1 : 0][ci.sy > 0 ? 1 : 0];
+    }
+    struct RingInfo {
+        std::size_t edge{}, fa{}, fb{};
+        std::size_t face_cap{}, face_lat{};
+        int axis{-1};
+        int k_lat{-1};
+        int corner_lo{0}, corner_hi{0};
+        std::size_t e_sb_cap{}, e_sb_lat{};
+        std::size_t f_bevel{};
+        math::Vec3d n_cap{}, n_lat{}, origin{};
+    };
+    RingInfo rings[8];
+    for (std::size_t ri = 0; ri < ring_edges.size(); ++ri) {
+        RingInfo& r = rings[ri];
+        r.edge = ring_edges[ri];
+        const auto& e = body.edges[r.edge];
+        const math::Vec3d& pa =
+            vpos(static_cast<std::size_t>(e.vertex(0)));
+        const math::Vec3d& pb =
+            vpos(static_cast<std::size_t>(e.vertex(1)));
+        const bool x_par = std::abs(pa.y - pb.y) <= tol &&
+                           std::abs(pa.z - pb.z) <= tol;
+        r.axis = x_par ? 0 : 1;
+        const auto& ces = e.coedges();
+        r.fa = face_of_coedge(ces[0]);
+        r.fb = face_of_coedge(ces[1]);
+        for (const std::size_t f : {r.fa, r.fb}) {
+            const PlaneSurface* pl = plane_of(f);
+            if (pl == nullptr)
+                refuse("a ring edge borders a non-planar face - the "
+                       "signature is the box family. Remedy: report "
+                       "the body's construction.");
+            const math::Vec3d n = pl->normal_vec();
+            if (std::abs(n.z) > 0.5) {
+                r.face_cap = f;
+                r.n_cap = n;
+            } else {
+                r.face_lat = f;
+                r.n_lat = n;
+                r.k_lat = std::abs(n.x) > 0.5 ? 0 : 1;
+            }
+        }
+        if (r.face_cap == r.face_lat || r.k_lat == r.axis)
+            refuse("a ring edge's adjacent faces are not a cap and a "
+                   "perpendicular lateral - the signature is the box "
+                   "family. Remedy: report the body's construction.");
+        const int s_cap = r.n_cap.z > 0.0 ? 1 : -1;
+        const int s_lat = r.k_lat == 0
+                              ? (r.n_lat.x > 0.0 ? 1 : -1)
+                              : (r.n_lat.y > 0.0 ? 1 : -1);
+        if (r.axis == 0) {
+            r.corner_lo = corner_index(-1, s_lat, s_cap);
+            r.corner_hi = corner_index(1, s_lat, s_cap);
+        } else {
+            r.corner_lo = corner_index(s_lat, -1, s_cap);
+            r.corner_hi = corner_index(s_lat, 1, s_cap);
+        }
+        const math::Vec3d mid = (pa + pb) * 0.5;
+        r.origin = mid - (r.n_cap + r.n_lat) * (0.5 * setback);
+    }
+    for (std::size_t ri = 0; ri < 8; ++ri) {
+        const RingInfo& r = rings[ri];
+        for (const int c : {r.corner_lo, r.corner_hi}) {
+            const CornerInfo& ci = corners[c];
+            const bool seat =
+                r.axis == 0
+                    ? (ci.face[1] == r.face_lat &&
+                       ci.face[2] == r.face_cap)
+                    : (ci.face[0] == r.face_lat &&
+                       ci.face[2] == r.face_cap);
+            if (!seat)
+                refuse("a ring edge's end planes do not meet at its "
+                       "corner - the signature is the box family. "
+                       "Remedy: report the body's construction.");
+            corners[c].ring[r.axis] = ri;
+        }
+    }
+    int seg_corner[8];
+    for (std::size_t si = 0; si < cap_segs.size(); ++si) {
+        const auto& e = body.edges[cap_segs[si]];
+        std::size_t cap_f = F0, bevel_f = F0;
+        for (const CoEdge* ce : e.coedges()) {
+            const std::size_t f = face_of_coedge(ce);
+            if (is_bevel_face(f))
+                bevel_f = f;
+            else
+                cap_f = f;
+        }
+        const PlaneSurface* pl_cap = plane_of(cap_f);
+        const PlaneSurface* pl_bev = plane_of(bevel_f);
+        if (pl_cap == nullptr || pl_bev == nullptr)
+            refuse("a cap segment's faces are not planes - report "
+                   "this as a kernel bug.");
+        seg_corner[si] = corner_index(
+            pl_bev->normal_vec().x > 0.0 ? 1 : -1,
+            pl_bev->normal_vec().y > 0.0 ? 1 : -1,
+            pl_cap->normal_vec().z > 0.0 ? 1 : -1);
+    }
+    struct WireInfo {
+        std::size_t edge{};
+        std::size_t lateral{}, bevel{};
+        int k_lat{-1};
+        int corner[2]{};
+    };
+    WireInfo wire_info[8];
+    for (std::size_t wi = 0; wi < wires.size(); ++wi) {
+        WireInfo& w = wire_info[wi];
+        w.edge = wires[wi];
+        for (const CoEdge* ce : body.edges[w.edge].coedges()) {
+            const std::size_t f = face_of_coedge(ce);
+            if (is_bevel_face(f)) {
+                w.bevel = f;
+            } else {
+                w.lateral = f;
+                const math::Vec3d n = plane_of(f)->normal_vec();
+                w.k_lat = std::abs(n.x) > 0.5 ? 0 : 1;
+            }
+        }
+        // The two ends' corners, read through the junctions: each
+        // dead foot's cap segment names the cap's side, the wire's
+        // own bevel the octant (the 17/11 law — never the ordering).
+        for (const int endp : {0, 1}) {
+            const std::size_t foot = static_cast<std::size_t>(
+                body.edges[w.edge].vertex(endp));
+            bool found = false;
+            for (std::size_t si = 0; si < cap_segs.size() && !found;
+                 ++si) {
+                const auto& seg = body.edges[cap_segs[si]];
+                if (seg.vertex(0) == static_cast<VertexId>(foot) ||
+                    seg.vertex(1) == static_cast<VertexId>(foot)) {
+                    w.corner[endp] = seg_corner[si];
+                    found = true;
+                }
+            }
+            if (!found)
+                refuse("a wire's dead foot carries no cap segment - "
+                       "the class signature is the chain's own (the "
+                       "m1 walk's born pair at each end). Remedy: "
+                       "report the body's construction.");
+        }
+    }
+
+    // ---- The maps and the numbering table. ALL sixteen vertices die
+    // (the m1 walks' feet); the edges: sixteen deaths (the ring edges
+    // and the cap segments), eight survivors (the wires, RE-SPANNED).
+    // The born: the miters first (the corner order), then the
+    // retreats (the corner order, the face axis within); the born
+    // edges: the miter lines first (the corner order, the shared
+    // face's axis within), then the ring setback lines (the census
+    // order, the cap before the lateral); the faces: the survivors
+    // keep their indices, the ring bevels append in the census order.
+    std::vector<std::size_t> emap(E0, E0);
+    {
+        std::size_t next = 0;
+        for (std::size_t i = 0; i < E0; ++i) {
+            bool dead = false;
+            for (const std::size_t r : ring_edges)
+                if (i == r) dead = true;
+            for (const std::size_t s : cap_segs)
+                if (i == s) dead = true;
+            if (!dead) emap[i] = next++;
+        }
+    }
+    const std::size_t e_base = E0 - 16;
+    for (int c = 0; c < 8; ++c) {
+        CornerInfo& ci = corners[c];
+        ci.v_M = static_cast<std::size_t>(c);
+        for (int k = 0; k < 3; ++k) {
+            ci.v_P[k] = 8 + 3 * static_cast<std::size_t>(c) +
+                        static_cast<std::size_t>(k);
+            ci.e_m[k] = e_base + 3 * static_cast<std::size_t>(c) +
+                        static_cast<std::size_t>(k);
+        }
+    }
+    for (std::size_t ri = 0; ri < 8; ++ri) {
+        rings[ri].e_sb_cap = e_base + 24 + 2 * ri;
+        rings[ri].e_sb_lat = e_base + 24 + 2 * ri + 1;
+        rings[ri].f_bevel = F0 + ri;
+    }
+    // The re-spanning substitution (the 17/11 law's own rule): each
+    // wire's dead foot replaced by the retreat on the WIRE's own
+    // lateral at the foot's OWN corner (the junction's cap segment).
+    const auto new_end = [&](std::size_t old_v,
+                             std::size_t ei) -> std::size_t {
+        for (std::size_t wi = 0; wi < wires.size(); ++wi) {
+            if (wires[wi] != ei) continue;
+            for (const int endp : {0, 1})
+                if (body.edges[ei].vertex(endp) ==
+                    static_cast<VertexId>(old_v))
+                    return corners[wire_info[wi].corner[endp]]
+                        .v_P[wire_info[wi].k_lat];
+        }
+        refuse("a dead vertex on an edge outside the re-spanned set - "
+               "report this as a kernel bug.");
+        return 0;  // unreachable — refuse() throws
+    };
+
+    auto R = std::make_unique<BRepBody>();
+    auto& shell = R->solid.shell_mut();
+    shell.set_closed(true);
+    const ProvenanceInfo prov = ProvenanceInfo::exact();
+
+    // ---- The vertices: the born thirty-two, in id order.
+    for (int c = 0; c < 8; ++c) {
+        Vertex v{corners[c].M};
+        v.set_id(static_cast<VertexId>(c));
+        v.set_provenance(prov);
+        R->vertices.push_back(v);
+    }
+    for (int c = 0; c < 8; ++c)
+        for (int k = 0; k < 3; ++k) {
+            Vertex v{corners[c].P[k]};
+            v.set_id(static_cast<VertexId>(8 + 3 * c + k));
+            v.set_provenance(prov);
+            R->vertices.push_back(v);
+        }
+
+    // ---- The edges: the eight wires (the survivors, the endpoints
+    // re-spanned), then the born forty.
+    for (std::size_t i = 0; i < E0; ++i) {
+        if (emap[i] == E0) continue;
+        R->edges.push_back(body.edges[i]);
+        auto& e = R->edges.back();
+        e.set_id(static_cast<EdgeId>(emap[i]));
+        e.set_vertex(0, static_cast<VertexId>(new_end(
+                            static_cast<std::size_t>(e.vertex(0)), i)));
+        e.set_vertex(1, static_cast<VertexId>(new_end(
+                            static_cast<std::size_t>(e.vertex(1)), i)));
+    }
+    for (int c = 0; c < 8; ++c) {
+        const CornerInfo& ci = corners[c];
+        const std::pair<std::size_t, std::size_t> born[3] = {
+            {ci.v_P[0], ci.v_M}, {ci.v_P[1], ci.v_M},
+            {ci.v_P[2], ci.v_M}};
+        for (const auto& [a, b] : born) {
+            Edge e{static_cast<VertexId>(a),
+                   static_cast<VertexId>(b)};
+            e.set_id(static_cast<EdgeId>(R->edges.size()));
+            e.set_provenance(prov);
+            R->edges.push_back(e);
+        }
+    }
+    for (std::size_t ri = 0; ri < 8; ++ri) {
+        const RingInfo& r = rings[ri];
+        const CornerInfo& lo = corners[r.corner_lo];
+        const CornerInfo& hi = corners[r.corner_hi];
+        const std::pair<std::size_t, std::size_t> born[2] = {
+            {lo.v_P[2], hi.v_P[2]},
+            {lo.v_P[r.k_lat], hi.v_P[r.k_lat]}};
+        for (const auto& [a, b] : born) {
+            Edge e{static_cast<VertexId>(a),
+                   static_cast<VertexId>(b)};
+            e.set_id(static_cast<EdgeId>(R->edges.size()));
+            e.set_provenance(prov);
+            R->edges.push_back(e);
+        }
+    }
+
+    // ---- The walk authoring: the face's new edge set chained into
+    // the unique cycle (every vertex of the window degree two — the
+    // adjacency the topology's own), started at the lowest edge id in
+    // its stored direction, oriented CCW in the face's own domain by
+    // the measured signed-area correction (the m3 sweep's own rule:
+    // the frame's octant never assumed).
+    const auto pos3 = [&](std::size_t v) -> const math::Vec3d& {
+        return R->vertices[v].position();
+    };
+    const auto emit_planar = [&](Loop& loop, const PlaneSurface& pl,
+                                 std::size_t e_id, std::size_t a,
+                                 std::size_t b) {
+        const auto& stored = R->edges[e_id];
+        const bool fwd =
+            stored.vertex(0) == static_cast<VertexId>(a) &&
+            stored.vertex(1) == static_cast<VertexId>(b);
+        const bool rev =
+            stored.vertex(0) == static_cast<VertexId>(b) &&
+            stored.vertex(1) == static_cast<VertexId>(a);
+        if (!fwd && !rev)
+            refuse("the re-authored walk lost the chaining - report "
+                   "this as a kernel bug.");
+        CoEdge ce{static_cast<EdgeId>(e_id), rev};
+        ce.set_p_curve(pcurve_segment(
+            chamfer_detail::dom_of(pl, pos3(a)),
+            chamfer_detail::dom_of(pl, pos3(b)),
+            /*interior_left=*/true));
+        loop.add_coedge(ce);
+    };
+    const auto author_face = [&](Face& face, const PlaneSurface& pl,
+                                 const std::vector<std::size_t>&
+                                     edge_ids) {
+        if (edge_ids.size() < 3)
+            refuse("a re-windowed face's edge set is degenerate - "
+                   "report this as a kernel bug.");
+        std::size_t start = edge_ids[0];
+        for (const std::size_t e : edge_ids)
+            if (e < start) start = e;
+        std::vector<bool> used(edge_ids.size(), false);
+        for (std::size_t j = 0; j < edge_ids.size(); ++j)
+            if (edge_ids[j] == start) used[j] = true;
+        Loop loop;
+        const std::size_t first = static_cast<std::size_t>(
+            R->edges[start].vertex(0));
+        std::size_t cur = static_cast<std::size_t>(
+            R->edges[start].vertex(1));
+        emit_planar(loop, pl, start, first, cur);
+        while (cur != first) {
+            bool advanced = false;
+            for (std::size_t j = 0; j < edge_ids.size(); ++j) {
+                if (used[j]) continue;
+                const auto& be = R->edges[edge_ids[j]];
+                const std::size_t b0 = static_cast<std::size_t>(
+                    be.vertex(0));
+                const std::size_t b1 = static_cast<std::size_t>(
+                    be.vertex(1));
+                if (b0 == cur) {
+                    emit_planar(loop, pl, edge_ids[j], cur, b1);
+                    used[j] = true;
+                    cur = b1;
+                    advanced = true;
+                    break;
+                }
+                if (b1 == cur) {
+                    emit_planar(loop, pl, edge_ids[j], cur, b0);
+                    used[j] = true;
+                    cur = b0;
+                    advanced = true;
+                    break;
+                }
+            }
+            if (!advanced)
+                refuse("the re-windowed walk lost the chaining (the "
+                       "edge set is not a cycle at the walk's "
+                       "position) - report this as a kernel bug.");
+        }
+        chamfer_detail::ensure_ccw(loop);
+        face.add_loop(std::move(loop));
+    };
+    const auto place_face = [&](std::size_t f_index, Face&& face) {
+        auto& faces_mut = shell.faces_mut();
+        if (faces_mut.size() <= f_index)
+            faces_mut.resize(f_index + 1);
+        faces_mut[f_index] = std::move(face);
+    };
+
+    // ---- The six planes re-windowed (the retreats' four-edge
+    // windows: the caps' four ring setback lines; the laterals' two
+    // re-spanned wires + two ring setback lines) — the records kept,
+    // the Absorbed edit.
+    for (int axis = 0; axis < 3; ++axis)
+        for (int si = 0; si < 2; ++si) {
+            const std::size_t f = plane_at[axis][si];
+            const Face& src = body.solid.shell().faces()[f];
+            const PlaneSurface* pl = plane_of(f);
+            std::vector<std::size_t> set;
+            for (std::size_t wi = 0; wi < wires.size(); ++wi)
+                if (wire_info[wi].lateral == f)
+                    set.push_back(emap[wires[wi]]);
+            for (std::size_t ri = 0; ri < 8; ++ri) {
+                if (rings[ri].face_cap == f)
+                    set.push_back(rings[ri].e_sb_cap);
+                if (rings[ri].face_lat == f)
+                    set.push_back(rings[ri].e_sb_lat);
+            }
+            if (set.size() != 4)
+                refuse("a plane's re-windowed edge set is not the "
+                       "retreats' four - report this as a kernel "
+                       "bug.");
+            Face face(std::make_shared<PlaneSurface>(*pl));
+            author_face(face, *pl, set);
+            face.set_id(static_cast<FaceId>(f));
+            face.set_shape_id(src.shape_id());
+            face.set_name(src.name());
+            face.set_provenance(src.provenance());
+            place_face(f, std::move(face));
+        }
+
+    // ---- The four vertical bevels RE-WINDOWED (the hexagons: the
+    // two wires re-spanned, the two cap segments dead with the cause
+    // verbatim "replaced by the miter line", the four miter lines
+    // born at its two corners) — the stamp and the name KEPT.
+    for (int bxi = 0; bxi < 2; ++bxi)
+        for (int byi = 0; byi < 2; ++byi) {
+            const std::size_t f = bevel_at[bxi][byi];
+            const Face& src = body.solid.shell().faces()[f];
+            const PlaneSurface* pl = plane_of(f);
+            const int sx = bxi ? 1 : -1;
+            const int sy = byi ? 1 : -1;
+            const int c_bot = corner_index(sx, sy, -1);
+            const int c_top = corner_index(sx, sy, 1);
+            std::vector<std::size_t> set;
+            for (std::size_t wi = 0; wi < wires.size(); ++wi)
+                if (wire_info[wi].bevel == f)
+                    set.push_back(emap[wires[wi]]);
+            for (const int c : {c_bot, c_top}) {
+                set.push_back(corners[c].e_m[0]);
+                set.push_back(corners[c].e_m[1]);
+            }
+            if (set.size() != 6)
+                refuse("a vertical bevel's re-windowed edge set is "
+                       "not the hexagon's six - report this as a "
+                       "kernel bug.");
+            Face face(std::make_shared<PlaneSurface>(*pl));
+            author_face(face, *pl, set);
+            face.set_id(static_cast<FaceId>(f));
+            face.set_shape_id(src.shape_id());
+            face.set_name(src.name());
+            face.set_provenance(src.provenance());
+            place_face(f, std::move(face));
+        }
+
+    // ---- The eight ring bevels BORN (the hexagons: two setback
+    // lines, four miter lines — both ends mitred, GIÀ RIFINITI), the
+    // plane the m1 bisector form one axis over (the edge's midpoint
+    // retreated by d/2 along the two normals' sum).
+    for (std::size_t ri = 0; ri < 8; ++ri) {
+        const RingInfo& r = rings[ri];
+        const CornerInfo& lo = corners[r.corner_lo];
+        const CornerInfo& hi = corners[r.corner_hi];
+        const math::Vec3d bis = r.n_cap + r.n_lat;
+        const math::Vec3d bis_unit =
+            bis * (1.0 / std::sqrt(bis.length_sq()));
+        auto surf = std::make_shared<PlaneSurface>(r.origin, bis_unit);
+        const PlaneSurface* pl = surf.get();
+        std::vector<std::size_t> set = {
+            r.e_sb_cap, r.e_sb_lat, lo.e_m[r.k_lat], lo.e_m[2],
+            hi.e_m[r.k_lat], hi.e_m[2]};
+        Face face(std::move(surf));
+        author_face(face, *pl, set);
+        face.set_id(static_cast<FaceId>(r.f_bevel));
+        face.set_provenance(prov);
+        place_face(r.f_bevel, std::move(face));
+    }
+
+    // ---- THE NAMING (the act's own vocabulary): the eight ring
+    // bevels (the operands the dead ring edges' adjacent faces in the
+    // CO-EDGE order — the m1 discipline, input-order-independent),
+    // their sixteen setback wires (the isect grammar: the landing
+    // face first, the bevel nested), and the twenty-four miter lines
+    // (the m3 role: the vertical bevel's own path verbatim where it
+    // is a party — the faithful identity — the two ring bevels in
+    // their face-index order at the cap's miter).
+    {
+        bool all_named = naming.body != nullptr;
+        for (int axis = 0; axis < 3 && all_named; ++axis)
+            for (int si = 0; si < 2; ++si)
+                if (body.solid.shell()
+                        .faces()[plane_at[axis][si]]
+                        .shape_id()
+                        .subshape.depth == 0)
+                    all_named = false;
+        for (int a = 0; a < 2 && all_named; ++a)
+            for (int b = 0; b < 2; ++b)
+                if (body.solid.shell()
+                        .faces()[bevel_at[a][b]]
+                        .shape_id()
+                        .subshape.depth == 0)
+                    all_named = false;
+        if (all_named) {
+            const Face& src_plane0 =
+                body.solid.shell().faces()[plane_at[0][0]];
+            naming::OperandBinding che_operands[2] = {
+                {src_plane0.shape_id().feature, naming.body},
+                {naming.feature, nullptr}};
+            const naming::OperationNaming che_decl{
+                naming::FeatureKind::Chamfer,
+                naming::kChamferFaceRoles, naming::kChamferEdgeRoles,
+                che_operands};
+            che_operands[1].naming = &che_decl;
+            const auto leg = [](geometry::SubshapeRef ref,
+                                const Face& operand) {
+                for (std::uint8_t k = 0;
+                     k < operand.shape_id().subshape.depth; ++k)
+                    ref = ref.push(
+                        operand.shape_id().subshape.path[k]);
+                return ref;
+            };
+            const auto bevel_ref_of = [&](const Face& fa,
+                                          const Face& fb) {
+                geometry::SubshapeRef ref =
+                    geometry::SubshapeRef{}.push(
+                        naming::kCheBevelRole);
+                ref = leg(ref, fa);
+                ref = leg(ref, fb);
+                return ref;
+            };
+            const auto stamp_bevel = [&](std::size_t f_new,
+                                         const Face& fa,
+                                         const Face& fb) {
+                const geometry::SubshapeRef ref =
+                    bevel_ref_of(fa, fb);
+                auto& face = shell.faces_mut()[f_new];
+                face.set_shape_id({naming.feature, ref, {}});
+                face.set_name(naming::render_name(
+                    naming.feature, ref, che_decl.faces()));
+            };
+            const auto stamp_wire = [&](std::size_t e_new,
+                                        const Face& landing,
+                                        const Face& fa,
+                                        const Face& fb) {
+                geometry::SubshapeRef wref =
+                    geometry::SubshapeRef{}.push(
+                        naming::kCheIsectRole);
+                wref = leg(wref, landing);
+                wref = wref.push(naming::kCheBevelRole);
+                wref = leg(wref, fa);
+                wref = leg(wref, fb);
+                R->edges[e_new].set_shape_id(
+                    {naming.feature, wref, {}});
+                R->edges[e_new].set_name(naming::render_name(
+                    naming.feature, wref, che_decl.edges()));
+            };
+            const auto stamp_miter =
+                [&](std::size_t e_new,
+                    const geometry::SubshapeRef& r1,
+                    const geometry::SubshapeRef& r2) {
+                    geometry::SubshapeRef wref =
+                        geometry::SubshapeRef{}.push(
+                            naming::kCheMiterRole);
+                    for (std::uint8_t k = 0; k < r1.depth; ++k)
+                        wref = wref.push(r1.path[k]);
+                    for (std::uint8_t k = 0; k < r2.depth; ++k)
+                        wref = wref.push(r2.path[k]);
+                    R->edges[e_new].set_shape_id(
+                        {naming.feature, wref, {}});
+                    R->edges[e_new].set_name(naming::render_name(
+                        naming.feature, wref, che_decl.edges()));
+                };
+            for (std::size_t ri = 0; ri < 8; ++ri) {
+                const RingInfo& r = rings[ri];
+                const Face& fa =
+                    body.solid.shell().faces()[r.fa];
+                const Face& fb =
+                    body.solid.shell().faces()[r.fb];
+                stamp_bevel(r.f_bevel, fa, fb);
+                stamp_wire(r.e_sb_cap,
+                           body.solid.shell().faces()[r.face_cap],
+                           fa, fb);
+                stamp_wire(r.e_sb_lat,
+                           body.solid.shell().faces()[r.face_lat],
+                           fa, fb);
+            }
+            for (int c = 0; c < 8; ++c) {
+                const CornerInfo& ci = corners[c];
+                const RingInfo& rx = rings[ci.ring[0]];
+                const RingInfo& ry = rings[ci.ring[1]];
+                const geometry::SubshapeRef ref_V =
+                    body.solid.shell()
+                        .faces()[ci.vert_bevel]
+                        .shape_id()
+                        .subshape;
+                const geometry::SubshapeRef ref_Rx = bevel_ref_of(
+                    body.solid.shell().faces()[rx.fa],
+                    body.solid.shell().faces()[rx.fb]);
+                const geometry::SubshapeRef ref_Ry = bevel_ref_of(
+                    body.solid.shell().faces()[ry.fa],
+                    body.solid.shell().faces()[ry.fb]);
+                stamp_miter(ci.e_m[0], ref_V, ref_Ry);
+                stamp_miter(ci.e_m[1], ref_V, ref_Rx);
+                if (rx.f_bevel < ry.f_bevel)
+                    stamp_miter(ci.e_m[2], ref_Rx, ref_Ry);
+                else
+                    stamp_miter(ci.e_m[2], ref_Ry, ref_Rx);
+            }
+        }
+    }
+
+    // ---- THE OUTPUT GATE (the act's own arithmetic, hard
+    // postconditions).
+    link_radial_edges(*R);
+    if (!loops_are_closed(*R))
+        throw std::runtime_error(
+            "chamfer_ring_act: postcondition failed - a loop does "
+            "not chain (an assembly defect in the act's re-windowed "
+            "walks; report this as a kernel bug)");
+    if (!is_closed_orientable(*R))
+        throw std::runtime_error(
+            "chamfer_ring_act: postcondition failed - the closed-"
+            "orientable contract broke (every edge exactly two "
+            "opposite co-edges; report this as a kernel bug)");
+    if (R->vertex_count() != V0 - 16 + 32 ||
+        R->edge_count() != E0 - 16 + 40 ||
+        R->face_count() != F0 + 8)
+        throw std::runtime_error(
+            "chamfer_ring_act: postcondition failed - the counts "
+            "moved (the act's own arithmetic is V-16+32 / E-16+40 / "
+            "F+8; report this as a kernel bug)");
+    if (euler_characteristic(*R) != euler_characteristic(body))
+        throw std::runtime_error(
+            "chamfer_ring_act: postcondition failed - chi moved (the "
+            "act is chi-flat by construction, Delta-chi = +16 - 24 "
+            "+ 8 = 0; report this as a kernel bug)");
+    return R;
+}
+
+// ---------------------------------------------------------------------------
+// chamfer_twelve_edges — THE COMPLETE TWELVE-EDGE OPERATION (G6 m4, the
+// ADR's D1.1 guide case: IL CUBO INTERAMENTE SMUSSATO): the fresh
+// factory box in, the fully chamfered cube out — the four vertical
+// bevels (the landed M1/M2 chain, every walk gated by its own output
+// gate and admitted by its own five-band law) and the atomic
+// ring-and-miter act (chamfer_ring_act, above) composed in ONE door.
+//
+// THE TRANSACTION: the intermediate states are the door's OWN
+// internals — nothing partially chamfered becomes visible or
+// persistent (a refusal at any stage throws with the refusing door's
+// own diagnosis and remedy, the caller's body untouched, nothing
+// published); the publication is the COMPLETE validated result or
+// nothing (Phase 1's own law).
+//
+// THE NAMING: one operation, one DAG node — the naming context's ONE
+// feature id owns everything the door births (the four vertical
+// bevels and the eight ring bevels distinct by their operand pairs,
+// the wires, the miter lines — the same-feature extension the fillet
+// bought, one feature over).
+//
+// The four verticals are found BY STAMP (the box's own edge roles
+// 8..11, the feature read from the found rows — the structural
+// reference, never an address) and fired in the table's own order —
+// the same closed forms, the same gate, the landed goldens'
+// machinery verbatim (D4.1's own freedom: the vertical passage
+// sequential, the ring and the miters indivisible).
+// ---------------------------------------------------------------------------
+inline std::unique_ptr<BRepBody> chamfer_twelve_edges(
+    const BRepBody& body, double setback,
+    const ChamferNaming& naming = ChamferNaming{},
+    double tol = kChamferTolerance) {
+    const std::size_t V0 = body.vertices.size();
+    const std::size_t E0 = body.edges.size();
+    const std::size_t F0 = body.face_count();
+
+    const auto refuse = [](const std::string& what) {
+        throw std::invalid_argument("chamfer_twelve_edges: " + what);
+    };
+
+    // ---- The setback's own gate.
+    if (!(setback > 0.0) || !std::isfinite(setback))
+        refuse("the setback must be finite and > 0, got " +
+               std::to_string(setback) +
+               " — a non-positive setback has no bevel plane and no "
+               "setback lines. Remedy: author a positive setback "
+               "within the stage's band (the admission derives).");
+
+    // ---- THE STATE: the fresh factory box (k = 0) — the partial
+    // chains are the landed walks' own world, the four-vertical state
+    // the ring act's own door.
+    const std::size_t chain_k =
+        chamfer_detail::admit_chain_carrier(body, V0, E0, F0,
+                                            refuse);
+    if (chain_k != 0)
+        refuse("the twelve-edge operation takes the FRESH factory box "
+               "(k = 0: 8 vertices, 12 edges, 6 faces) - the carrier "
+               "reads k=" + std::to_string(chain_k) +
+               " previous vertical chamfers, and the partial chains "
+               "are the landed walks' own world (chamfer_edge, the "
+               "M1/M2 chain, gated at every step), the four-vertical "
+               "state the ring act's own door (chamfer_ring_act). "
+               "Remedy: pass the factory box, or compose the doors by "
+               "hand.");
+
+    // ---- THE FOUR VERTICALS, found by stamp (the box's edge roles
+    // 8..11 — the verticals' own table rows, edge-only in the path
+    // space), one feature shared, fired in the table's own order.
+    // Every walk is the landed m1 machine verbatim: its admission
+    // (the reference find, the verticality, the dihedral, the typed
+    // bands, THE STAGE BAND d < 1 with the two readings from the
+    // second link on — the collapse refused here, at the chain's own
+    // door) and its output gate (the counts, chi, the closed walks).
+    std::vector<std::unique_ptr<BRepBody>> owned;
+    const BRepBody* cur = &body;
+    for (std::uint32_t role = 8; role < 12; ++role) {
+        const std::size_t Ec = cur->edges.size();
+        std::size_t found = Ec;
+        geometry::FeatureId feature{};
+        for (std::size_t i = 0; i < Ec; ++i) {
+            const auto& id = cur->edges[i].shape_id();
+            if (id.subshape.depth != 1 ||
+                id.subshape.path[0] != role)
+                continue;
+            if (found != Ec)
+                refuse("the box's vertical role " +
+                       std::to_string(role) +
+                       " materializes twice on this carrier - report "
+                       "this as a kernel bug.");
+            found = i;
+            feature = id.feature;
+        }
+        if (found == Ec)
+            refuse("the box's vertical role " +
+                   std::to_string(role) +
+                   " finds no edge of this body - the carrier is not "
+                   "the factory box the admission verified (the "
+                   "structural find against the stamps). Remedy: "
+                   "report this as a kernel bug.");
+        for (std::size_t i = 0; i < Ec; ++i) {
+            const auto& id = cur->edges[i].shape_id();
+            if (id.subshape.depth == 1 && id.subshape.path[0] >= 8 &&
+                id.subshape.path[0] <= 11 &&
+                id.feature != feature)
+                refuse("the carrier's vertical-role edges disagree on "
+                       "their creating feature - the carrier is not "
+                       "the factory box. Remedy: report this as a "
+                       "kernel bug.");
+        }
+        owned.push_back(chamfer_edge(
+            *cur, cur->edges[found].shape_id(), setback, naming,
+            tol));
+        cur = owned.back().get();
+    }
+
+    // ---- THE RING AND THE MITERS, indivisible — the act's own door.
+    return chamfer_ring_act(*cur, setback, naming, tol);
+}
+
 } // namespace CAD_0::brep

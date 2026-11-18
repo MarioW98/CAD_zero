@@ -804,6 +804,83 @@ void bind_brep(nb::module_& m) {
         "the named refusal with both values); raises ValueError for\n"
         "every refusal the C++ kernel makes.");
 
+    // THE CHAMFER'S RING AND MITER ACT (G6 m4, ADR-0045 D4.1/D8.4):
+    // the cube's eight ring edges and eight corner miters consumed
+    // in ONE transaction, from the four-vertical state (16/24/10)
+    // to the fully chamfered cube (32/48/18) — the eight miters
+    // born VERTICES (never faces), the eight ring bevels born
+    // already refined as HEXAGONS, the four vertical bevels
+    // re-windowed in place (the cap segments dead with the cause
+    // verbatim "replaced by the miter line"), the six planes
+    // re-windowed to the retreats' rectangles. The tests' own seat
+    // (the UI door is the final morse's).
+    brep_mod.def(
+        "chamfer_ring_act",
+        [](const BRepBody& body, double setback,
+           std::uint64_t feature,
+           std::optional<CAD_0::brep::naming::FeatureKind> body_kind,
+           double tol) {
+            CAD_0::brep::ChamferNaming naming{};
+            if (body_kind.has_value()) {
+                naming = CAD_0::brep::ChamferNaming{
+                    CAD_0::geometry::FeatureId{feature},
+                    naming_table_of(*body_kind)};
+            }
+            return CAD_0::brep::chamfer_ring_act(body, setback,
+                                                 naming, tol);
+        },
+        nb::arg("body"), nb::arg("setback"),
+        nb::arg("feature") = 0, nb::arg("body_kind") = std::nullopt,
+        nb::arg("tol") = 1e-6,
+        "The ring and miter act, indivisible (ADR-0045 D4.1): the\n"
+        "eight ring edges and eight corner miters in ONE transaction\n"
+        "from the four-vertical state — the guide chain answers\n"
+        "32/48/18, chi=2, volume 8 - 12d^2 + 6d^3 = 5.75 at d=0.5,\n"
+        "the eight miters M = corner - (d/2)(1,1,1) in the corner's\n"
+        "own signs, every bevel a hexagon, every plane a four-edge\n"
+        "window. The stage band d < 1 (the collapse at d=1 the\n"
+        "closed form sees and the admission refuses) and the setback\n"
+        "mismatch (all four vertical bevels' own setbacks must agree\n"
+        "with the request) are the named refusals with their values;\n"
+        "raises ValueError for every refusal the C++ kernel makes.");
+
+    // THE COMPLETE TWELVE-EDGE OPERATION (G6 m4, the ADR's D1.1 guide
+    // case): the fresh factory box in, the fully chamfered cube out —
+    // the four vertical bevels (the landed chain, gated at every
+    // step) and the atomic ring-and-miter act composed in ONE door.
+    // The intermediate states are the door's OWN internals (nothing
+    // partially chamfered becomes visible or persistent; a refusal
+    // at any stage leaves the caller's body untouched); ONE feature
+    // id owns everything the door births.
+    brep_mod.def(
+        "chamfer_twelve_edges",
+        [](const BRepBody& body, double setback,
+           std::uint64_t feature,
+           std::optional<CAD_0::brep::naming::FeatureKind> body_kind,
+           double tol) {
+            CAD_0::brep::ChamferNaming naming{};
+            if (body_kind.has_value()) {
+                naming = CAD_0::brep::ChamferNaming{
+                    CAD_0::geometry::FeatureId{feature},
+                    naming_table_of(*body_kind)};
+            }
+            return CAD_0::brep::chamfer_twelve_edges(body, setback,
+                                                     naming, tol);
+        },
+        nb::arg("body"), nb::arg("setback"),
+        nb::arg("feature") = 0, nb::arg("body_kind") = std::nullopt,
+        nb::arg("tol") = 1e-6,
+        "The complete twelve-edge chamfer (ADR-0045 D1.1: the cube\n"
+        "entirely chamfered at the uniform setback): the fresh\n"
+        "factory box in, the validated 32/48/18 solid out — the\n"
+        "four vertical walks and the atomic ring-and-miter act in\n"
+        "one transaction (the intermediates the door's own\n"
+        "internals, one feature owning everything born). The guide\n"
+        "case box#1 at d=0.5 answers 32/48/18, chi=2, volume 5.75\n"
+        "exact; the d=1 collapse is refused at the chain's own stage\n"
+        "wall with the two readings. Raises ValueError for every\n"
+        "refusal the C++ kernel makes.");
+
     // THE FILLET, CLASS 2 — IL RIM CIRCOLARE DEL FORO (G2-u3 m3,
     // ADR-0039 D1.2): the rolling ball on the blind hole's convex
     // top rim, the toroidal flank born in the rim's place. The
