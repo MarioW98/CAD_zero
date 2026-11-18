@@ -2,7 +2,12 @@
 
 ## Status
 
-Proposed (2026-11-18) — the flip is the maintainer's own act. Questo ADR è
+Accepted (2026-11-18) — the flip is the maintainer's own act,
+received in review and performed by the implementing agent on that
+written instruction (the 0535ac6 precedent): the independent review
+of the contract is PASS, the numbers of D6 verified by the reviewer
+with derivations of their own (the miter, the counts 32/48/18, V(d)
+= 8−12d²+6d³, the limit V(1) = 2 double-checked). Questo ADR è
 la proposta che apre la linea G6; nessun morso di implementazione parte
 prima dell'accettazione del maintainer. Il metodo è quello di casa
 (ADR-0031 D5): l'ambito è ciò che i guide cases e la scala raggiungono
