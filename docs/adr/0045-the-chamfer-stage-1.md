@@ -294,6 +294,28 @@ scenario misurato D2.4 di ADR-0044 è il precedente esatto: mai una
 morte e una nascita sotto lo stesso nome (il Born-sotto-falso che il
 test rifiuta), mai lo stamp perso.
 
+**EMENDAMENTO (G6 m3, 2026-11-18 — l'atto a UN ANGOLO, D8.3):** la
+descrizione sopra è la composizione a DUE angoli (l'atto del ring
+completo). L'atto a UN angolo — il morso che per primo materializza
+questo paragrafo — ha le sue FORME PROPRIE, derivate prima del codice
+e qui scritte: il bevel verticale si ri-finestra a **PENTAGONO** (UN
+solo segmento di capitello morto all'angolo consumato, le due rette
+di miter che vi convergono, la causa verbatim invariata); i bevel del
+ring nascono **PENTAGONI** — il piano non taperizza, e all'estremo
+lontano lo stesso piano taglia l'angolo NON mitrato: un SEGMENTO
+CAPO-LONTANO sulla faccia laterale remota, il vertice remoto morto e
+i suoi due spigoli (la verticale e la ring edge) re-spanati ai piedi
+remoti. L'esagono è la composizione additiva: il secondo atto
+ri-finestra il pentagono, e i capi lontani muoiono "replaced by the
+miter line" negli atti partner. I conteggi dell'atto a un angolo dal
+10/15/7 della catena k=1: **14/21/9, χ = 2** (4 vertici e 3 spigoli
+morti, 8 vertici, 9 spigoli e 2 facce nati), il volume
+**V = 8 − 3d² + (3/4)d³** (l'inclusione-esclusione all'angolo: tre
+prismi pieni 3d², meno tre sovrapposizioni a coppie 3·(d³/3), più la
+tripla d³/4 col tetra-split det/6). I criteri di STOP di D2 restano
+onerati: nessuna riga SSI, nessuna famiglia di superfici nuova (il
+miter un VERTICE, mai una faccia).
+
 #### D4.3 L'aritmetica dell'atto (la tavola contata, la chiusura da entrambi i lati)
 
 Dal 16/24/10 del passaggio verticale: **muoiono 16 vertici** (le punte
