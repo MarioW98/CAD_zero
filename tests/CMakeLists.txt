@@ -72,6 +72,7 @@ set(CAD_0_TEST_SOURCES
     unit/brep/test_g6_m1_chamfer_edge.cpp
     unit/brep/test_g6_m2_the_chain.cpp
     unit/brep/test_g6_m3_corner_act.cpp
+    unit/brep/test_g6_m4_the_twelve_edges.cpp
     unit/brep/test_h2_u3_pcurve_double.cpp
     unit/brep/test_h2_u6_m2_factory_names.cpp
     unit/brep/test_h2_u6_m3_extrude_names.cpp
