@@ -316,6 +316,16 @@ tripla d³/4 col tetra-split det/6). I criteri di STOP di D2 restano
 onerati: nessuna riga SSI, nessuna famiglia di superfici nuova (il
 miter un VERTICE, mai una faccia).
 
+**LANDING (G6 m4, 2026-11-18):** la composizione a due angoli è
+landed per intero — `chamfer_ring_act` (l'atto indivisibile dallo
+stato a quattro verticali 16/24/10) e `chamfer_twelve_edges` (la
+porta completa: i quattro passaggi gated e l'atto in UNA
+transazione, gli intermedi interni alla porta, UNA feature sola per
+i dodici bevel), gli esagoni interi, i conteggi 32/48/18, il volume
+V(d) = 8 − 12d² + 6d³ con l'oracolo indipendente a codice zero
+condiviso — il pentagolo a un angolo qui sopra il passo additivo che
+lo raggiunge.
+
 #### D4.3 L'aritmetica dell'atto (la tavola contata, la chiusura da entrambi i lati)
 
 Dal 16/24/10 del passaggio verticale: **muoiono 16 vertici** (le punte
@@ -367,7 +377,15 @@ dottorano, i degeneri pinnati dal vivo (la legge del m3, verbatim).
    (D6: V(1) = 2, il rombododecaedro) e l'ammissione lo RIFIUTA (il
    fillet's r=1 sphere precedent: the body is not the limit). Il miter
    non è mai il vincolo vincolante: M sta a 1−d/2, dentro il cubo per
-   ogni d < 2 — la striscia lega prima.
+   ogni d < 2 — la striscia lega prima. **LA NOTA DEL LANDING
+   (G6 m4):** alla PORTA COMPLETA il collasso a d = 1 è preso UN MURO
+   PRIMA dalla legge delle strisce stessa — la macchina m1 legge la
+   portata CORRENTE della faccia ri-finestrata (il primo smusso l'ha
+   stretta a 2−d), e la banda di faccia della SECONDA walk rifiuta
+   esattamente a d = 1 con il bound nel payload; il rifiuto NOMINATO
+   della banda di stadio vive alla porta dell'atto (dove la lettura
+   doppia — la portata delle facce contro il bound dello stadio — è
+   il payload). Entrambi i muri onesti, entrambi nominati.
 2. **LO SPIGOLO CURVO** — `chamfer_out_of_class_pair`, la famiglia
    NEL payload: lo smusso sul bordo del foro avrebbe per fianco un
    CONO (la famiglia esiste, il suo writer no: la sede è la classe rim
