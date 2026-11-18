@@ -194,19 +194,22 @@ def test_the_band_refusal_carries_the_bound():
                              sid["path"]), 0.5, feature=2,
             body_kind=brep_mod.FeatureKind.Box)
     assert "not vertical" in str(exc_info.value)
-    # The chained body (the chamfered box itself): the chain is the
-    # next morse's own seat — refused BY NAME, the seat carried.
-    with pytest.raises(ValueError) as exc_info:
-        out2 = _chamfer(box)
-        ref9 = brep_mod.edge_query(box, 9)["shape_id"]
-        brep_mod.chamfer_edge(
-            out2,
-            geom_mod.ShapeId(geom_mod.FeatureId(ref9["feature"]),
-                             ref9["path"]), 0.5, feature=3,
-            body_kind=brep_mod.FeatureKind.Box)
-    msg = str(exc_info.value)
-    assert "outside the class signature" in msg
-    assert "next morse's own seat" in msg
+    # THE CHAINED BODY — the widening declared (G6 m2, ADR-0045
+    # D8.2): the m1 signature's frozen triple refused the carrier
+    # (the old predicate asserted false); the m2 signature admits
+    # the same machine re-executed — the chain's counts landed.
+    out2 = _chamfer(box)
+    q2 = brep_mod.body_query(out2)
+    assert (q2["V"], q2["E"], q2["F"]) != (8, 12, 6)  # the old triple
+    ref9 = brep_mod.edge_query(box, 9)["shape_id"]
+    chained = brep_mod.chamfer_edge(
+        out2,
+        geom_mod.ShapeId(geom_mod.FeatureId(ref9["feature"]),
+                         ref9["path"]), 0.5, feature=3,
+        body_kind=brep_mod.FeatureKind.Box)
+    qc = brep_mod.body_query(chained)
+    assert (qc["V"], qc["E"], qc["F"]) == (12, 18, 8)
+    assert qc["chi"] == 2
 
 
 def test_the_tavola_and_the_digest_determinism():

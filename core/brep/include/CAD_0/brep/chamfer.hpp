@@ -153,13 +153,28 @@ inline std::unique_ptr<BRepBody> chamfer_edge(
 
     // ---- The class signature (the admission BEFORE the
     // construction — the counts and the families, zero dihedral
-    // arithmetic, zero convexity signs). This morse's carrier: THE
-    // FACTORY BOX (k = 0) — 8/12/6, chi = 2, closed orientable,
-    // every entity exact, every face a single-loop PLANE. The chain's
-    // widening is the next morse's seat (the header's own words); a
-    // curved face anywhere (a fillet's flank among them) refuses
-    // here — the mixed corner is the crease merge's family (D5.3),
-    // never met, never sedated.
+    // arithmetic, zero convexity signs). The carrier: the FACTORY
+    // BOX (k = 0) or a box carrying k PREVIOUS VERTICAL CHAMFERS —
+    // 8+2k vertices, 12+3k edges, 6+k faces, chi = 2, closed
+    // orientable, every entity exact, every face a single-loop
+    // PLANE (the G6 m2 widening, ADR-0045 D8.2: the same machine
+    // re-executed on the chain's state, the m6ter precedent — the
+    // m1 signature's frozen triple 8/12/6 declared widened IN THE
+    // TEST, never silently loosened). THE IMPOSTOR WALL: the
+    // chamfer chain's faces are ALL PLANES — the counts alone
+    // cannot exclude the orthogonal prisms (the HEXAGONAL one is
+    // 12/18/8, every plane) — so the extras must be the chain's
+    // own BEVELS BY STAMP (the subshape the m1 walk writes: the
+    // bevel role under the two box-face legs; the identity is
+    // where a thing was BORN, the Layer-2 rule), the bevel-stamped
+    // count and the counts' k agreeing. The OCCUPIED CORNER is the
+    // corner act's own seat (D4): the four verticals' corner pairs
+    // are disjoint by the box's own constitution, so no vertical
+    // chain can meet it — the ring act's morsi will. A body
+    // carrying curved faces (a fillet's flank among them) refuses
+    // here by signature — the mixed corner is the crease merge's
+    // family (D5.3), never sedated.
+    std::size_t chain_k = 0;
     {
         bool all_exact = true;
         for (const auto& v : body.vertices)
@@ -174,23 +189,30 @@ inline std::unique_ptr<BRepBody> chamfer_edge(
                    "consumes EXACT bodies only (the booleans' own "
                    "gate). Remedy: author the body on the exact path "
                    "(the factories), or accept the faceted path.");
-        if (V0 != 8 || E0 != 12 || F0 != 6 ||
+        const std::size_t kcand =
+            F0 >= 6 ? F0 - 6 : static_cast<std::size_t>(-1);
+        const bool counts_match =
+            kcand != static_cast<std::size_t>(-1) &&
+            V0 == 8 + 2 * kcand && E0 == 12 + 3 * kcand;
+        if (!counts_match ||
             euler_characteristic(body) != 2 ||
             !is_closed_orientable(body))
-            refuse("the body is outside the class signature (this "
-                   "morse's carrier is the FACTORY BOX alone: 8 "
-                   "vertices, 12 edges, 6 faces, chi = 2, closed "
-                   "orientable; found " +
+            refuse("the body is outside the class signature (the "
+                   "chamfer chain's own: 8+2k vertices, 12+3k "
+                   "edges, 6+k faces for k previous vertical "
+                   "chamfers, chi = 2, closed orientable; found " +
                    std::to_string(V0) + "/" + std::to_string(E0) +
                    "/" + std::to_string(F0) +
-                   ") - the CHAIN (a box carrying k previous "
-                   "vertical chamfers, 8+2k/12+3k/6+k) is the next "
-                   "morse's own seat (ADR-0045 D8.2, the fillet's "
-                   "own history: m2 the box, the m6ter the chain), "
-                   "and a body carrying curved faces is the mixed "
-                   "corner's family (D5.3, the crease merge's seat, "
-                   "ADR-0039 D4). Remedy: chamfer a factory box's "
-                   "vertical edge.");
+                   ") - the carrier may carry ONLY the chain's own "
+                   "vertical bevels: the RING chamfers and the "
+                   "corner MITER are their own morsi's seats (D4, "
+                   "the heart of the stage), and a curved face is "
+                   "the mixed corner's family (D5.3, the crease "
+                   "merge's seat, ADR-0039 D4). Remedy: chamfer a "
+                   "factory box's vertical edge, or a chain of "
+                   "them.");
+        chain_k = kcand;
+        std::size_t bevels = 0;
         for (const auto& f : body.solid.shell().faces()) {
             if (f.loops().size() != 1)
                 refuse("a face carries " +
@@ -207,12 +229,34 @@ inline std::unique_ptr<BRepBody> chamfer_edge(
                 (surf->accept(rd), rd.plane != nullptr);
             if (!planar)
                 refuse("a face carries a surface outside the class "
-                       "families (the box's six planes are this "
-                       "morse's whole world; a curved face is the "
-                       "mixed corner's family - the crease merge's "
-                       "seat, ADR-0039 D4, ADR-0045 D5.3). Remedy: "
-                       "chamfer a factory box's vertical edge.");
+                       "families (the carrier's world is the box's "
+                       "six planes and the chain's own flat "
+                       "bevels; a curved face is the mixed "
+                       "corner's family - the crease merge's "
+                       "seat, ADR-0039 D4, ADR-0045 D5.3). "
+                       "Remedy: chamfer a factory box's vertical "
+                       "edge, or a chain of them.");
+            // The bevel's own stamp form (the m1 walk's writer):
+            // the bevel role under the two box-face legs.
+            const auto& sub = f.shape_id().subshape;
+            if (sub.depth == 3 &&
+                sub.path[0] == naming::kCheBevelRole &&
+                sub.path[1] < 6 && sub.path[2] < 6)
+                ++bevels;
         }
+        if (bevels != chain_k)
+            refuse("the body carries " + std::to_string(bevels) +
+                   " bevel-stamped faces where the chain's counts "
+                   "declare " + std::to_string(chain_k) +
+                   " - the signature's own arithmetic (the "
+                   "bevel-stamp wall: the chamfer chain's faces "
+                   "are all planes, and the counts alone admit the "
+                   "ALL-PLANAR IMPOSTORS - the HEXAGONAL PRISM is "
+                   "12/18/8, every plane; the identity is where a "
+                   "thing was BORN, and only the chain's own "
+                   "bevels were born bevels). Remedy: chamfer a "
+                   "factory box's vertical edge, or a chain of "
+                   "them.");
     }
 
     // ---- The reference's own find: the structural match against the
@@ -461,6 +505,40 @@ inline std::unique_ptr<BRepBody> chamfer_edge(
     if (setback >= reach_cap_hi - tol)
         band_refusal("the chamfer segment exits the high end face",
                      reach_cap_hi);
+
+    // ---- THE STAGE BAND (D5.1's derived wall, ALIVE with the
+    // multi-edge state — G6 m2): in the chain (the carrier carries
+    // k >= 1 bevels) every new setback must sit under 1 — the
+    // strips of the opposing chamfers on every face must not meet
+    // (2d < 2), the non-adjacent prisms' regions stay empty sse
+    // d < 1 (the derivation: the tripla {x+y > 2−d, x+z > 2−d,
+    // x−z > 2−d} dà 2x > 4−2d, e con x ≤ 1 è vuota sse d ≤ 1), and
+    // at d = 1 the six planes die to points (the tangential
+    // collapse, the rhombic dodecahedron) — the stage refuses the
+    // limit ("the body is not the limit", the fillet's r=1
+    // precedent). The SINGLE edge's own band stays the m1 tests'
+    // (a lone chamfer at 1.5 within its faces' reach is the
+    // single-edge mode's own geometry, its tests IMMOBILE); the
+    // TWO READINGS ride the payload: the faces' own reach — the
+    // m1 band, satisfied — and the stage's 1, the binding one.
+    if (chain_k >= 1 && setback >= 1.0 - tol)
+        refuse("the setback crosses the STAGE band "
+               "(chamfer_setback_exceeds_face): the setback " +
+               std::to_string(setback) +
+               " against the stage's derived bound 1.000000 - " +
+               std::to_string(tol) +
+               " (THE TWO READINGS: the faces' own current reach " +
+               std::to_string(std::min(reach_A, reach_B)) +
+               " would admit it - the single edge's m1 band, "
+               "satisfied - but the multi-edge state's strips must "
+               "not meet, 2d < 2, the non-adjacent prisms' regions "
+               "empty sse d < 1, and at d = 1 the six planes die "
+               "to points - the tangential collapse, ADR-0045 "
+               "D5.1's derivation; the body is not the limit, the "
+               "fillet's r=1 precedent). Remedy: keep the chain's "
+               "setbacks below 0.999999 (the uniform twelve-edge "
+               "mode's own derivation is the ring act's morse, "
+               "D4).");
 
     // ---- THE CONSTRUCTION — every quantity a closed form of the
     // stored operands, ZERO solves (D2's contract). The setback feet:

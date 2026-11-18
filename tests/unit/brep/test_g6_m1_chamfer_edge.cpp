@@ -1145,7 +1145,14 @@ TEST_CASE("G6 m1 the refusals: the setback out of band carries the "
                       "outside the class signature") !=
                   std::string::npos);
         }
-        // The filleted box: the mixed world refused by signature.
+        // The filleted box: the mixed world refused — under the m1
+        // signature the COUNTS refused it (10/15/7 outside the
+        // frozen triple); the G6 m2 widening moved the refusal's
+        // SEAT one wall later (the counts' chain formula admits
+        // the shape, k = 1), and the FAMILY wall refuses the
+        // cylinder flank — D5.3's own world, still refused, by
+        // name (the seat's move is the widening's, declared above
+        // and in the m2 test).
         {
             const b::FilletNaming fctx{FeatureId{2},
                                        &n::kBoxNaming};
@@ -1162,34 +1169,50 @@ TEST_CASE("G6 m1 the refusals: the setback out of band carries the "
                 FAIL("the filleted body must refuse");
             } catch (const std::invalid_argument& e) {
                 CHECK(std::string(e.what()).find(
-                          "outside the class signature") !=
+                          "outside the class families") !=
                       std::string::npos);
             }
         }
-        // The chamfered box: the chain's widening is the next
-        // morse's own seat — refused here, BY NAME, the remedy
-        // carrying the seat.
+        // THE CHAINED BODY — THE WIDENING DECLARED (G6 m2, ADR-0045
+        // D8.2): the m1 signature's frozen triple (the factory box
+        // alone, 8/12/6) REFUSED this carrier — the old predicate,
+        // asserted false where it stood; the m2 signature (the
+        // chain's own: 8+2k/12+3k/6+k with the bevel-stamp wall)
+        // ADMITS it — the same machine re-executed on the chain's
+        // state (the m6ter precedent). Both asserted here: the
+        // loosening is never silent, and no golden above moves
+        // (the m1 digests, the tavola, the single-edge band's own
+        // tests all green in this very file).
         {
             auto chamfered = b::chamfer_edge(*box(), ref, 0.5,
                                              ctx);
             REQUIRE(chamfered != nullptr);
-            try {
-                auto r = b::chamfer_edge(
-                    *chamfered,
-                    ShapeId{FeatureId{1},
-                            SubshapeRef{}.push(9), {}},
-                    0.5, ctx);
-                (void)r;
-                FAIL("the chained body must refuse (this morse)");
-            } catch (const std::invalid_argument& e) {
-                CHECK(std::string(e.what()).find(
-                          "outside the class signature") !=
-                      std::string::npos);
-                CHECK(std::string(e.what()).find(
-                          "next "
-                          "morse's own seat") !=
-                      std::string::npos);
-            }
+            // The OLD signature's predicate — the frozen triple
+            // the m1 admission demanded — FALSE for the carrier
+            // (the widening's whole reason, said not implied).
+            const bool old_signature =
+                chamfered->vertex_count() == 8 &&
+                chamfered->edge_count() == 12 &&
+                chamfered->face_count() == 6;
+            CHECK_FALSE(old_signature);
+            REQUIRE(chamfered->vertex_count() == 10);
+            REQUIRE(chamfered->edge_count() == 15);
+            REQUIRE(chamfered->face_count() == 7);
+            // The NEW signature admits: the second chamfer on the
+            // NON-ADJACENT vertical1 (the same-face strip law's
+            // own guide pair — the chain's golden is the m2 test's
+            // seat; here the widening's landing, the counts).
+            const b::ChamferNaming ctx3{FeatureId{3},
+                                        &n::kBoxNaming};
+            auto chained = b::chamfer_edge(
+                *chamfered,
+                ShapeId{FeatureId{1}, SubshapeRef{}.push(9), {}},
+                0.5, ctx3);
+            REQUIRE(chained != nullptr);
+            REQUIRE(chained->vertex_count() == 12);
+            REQUIRE(chained->edge_count() == 18);
+            REQUIRE(chained->face_count() == 8);
+            CHECK(b::euler_characteristic(*chained) == 2);
         }
     }
 }
