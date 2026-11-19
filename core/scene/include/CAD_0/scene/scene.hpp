@@ -33,6 +33,7 @@
 #include "CAD_0/brep/extrude.hpp"
 #include "CAD_0/brep/subtract.hpp"
 #include "CAD_0/brep/fillet.hpp"
+#include "CAD_0/brep/chamfer.hpp"
 #include "CAD_0/brep/tessellate.hpp"
 #include "CAD_0/brep/descent.hpp"
 #include "CAD_0/brep/resolve.hpp"
@@ -226,13 +227,43 @@ enum class NodeKind : std::uint8_t {
             // D6.6/D1) is the DOORS' own — read BEFORE any kernel
             // call, never by the kernel. "fillet_multi" in the
             // dispatch; the naming plane rides the single's `fil`.
-    Ellipsoid // the exact-side PRIMITIVE (K1 m3, ADR-0042 D6): the
+    Ellipsoid, // the exact-side PRIMITIVE (K1 m3, ADR-0042 D6): the
               // probe's family rides the file as its own node kind —
               // the recipe the sphere never paid, paid here (the
               // semiaxes as NAMED FIELDS, the exact body derived
               // state rebuilt by the same pass, no SDF twin — the
               // fillet's own form one kind over). FeatureKind `elp`
               // in the naming plane; "ellipsoid" in the dispatch.
+    Chamfer, // the chamfer feature (G6 m5, ADR-0045 D7.1): the
+              // second replacing feature's own scene-side payload —
+              // the payload is the RECIPE (brep::ChamferRecipe — the
+              // edge-reference STRING verbatim + the setback its
+              // typed field; named fields, never a raw struct), the
+              // materialization the exact body ALONE through the
+              // KERNEL'S OWN DOORS (chamfer_edge at a vertical, the
+              // m3 corner act at a ring spigolo — the geometric
+              // dispatch reads the resolved edge's adjacency, never
+              // a name parsed). The naming plane rides the kernel's
+              // che tables (ChamferNaming's own context);
+              // "chamfer" in the dispatch.
+    ChamferMulti // the chamfer's CONTEMPORANEA (G6 m5, ADR-0045
+              // D7.1): the many-edge recipe — the EDGE→SETBACK MAP
+              // (brep::MultiChamferRecipe, one entry per consumed
+              // spigolo, named fields, the authored order). The
+              // materialization REPLAYS THE DERIVED CHAIN (D4.1:
+              // the vertical passage first — each entry its own
+              // walk, gated at every step — then, when the map
+              // declares the ring, THE RING AND MITER ACT,
+              // indivisible) landing the partials (8+2k/12+3k/6+k,
+              // the setbacks free among the verticals — no two
+              // verticals share a corner) or the fully chamfered
+              // cube (32/48/18). THE SETBACK LAW (the connected
+              // edge-corner graph forces one setback per component,
+              // D5.4/D4.1) is the DOORS' own — read BEFORE any
+              // kernel call, never by the kernel (its own mismatch
+              // wall the last line, its words unchanged).
+              // "chamfer_multi" in the dispatch; the naming plane
+              // rides the single's che.
 };
 
 // The kind's name, for error messages ("must be a sketch-kind node").
@@ -244,6 +275,8 @@ inline std::string node_kind_name(NodeKind k) {
     case NodeKind::Fillet: return "fillet";
     case NodeKind::FilletMulti: return "fillet_multi";
     case NodeKind::Ellipsoid: return "ellipsoid";
+    case NodeKind::Chamfer: return "chamfer";
+    case NodeKind::ChamferMulti: return "chamfer_multi";
     }
     return "?";
 }
@@ -389,6 +422,27 @@ struct SceneNode {
     // loader's pass 2, the save door), never by the kernel.
     std::optional<brep::MultiFilletRecipe> fillet_multi;
 
+    // ---- The chamfer feature (G6 m5, ADR-0045 D7.1) --------------
+    // The second replacing feature's own scene-side payload: the
+    // SINGLE recipe (brep::ChamferRecipe — the edge-reference STRING
+    // verbatim + the setback its typed field; named fields, never a
+    // raw struct) and the MULTI recipe (the edge→setback map,
+    // brep::MultiChamferRecipe) — one node carries exactly one of
+    // them, the kind decides which. The derived state below is the
+    // FILLET'S OWN SHAPE, one design over (the materialized exact
+    // body, the visible refusal, the consumed operand): the display,
+    // the panel and the chain walk read ONE shape of state for both
+    // chamfer kinds. THE SETBACK LAW is read at the DOORS (creation,
+    // the loader's pass 2, the save door), never by the kernel.
+    std::optional<brep::ChamferRecipe> chamfer;
+    std::optional<brep::MultiChamferRecipe> chamfer_multi;
+    std::unique_ptr<brep::BRepBody> chamfer_body;
+    std::string chamfer_refusal;
+    // The operand the recipe consumed, the discovery's own answer —
+    // DERIVED state, never serialized: the loader's pass re-discovers
+    // it exactly as it re-materializes the body.
+    std::uint32_t chamfer_operand_id{0};
+
     // ---- The ellipsoid primitive (K1 m3, ADR-0042 D6) -------------
     // The exact-side PRIMITIVE: the payload is the RECIPE alone
     // (brep::EllipsoidRecipe — the semiaxes, named fields), the
@@ -474,12 +528,19 @@ struct SceneNode {
           fillet(other.fillet), fillet_refusal(other.fillet_refusal),
           fillet_operand_id(other.fillet_operand_id),
           fillet_multi(other.fillet_multi),
+          chamfer(other.chamfer),
+          chamfer_multi(other.chamfer_multi),
+          chamfer_refusal(other.chamfer_refusal),
+          chamfer_operand_id(other.chamfer_operand_id),
           ellipsoid(other.ellipsoid),
           tavola(other.tavola),
           operation_pending(other.operation_pending),
           operation_pending_error(other.operation_pending_error) {
         if (other.fillet_body) {
             fillet_body = brep::clone_body(*other.fillet_body);
+        }
+        if (other.chamfer_body) {
+            chamfer_body = brep::clone_body(*other.chamfer_body);
         }
         if (other.ellipsoid_body) {
             ellipsoid_body = brep::clone_body(*other.ellipsoid_body);
@@ -518,12 +579,21 @@ struct SceneNode {
         fillet_refusal = other.fillet_refusal;
         fillet_operand_id = other.fillet_operand_id;
         fillet_multi = other.fillet_multi;
+        chamfer = other.chamfer;
+        chamfer_multi = other.chamfer_multi;
+        chamfer_refusal = other.chamfer_refusal;
+        chamfer_operand_id = other.chamfer_operand_id;
         ellipsoid = other.ellipsoid;
         tavola = other.tavola;
         if (other.fillet_body) {
             fillet_body = brep::clone_body(*other.fillet_body);
         } else {
             fillet_body.reset();
+        }
+        if (other.chamfer_body) {
+            chamfer_body = brep::clone_body(*other.chamfer_body);
+        } else {
+            chamfer_body.reset();
         }
         if (other.ellipsoid_body) {
             ellipsoid_body = brep::clone_body(*other.ellipsoid_body);
@@ -609,11 +679,16 @@ inline DisplaySourceSnapshot snapshot_display_source(const SceneNode& n) {
         break;
     case NodeKind::Fillet:
     case NodeKind::FilletMulti:
+    case NodeKind::Chamfer:
+    case NodeKind::ChamferMulti:
     case NodeKind::Ellipsoid: {
         const brep::BRepBody* src =
             n.kind == NodeKind::Ellipsoid
                 ? n.ellipsoid_body.get()
-                : n.fillet_body.get();
+                : (n.kind == NodeKind::Chamfer ||
+                           n.kind == NodeKind::ChamferMulti
+                       ? n.chamfer_body.get()
+                       : n.fillet_body.get());
         if (src != nullptr) {
             s.exact = brep::clone_body(*src);
         }
@@ -659,6 +734,8 @@ inline DisplayDerivation derive_display_mesh(
     }
     case NodeKind::Fillet:
     case NodeKind::FilletMulti:
+    case NodeKind::Chamfer:
+    case NodeKind::ChamferMulti:
     case NodeKind::Ellipsoid: {
         if (s.exact == nullptr)
             break; // the refused/null body: the update_meshes skip
@@ -932,27 +1009,46 @@ inline std::unique_ptr<brep::BRepBody> operand_exact_brep_quiet(
         // over; the clone is the sanctioned copy, links included).
         return brep::clone_body(*n.fillet_body);
     }
+    if ((n.kind == NodeKind::Chamfer ||
+         n.kind == NodeKind::ChamferMulti) &&
+        n.chamfer_body != nullptr) {
+        // The chamfer answers its own materialized body — the
+        // chain's CURRENT STATE, the fillet's own rule one feature
+        // over (G6 m5: a refused re-run keeps the last good body,
+        // the visible state; the clone is the sanctioned copy).
+        return brep::clone_body(*n.chamfer_body);
+    }
     if (n.kind != NodeKind::Sdf) return nullptr;
     return bridge::sdf_to_brep_primitive(
         n.body, geometry::FeatureId{n.id});
 }
 
 // fillet_chain_root — the chain's ROOT operand node: walking the
-// fillet_operand_id links back (each operand precedes its consumer
-// by construction, so the walk terminates; the guard is the
-// corrupt-file belt). The root is where the NAMING comes from: the
-// chain's bodies carry the ROOT's stamps (the kept stamp copies
-// ride every link), so the fillet's naming context binds the ROOT's
-// table — the m2 rule one link over.
+// operand links back (each operand precedes its consumer by
+// construction, so the walk terminates; the guard is the corrupt-file
+// belt). The root is where the NAMING comes from: the chain's bodies
+// carry the ROOT's stamps (the kept stamp copies ride every link), so
+// the feature's naming context binds the ROOT's table — the m2 rule
+// one link over. G6 m5: the walk is FEATURE-AGNOSTIC — the chamfer's
+// links ride it too (a mixed fillet/chamfer chain still finds its
+// root; the kernels' own class refusals answer the mixing, the naming
+// never guesses).
 inline const SceneNode* fillet_chain_root(
     const std::vector<SceneNode*>& nodes, const SceneNode* n) {
     std::size_t guard = 0;
-    while (n != nullptr &&
-           (n->kind == NodeKind::Fillet ||
-            n->kind == NodeKind::FilletMulti) &&
-           n->fillet_operand_id != 0 &&
-           guard++ <= nodes.size()) {
-        const SceneNode* up = find_node(nodes, n->fillet_operand_id);
+    while (n != nullptr && guard++ <= nodes.size()) {
+        std::uint32_t up_id = 0;
+        if ((n->kind == NodeKind::Fillet ||
+             n->kind == NodeKind::FilletMulti) &&
+            n->fillet_operand_id != 0)
+            up_id = n->fillet_operand_id;
+        else if ((n->kind == NodeKind::Chamfer ||
+                  n->kind == NodeKind::ChamferMulti) &&
+                 n->chamfer_operand_id != 0)
+            up_id = n->chamfer_operand_id;
+        else
+            break;
+        const SceneNode* up = find_node(nodes, up_id);
         if (up == nullptr || up == n) break;
         n = up;
     }
@@ -1048,14 +1144,29 @@ inline FilletDiscovery discover_fillet_operand(
             if (!info.name.empty() && info.name == edge_reference) {
                 out.reference = info.id;
                 // THE SUPERSEDED CHECK: is this carrier itself the
-                // operand of a later fillet? Then the name's chain
-                // moved past it — and since the reverse walk found
-                // THIS body first, no newer body carries the name:
-                // it is VANISHED in the current state.
+                // operand of a later feature (a fillet or a chamfer,
+                // single or CONTEMPORANEA — the payload of its own
+                // kind, never the other's field)? Then the name's
+                // chain moved past it — and since the reverse walk
+                // found THIS body first, no newer body carries the
+                // name: it is VANISHED in the current state. (The
+                // multi payloads are the correttiva's own: a
+                // contemporanea consuming the body supersedes it as
+                // surely as a single does — the sibling-cube defect
+                // the m6-correttiva-ter closed, closed for BOTH
+                // kinds here, the G5 line's own gap one feature
+                // over.)
                 for (std::size_t j = k + 1; j < bound; ++j) {
                     const SceneNode* m = nodes[j];
-                    if (m->fillet.has_value() &&
-                        m->fillet_operand_id == n->id) {
+                    const bool m_fillet =
+                        (m->fillet.has_value() ||
+                         m->fillet_multi.has_value()) &&
+                        m->fillet_operand_id == n->id;
+                    const bool m_chamfer =
+                        (m->chamfer.has_value() ||
+                         m->chamfer_multi.has_value()) &&
+                        m->chamfer_operand_id == n->id;
+                    if (m_fillet || m_chamfer) {
                         out.superseded = n;
                         out.killer = m;
                         return out;
@@ -1949,6 +2060,904 @@ inline bool attach_fillet_multi(
     }
 }
 
+// ===========================================================================
+// THE CHAMFER ON THE SCENE (G6 m5, ADR-0045 D7.1): the second
+// replacing feature rides the document — the recipe is the truth (the
+// edge-reference STRING + the setback; the map for the many-edge
+// form), the body derived state, THE SETBACK LAW THE DOORS' OWN
+// (never the kernel's). The genealogy is implicit in the chain, the
+// fillet's own discipline one feature over: each recipe reads only
+// what precedes it (the DAG in file), the discovery answers the
+// newest carrier, the naming binds the chain's ROOT table.
+// ===========================================================================
+
+// chamfer_vanished_words — the VANISHED refusal's own text, the
+// fillet's own shape with the chamfer's own words: what died, where,
+// why (the killer's tavola carries the cause), the remedy.
+inline std::string chamfer_vanished_words(
+    const FilletDiscovery& disc,
+    const std::string& edge_reference) {
+    std::string cause;
+    if (disc.killer != nullptr) {
+        for (const brep::DescentRow& row : disc.killer->tavola.rows) {
+            if (row.relation == brep::Descent::Vanished &&
+                row.entity == brep::EntityKind::Edge &&
+                row.name == edge_reference) {
+                cause = row.cause;
+                break;
+            }
+        }
+    }
+    std::string out =
+        "the recipe's edge-reference '" + edge_reference +
+        "' names an edge of a SUPERSEDED state (node " +
+        std::to_string(disc.superseded == nullptr
+                           ? 0
+                           : disc.superseded->id) +
+        ", '" +
+        (disc.superseded == nullptr ? std::string("?")
+                                    : disc.superseded->name) +
+        "') — the edge is VANISHED in the current chain: it died in "
+        "the chamfer '" +
+        (disc.killer == nullptr ? std::string("?")
+                                : disc.killer->name) +
+        "'";
+    if (!cause.empty()) out += " (" + cause + ")";
+    out +=
+        ". The parametric chain consumes the CURRENT state — the "
+        "newest body — and the dead edge has no descendant there. "
+        "Remedy: pick the edge from the newest body's own list, or "
+        "remove the chamfer that consumed the edge.";
+    return out;
+}
+
+// chamfer_box_class_call — THE BOX CLASS'S TWO DOORS (G6 m5): the
+// resolved edge's adjacency read, never a name parsed — a VERTICAL
+// spigolo through chamfer_edge (the m1 walk, its own bands and its
+// own refusals riding), a RING spigolo (plane × plane, horizontal)
+// through chamfer_corner_act (the m3 one-corner door, its own
+// admission guarding the bevel-occupied corner and the setback
+// agreement). The corner act's reference IS the ring edge the
+// recipe carries — the corner found topologically inside the
+// kernel, the 17/11 law its own.
+inline std::unique_ptr<brep::BRepBody> chamfer_box_class_call(
+    const brep::BRepBody& body, const geometry::ShapeId& reference,
+    double setback, const brep::ChamferNaming& naming) {
+    for (brep::EdgeId k = 0; k < body.edge_count(); ++k) {
+        const brep::EdgeInfo info = brep::query_edge(body, k);
+        if (info.id != reference) continue;
+        const auto& e = body.edges[k];
+        if (e.coedges().size() != 2) break;  // the vertical door answers
+        const auto face_of = [&](const brep::CoEdge* ce)
+            -> std::size_t {
+            for (std::size_t f = 0; f < body.face_count(); ++f)
+                for (const auto& loop :
+                     body.solid.shell().faces()[f].loops())
+                    for (const auto& other : loop.coedges())
+                        if (&other == ce) return f;
+            return body.face_count();
+        };
+        const std::size_t f0 = face_of(e.coedges()[0]);
+        const std::size_t f1 = face_of(e.coedges()[1]);
+        if (f0 >= body.face_count() || f1 >= body.face_count())
+            break;  // the vertical door answers
+        struct KindReader : brep::SurfaceVisitor {
+            const brep::PlaneSurface* p{nullptr};
+            void visit(const brep::PlaneSurface& s) override {
+                p = &s;
+            }
+        };
+        const auto is_plane = [&](std::size_t f) {
+            KindReader r;
+            const auto* s = body.solid.shell().faces()[f].surface();
+            if (s != nullptr) s->accept(r);
+            return r.p != nullptr;
+        };
+        const math::Vec3d& pa =
+            body.vertices[static_cast<std::size_t>(e.vertex(0))]
+                .position();
+        const math::Vec3d& pb =
+            body.vertices[static_cast<std::size_t>(e.vertex(1))]
+                .position();
+        const double geo_tol = 1e-9;
+        const bool vertical =
+            std::abs(pa.x - pb.x) <= geo_tol &&
+            std::abs(pa.y - pb.y) <= geo_tol;
+        if (is_plane(f0) && is_plane(f1) && !vertical) {
+            // THE RING SPIGOLO — the m3 corner act (the reference
+            // names the corner's ring edge; the kernel's own
+            // admission guards the occupied corner and the setback
+            // agreement, its own words).
+            return brep::chamfer_corner_act(body, reference, setback,
+                                            naming);
+        }
+        break;  // the vertical door answers (its own refusals ride)
+    }
+    return brep::chamfer_edge(body, reference, setback, naming);
+}
+
+// attach_chamfer — THE SINGLE'S OWN MACHINE (G6 m5, the
+// attach_fillet pattern): ONE definition for creation, the DAG pass
+// and the loader's pass 2. The discovery (the newest carrier, the
+// superseded answer by name), the operand's exact body, the naming
+// context (the chain's ROOT table — the stamps ride the root), the
+// geometric dispatch (chamfer_box_class_call), the CONTEGGIO (the
+// chain formula 8+2k/12+3k/6+k at the landing state, the operand's
+// own k0 completed by one), the tavola's lodging (chamfer_descent).
+// A kernel refusal is the VISIBLE state: the last good body kept,
+// the actionable reason in `chamfer_refusal` — never a throw at the
+// document level (the Phase F philosophy), and a THROWN
+// invalid_argument only at CREATION (the caller — add_chamfer_node
+// — refuses before installing anything).
+inline bool attach_chamfer(
+    SceneNode& n, const std::vector<SceneNode*>& nodes,
+    const std::map<std::uint32_t, brep::DescentTable>* old_tavole) {
+    const brep::ChamferRecipe& recipe = *n.chamfer;
+    // THE DAG IN FILE: each recipe reads only what PRECEDES it.
+    std::size_t until = nodes.size();
+    for (std::size_t k = 0; k < nodes.size(); ++k)
+        if (nodes[k] == &n) { until = k; break; }
+    try {
+        const FilletDiscovery disc = discover_fillet_operand(
+            nodes, recipe.edge_reference, until);
+        if (disc.superseded != nullptr) {
+            n.chamfer_refusal =
+                "attach_chamfer: " +
+                chamfer_vanished_words(disc, recipe.edge_reference);
+            return false;
+        }
+        if (disc.operand == nullptr) {
+            // The dead reference: the resolver leg when the pass
+            // carries the lodgings (the fillet's own class-4
+            // answer), the honest door otherwise.
+            if (old_tavole != nullptr) {
+                for (const auto& [oid, tav] : *old_tavole) {
+                    for (const brep::DescentRow& row : tav.rows) {
+                        if (row.name.empty() ||
+                            row.name != recipe.edge_reference)
+                            continue;
+                        const SceneNode* op = find_node(nodes, oid);
+                        if (op == nullptr || !op->operation.has_value() ||
+                            op->hybrid == nullptr ||
+                            op->hybrid->brep == nullptr)
+                            continue;
+                        const brep::naming::OperandBinding bindings[2] = {
+                            {geometry::FeatureId{op->operation->target},
+                             operand_naming_of(
+                                 *find_node(nodes,
+                                            op->operation->target)),
+                             false},
+                            {geometry::FeatureId{op->operation->tool},
+                             operand_naming_of(
+                                 *find_node(nodes,
+                                            op->operation->tool)),
+                             false}};
+                        const brep::naming::OperationNaming decl{
+                            brep::naming::FeatureKind::Subtract, {},
+                            brep::naming::kSubEdgeRoles,
+                            {bindings, 2}};
+                        const brep::Generation old_gen{
+                            nullptr, &tav, &decl, false};
+                        const brep::Generation new_gen{
+                            op->hybrid->brep.get(), nullptr, &decl,
+                            false};
+                        const brep::EditContext ectx{};
+                        const brep::Resolution res =
+                            brep::resolve(row.shape_id, old_gen,
+                                          new_gen, ectx);
+                        n.chamfer_refusal =
+                            brep::resolution_text(res);
+                        return false;
+                    }
+                }
+            }
+            throw std::invalid_argument(
+                "attach_chamfer: the recipe's edge-reference '" +
+                recipe.edge_reference +
+                "' names no edge among the features' exact sides - "
+                "the reference is the grammar's own form, matched "
+                "whole against the entity names (never parsed, never "
+                "an address). Remedy: pick the edge from the operand "
+                "body's own query (the by-name surface) and re-run.");
+        }
+        const SceneNode* operand = disc.operand;
+        std::unique_ptr<brep::BRepBody> owned =
+            operand_exact_brep_quiet(*operand);
+        if (owned == nullptr)
+            throw std::invalid_argument(
+                "attach_chamfer: the operand's exact side is not "
+                "available (its materialization refused) - the "
+                "chamfer consumes the exact body. Remedy: fix the "
+                "operand's own refusal first (its refusal field "
+                "carries the reason).");
+        const brep::BRepBody& operand_body = *owned;
+        // ---- The naming context: the chain's ROOT table (the
+        // stamps ride the root, whatever feature the operand is).
+        const SceneNode* root =
+            fillet_chain_root(nodes, operand);
+        const brep::naming::OperationNaming* body_table =
+            root == nullptr ? nullptr : operand_naming_of(*root);
+        if (body_table == nullptr)
+            throw std::invalid_argument(
+                "attach_chamfer: the operand carries no naming "
+                "table (the unnamed mode) - the born entities would "
+                "read honestly empty and the references would not "
+                "survive the file. Remedy: model the operand as a "
+                "fitted primitive (the box), or accept the unnamed "
+                "kernel path (CAD_0.brep).");
+        const brep::ChamferNaming naming{
+            geometry::FeatureId{n.id}, body_table};
+        // ---- The operand's own chain state k0 (the naked box 0; a
+        // chain operand its landed verticals — the walk completes
+        // the passage), read from the counts, then the DISPATCH
+        // (the kernel's own admission does the rest, by name, with
+        // the remedy).
+        const std::size_t V0 = operand_body.vertices.size();
+        const std::size_t E0 = operand_body.edges.size();
+        const std::size_t F0 = operand_body.face_count();
+        std::size_t k0 = 0;
+        {
+            const std::size_t k_guess = F0 >= 6 ? F0 - 6 : 0;
+            if (F0 >= 6 && V0 == 8 + 2 * k_guess &&
+                E0 == 12 + 3 * k_guess)
+                k0 = k_guess;
+        }
+        std::unique_ptr<brep::BRepBody> result =
+            chamfer_box_class_call(operand_body, disc.reference,
+                                   recipe.setback, naming);
+        // The resolved edge's own geometry (read here once more, the
+        // dispatch's own rule) decides the CONTEGGIO's form: a
+        // VERTICAL lands the chain formula at k0+1; a RING spigolo
+        // lands the m3 corner act's arithmetic from the k0 state
+        // (V+4/E+6/F+2 — the act consumes the CORNER: 4 vertices
+        // and 3 edges dead, 8 vertices, 9 edges and 2 faces born,
+        // D4.2's own numbers).
+        bool ref_vertical = true;
+        {
+            const double geo_tol = 1e-9;
+            for (brep::EdgeId k = 0;
+                 k < operand_body.edge_count(); ++k) {
+                if (brep::query_edge(operand_body, k).id !=
+                    disc.reference)
+                    continue;
+                const auto& e = operand_body.edges[k];
+                const math::Vec3d& pa =
+                    operand_body.vertices[static_cast<std::size_t>(
+                        e.vertex(0))]
+                        .position();
+                const math::Vec3d& pb =
+                    operand_body.vertices[static_cast<std::size_t>(
+                        e.vertex(1))]
+                        .position();
+                ref_vertical =
+                    std::abs(pa.x - pb.x) <= geo_tol &&
+                    std::abs(pa.y - pb.y) <= geo_tol;
+                break;
+            }
+        }
+        // THE CONTEGGIO (the machine's own arithmetic, the defect
+        // detector): the landing state, the door's own formula.
+        if (ref_vertical) {
+            const std::size_t k = k0 + 1;
+            const std::size_t wantV = 8 + 2 * k;
+            const std::size_t wantE = 12 + 3 * k;
+            const std::size_t wantF = 6 + k;
+            if (result->vertices.size() != wantV ||
+                result->edges.size() != wantE ||
+                result->face_count() != wantF)
+                throw std::invalid_argument(
+                    "attach_chamfer: the walk's conteggio broke "
+                    "(k=" + std::to_string(k0) + " -> " +
+                    std::to_string(k) + ": V=" +
+                    std::to_string(result->vertices.size()) +
+                    "/E=" +
+                    std::to_string(result->edges.size()) +
+                    "/F=" +
+                    std::to_string(result->face_count()) +
+                    " where the chain formula 8+2k/12+3k/6+k reads " +
+                    std::to_string(wantV) + "/" +
+                    std::to_string(wantE) + "/" +
+                    std::to_string(wantF) +
+                    ") - an implementation defect, loud by design. "
+                    "Remedy: report the construction (never "
+                    "re-authored silently).");
+        } else {
+            const std::size_t wantV = V0 + 4;
+            const std::size_t wantE = E0 + 6;
+            const std::size_t wantF = F0 + 2;
+            if (result->vertices.size() != wantV ||
+                result->edges.size() != wantE ||
+                result->face_count() != wantF)
+                throw std::invalid_argument(
+                    "attach_chamfer: the corner act's conteggio "
+                    "broke (V=" +
+                    std::to_string(result->vertices.size()) +
+                    "/E=" +
+                    std::to_string(result->edges.size()) +
+                    "/F=" +
+                    std::to_string(result->face_count()) +
+                    " where the m3 arithmetic from the k=" +
+                    std::to_string(k0) + " state reads " +
+                    std::to_string(wantV) + "/" +
+                    std::to_string(wantE) + "/" +
+                    std::to_string(wantF) +
+                    " (V+4/E+6/F+2, D4.2) - an implementation "
+                    "defect, loud by design. Remedy: report the "
+                    "construction (never re-authored silently).");
+        }
+        n.chamfer_body = std::move(result);
+        n.chamfer_operand_id = operand->id;
+        n.tavola = brep::chamfer_descent(*n.chamfer_body,
+                                         operand_body);
+        n.chamfer_refusal.clear();
+        return true;
+    } catch (const std::invalid_argument& e) {
+        // The visible refusal state: the last good body KEPT (display
+        // and the numbers continue), the actionable reason carried.
+        n.chamfer_refusal = e.what();
+        return false;
+    }
+}
+
+// chamfer_multi_corner_law — THE SETBACK LAW'S ONE DEFINITION (G6
+// m5, ADR-0045 D5.4/D4.1 — "the miter is the three planes'
+// concurrence and closes inside the corner's octant only at the
+// COMMON setback"), shared by every door that carries the body: the
+// machine's pre-kernel check (creation, the DAG pass, the loader's
+// pass 2) and the SAVE DOOR's own reading. The corner graph: two
+// entries are connected when their resolved edges SHARE an endpoint
+// vertex (the corner); within each connected component the setbacks
+// must agree. The verticals never share corners (each corner owns
+// exactly one vertical) — the partial world's own freedom; any ring
+// entry connects the whole map (the ring edges meet every vertical
+// at the corners). Returns "" when the law holds, the loud refusal
+// — D5.4's own name (the kernel's mismatch wall its own last line,
+// its words unchanged), the two entries and their setbacks, the
+// remedy — when it does not. NEVER a kernel question.
+inline std::string chamfer_multi_corner_law(
+    const brep::BRepBody& body,
+    const std::vector<geometry::ShapeId>& references,
+    const std::vector<double>& setbacks,
+    const std::vector<std::string>& texts) {
+    const std::size_t m = references.size();
+    if (m == 0 || setbacks.size() != m || texts.size() != m)
+        return "";  // nothing to judge (the other doors' business)
+    constexpr std::size_t kNone = static_cast<std::size_t>(-1);
+    std::vector<std::pair<std::size_t, std::size_t>> ends(
+        m, {kNone, kNone});
+    for (std::size_t i = 0; i < m; ++i) {
+        for (brep::EdgeId k = 0; k < body.edge_count(); ++k) {
+            if (brep::query_edge(body, k).id != references[i])
+                continue;
+            const auto& e = body.edges[k];
+            ends[i] = {static_cast<std::size_t>(e.vertex(0)),
+                       static_cast<std::size_t>(e.vertex(1))};
+            break;
+        }
+    }
+    // The union-find over the corner graph (the fillet's own shape,
+    // the law's own arithmetic one feature over).
+    std::vector<std::size_t> parent(m);
+    for (std::size_t i = 0; i < m; ++i) parent[i] = i;
+    const auto find = [&](std::size_t x) {
+        while (parent[x] != x)
+            x = parent[x] = parent[parent[x]];
+        return x;
+    };
+    const auto unite = [&](std::size_t a, std::size_t b) {
+        a = find(a); b = find(b);
+        if (a != b) parent[a] = b;
+    };
+    for (std::size_t i = 0; i < m; ++i) {
+        if (ends[i].first == kNone) continue;
+        for (std::size_t j = i + 1; j < m; ++j) {
+            if (ends[j].first == kNone) continue;
+            const bool shared =
+                ends[i].first == ends[j].first ||
+                ends[i].first == ends[j].second ||
+                ends[i].second == ends[j].first ||
+                ends[i].second == ends[j].second;
+            if (shared) unite(i, j);
+        }
+    }
+    for (std::size_t i = 0; i < m; ++i)
+        for (std::size_t j = i + 1; j < m; ++j)
+            if (find(i) == find(j) && setbacks[i] != setbacks[j])
+                return "the corner setbacks disagree "
+                       "(chamfer_corner_setback_mismatch): the "
+                       "edges '" +
+                       texts[i] + "' (d=" +
+                       std::to_string(setbacks[i]) + ") and '" +
+                       texts[j] + "' (d=" +
+                       std::to_string(setbacks[j]) +
+                       ") meet at a common corner - the miter is "
+                       "the three planes' concurrence and closes "
+                       "inside the corner's octant only at the "
+                       "COMMON setback (the connected edge-corner "
+                       "graph forces one setback per component, "
+                       "ADR-0045 D5.4/D4.1). Remedy: author the "
+                       "corner's edges at the same setback, or keep "
+                       "the partial world (the verticals alone - no "
+                       "two verticals share a corner, the setbacks "
+                       "free among them).";
+    return "";
+}
+
+// ---------------------------------------------------------------------------
+// THE CHAMFER'S CONTEMPORANEA MACHINE (G6 m5, ADR-0045 D4.1's
+// derived chain replayed scene-side, the fillet's own machine one
+// feature over): attach_chamfer_multi — ONE definition for creation,
+// the DAG pass and the loader's pass 2. The machine:
+//
+//   1. THE UNANIMITY OF THE OPERAND — every entry's reference must
+//      resolve on the SAME operand (the derived chain replays ONE
+//      body).
+//   2. THE SETBACK LAW, BEFORE ANY KERNEL CALL (D5.4/D4.1): the
+//      resolved edges' SHARED ENDPOINT VERTICES are the corners —
+//      within each connected component the setbacks must agree,
+//      else the loud chamfer_corner_setback_mismatch (the law's
+//      ONE definition, chamfer_multi_corner_law). THE LAW IS THE
+//      DOORS' OWN — the kernel is never asked a question the map
+//      itself already answers.
+//   3. THE GEOMETRIC DISPATCH — each resolved edge is VERTICAL (its
+//      endpoints share (x, y)) or RING (they share z), read from
+//      the operand's own geometry, never a name parsed.
+//   4. THE REPLAY, THE DERIVATION'S OWN ORDER (D4.1): the vertical
+//      passage first — each entry its own walk through the m1
+//      machine, the kernel's chain admission gating every step,
+//      the CONTEGGI verified after every step (8+2k/12+3k/6+k, the
+//      operand's own k0 completed); then, when the map declares the
+//      ring, THE RING AND MITER ACT, INDIVISIBLE — the act's whole
+//      declaration demanded first (the map's ring set must be the
+//      body's COMPLETE ring set — the eight horizontal spigoli
+//      whose adjacent faces are BOTH axis-pure planes, never the
+//      walks' bisector bevels — and the passage must land the act's
+//      own signature 16/24/10), then chamfer_ring_act once, the
+//      verdict 32/48/18 with chi = 2 verified after.
+//   5. THE LODGING — the single's own: the body beside the recipe,
+//      the operand's id, the tavola (the whole diff, one feature).
+//
+// THE PARTIAL WORLD is the map without ring entries: 1..4
+// verticals (any mix with the earlier links), the setbacks FREE
+// among them (no two verticals share a corner — the law's own
+// arithmetic). The refused states are the visible ones (the last
+// good body kept), the creation door excepted (the caller refuses
+// before installing anything).
+// ---------------------------------------------------------------------------
+inline bool attach_chamfer_multi(
+    SceneNode& n, const std::vector<SceneNode*>& nodes,
+    const std::map<std::uint32_t, brep::DescentTable>* old_tavole) {
+    const brep::MultiChamferRecipe& recipe = *n.chamfer_multi;
+    // THE DAG IN FILE: each recipe reads only what PRECEDES it.
+    std::size_t until = nodes.size();
+    for (std::size_t k = 0; k < nodes.size(); ++k)
+        if (nodes[k] == &n) { until = k; break; }
+    try {
+        if (recipe.entries.empty())
+            throw std::invalid_argument(
+                "attach_chamfer_multi: the recipe's map is empty - "
+                "the contemporanea consumes at least one spigolo "
+                "(the edge->setback map, one entry per consumed "
+                "edge). Remedy: pick the edges from the operand "
+                "body's own query (the by-name surface) and re-run.");
+        // The map's own uniqueness (the belt every door wears): an
+        // edge consumed twice is not a map.
+        for (std::size_t i = 0; i < recipe.entries.size(); ++i)
+            for (std::size_t j = i + 1;
+                 j < recipe.entries.size(); ++j)
+                if (recipe.entries[i].edge_reference ==
+                    recipe.entries[j].edge_reference)
+                    throw std::invalid_argument(
+                        "attach_chamfer_multi: the map declares the "
+                        "edge '" +
+                        recipe.entries[i].edge_reference +
+                        "' twice - the edge->setback map is a MAP: "
+                        "one entry per spigolo, the setback one "
+                        "field. Remedy: author one entry per edge.");
+        // ---- 1. THE DISCOVERY, PER ENTRY, and THE UNANIMITY OF
+        // THE OPERAND (all entries resolve on ONE body).
+        struct Resolved {
+            std::string reference_text;
+            geometry::ShapeId reference{};
+            double setback{0.0};
+            bool vertical{false};
+            bool ring{false};
+        };
+        std::vector<Resolved> resolved;
+        resolved.reserve(recipe.entries.size());
+        const SceneNode* operand = nullptr;
+        for (const brep::MultiChamferEntry& entry :
+             recipe.entries) {
+            const FilletDiscovery disc =
+                discover_fillet_operand(
+                    nodes, entry.edge_reference, until);
+            if (disc.superseded != nullptr) {
+                n.chamfer_refusal =
+                    "attach_chamfer_multi: the entry '" +
+                    entry.edge_reference + "' - " +
+                    chamfer_vanished_words(
+                        disc, entry.edge_reference);
+                return false;
+            }
+            if (disc.operand == nullptr) {
+                // The dead reference: the resolver leg when the
+                // pass carries the lodgings, the honest door
+                // otherwise (the fillet's own shape).
+                if (old_tavole != nullptr) {
+                    for (const auto& [oid, tav] : *old_tavole) {
+                        for (const brep::DescentRow& row :
+                             tav.rows) {
+                            if (row.name.empty() ||
+                                row.name != entry.edge_reference)
+                                continue;
+                            const SceneNode* op =
+                                find_node(nodes, oid);
+                            if (op == nullptr ||
+                                !op->operation.has_value() ||
+                                op->hybrid == nullptr ||
+                                op->hybrid->brep == nullptr)
+                                continue;
+                            const brep::naming::OperandBinding
+                                bindings[2] = {
+                                    {geometry::FeatureId{
+                                         op->operation->target},
+                                     operand_naming_of(
+                                         *find_node(
+                                             nodes,
+                                             op->operation->target)),
+                                     false},
+                                    {geometry::FeatureId{
+                                         op->operation->tool},
+                                     operand_naming_of(
+                                         *find_node(
+                                             nodes,
+                                             op->operation->tool)),
+                                     false}};
+                            const brep::naming::OperationNaming
+                                decl{
+                                    brep::naming::FeatureKind::
+                                        Subtract,
+                                    {},
+                                    brep::naming::kSubEdgeRoles,
+                                    {bindings, 2}};
+                            const brep::Generation old_gen{
+                                nullptr, &tav, &decl, false};
+                            const brep::Generation new_gen{
+                                op->hybrid->brep.get(), nullptr,
+                                &decl, false};
+                            const brep::EditContext ectx{};
+                            const brep::Resolution res =
+                                brep::resolve(row.shape_id, old_gen,
+                                              new_gen, ectx);
+                            n.chamfer_refusal =
+                                "attach_chamfer_multi: the entry '" +
+                                entry.edge_reference + "' - " +
+                                brep::resolution_text(res);
+                            return false;
+                        }
+                    }
+                }
+                throw std::invalid_argument(
+                    "attach_chamfer_multi: the entry's "
+                    "edge-reference '" + entry.edge_reference +
+                    "' names no edge among the features' exact "
+                    "sides - the reference is the grammar's own "
+                    "form, matched whole against the entity names "
+                    "(never parsed, never an address). Remedy: "
+                    "pick the edge from the operand body's own "
+                    "query (the by-name surface) and re-run.");
+            }
+            if (operand == nullptr) operand = disc.operand;
+            else if (operand->id != disc.operand->id)
+                throw std::invalid_argument(
+                    "attach_chamfer_multi: the map spans TWO "
+                    "operands ('" + operand->name + "' and '" +
+                    disc.operand->name +
+                    "') - the contemporanea replays the derived "
+                    "chain of ONE body (the act is indivisible, "
+                    "D4.1). Remedy: author the map against a "
+                    "single operand (the box or its chain).");
+            Resolved r;
+            r.reference_text = entry.edge_reference;
+            r.reference = disc.reference;
+            r.setback = entry.setback;
+            resolved.push_back(std::move(r));
+        }
+        // ---- The operand's exact body (the same door, once).
+        std::unique_ptr<brep::BRepBody> owned =
+            operand_exact_brep_quiet(*operand);
+        if (owned == nullptr)
+            throw std::invalid_argument(
+                "attach_chamfer_multi: the operand's exact side is "
+                "not available (its materialization refused) - the "
+                "contemporanea consumes the exact body. Remedy: fix "
+                "the operand's own refusal first.");
+        const brep::BRepBody& body = *owned;
+        // ---- 3. THE GEOMETRIC DISPATCH, per entry, on the
+        // operand's own body (never a name parsed).
+        for (Resolved& r : resolved) {
+            bool found = false;
+            for (brep::EdgeId k = 0; k < body.edge_count(); ++k) {
+                const brep::EdgeInfo info =
+                    brep::query_edge(body, k);
+                if (info.id != r.reference) continue;
+                const auto& e = body.edges[k];
+                const math::Vec3d& pa =
+                    body.vertices[static_cast<std::size_t>(
+                        e.vertex(0))]
+                        .position();
+                const math::Vec3d& pb =
+                    body.vertices[static_cast<std::size_t>(
+                        e.vertex(1))]
+                        .position();
+                const double geo_tol = 1e-9;
+                const bool vertical =
+                    std::abs(pa.x - pb.x) <= geo_tol &&
+                    std::abs(pa.y - pb.y) <= geo_tol;
+                const bool horizontal =
+                    std::abs(pa.z - pb.z) <= geo_tol;
+                if (!vertical && !horizontal)
+                    throw std::invalid_argument(
+                        "attach_chamfer_multi: the entry '" +
+                        r.reference_text + "' is neither a vertical "
+                        "nor a ring spigolo of the box (its "
+                        "endpoints share neither (x, y) nor z) - "
+                        "the contemporanea's world is the cube's "
+                        "twelve spigoli (ADR-0045 D1). Remedy: pick "
+                        "from the box's own edges; the general "
+                        "dihedral is stage 2's seat (D1-OUT).");
+                r.vertical = vertical;
+                r.ring = !vertical;  // horizontal on the box class
+                found = true;
+                break;
+            }
+            if (!found)
+                throw std::invalid_argument(
+                    "attach_chamfer_multi: the entry '" +
+                    r.reference_text +
+                    "' resolves to no edge of the operand body - "
+                    "the discovery's answer and the body disagree "
+                    "(an implementation defect, loud by design).");
+        }
+        // ---- 2. THE SETBACK LAW, BEFORE ANY KERNEL CALL (the
+        // law's ONE definition, shared with the save door).
+        {
+            std::vector<geometry::ShapeId> refs;
+            std::vector<double> setbacks;
+            std::vector<std::string> texts;
+            refs.reserve(resolved.size());
+            setbacks.reserve(resolved.size());
+            texts.reserve(resolved.size());
+            for (const Resolved& r : resolved) {
+                refs.push_back(r.reference);
+                setbacks.push_back(r.setback);
+                texts.push_back(r.reference_text);
+            }
+            const std::string law = chamfer_multi_corner_law(
+                body, refs, setbacks, texts);
+            if (!law.empty())
+                throw std::invalid_argument(
+                    "attach_chamfer_multi: " + law);
+        }
+        // ---- THE NAMING CONTEXT: the chain's ROOT table (the
+        // stamps ride the root, whatever feature the operand is).
+        const SceneNode* root = fillet_chain_root(nodes, operand);
+        const brep::naming::OperationNaming* body_table =
+            root == nullptr ? nullptr : operand_naming_of(*root);
+        if (body_table == nullptr)
+            throw std::invalid_argument(
+                "attach_chamfer_multi: the operand carries no "
+                "naming table (the unnamed mode) - the born "
+                "entities would read honestly empty and the "
+                "references would not survive the file. Remedy: "
+                "model the operand as a fitted primitive (the box), "
+                "or accept the unnamed kernel path (CAD_0.brep).");
+        const brep::ChamferNaming naming{
+            geometry::FeatureId{n.id}, body_table};
+        // ---- 4. THE REPLAY — the vertical passage first (the
+        // authored order, each step gated by the kernel's own chain
+        // admission, the CONTEGGI verified after every step). The
+        // operand's own chain state k0 is read from its counts.
+        const std::size_t V0 = body.vertices.size();
+        const std::size_t E0 = body.edges.size();
+        const std::size_t F0 = body.face_count();
+        std::size_t k0 = 0;
+        {
+            const std::size_t k_guess = F0 >= 6 ? F0 - 6 : 0;
+            if (F0 >= 6 && V0 == 8 + 2 * k_guess &&
+                E0 == 12 + 3 * k_guess)
+                k0 = k_guess;
+        }
+        std::unique_ptr<brep::BRepBody> cur = brep::clone_body(body);
+        std::size_t verticals = 0;
+        bool ring_declared = false;
+        for (const Resolved& r : resolved) {
+            if (!r.vertical) { ring_declared = true; continue; }
+            const std::size_t k_before = k0 + verticals;
+            cur = brep::chamfer_edge(*cur, r.reference, r.setback,
+                                     naming);
+            ++verticals;
+            const std::size_t k_now = k0 + verticals;
+            const std::size_t V = cur->vertices.size();
+            const std::size_t E = cur->edges.size();
+            const std::size_t F = cur->face_count();
+            const std::size_t wantV = 8 + 2 * k_now;
+            const std::size_t wantE = 12 + 3 * k_now;
+            const std::size_t wantF = 6 + k_now;
+            if (V != wantV || E != wantE || F != wantF)
+                throw std::invalid_argument(
+                    "attach_chamfer_multi: the vertical passage's "
+                    "conteggio broke at entry '" +
+                    r.reference_text + "' (k=" +
+                    std::to_string(k_before) + " -> " +
+                    std::to_string(k_now) + ": V=" +
+                    std::to_string(V) + "/E=" + std::to_string(E) +
+                    "/F=" + std::to_string(F) +
+                    " where the chain formula 8+2k/12+3k/6+k reads " +
+                    std::to_string(wantV) + "/" +
+                    std::to_string(wantE) + "/" +
+                    std::to_string(wantF) +
+                    ") - an implementation defect, loud by design. "
+                    "Remedy: report the construction (never "
+                    "re-authored silently).");
+        }
+        // ---- THE ACT'S OWN DECLARATION, verified whole before the
+        // call (the indivisibility is the DOOR's to guard here).
+        if (ring_declared) {
+            // (a) The ring completeness: the map's ring set must be
+            // the body's COMPLETE ring set — the horizontal spigoli
+            // whose adjacent faces are BOTH AXIS-PURE planes (the
+            // box's own: a vertical bevel's bisector normal is
+            // diagonal, |n.x| == |n.y|, so the cap segments — the
+            // horizontal edges bordering a bevel — are excluded by
+            // geometry, never by name).
+            std::vector<geometry::ShapeId> body_ring;
+            struct AxisPureReader : brep::SurfaceVisitor {
+                const brep::PlaneSurface* p{nullptr};
+                void visit(const brep::PlaneSurface& s) override {
+                    p = &s;
+                }
+            };
+            const auto axis_pure = [&](std::size_t f) {
+                AxisPureReader r;
+                const auto* s =
+                    cur->solid.shell().faces()[f].surface();
+                if (s != nullptr) s->accept(r);
+                if (r.p == nullptr) return false;
+                const math::Vec3d nrm = r.p->normal_vec();
+                const double ax = std::abs(nrm.x),
+                             ay = std::abs(nrm.y),
+                             az = std::abs(nrm.z);
+                const double geo_tol = 1e-9;
+                return (ax > 1.0 - geo_tol &&
+                        ay <= geo_tol && az <= geo_tol) ||
+                       (ay > 1.0 - geo_tol &&
+                        ax <= geo_tol && az <= geo_tol) ||
+                       (az > 1.0 - geo_tol &&
+                        ax <= geo_tol && ay <= geo_tol);
+            };
+            for (brep::EdgeId k = 0; k < cur->edge_count(); ++k) {
+                const auto& e = cur->edges[k];
+                if (e.coedges().size() != 2) continue;
+                const auto face_of = [&](const brep::CoEdge* ce)
+                    -> std::size_t {
+                    for (std::size_t f = 0;
+                         f < cur->face_count(); ++f)
+                        for (const auto& loop :
+                             cur->solid.shell().faces()[f].loops())
+                            for (const auto& other :
+                                 loop.coedges())
+                                if (&other == ce) return f;
+                    return cur->face_count();
+                };
+                const std::size_t f0 = face_of(e.coedges()[0]);
+                const std::size_t f1 = face_of(e.coedges()[1]);
+                if (f0 >= cur->face_count() ||
+                    f1 >= cur->face_count())
+                    continue;
+                if (!axis_pure(f0) || !axis_pure(f1)) continue;
+                const math::Vec3d& pa =
+                    cur->vertices[static_cast<std::size_t>(
+                        e.vertex(0))]
+                        .position();
+                const math::Vec3d& pb =
+                    cur->vertices[static_cast<std::size_t>(
+                        e.vertex(1))]
+                        .position();
+                const double geo_tol = 1e-9;
+                if (std::abs(pa.z - pb.z) <= geo_tol)
+                    body_ring.push_back(
+                        brep::query_edge(*cur, k).id);
+            }
+            std::size_t declared_ring = 0;
+            for (const Resolved& r : resolved)
+                if (r.ring) ++declared_ring;
+            const bool complete =
+                declared_ring == body_ring.size() &&
+                [&]() {
+                    for (const Resolved& r : resolved) {
+                        if (!r.ring) continue;
+                        bool hit = false;
+                        for (const geometry::ShapeId& id : body_ring)
+                            if (id == r.reference) { hit = true; break; }
+                        if (!hit) return false;
+                    }
+                    return true;
+                }();
+            if (!complete)
+                throw std::invalid_argument(
+                    "attach_chamfer_multi: the map declares " +
+                    std::to_string(declared_ring) + " of the "
+                    "body's " + std::to_string(body_ring.size()) +
+                    " ring spigoli - the ring is consumed by THE "
+                    "ACT, indivisible (D4.1: mezzo atto e' un corpo "
+                    "che la gate rifiuta). Remedy: declare the "
+                    "whole ring (the contemporanea: every remaining "
+                    "vertical and all eight ring spigoli), or keep "
+                    "the partial world (the verticals alone) - the "
+                    "single corner stays the m3 door's own (the "
+                    "one-edge recipe at a bevel-occupied corner).");
+            // (b) The act's own signature, the formula's numbers
+            // (16/24/10 — the kernel's gate stays; this is the
+            // recipe's own conteggio, the honest pre-verification).
+            {
+                const std::size_t V = cur->vertices.size();
+                const std::size_t E = cur->edges.size();
+                const std::size_t F = cur->face_count();
+                if (V != 16 || E != 24 || F != 10)
+                    throw std::invalid_argument(
+                        "attach_chamfer_multi: the map declares the "
+                        "act without the complete vertical passage - "
+                        "the state is V=" + std::to_string(V) +
+                        "/E=" + std::to_string(E) + "/F=" +
+                        std::to_string(F) +
+                        " where the act's own signature (the chain "
+                        "formula 8+2k/12+3k/6+k at k=4) reads "
+                        "16/24/10 - the act takes the cube after "
+                        "the FOUR VERTICAL CHAMFERS (the consumption "
+                        "order of D4.1). Remedy: complete the "
+                        "verticals in the map (or through the "
+                        "chain), or keep the partial world (the "
+                        "verticals alone).");
+            }
+            // (c) THE ACT — the ring's setback (the law's own: one
+            // setback for the whole connected map).
+            double act_setback = 0.0;
+            for (const Resolved& r : resolved)
+                if (r.ring) { act_setback = r.setback; break; }
+            cur = brep::chamfer_ring_act(*cur, act_setback, naming);
+            {
+                const std::size_t V = cur->vertices.size();
+                const std::size_t E = cur->edges.size();
+                const std::size_t F = cur->face_count();
+                if (V != 32 || E != 48 || F != 18 ||
+                    brep::euler_characteristic(*cur) != 2)
+                    throw std::invalid_argument(
+                        "attach_chamfer_multi: the act's conteggio "
+                        "broke (V=" + std::to_string(V) + "/E=" +
+                        std::to_string(E) + "/F=" +
+                        std::to_string(F) +
+                        " where the derivation reads 32/48/18 with "
+                        "chi=2, ADR-0045 D4.3) - an implementation "
+                        "defect, loud by design. Remedy: report the "
+                        "construction (never re-authored "
+                        "silently).");
+            }
+        }
+        // ---- 5. THE LODGING — the single's own, one feature.
+        n.chamfer_body = std::move(cur);
+        n.chamfer_operand_id = operand->id;
+        n.tavola = brep::chamfer_descent(*n.chamfer_body, body);
+        n.chamfer_refusal.clear();
+        return true;
+    } catch (const std::invalid_argument& e) {
+        // The visible refusal state: the last good body KEPT (display
+        // and the numbers continue), the actionable reason carried.
+        n.chamfer_refusal = e.what();
+        return false;
+    }
+}
+
 class Scene {
 public:
     Scene() = default;
@@ -2667,6 +3676,201 @@ public:
         return id;
     }
 
+    // ---- THE CHAMFER NODES (G6 m5, ADR-0045 D7.1) -----------------
+    // The creation doors' own contract, the fillet's one feature
+    // over: the value class validated LOUDLY (the reference
+    // non-empty, the setback finite and > 0 — the typed value
+    // class, the loader's own door; the map's uniqueness for the
+    // multi), the body materialized FIRST, the node installed
+    // after (a refused creation touches nothing — no node, no
+    // body, no id consumed).
+
+    std::uint32_t add_chamfer_node(const std::string& name,
+                                   brep::ChamferRecipe recipe) {
+        if (recipe.edge_reference.empty())
+            throw std::invalid_argument(
+                "Scene::add_chamfer_node: the recipe's "
+                "edge-reference is empty - the reference is the "
+                "grammar's own form (e.g. 'box#1:vertical2'), the "
+                "pick's own answer.");
+        if (!(recipe.setback > 0.0) ||
+            !std::isfinite(recipe.setback))
+            throw std::invalid_argument(
+                "Scene::add_chamfer_node: the recipe's setback must "
+                "be finite and > 0 (the typed value class, the "
+                "loader's own door).");
+        std::vector<SceneNode*> live;
+        live.reserve(nodes_.size());
+        for (SceneNode& n : nodes_) live.push_back(&n);
+        // Materialize FIRST, install after (the fillet's contract:
+        // a refused creation leaves the scene untouched).
+        SceneNode node;
+        node.id = next_id_;
+        node.kind = NodeKind::Chamfer;
+        node.chamfer = std::move(recipe);
+        if (!attach_chamfer(node, live, nullptr))
+            throw std::invalid_argument(node.chamfer_refusal);
+        node.id = next_id_++;
+        node.name = name.empty()
+                        ? ("Chamfer_" + std::to_string(node.id))
+                        : name;
+        nodes_.push_back(std::move(node));
+        notify(SceneChange::NodeAdded, nodes_.back().id);
+        return nodes_.back().id;
+    }
+
+    // Id-stable re-creation of a CHAMFER node (the command redo and
+    // the delete-undo's other half — the restore pattern, the
+    // fillet's own contract one feature over: the LIFO discipline,
+    // ADR-0027 D2, holds for the chamfer too).
+    std::uint32_t restore_chamfer_node(std::uint32_t id,
+                                       const std::string& name,
+                                       brep::ChamferRecipe recipe) {
+        if (recipe.edge_reference.empty())
+            throw std::invalid_argument(
+                "Scene::restore_chamfer_node: the recipe's "
+                "edge-reference is empty - the reference is the "
+                "grammar's own form, the pick's own answer.");
+        if (!(recipe.setback > 0.0) || !std::isfinite(recipe.setback))
+            throw std::invalid_argument(
+                "Scene::restore_chamfer_node: the recipe's setback "
+                "must be finite and > 0 (the typed value class).");
+        if (get_node(id) != nullptr)
+            throw std::runtime_error(
+                "Scene::restore_chamfer_node: id " +
+                std::to_string(id) +
+                " is already in use - restore-style insertion never "
+                "rebinds (ADR-0027 D2)");
+        std::vector<SceneNode*> live;
+        live.reserve(nodes_.size());
+        for (SceneNode& n : nodes_) live.push_back(&n);
+        SceneNode node;
+        node.id = id;
+        node.kind = NodeKind::Chamfer;
+        node.chamfer = std::move(recipe);
+        if (!attach_chamfer(node, live, nullptr))
+            throw std::invalid_argument(node.chamfer_refusal);
+        node.name = name.empty()
+                        ? ("Chamfer_" + std::to_string(node.id))
+                        : name;
+        nodes_.push_back(std::move(node));
+        if (next_id_ <= id) next_id_ = id + 1;
+        notify(SceneChange::NodeAdded, id);
+        return id;
+    }
+
+    std::uint32_t add_chamfer_multi_node(
+        const std::string& name, brep::MultiChamferRecipe recipe) {
+        if (recipe.entries.empty())
+            throw std::invalid_argument(
+                "Scene::add_chamfer_multi_node: the recipe's map is "
+                "empty - the contemporanea consumes at least one "
+                "spigolo (the edge->setback map). Remedy: pick the "
+                "edges from the operand body's own query.");
+        for (const brep::MultiChamferEntry& e : recipe.entries) {
+            if (e.edge_reference.empty())
+                throw std::invalid_argument(
+                    "Scene::add_chamfer_multi_node: an entry's "
+                    "edge-reference is empty - the reference is the "
+                    "grammar's own form, the pick's own answer.");
+            if (!(e.setback > 0.0) || !std::isfinite(e.setback))
+                throw std::invalid_argument(
+                    "Scene::add_chamfer_multi_node: the entry '" +
+                    e.edge_reference + "' setback must be finite "
+                    "and > 0, got " + std::to_string(e.setback) +
+                    " (the typed value class, the loader's own "
+                    "door).");
+        }
+        for (std::size_t i = 0; i < recipe.entries.size(); ++i)
+            for (std::size_t j = i + 1;
+                 j < recipe.entries.size(); ++j)
+                if (recipe.entries[i].edge_reference ==
+                    recipe.entries[j].edge_reference)
+                    throw std::invalid_argument(
+                        "Scene::add_chamfer_multi_node: the map "
+                        "declares the edge '" +
+                        recipe.entries[i].edge_reference +
+                        "' twice - the edge->setback map is a MAP. "
+                        "Remedy: author one entry per spigolo.");
+        std::vector<SceneNode*> live;
+        live.reserve(nodes_.size());
+        for (SceneNode& n : nodes_) live.push_back(&n);
+        // Materialize FIRST, install after (the single's contract:
+        // a refused creation leaves the scene untouched).
+        SceneNode node;
+        node.id = next_id_;
+        node.kind = NodeKind::ChamferMulti;
+        node.chamfer_multi = std::move(recipe);
+        if (!attach_chamfer_multi(node, live, nullptr))
+            throw std::invalid_argument(node.chamfer_refusal);
+        node.id = next_id_++;
+        node.name = name.empty()
+                        ? ("ChamferMulti_" +
+                           std::to_string(node.id))
+                        : name;
+        nodes_.push_back(std::move(node));
+        notify(SceneChange::NodeAdded, nodes_.back().id);
+        return nodes_.back().id;
+    }
+
+    // Id-stable re-creation of a CHAMFER CONTEMPORANEA node (the
+    // command redo and the delete-undo's other half — the restore
+    // pattern, the single's own contract one recipe over).
+    std::uint32_t restore_chamfer_multi_node(
+        std::uint32_t id, const std::string& name,
+        brep::MultiChamferRecipe recipe) {
+        if (recipe.entries.empty())
+            throw std::invalid_argument(
+                "Scene::restore_chamfer_multi_node: the recipe's "
+                "map is empty - the contemporanea consumes at least "
+                "one spigolo.");
+        for (const brep::MultiChamferEntry& e : recipe.entries) {
+            if (e.edge_reference.empty())
+                throw std::invalid_argument(
+                    "Scene::restore_chamfer_multi_node: an entry's "
+                    "edge-reference is empty - the reference is the "
+                    "grammar's own form.");
+            if (!(e.setback > 0.0) || !std::isfinite(e.setback))
+                throw std::invalid_argument(
+                    "Scene::restore_chamfer_multi_node: the entry '"
+                    + e.edge_reference + "' setback must be finite "
+                    "and > 0 (the typed value class).");
+        }
+        for (std::size_t i = 0; i < recipe.entries.size(); ++i)
+            for (std::size_t j = i + 1;
+                 j < recipe.entries.size(); ++j)
+                if (recipe.entries[i].edge_reference ==
+                    recipe.entries[j].edge_reference)
+                    throw std::invalid_argument(
+                        "Scene::restore_chamfer_multi_node: the map "
+                        "declares the edge '" +
+                        recipe.entries[i].edge_reference +
+                        "' twice - the map's uniqueness.");
+        if (get_node(id) != nullptr)
+            throw std::runtime_error(
+                "Scene::restore_chamfer_multi_node: id " +
+                std::to_string(id) +
+                " is already in use - restore-style insertion never "
+                "rebinds (ADR-0027 D2)");
+        std::vector<SceneNode*> live;
+        live.reserve(nodes_.size());
+        for (SceneNode& n : nodes_) live.push_back(&n);
+        SceneNode node;
+        node.id = id;
+        node.kind = NodeKind::ChamferMulti;
+        node.chamfer_multi = std::move(recipe);
+        if (!attach_chamfer_multi(node, live, nullptr))
+            throw std::invalid_argument(node.chamfer_refusal);
+        node.name = name.empty()
+                        ? ("ChamferMulti_" +
+                           std::to_string(node.id))
+                        : name;
+        nodes_.push_back(std::move(node));
+        if (next_id_ <= id) next_id_ = id + 1;
+        notify(SceneChange::NodeAdded, id);
+        return id;
+    }
+
     // THE UNIFORM RADIUS EDIT (the m6 silent edit one recipe over,
     // D5.4's own leg): ONE scene mutation, EVERY entry's radius set
     // to the same value, the whole contemporanea re-run — the
@@ -2909,6 +4113,62 @@ public:
         return fillet_multi_corner_law(*owned, refs, radii, texts);
     }
 
+    // chamfer_multi_save_law — THE SAVE DOOR'S OWN READING of the
+    // chamfer contemporanea's recipe law (G6 m5, ADR-0045 D7.1 —
+    // the law read at TWO points, the write and the
+    // re-materialization: two doors, one law): the resolvable
+    // entries resolved through the SAME discovery the machine
+    // walks, the operand's unanimity among them, then THE SETBACK
+    // LAW'S one definition (chamfer_multi_corner_law) on the
+    // operand's own corners. An entry that resolves on nothing
+    // (the dead reference) is the Phase F state, not a law
+    // violation — it rides the file, the load reproduces the
+    // refusal; THE LAW (the recipe's own incoherence through the
+    // box's corners) is refused at the write, D5.4's own name.
+    // Returns "" when the law holds, the refusal text when it does
+    // not.
+    std::string chamfer_multi_save_law(
+        const brep::MultiChamferRecipe& recipe) const {
+        if (recipe.entries.empty()) return "";
+        auto& nodes_mut = const_cast<std::vector<SceneNode>&>(
+            nodes_);
+        std::vector<SceneNode*> live;
+        live.reserve(nodes_mut.size());
+        for (SceneNode& n : nodes_mut) live.push_back(&n);
+        const SceneNode* operand = nullptr;
+        std::unique_ptr<brep::BRepBody> owned;
+        std::vector<geometry::ShapeId> refs;
+        std::vector<double> setbacks;
+        std::vector<std::string> texts;
+        for (const brep::MultiChamferEntry& entry :
+             recipe.entries) {
+            const FilletDiscovery disc = discover_fillet_operand(
+                live, entry.edge_reference);
+            if (disc.operand == nullptr)
+                continue;  // the Phase F state rides the file
+            if (operand == nullptr) {
+                operand = disc.operand;
+                owned = operand_exact_brep_quiet(*operand);
+                if (owned == nullptr)
+                    continue;  // not the save's to judge
+            } else if (operand->id != disc.operand->id) {
+                return "the map spans TWO operands ('" +
+                       operand->name + "' and '" +
+                       disc.operand->name +
+                       "') - the contemporanea replays the derived "
+                       "chain of ONE body (the act is indivisible, "
+                       "D4.1). Remedy: author the map against a "
+                       "single operand (the box or its chain).";
+            }
+            refs.push_back(disc.reference);
+            setbacks.push_back(entry.setback);
+            texts.push_back(entry.edge_reference);
+        }
+        if (owned == nullptr) return "";
+        return chamfer_multi_corner_law(*owned, refs, setbacks,
+                                        texts);
+    }
+
     // Next id that add_node() will hand out. Persisted by the native
     // format so ids keep growing monotonically across save/load.
     std::uint32_t next_id() const noexcept { return next_id_; }
@@ -2961,22 +4221,28 @@ public:
             if (!n.mesh_dirty || !n.visible) continue;
             if (n.kind == NodeKind::Fillet ||
                 n.kind == NodeKind::FilletMulti ||
+                n.kind == NodeKind::Chamfer ||
+                n.kind == NodeKind::ChamferMulti ||
                 n.kind == NodeKind::Ellipsoid) {
                 // THE EXACT BODIES' DISPLAY MESH (G2-u3 m6-correttiva,
                 // the click-test's defect 1 — "the fillet applied does
                 // not show in the viewport"; the ellipsoid rides the
-                // same road, K1 m3): the exact body tessellated on the
-                // exact bodies' OWN road (brep::tessellate_body — the
-                // same tessellator the bridge and the CSG precedent
-                // walk), never a special render. A refused re-run
-                // keeps the last good body — and its mesh keeps
-                // rendering (the visible state); a null body (never
-                // installed in practice — creation refuses before
-                // installing) is a clean skip, never a guess.
+                // same road, K1 m3, and the chamfer one feature over,
+                // G6 m5): the exact body tessellated on the exact
+                // bodies' OWN road (brep::tessellate_body — the same
+                // tessellator the bridge and the CSG precedent walk),
+                // never a special render. A refused re-run keeps the
+                // last good body — and its mesh keeps rendering (the
+                // visible state); a null body (never installed in
+                // practice — creation refuses before installing) is a
+                // clean skip, never a guess.
                 const brep::BRepBody* exact =
                     n.kind == NodeKind::Ellipsoid
                         ? n.ellipsoid_body.get()
-                        : n.fillet_body.get();
+                        : (n.kind == NodeKind::Chamfer ||
+                                   n.kind == NodeKind::ChamferMulti
+                               ? n.chamfer_body.get()
+                               : n.fillet_body.get());
                 if (exact != nullptr) {
                     brep::TessellationOptions opts;
                     opts.resolution = resolution;

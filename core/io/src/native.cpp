@@ -190,6 +190,13 @@ const bool kMigrator0708Registered [[maybe_unused]] = [] {
                       [](json::JsonValue&) {
                           // no-op by design — see ADR-0043 D6.5.
                       });
+    register_migrator(NativeVersion{0, 8, 0}, NativeVersion{0, 9, 0},
+                      [](json::JsonValue&) {
+                          // no-op by design — see ADR-0045 D7.2 (the
+                          // third capability bump: the chamfer's era
+                          // began at 0.9, every v0.8 byte travels
+                          // whole).
+                      });
     return true;
 }();
 
@@ -1369,6 +1376,72 @@ std::string serialize_document(const scene::Scene& s, const NativeCamera& cam,
                 "fillet_multi",
                 JsonValue(JsonObject{})
                     .set("edges", JsonValue(std::move(edges))));
+        } else if (node.kind == scene::NodeKind::Chamfer) {
+            // v0.9.0 (G6 m5, ADR-0045 D7.1/D7.2): the chamfer
+            // feature — the second replacing feature's own
+            // scene-side payload. The recipe rides NAMED FIELDS: the
+            // edge-reference as the STRING verbatim (the grammar's
+            // own form — never an address, never a dump: a raw image
+            // would carry the string's heap address, the ABI hole
+            // the m4 padding doctrine refuses), the setback its own
+            // typed field. The materialized exact body is DERIVED
+            // state, never serialized — the recipe is the source of
+            // truth; the loader's pass 2 re-materializes
+            // deterministically through the machine. The kind is
+            // guaranteed to carry the payload (add_chamfer_node's
+            // own invariant, the fillet's).
+            n.emplace_back("kind", JsonValue("chamfer"));
+            n.emplace_back(
+                "chamfer",
+                JsonValue(JsonObject{})
+                    .set("edge", JsonValue(node.chamfer->edge_reference))
+                    .set("setback",
+                         JsonValue(static_cast<double>(
+                             node.chamfer->setback))));
+        } else if (node.kind == scene::NodeKind::ChamferMulti) {
+            // v0.9.0 (G6 m5, ADR-0045 D7.1/D7.2): the chamfer
+            // CONTEMPORANEA — the many-edge recipe, the EDGE→SETBACK
+            // MAP. The entries ride NAMED FIELDS (the single
+            // recipe's own two, one map over: the edge-reference as
+            // the STRING verbatim, the setback its own typed field),
+            // the order the AUTHORED order (the vertical passage
+            // replays in it). The materialized exact body is
+            // DERIVED state, never serialized. The kind is
+            // guaranteed to carry the payload
+            // (add_chamfer_multi_node's own invariant).
+            //
+            // THE SAVE DOOR (the SETBACK LAW read at the WRITE —
+            // the write and the re-materialization, two doors one
+            // law): the recipe's law read through the scene's own
+            // resolution (the same discovery the machine walks, the
+            // resolvable subset — a dead reference is the Phase F
+            // state and rides the file), and a map whose entries
+            // disagree at a shared corner is REFUSED at the write
+            // with D5.4's own name: this build never blesses a
+            // self-incoherent map with a file.
+            {
+                const std::string law =
+                    s.chamfer_multi_save_law(*node.chamfer_multi);
+                if (!law.empty())
+                    throw std::runtime_error(
+                        "native format: node " +
+                        std::to_string(node.id) +
+                        " (chamfer_multi) - " + law);
+            }
+            JsonArray edges;
+            edges.reserve(node.chamfer_multi->entries.size());
+            for (const brep::MultiChamferEntry& e :
+                 node.chamfer_multi->entries) {
+                edges.emplace_back(JsonValue(JsonObject{})
+                    .set("edge", JsonValue(e.edge_reference))
+                    .set("setback",
+                         JsonValue(static_cast<double>(e.setback))));
+            }
+            n.emplace_back("kind", JsonValue("chamfer_multi"));
+            n.emplace_back(
+                "chamfer_multi",
+                JsonValue(JsonObject{})
+                    .set("edges", JsonValue(std::move(edges))));
         } else {
             if (!node.builder.empty())
                 n.emplace_back("builder", JsonValue(node.builder));
@@ -1734,11 +1807,48 @@ ParsedDocument parse_document(std::string_view text,
                         version_to_string(file_version) +
                         " writer ever emitted one: the file is not what "
                         "its version claims");
+            } else if (kind == "chamfer") {
+                node.kind = scene::NodeKind::Chamfer;
+                // The v0.9.0 payload (G6 m5, ADR-0045 D7.2). The same
+                // anachronism discipline: a file whose ORIGINAL
+                // version predates 0.9.0 cannot carry a chamfer node
+                // — no earlier writer ever emitted one (the kind did
+                // not exist before the third capability bump): the
+                // file is not what its version claims.
+                if (file_version.major == 0 && file_version.minor < 9)
+                    throw std::runtime_error(
+                        "native format: node " + std::to_string(node.id) +
+                        " is a \"chamfer\" node but the file declares " +
+                        version_to_string(file_version) +
+                        " — chamfer nodes are the v0.9.0 payload "
+                        "(G6 m5, ADR-0045 D7.2) and no " +
+                        version_to_string(file_version) +
+                        " writer ever emitted one: the file is not what "
+                        "its version claims");
+            } else if (kind == "chamfer_multi") {
+                node.kind = scene::NodeKind::ChamferMulti;
+                // The v0.9.0 payload (G6 m5, ADR-0045 D7.2), the
+                // contemporanea's own kind. The same anachronism
+                // discipline: a file whose ORIGINAL version predates
+                // 0.9.0 cannot carry a chamfer_multi node — no
+                // earlier writer ever emitted one: the file is not
+                // what its version claims.
+                if (file_version.major == 0 && file_version.minor < 9)
+                    throw std::runtime_error(
+                        "native format: node " + std::to_string(node.id) +
+                        " is a \"chamfer_multi\" node but the file "
+                        "declares " + version_to_string(file_version) +
+                        " — chamfer_multi nodes are the v0.9.0 payload "
+                        "(G6 m5, ADR-0045 D7.2) and no " +
+                        version_to_string(file_version) +
+                        " writer ever emitted one: the file is not what "
+                        "its version claims");
             } else {
                 throw std::runtime_error(
                     "native format: unknown node \"kind\" \"" + kind +
                     "\" (this build reads Sdf, \"mesh\", \"sketch\", "
-                    "\"fillet\", \"fillet_multi\" and \"ellipsoid\" "
+                    "\"fillet\", \"fillet_multi\", \"ellipsoid\", "
+                    "\"chamfer\" and \"chamfer_multi\" "
                     "nodes; the file was "
                     "likely written by a newer CAD_0 version)");
             }
@@ -1747,13 +1857,16 @@ ParsedDocument parse_document(std::string_view text,
         if (node.kind == scene::NodeKind::Sdf ||
             node.kind == scene::NodeKind::Fillet ||
             node.kind == scene::NodeKind::FilletMulti ||
-            node.kind == scene::NodeKind::Ellipsoid) {
+            node.kind == scene::NodeKind::Ellipsoid ||
+            node.kind == scene::NodeKind::Chamfer ||
+            node.kind == scene::NodeKind::ChamferMulti) {
             node.mesh_dirty = true; // re-tessellate SDF caches after load;
-                                    // the fillet's and the ellipsoid's
-                                    // display meshes are the exact
-                                    // bodies' own tessellations
-                                    // (m6-correttiva) — a cache like any
-                                    // other, never serialized (D11).
+                                    // the fillet's, the ellipsoid's and
+                                    // the chamfer's display meshes are
+                                    // the exact bodies' own
+                                    // tessellations (m6-correttiva) — a
+                                    // cache like any other, never
+                                    // serialized (D11).
         } else {
             node.mesh_dirty = false; // Mesh: the payload IS final — never
                                      // re-tessellated. Sketch: no mesh at
@@ -1775,6 +1888,10 @@ ParsedDocument parse_document(std::string_view text,
                 node.name = "FilletMulti_" + std::to_string(node.id); break;
             case scene::NodeKind::Ellipsoid:
                 node.name = "Ellipsoid_" + std::to_string(node.id); break;
+            case scene::NodeKind::Chamfer:
+                node.name = "Chamfer_" + std::to_string(node.id); break;
+            case scene::NodeKind::ChamferMulti:
+                node.name = "ChamferMulti_" + std::to_string(node.id); break;
             default:
                 node.name = "Shape_" + std::to_string(node.id); break;
             }
@@ -2028,6 +2145,178 @@ ParsedDocument parse_document(std::string_view text,
             continue;
         }
 
+        if (node.kind == scene::NodeKind::Chamfer) {
+            // v0.9.0 (G6 m5, ADR-0045 D7.1/D7.2): the chamfer payload.
+            // The recipe rides NAMED FIELDS — the edge-reference as
+            // the STRING verbatim (the grammar's own form, never an
+            // address, never a dump), the setback its own TYPED
+            // field. No builder, no params, no body, no operation,
+            // no mesh: the representations never mix. The VALUE
+            // class is the loader's (the same doctrine as the
+            // fillet's): the edge non-empty, the setback finite and
+            // > 0 — corruption of this class is a loud load error,
+            // never a default, never a best-effort guess. The
+            // REFERENCE's own class (dead or alive) is NOT the
+            // loader's to judge: the recipe is the truth, the pass-2
+            // re-materialization answers it (the visible refusal
+            // state, the class-4 payload when the old tavola can
+            // speak).
+            for (const char* leftover :
+                 {"builder", "params", "body", "operation", "mesh",
+                  "fillet", "fillet_multi", "chamfer_multi"})
+                if (node_v.find(leftover))
+                    throw std::runtime_error(
+                        std::string("native format: node ") +
+                        std::to_string(node.id) +
+                        " is a \"chamfer\" node but carries a "
+                        "non-chamfer field \"" + leftover +
+                        "\" — the representations never mix (ADR-0002 "
+                        "honest dispatch; a chamfer is an exact-side "
+                        "feature, its payload is the recipe alone)");
+            {
+                const JsonValue& ch = node_v.at("chamfer");
+                if (!ch.is_object())
+                    type_error("object for node \"chamfer\"", ch);
+                brep::ChamferRecipe recipe{};
+                const JsonValue& edge = ch.at("edge");
+                if (!edge.is_string())
+                    type_error("string for chamfer \"edge\"", edge);
+                recipe.edge_reference = edge.as_string();
+                if (recipe.edge_reference.empty())
+                    throw std::runtime_error(
+                        "native format: node " + std::to_string(node.id) +
+                        " chamfer \"edge\" is empty — the reference is "
+                        "the grammar's own form (the pick's own answer, "
+                        "never an address); an empty string names no "
+                        "edge. Remedy: fix the value in the file.");
+                const JsonValue& sb = ch.at("setback");
+                if (!sb.is_number())
+                    type_error("number for chamfer \"setback\"", sb);
+                const double d = sb.as_number();
+                if (!std::isfinite(d) || !(d > 0.0))
+                    throw std::runtime_error(
+                        "native format: node " + std::to_string(node.id) +
+                        " chamfer \"setback\" must be finite and > 0, "
+                        "got " + std::to_string(d) +
+                        " — a non-positive or non-finite setback "
+                        "degenerates the bevel plane (the typed value "
+                        "class). Remedy: fix the value in the file.");
+                recipe.setback = d;
+                node.chamfer = std::move(recipe);
+            }
+            doc.nodes.push_back(std::move(node));
+            continue;
+        }
+
+        if (node.kind == scene::NodeKind::ChamferMulti) {
+            // v0.9.0 (G6 m5, ADR-0045 D7.1/D7.2): the chamfer
+            // CONTEMPORANEA payload — the many-edge recipe, the
+            // EDGE→SETBACK MAP. The entries ride NAMED FIELDS (the
+            // single's own two, one map over). No builder, no
+            // params, no body, no operation, no mesh — the
+            // representations never mix. THE VALUE CLASS is the
+            // loader's (the same doctrine as the single's): the
+            // entries array non-empty, each edge non-empty, each
+            // setback finite and > 0, and THE MAP'S UNIQUENESS (the
+            // same edge string twice is not a map) — corruption of
+            // this class is a loud load error, never a default,
+            // never a best-effort guess. THE SETBACK LAW and the
+            // references' own aliveness are NOT the parse's to
+            // judge: the law is read where the body is (the pass-2
+            // machine — the visible refusal state — and the save
+            // door's own reading), the dead reference is the Phase F
+            // state the pass-2 answers.
+            for (const char* leftover :
+                 {"builder", "params", "body", "operation", "mesh",
+                  "fillet", "fillet_multi", "chamfer"})
+                if (node_v.find(leftover))
+                    throw std::runtime_error(
+                        std::string("native format: node ") +
+                        std::to_string(node.id) +
+                        " is a \"chamfer_multi\" node but carries a "
+                        "non-multi field \"" + leftover +
+                        "\" — the representations never mix (ADR-0002 "
+                        "honest dispatch; the contemporanea's payload "
+                        "is the edge->setback map alone)");
+            {
+                const JsonValue& cm = node_v.at("chamfer_multi");
+                if (!cm.is_object())
+                    type_error("object for node \"chamfer_multi\"", cm);
+                const JsonValue& edges = cm.at("edges");
+                if (!edges.is_array())
+                    type_error("array for chamfer_multi \"edges\"",
+                               edges);
+                if (edges.as_array().empty())
+                    throw std::runtime_error(
+                        "native format: node " +
+                        std::to_string(node.id) +
+                        " chamfer_multi \"edges\" is empty — the "
+                        "contemporanea consumes at least one spigolo "
+                        "(the edge->setback map, one entry per "
+                        "consumed edge). Remedy: fix the value in the "
+                        "file.");
+                brep::MultiChamferRecipe recipe{};
+                recipe.entries.reserve(edges.as_array().size());
+                for (const JsonValue& entry :
+                     edges.as_array()) {
+                    if (!entry.is_object())
+                        type_error("object for chamfer_multi entry",
+                                   entry);
+                    brep::MultiChamferEntry e{};
+                    const JsonValue& edge = entry.at("edge");
+                    if (!edge.is_string())
+                        type_error("string for chamfer_multi \"edge\"",
+                                   edge);
+                    e.edge_reference = edge.as_string();
+                    if (e.edge_reference.empty())
+                        throw std::runtime_error(
+                            "native format: node " +
+                            std::to_string(node.id) +
+                            " chamfer_multi \"edge\" is empty — the "
+                            "reference is the grammar's own form (the "
+                            "pick's own answer, never an address); an "
+                            "empty string names no edge. Remedy: fix "
+                            "the value in the file.");
+                    const JsonValue& sb = entry.at("setback");
+                    if (!sb.is_number())
+                        type_error(
+                            "number for chamfer_multi \"setback\"", sb);
+                    const double d = sb.as_number();
+                    if (!std::isfinite(d) || !(d > 0.0))
+                        throw std::runtime_error(
+                            "native format: node " +
+                            std::to_string(node.id) +
+                            " chamfer_multi \"setback\" must be finite "
+                            "and > 0, got " + std::to_string(d) +
+                            " — a non-positive or non-finite setback "
+                            "degenerates the bevel plane (the typed "
+                            "value class). Remedy: fix the value in "
+                            "the file.");
+                    e.setback = d;
+                    recipe.entries.push_back(std::move(e));
+                }
+                for (std::size_t i = 0;
+                     i < recipe.entries.size(); ++i)
+                    for (std::size_t j = i + 1;
+                         j < recipe.entries.size(); ++j)
+                        if (recipe.entries[i].edge_reference ==
+                            recipe.entries[j].edge_reference)
+                            throw std::runtime_error(
+                                "native format: node " +
+                                std::to_string(node.id) +
+                                " chamfer_multi \"edges\" declares "
+                                "the edge '" +
+                                recipe.entries[i].edge_reference +
+                                "' twice — the edge->setback map is a "
+                                "MAP: one entry per spigolo, the "
+                                "setback one field. Remedy: fix the "
+                                "value in the file.");
+                node.chamfer_multi = std::move(recipe);
+            }
+            doc.nodes.push_back(std::move(node));
+            continue;
+        }
+
         if (node.kind == scene::NodeKind::Ellipsoid) {
             // v0.7.0 (K1 m3, ADR-0042 D6): the ellipsoid payload — the
             // exact-side PRIMITIVE's recipe, the sphere's debt paid as
@@ -2240,7 +2529,7 @@ ParsedDocument parse_document(std::string_view text,
         bool has_ops = false;
         for (const auto& n : doc.nodes)
             if (n.operation || n.fillet || n.fillet_multi ||
-                n.ellipsoid) {
+                n.ellipsoid || n.chamfer || n.chamfer_multi) {
                 has_ops = true;
                 break;
             }

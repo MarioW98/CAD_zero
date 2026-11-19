@@ -92,6 +92,86 @@ struct ChamferNaming {
     const naming::OperationNaming* body{};
 };
 
+// ---------------------------------------------------------------------------
+// THE RECIPE — G6 m5 (ADR-0045 D7.1, the ADR's own words: "la
+// edge-reference come STRINGA (la forma della grammatica, character
+// for character) e il setback come campo TIPATO suo proprio (d > 0,
+// finito)"): the record the FILE carries, named fields, never a raw
+// struct — exactly two, nothing else: the edge-reference as the
+// STRING (the grammar's own form, VERBATIM — 'box#11:vertical2',
+// the pick's own answer), and the setback as its own TYPED field
+// (the uniform retreat d of the bevel plane). MAI un indirizzo, MAI
+// un dump di struct: the padding does not exist in the file, and
+// neither does the pointer — a raw image of this record would carry
+// the string's heap address (the ABI), not its characters (the m4
+// padding doctrine, the fillet's own recipe one feature over). The
+// materialized B-Rep is NEVER the recipe's payload: the body is
+// DERIVED state rebuilt by the doors from this record (the
+// recipe-is-the-truth discipline, ADR-0027 D4 carried to the exact
+// side).
+// ---------------------------------------------------------------------------
+struct ChamferRecipe {
+    std::string edge_reference{};  // the grammar's form, character for character
+    double setback{0.0};           // the uniform retreat d (> 0, finite)
+};
+
+// ---------------------------------------------------------------------------
+// THE MULTI RECIPE — G6 m5 (ADR-0045 D7.1: "la forma multi (la MAPPA
+// spigolo→setback, l'ordine autore, l'unicità della reference
+// rifiutata ad alta voce a ogni porta) sullo stampo di
+// MultiFilletRecipe"): the many-edge record the FILE carries — the
+// EDGE→SETBACK MAP, one entry per consumed spigolo, named fields,
+// never a raw struct. THE LAW THE MAP OBEYS is not the struct's — it
+// is THE SETBACK LAW (D5.4/D4.1: the miter is the three planes'
+// concurrence and closes inside the corner's octant only at the
+// COMMON setback — the connected edge-corner graph forces one
+// setback per component), read by the doors that carry the body
+// (creation, the loader's pass 2, the save door) and NEVER by the
+// kernel: the kernel's own admission (the chain's bands, the act's
+// stage band and its own mismatch wall) stays the last line, its
+// words unchanged. The verticals never share corners (each corner
+// owns exactly one vertical) — the PARTIAL WORLD of free setbacks
+// among them; any ring entry connects the whole map (the ring edges
+// meet every vertical at the corners) — one setback everywhere, the
+// act's own unanimity.
+// ---------------------------------------------------------------------------
+struct MultiChamferEntry {
+    std::string edge_reference{};  // the grammar's form, character for character
+    double setback{0.0};           // the uniform retreat d (> 0, finite)
+};
+
+struct MultiChamferRecipe {
+    // The consumed spigoli, one entry each, in the AUTHORED order
+    // (the vertical passage replays in this order — the derivation's
+    // freedom among the verticals, D4.1; the ring's consumption is
+    // THE ACT, orderless by construction). The SAME reference twice
+    // is a loud refusal at every door (the map's uniqueness — an
+    // edge consumed twice is not a map).
+    std::vector<MultiChamferEntry> entries{};
+};
+
+// chamfer_reference_find — THE STRING'S OWN DOOR (G6 m5, the
+// fillet_reference_find pattern): the recipe's edge-reference
+// resolved against a body's stamps by RENDER equality — the whole
+// string matched against the entity's own name, never parsed, never
+// an address. LOUD on the miss, with the remedy: the string named
+// by name, the body's own edges offered as the candidates.
+inline geometry::ShapeId chamfer_reference_find(
+    const BRepBody& body, const std::string& edge_reference) {
+    for (EdgeId i = 0; i < body.edge_count(); ++i) {
+        const EdgeInfo info = query_edge(body, i);
+        if (!info.name.empty() && info.name == edge_reference)
+            return info.id;
+    }
+    throw std::invalid_argument(
+        "chamfer_reference_find: the edge-reference '" + edge_reference +
+        "' names no edge of this body - the reference is the grammar's "
+        "own form, matched whole against the entity names (never "
+        "parsed, never an address). Remedy: pick the edge from the "
+        "body's own query (the by-name surface), or re-run against "
+        "the body the reference was authored on.");
+}
+
 namespace chamfer_detail {
 
 // The plane payload reader (the typed dispatch — the fillet_detail

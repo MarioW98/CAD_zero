@@ -143,7 +143,28 @@ struct NativeVersion {
 // carry the body — the loader's pass 2 (the visible refusal state,
 // the last good body kept) and THE SAVE DOOR (the write refused
 // with D6.6's own name when the map's resolvable entries disagree
-// at a shared corner) — never by the kernel. The migrator chain upgrades older documents: 0.1.0 → 0.2.0
+// at a shared corner) — never by the kernel.
+// 0.9.0 (G6 m5, ADR-0045 D7.2 — THE CAPABILITY BUMP'S THIRD RITE,
+// the number pre-arbitrated at the v0.8 door): the document gains
+// THE CHAMFER FEATURE — the second replacing feature's own
+// recipes, the SINGLE ("chamfer": the edge-reference string
+// verbatim + the setback its typed field, the m4 padding doctrine)
+// and the CONTEMPORANEA ("chamfer_multi": the EDGE→SETBACK MAP,
+// each entry the single's own two named fields one map over, the
+// authored order the replay's). THE ADDITIVITY LAW (every byte of
+// v0.8 travels whole: no v0.8-era file carries a chamfer node —
+// the kind did not exist — so a v0.8-DECLARING file WALKS the
+// chain's eighth step, the v0.6→v0.7/v0.7→v0.8 capability-bump
+// precedent, NOT the v0.4/v0.5 silent-loss doors); the anachronism
+// gate at the payload refuses a chamfer/chamfer_multi node in any
+// file declaring < 0.9 (the hand-edited lie, the fillet's own gate
+// form); a NEWER file is refused by name. THE SETBACK LAW (the
+// connected edge-corner graph forces one setback per component,
+// ADR-0045 D5.4/D4.1) is read at the doors that carry the body —
+// the loader's pass 2 and THE SAVE DOOR (the write refused with
+// chamfer_corner_setback_mismatch, both values in the payload) —
+// never by the kernel: the kernel's own admission stays the last
+// line, its words unchanged. The migrator chain upgrades older documents: 0.1.0 → 0.2.0
 // (ADR-0007a), 0.2.0 → 0.3.0 (ADR-0027 D4), 0.3.0 → 0.4.0
 // (ADR-0030 D4), 0.4.0 → 0.5.0 (ADR-0040 D6 — the step the
 // pre-sketch goldens walk THROUGH; the v0.4-DECLARING file never
@@ -153,11 +174,14 @@ struct NativeVersion {
 // reaches it, the v0.6 door refuses it first), 0.6.0 → 0.7.0
 // (ADR-0042 D6 — the step the v0.6-DECLARING golden now WALKS
 // whole, its fillet recipe preserved by the no-op: no door stands
-// before it, the era lost nothing) and 0.7.0 → 0.8.0 (ADR-0043
+// before it, the era lost nothing), 0.7.0 → 0.8.0 (ADR-0043
 // D6.5 — the step the v0.7-DECLARING golden now WALKS whole, the
 // additivity law's own promise: every byte travels, only the
-// version field moves).
-inline constexpr NativeVersion kNativeVersion{0, 8, 0};
+// version field moves) and 0.8.0 → 0.9.0 (ADR-0045 D7.2 — the
+// step the v0.8-DECLARING golden now WALKS whole, the third
+// capability bump's own promise: the chamfer's era began at 0.9,
+// nothing v0.8 carries is left behind).
+inline constexpr NativeVersion kNativeVersion{0, 9, 0};
 
 // A Migrator transforms a parsed JSON document from `from_version` to
 // `to_version`. Registered in a chain indexed by the version pair. The
@@ -165,9 +189,11 @@ inline constexpr NativeVersion kNativeVersion{0, 8, 0};
 // the no-op 0.2.0 → 0.3.0 upgrade (ADR-0027 D4), the no-op
 // 0.3.0 → 0.4.0 upgrade (ADR-0030 D4), the no-op 0.4.0 → 0.5.0
 // upgrade (ADR-0040 D6), the no-op 0.5.0 → 0.6.0 upgrade
-// (ADR-0039 D6), the no-op 0.6.0 → 0.7.0 upgrade (ADR-0042 D6) and
-// the no-op 0.7.0 → 0.8.0 upgrade (ADR-0043 D6.5, the additivity
-// law: every v0.7 byte travels whole).
+// (ADR-0039 D6), the no-op 0.6.0 → 0.7.0 upgrade (ADR-0042 D6), the
+// no-op 0.7.0 → 0.8.0 upgrade (ADR-0043 D6.5, the additivity
+// law: every v0.7 byte travels whole) and the no-op 0.8.0 → 0.9.0
+// upgrade (ADR-0045 D7.2, the third capability bump: the chamfer's
+// era began at 0.9, every v0.8 byte travels whole).
 // Any file whose MAJOR.MINOR differs from the
 // current version and has no registered chain of steps fails with an
 // explicit error — except a v0.4-declaring file (the v0.5 door's
@@ -176,7 +202,7 @@ inline constexpr NativeVersion kNativeVersion{0, 8, 0};
 using Migrator = std::function<void(json::JsonValue&)>;
 
 void register_migrator(NativeVersion from, NativeVersion to, Migrator m);
-std::size_t migrator_count() noexcept; // test hook: 7 (0.1→0.2, 0.2→0.3, 0.3→0.4, 0.4→0.5, 0.5→0.6, 0.6→0.7, 0.7→0.8)
+std::size_t migrator_count() noexcept; // test hook: 8 (0.1→0.2, 0.2→0.3, 0.3→0.4, 0.4→0.5, 0.5→0.6, 0.6→0.7, 0.7→0.8, 0.8→0.9)
 
 // Parse "MAJOR.MINOR.PATCH" (e.g. "0.1.0"). Throws std::runtime_error
 // with an explicit message on malformed input.
