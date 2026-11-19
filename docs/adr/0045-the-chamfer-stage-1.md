@@ -528,6 +528,26 @@ sweep su TUTTI gli istanti dello spazio dei casi, mai un campione).
    tutto — i conteggi col termine H, la provenienza, la colonna dei
    nomi, il volume in forma chiusa).
 
+**LANDING (G6 m5, 2026-11-19):** la ricetta e la porta landed per
+intero — `ChamferRecipe`/`MultiChamferRecipe` (i campi nominali, la
+mappa con l'ordine autore e l'unicità), la macchina
+(`attach_chamfer`/`attach_chamfer_multi`: la legge del setback ALLE
+PORTE col nome del mismatch e i valori, MAI dal kernel — la cui
+ammissione resta l'ultima linea, la banda di stadio con la
+provenienza della walk del kernel, il complemento onesto pinnato),
+il rito v0.9.0 compiuto (l'additività, il gate anacronistico, il
+migrator no-op ottavo passo, il golden `native_v0_9_0` con la
+completamento di catena del caso guida e la genealogia nei nomi,
+`che#14`/`che#15`), la riga PLANE del censimento approfondita (il
+writer col bevel, la SSI consumata come grammatica, la
+serializzazione v0.9 — nessuna cella indietro). La correttiva che
+il morso porta: il controllo SUPERSEDED della discovery copre i
+payload di ENTRAMBE le specie (il difetto sibling-cube della linea
+G5, chiuso una feature dopo — la contemporanea che consuma un
+corpo supersede quanto il singolo), e la guardia della pass 2 guadagna
+i chamfer (i documenti solo-feature si ri-materializzano). Il
+picker resta a m6.
+
 ### D8. La stima dei morsi — ciascuno col suo rischio dichiarato
 
 Le unità di lavoro, contate alla scala della casa (i morsi del fillet
