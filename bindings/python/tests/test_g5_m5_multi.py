@@ -101,10 +101,12 @@ def test_the_uniform_edit_and_the_round_trip(tmp_path):
     mp = CAD_0.brep.mass_properties(n.fillet_brep)
     assert mp["volume"] == pytest.approx(want, rel=1e-12)
 
-    # The v0.8 door: save -> load, the recipe entry for entry.
+    # The format door: save -> load, the recipe entry for entry
+    # (G6 m5: the current writer declares 0.9.0 — the chamfer's
+    # bump; the fillet_multi payload rides whole).
     p = str(tmp_path / "g5m5.CAD_0")
     CAD_0.io.save_native(p, s)
-    assert CAD_0.io.NATIVE_VERSION == "0.8.0"
+    assert CAD_0.io.NATIVE_VERSION == "0.9.0"
     s2 = CAD_0.scene.Scene()
     CAD_0.io.load_native(p, s2)
     n2 = s2.get_node(fid)

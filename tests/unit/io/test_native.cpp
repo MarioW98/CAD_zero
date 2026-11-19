@@ -49,6 +49,7 @@
 #include "CAD_0/brep/fillet.hpp"
 #include "CAD_0/brep/query.hpp"
 #include "CAD_0/brep/mass_properties.hpp"
+#include "CAD_0/brep/chain_gate.hpp"
 #include "CAD_0/brep/topology.hpp"
 #include "CAD_0/brep/factory.hpp"
 #include "CAD_0/brep/extrude.hpp"
@@ -208,7 +209,7 @@ std::filesystem::path golden_v7_path() {
     // (id 10, the guide case a = 0.75, c = 0.5) — the recipe the
     // sphere never paid, paid as a pattern: the semiaxes as NAMED
     // FIELDS. FROZEN HISTORY since the v0.8 bump (G5 m5, ADR-0043
-    // D6.5): the current writer declares 0.8.0 and can no longer
+    // D6.5; the current writer declares 0.9.0, G6 m5, and can no longer
     // produce these bytes — the golden WALKS the chain's seventh
     // step whole instead (the additivity law's own proof).
     return std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
@@ -229,6 +230,25 @@ std::filesystem::path golden_v8_path() {
     // named fields").
     return std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
            "native_v0_8_0.CAD_0";
+}
+
+std::filesystem::path golden_v9_path() {
+    // The v0.9.0 golden (G6 m5, ADR-0045 D7.2 — THE CAPABILITY
+    // BUMP'S THIRD RITE): the v0.8 document WHOLE (ids 1-12, every
+    // byte the no-op walk preserves) PLUS THE CHAMFER FEATURE — a
+    // fitted cube (id 13), a single chamfer walk on one vertical
+    // (id 14, the chain's first link, d = 0.4) and the
+    // CONTEMPORANEA completing the eleven remaining spigoli (id 15,
+    // the edge->setback map: the three verticals + the whole ring
+    // at the common setback d = 0.4) — the machine's k0 read from
+    // the single's own counts, the act landing the fully chamfered
+    // cube 32/48/18 with V = 8 - 12d^2 + 6d^3 = 6.464.
+    // Regenerable via CAD_0_GENERATE_GOLDEN=1 after an INTENTIONAL
+    // format change (the companion declaration required per
+    // ADR-0007 — the reason rides the landing commit's body:
+    // "v0.9: the chamfer's recipes ride named fields").
+    return std::filesystem::path(CAD_0_SOURCE_DIR) / "tests" / "golden" /
+           "native_v0_9_0.CAD_0";
 }
 
 std::filesystem::path golden_v5_path() {
@@ -464,6 +484,38 @@ scene::Scene make_v0_8_scene() {
     return s;
 }
 
+// The v0.9.0 golden's scene (G6 m5, ADR-0045 D7.2): the v0.8
+// document WHOLE (ids 1-12 — the fillet contemporanea's cube and
+// recipe among them, every byte the additivity law preserves) PLUS
+// THE CHAMFER FEATURE on its own fitted cube: the single walk
+// (id 14, one vertical at d = 0.4 — the chain's first link, the
+// recipe's first form) and the contemporanea (id 15, the remaining
+// three verticals + the whole ring at the same d = 0.4 — the
+// machine's k0 read from the single's own counts, the act landing
+// the fully chamfered cube, 32/48/18, V = 6.464).
+scene::Scene make_v0_9_scene() {
+    scene::Scene s = make_v0_8_scene();
+    const std::uint32_t box = s.add_node(
+        "ChamferCube", CAD_0::sdf::make_box(
+                           math::Vec3f{1.0f, 1.0f, 1.0f}));
+    REQUIRE(box == 13);
+    const std::uint32_t single = s.add_chamfer_node(
+        "First_Vertical",
+        brep::ChamferRecipe{"box#13:vertical0", 0.4});
+    REQUIRE(single == 14);
+    brep::MultiChamferRecipe r;
+    for (const char* tok :
+         {"bottom0", "bottom1", "bottom2", "bottom3",
+          "top0", "top1", "top2", "top3",
+          "vertical1", "vertical2", "vertical3"})
+        r.entries.push_back(brep::MultiChamferEntry{
+            std::string("box#13:") + tok, 0.4});
+    const std::uint32_t id =
+        s.add_chamfer_multi_node("Eleven_Remaining", std::move(r));
+    REQUIRE(id == 15);
+    return s;
+}
+
 // The embedded mesh of the v0.2.0 golden: a regular octahedron — 6
 // vertices, 8 triangles, deterministic to the last bit. Normals are the
 // positions themselves (every vertex is a unit vector).
@@ -501,9 +553,9 @@ std::string read_file(const std::filesystem::path& p) {
 
 TEST_SUITE("io native format") {
 
-TEST_CASE("version constant + migrator chain (ADR-0007/0007a/0027/0030/0040/0039/0042/0043)") {
+TEST_CASE("version constant + migrator chain (ADR-0007/0007a/0027/0030/0040/0039/0042/0043/0045)") {
     CHECK(native::kNativeVersion.major == 0);
-    CHECK(native::kNativeVersion.minor == 8);
+    CHECK(native::kNativeVersion.minor == 9);
     CHECK(native::kNativeVersion.patch == 0);
     // The registered chain: 0.1.0 -> 0.2.0 (ADR-0007a, no-op),
     // 0.2.0 -> 0.3.0 (ADR-0027 D4, content no-op), 0.3.0 -> 0.4.0
@@ -520,15 +572,20 @@ TEST_CASE("version constant + migrator chain (ADR-0007/0007a/0027/0030/0040/0039
     // nothing at v0.7 (no unpersisted ellipsoid content existed), so
     // the v0.6-DECLARING file walks this step whole, the v0_6 golden
     // with it — the v0.3→v0.4 precedent, never the v0.4/v0.5
-    // silent-loss doors) and 0.7.0 -> 0.8.0 (G5 m5, ADR-0043 D6.5,
+    // silent-loss doors), 0.7.0 -> 0.8.0 (G5 m5, ADR-0043 D6.5,
     // THE CAPABILITY BUMP'S SECOND RITE, the additivity law —
     // content no-op, and NO door before it: every byte of v0.7
     // travels whole (no unpersisted multi-fillet content existed in
     // the v0.7 era), so the v0.7-DECLARING file walks this step
-    // whole, the v0_7 golden with it).
-    CHECK(native::migrator_count() == 7);
+    // whole, the v0_7 golden with it) and 0.8.0 -> 0.9.0 (G6 m5,
+    // ADR-0045 D7.2, THE CAPABILITY BUMP'S THIRD RITE — content
+    // no-op, and NO door before it: every byte of v0.8 travels
+    // whole (no chamfer node existed in the v0.8 era), so the
+    // v0.8-DECLARING file walks this step whole, the v0_8 golden
+    // with it).
+    CHECK(native::migrator_count() == 8);
 
-    const auto v = native::parse_version("0.8.0");
+    const auto v = native::parse_version("0.9.0");
     CHECK(v == native::kNativeVersion);
 
     CHECK_THROWS_WITH_AS(native::parse_version("0.1"),
@@ -697,7 +754,7 @@ TEST_CASE("golden v0.2.0: loads through the 0.2→0.3 migrator; migrated save ==
     native::save_file(tmp, make_canonical_scene(),
                       make_canonical_camera(), make_golden_meshes());
     const std::string fresh_save = read_file(tmp);
-    CHECK(fresh_save.find("\"version\": \"0.8.0\"") != std::string::npos);
+    CHECK(fresh_save.find("\"version\": \"0.9.0\"") != std::string::npos);
     std::filesystem::remove(tmp);
 
     // (b) Load the golden: the 0.2.0 → 0.3.0 migrator runs, framing,
@@ -818,7 +875,7 @@ TEST_CASE("golden v0.3.0: pierced box with recipe - migrates, extraction chi=0 g
     // drift detector survives the bump.
     native::save_file(tmp, make_pierced_scene(), make_canonical_camera());
     const std::string fresh_save = read_file(tmp);
-    CHECK(fresh_save.find("\"version\": \"0.8.0\"") != std::string::npos);
+    CHECK(fresh_save.find("\"version\": \"0.9.0\"") != std::string::npos);
     std::filesystem::remove(tmp);
 
     const native::ParsedDocument doc = native::load_file(gp);
@@ -1001,13 +1058,13 @@ TEST_CASE("golden v0.6.0: the fillet recipe rides named fields - the blind chain
     native::save_file(tmp, make_v0_6_scene(), make_canonical_camera());
     {
         const std::string fresh = read_file(tmp);
-        CHECK(fresh.find("\"version\": \"0.8.0\"") != std::string::npos);
+        CHECK(fresh.find("\"version\": \"0.9.0\"") != std::string::npos);
         std::string fresh_as_v6 = fresh;
-        const std::string v8 = "\"version\": \"0.8.0\"";
+        const std::string v9 = "\"version\": \"0.9.0\"";
         const std::string v6 = "\"version\": \"0.6.0\"";
-        const auto pos = fresh_as_v6.find(v8);
+        const auto pos = fresh_as_v6.find(v9);
         REQUIRE(pos != std::string::npos);
-        fresh_as_v6.replace(pos, v8.size(), v6);
+        fresh_as_v6.replace(pos, v9.size(), v6);
         CHECK(fresh_as_v6 == golden);
     }
     std::filesystem::remove(tmp);
@@ -1411,14 +1468,14 @@ TEST_CASE("G2-u3 m4 - the round-trip's digests: N cycles bit-identical, the refe
             first_file = file_bytes;
             // The first re-save IS the golden bytes MODULO THE VERSION
             // FIELD (the capability bumps' own rite: the golden
-            // declares 0.6.0, the current writer 0.8.0, and the
+            // declares 0.6.0, the current writer 0.9.0, and the
             // no-op walk's own proof is that NOTHING ELSE moved).
             std::string as_v6 = file_bytes;
-            const std::string v8 = "\"version\": \"0.8.0\"";
+            const std::string v9 = "\"version\": \"0.9.0\"";
             const std::string v6 = "\"version\": \"0.6.0\"";
-            const auto pos = as_v6.find(v8);
+            const auto pos = as_v6.find(v9);
             REQUIRE(pos != std::string::npos);
-            as_v6.replace(pos, v8.size(), v6);
+            as_v6.replace(pos, v9.size(), v6);
             CHECK(as_v6 == read_file(golden_v6_path()));
         } else {
             CHECK(file_bytes == first_file);
@@ -1506,10 +1563,10 @@ TEST_CASE("G2-u3 m4 - the doors: the fillet's value class, the anachronism, the 
     }
 
     // (e) THE NEWER FILE, refused by name (upgrade-only, never a
-    // guessed downgrade) — one check on the door (G5 m5: the current
-    // number is 0.8.0, so the newer file declares 0.9.0).
+    // guessed downgrade) — one check on the door (G6 m5: the current
+    // number is 0.9.0, so the newer file declares 0.10.0).
     CHECK_THROWS_WITH_AS(native::parse_document(
-        "{\"format\": \"CAD_0 native\", \"version\": \"0.9.0\","
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.10.0\","
         " \"scene\": { \"next_id\": 1, \"nodes\": [] }}"),
         doctest::Contains("NEWER CAD_0"), std::runtime_error);
 }
@@ -1547,13 +1604,13 @@ TEST_CASE("K1 m3 golden v0.7.0: the ellipsoid recipe rides named fields - the do
             "cad0_golden_v7_check.CAD_0";
         native::save_file(tmp, make_v0_7_scene(), make_canonical_camera());
         const std::string fresh = read_file(tmp);
-        CHECK(fresh.find("\"version\": \"0.8.0\"") != std::string::npos);
+        CHECK(fresh.find("\"version\": \"0.9.0\"") != std::string::npos);
         std::string fresh_as_v7 = fresh;
-        const std::string v8 = "\"version\": \"0.8.0\"";
+        const std::string v9 = "\"version\": \"0.9.0\"";
         const std::string v7 = "\"version\": \"0.7.0\"";
-        const auto pos = fresh_as_v7.find(v8);
+        const auto pos = fresh_as_v7.find(v9);
         REQUIRE(pos != std::string::npos);
-        fresh_as_v7.replace(pos, v8.size(), v7);
+        fresh_as_v7.replace(pos, v9.size(), v7);
         CHECK(fresh_as_v7 == golden);
         std::filesystem::remove(tmp);
     }
@@ -1659,11 +1716,11 @@ TEST_CASE("K1 m3 the round-trip's digests: N cycles bit-identical, the recipe fi
             // golden declares 0.7.0, the current writer 0.8.0, and
             // the no-op walk's own proof is that NOTHING ELSE moved).
             std::string as_v7 = file_bytes;
-            const std::string v8 = "\"version\": \"0.8.0\"";
+            const std::string v9 = "\"version\": \"0.9.0\"";
             const std::string v7 = "\"version\": \"0.7.0\"";
-            const auto pos = as_v7.find(v8);
+            const auto pos = as_v7.find(v9);
             REQUIRE(pos != std::string::npos);
-            as_v7.replace(pos, v8.size(), v7);
+            as_v7.replace(pos, v9.size(), v7);
             CHECK(as_v7 == read_file(golden_v7_path()));
         } else {
             CHECK(file_bytes == first_file);
@@ -1809,7 +1866,7 @@ TEST_CASE("K1 m3 the doors: the anachronism, the value class, the leftovers, and
 
     // (e) THE NEWER FILE, refused by name (one check on this door).
     CHECK_THROWS_WITH_AS(native::parse_document(
-        "{\"format\": \"CAD_0 native\", \"version\": \"0.9.0\","
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.10.0\","
         " \"scene\": { \"next_id\": 1, \"nodes\": [] }}"),
         doctest::Contains("NEWER CAD_0"), std::runtime_error);
 }
@@ -2270,10 +2327,10 @@ TEST_CASE("G4 m4 — the doors: the NEWER file refused by name; the hand-edited 
     // this build's is refused naming both versions and the direction
     // — migrators run upgrade-only, a downgrade is never guessed.
     const std::string newer_minor =
-        "{\"format\": \"CAD_0 native\", \"version\": \"0.9.0\","
+        "{\"format\": \"CAD_0 native\", \"version\": \"0.10.0\","
         " \"scene\": { \"next_id\": 1, \"nodes\": [] }}";
     CHECK_THROWS_WITH_AS(native::parse_document(newer_minor),
-        doctest::Contains("0.9.0"), std::runtime_error);
+        doctest::Contains("0.10.0"), std::runtime_error);
     CHECK_THROWS_WITH_AS(native::parse_document(newer_minor),
         doctest::Contains("NEWER CAD_0"), std::runtime_error);
     CHECK_THROWS_WITH_AS(native::parse_document(newer_minor),
@@ -4099,14 +4156,23 @@ TEST_CASE("G5 m5 golden v0.8.0: the multi-edge recipe rides named fields - the d
     const std::string golden = read_file(gp);
     CHECK(golden.find("\"version\": \"0.8.0\"") != std::string::npos);
 
-    // (a) The fresh save of the v0.8 scene IS the golden bytes (the
-    // writer is the current one — no bump in between).
+    // (a) The fresh save of the v0.8 scene IS the golden bytes
+    // MODULO THE VERSION FIELD (G6 m5, ADR-0045 D7.2 — the third
+    // capability bump: the golden declares 0.8.0, the current
+    // writer 0.9.0, and the no-op walk's own proof is that NOTHING
+    // ELSE moved).
     {
         const std::filesystem::path tmp =
             std::filesystem::temp_directory_path() /
             "cad0_golden_v8_check.CAD_0";
         native::save_file(tmp, make_v0_8_scene(), make_canonical_camera());
-        CHECK(read_file(tmp) == golden);
+        std::string fresh = read_file(tmp);
+        const std::string v9 = "\"version\": \"0.9.0\"";
+        const std::string v8 = "\"version\": \"0.8.0\"";
+        const auto pos = fresh.find(v9);
+        REQUIRE(pos != std::string::npos);
+        fresh.replace(pos, v9.size(), v8);
+        CHECK(fresh == golden);
         std::filesystem::remove(tmp);
     }
 
@@ -4226,8 +4292,259 @@ TEST_CASE("G5 m5 the corpus round-trip: N cycles bit-identical, the recipe entry
         const std::string file_bytes = read_file(next);
         if (cycle == 0) {
             first_file = file_bytes;
+            // The first re-save IS the golden bytes MODULO THE
+            // VERSION FIELD (G6 m5, ADR-0045 D7.2 — the capability
+            // bump: the golden declares 0.8.0, the current writer
+            // 0.9.0, and the no-op walk's own proof is that NOTHING
+            // ELSE moved).
+            std::string as_v8 = file_bytes;
+            const std::string v9 = "\"version\": \"0.9.0\"";
+            const std::string v8 = "\"version\": \"0.8.0\"";
+            const auto pos = as_v8.find(v9);
+            REQUIRE(pos != std::string::npos);
+            as_v8.replace(pos, v9.size(), v8);
+            CHECK(as_v8 == read_file(golden_v8_path()));
+        } else {
+            CHECK(file_bytes == first_file);
+        }
+        if (cycle > 0) std::filesystem::remove(prev);
+        prev = next;
+    }
+    std::filesystem::remove(prev);
+}
+
+// ===========================================================================
+// G6 m5 — THE CHAMFER'S SERIALIZATION (ADR-0045 D7.1/D7.2): the
+// recipe and its multi form, the third capability bump. The golden
+// corpus moves (the v0_9 NEW, the v0_8 WALKS whole — the additivity
+// law); the doors (the anachronism, the value class, the map's
+// uniqueness, the never-mix, the setback law at the SAVE door) live
+// in test_g6_m5_the_door.cpp beside this file; the machine's own
+// laws live in tests/unit/scene/test_g6_m5_recipe.cpp; the
+// corpus-dependent proofs live here (the builders are this file's
+// own).
+// ===========================================================================
+
+TEST_CASE("G6 m5 golden v0.9.0: the chamfer's recipes ride named "
+          "fields - the document whole, the single walk and the "
+          "contemporanea's completion") {
+    // Regeneration mode (maintainer-only, never active in CI):
+    //   CAD_0_GENERATE_GOLDEN=1 ./CAD_0_tests --test-case="*G6 m5 golden v0.9.0*"
+    // rewrites the v0.9.0 golden after an INTENTIONAL format change
+    // (companion declaration required per ADR-0007; the m5 landing's
+    // own reason: "v0.9: the chamfer's recipes ride named fields").
+    if (const char* env = std::getenv("CAD_0_GENERATE_GOLDEN");
+        env && std::string_view(env) == "1") {
+        std::filesystem::create_directories(golden_v9_path().parent_path());
+        native::save_file(golden_v9_path(), make_v0_9_scene(),
+                          make_canonical_camera());
+        MESSAGE("golden file (re)written: ", golden_v9_path().string());
+        return;
+    }
+
+    const std::filesystem::path gp = golden_v9_path();
+    const std::string missing = "golden file missing: " + gp.string();
+    REQUIRE_MESSAGE(std::filesystem::exists(gp), missing);
+    const std::string golden = read_file(gp);
+    CHECK(golden.find("\"version\": \"0.9.0\"") != std::string::npos);
+
+    // (a) The fresh save of the v0.9 scene IS the golden bytes (the
+    // writer is the current one — no bump in between).
+    {
+        const std::filesystem::path tmp =
+            std::filesystem::temp_directory_path() /
+            "cad0_golden_v9_check.CAD_0";
+        native::save_file(tmp, make_v0_9_scene(), make_canonical_camera());
+        CHECK(read_file(tmp) == golden);
+        std::filesystem::remove(tmp);
+    }
+
+    // (b) The golden carries the v0.9 payload: the CHAMFER node in
+    // NAMED FIELDS (the edge-reference as the STRING verbatim, the
+    // setback its own typed field) and the CHAMFER_MULTI node (the
+    // entries array, each entry the single's own two, the authored
+    // order) — the file saying the FIELD's name, never a struct's
+    // byte. The first and the last entries pinned as text.
+    CHECK(golden.find("\"kind\": \"chamfer\"") != std::string::npos);
+    CHECK(golden.find("\"edge\": \"box#13:vertical0\"") !=
+          std::string::npos);
+    CHECK(golden.find("\"setback\": 0.4") != std::string::npos);
+    CHECK(golden.find("\"kind\": \"chamfer_multi\"") !=
+          std::string::npos);
+    CHECK(golden.find("\"edge\": \"box#13:bottom0\"") !=
+          std::string::npos);
+    CHECK(golden.find("\"edge\": \"box#13:vertical3\"") !=
+          std::string::npos);
+    // THE ADDITIVITY (D7.2): every byte of v0.8 travels whole — the
+    // fillet contemporanea's map, the ellipsoid's fields, the
+    // fillet recipe's pinned string, the sketch payload, all of it
+    // beside the new nodes.
+    CHECK(golden.find("\"kind\": \"fillet_multi\"") != std::string::npos);
+    CHECK(golden.find("\"edge\": \"box#11:bottom0\"") != std::string::npos);
+    CHECK(golden.find("\"radius\": 0.5") != std::string::npos);
+    CHECK(golden.find("\"kind\": \"ellipsoid\"") != std::string::npos);
+    CHECK(golden.find("\"kind\": \"fillet\"") != std::string::npos);
+    CHECK(golden.find("\"kind\": \"sketch\"") != std::string::npos);
+
+    // (c) Load: FIFTEEN nodes in construction order, the single
+    // chamfer (id 14) and the contemporanea (id 15) re-materialized
+    // by the loader's pass 2 from the recipes alone (the derived
+    // bodies never serialized) — the machine's own chain
+    // completion: the single's k=1 state completed by the map's
+    // three verticals and the act, the verdict 32/48/18 with
+    // chi = 2, the volume 8 - 12d^2 + 6d^3 at d = 0.4 = 6.464.
+    const native::ParsedDocument doc = native::load_file(gp);
+    REQUIRE(doc.nodes.size() == 15);
+    REQUIRE(doc.next_id == 16);
+    const scene::SceneNode* single = &doc.nodes[13];
+    REQUIRE(single->id == 14);
+    REQUIRE(single->kind == scene::NodeKind::Chamfer);
+    REQUIRE(single->chamfer.has_value());
+    CHECK(single->chamfer->edge_reference == "box#13:vertical0");
+    CHECK(single->chamfer->setback == 0.4);
+    REQUIRE(single->chamfer_body != nullptr);
+    CHECK(single->chamfer_body->vertex_count() == 10);
+    CHECK(single->chamfer_body->edge_count() == 15);
+    CHECK(single->chamfer_body->face_count() == 7);
+    CHECK(single->chamfer_operand_id == 13);
+
+    const scene::SceneNode* cm = &doc.nodes[14];
+    REQUIRE(cm->id == 15);
+    REQUIRE(cm->kind == scene::NodeKind::ChamferMulti);
+    REQUIRE(cm->chamfer_multi.has_value());
+    REQUIRE(cm->chamfer_multi->entries.size() == 11);
+    CHECK(cm->chamfer_multi->entries[0].edge_reference ==
+          "box#13:bottom0");
+    CHECK(cm->chamfer_multi->entries[0].setback == 0.4);
+    CHECK(cm->chamfer_multi->entries[10].edge_reference ==
+          "box#13:vertical3");
+    REQUIRE(cm->chamfer_body != nullptr);
+    CHECK(cm->chamfer_body->vertex_count() == 32);
+    CHECK(cm->chamfer_body->edge_count() == 48);
+    CHECK(cm->chamfer_body->face_count() == 18);
+    CHECK(brep::euler_characteristic(*cm->chamfer_body) == 2);
+    CHECK(brep::is_closed_orientable(*cm->chamfer_body));
+    // The operand discovered: the CHAIN's current state (the
+    // single's body), the machine's k0 its own counts.
+    CHECK(cm->chamfer_operand_id == 14);
+    // THE GOLDEN OF THE TWELVE through the loaded body (the recipe
+    // the truth, the body the cache — the M4 kernel golden one
+    // trip later): V = 8 - 12d^2 + 6d^3 at 1e-12.
+    {
+        const brep::MassProperties mp = brep::mass_properties(
+            *cm->chamfer_body, CAD_0::math::Tolerance::linear(1e-9));
+        CHECK(mp.all_exact);
+        CHECK(mp.volume ==
+              doctest::Approx(8.0 - 12.0 * 0.16 + 6.0 * 0.064)
+                  .epsilon(1e-12));
+    }
+    // THE GENEALOGY IN THE NAMES (the chain completion's own
+    // signature): the final body's twelve bevels — ELEVEN under the
+    // contemporanea's own feature (che#15) and ONE under the
+    // single's (che#14, the first vertical's bevel, its stamp KEPT
+    // through the act's Absorbed re-windowing — the survival the
+    // tavola books).
+    {
+        std::size_t che14 = 0, che15 = 0, others = 0;
+        for (brep::FaceId f = 0;
+             f < cm->chamfer_body->face_count(); ++f) {
+            const std::string name =
+                brep::query_face(*cm->chamfer_body, f).name;
+            if (name.rfind("che#14:bevel[", 0) == 0)
+                ++che14;
+            else if (name.rfind("che#15:bevel[", 0) == 0)
+                ++che15;
+            else if (name.find(":bevel[") != std::string::npos)
+                ++others;
+        }
+        CHECK(che14 == 1);
+        CHECK(che15 == 11);
+        CHECK(others == 0);
+    }
+    // The v0.8 payload's pins UNMOVED (the additivity): the fillet
+    // contemporanea 24/48/26 on node 12, the ellipsoid 2/1/1 on
+    // node 10, the rim fillet 14/20/9 on node 9.
+    const scene::SceneNode* fm = &doc.nodes[11];
+    REQUIRE(fm->id == 12);
+    REQUIRE(fm->fillet_body != nullptr);
+    CHECK(fm->fillet_body->vertex_count() == 24);
+    CHECK(fm->fillet_body->edge_count() == 48);
+    CHECK(fm->fillet_body->face_count() == 26);
+    const scene::SceneNode* el = &doc.nodes[9];
+    REQUIRE(el->id == 10);
+    REQUIRE(el->ellipsoid_body != nullptr);
+    CHECK(el->ellipsoid_body->vertex_count() == 2);
+    const scene::SceneNode* fil = &doc.nodes[8];
+    REQUIRE(fil->id == 9);
+    REQUIRE(fil->fillet_body != nullptr);
+    CHECK(fil->fillet_body->vertex_count() == 14);
+}
+
+TEST_CASE("G6 m5 the corpus round-trip: N cycles bit-identical, the "
+          "recipes entry for entry, the chain completion rebuilt "
+          "every time") {
+    // N = 10 cycles on the v0.9 golden: load -> read the counts and
+    // the digests -> save -> load again. Every cycle's answers equal
+    // the first's; every re-save is byte-identical to the golden
+    // (the writer is the current one); the recipes come back ENTRY
+    // FOR ENTRY every time (the eleven references character for
+    // character, the setbacks their typed values); the chain
+    // completion rebuilds deterministically every cycle (the
+    // single's k=1 state re-discovered, the act re-landed).
+    std::string first_file;
+    std::string first_digest;
+    std::filesystem::path prev = golden_v9_path();
+    for (int cycle = 0; cycle < 10; ++cycle) {
+        const native::ParsedDocument doc = native::load_file(prev);
+        REQUIRE(doc.nodes.size() == 15);
+        const scene::SceneNode* cm = &doc.nodes[14];
+        REQUIRE(cm->chamfer_multi.has_value());
+        REQUIRE(cm->chamfer_multi->entries.size() == 11);
+        REQUIRE(cm->chamfer_body != nullptr);
+        // The counts, the chi and the operand at every cycle (the
+        // re-run answers through the recipe — the derived state's
+        // own determinism, one trip later every time).
+        CHECK(cm->chamfer_body->vertex_count() == 32);
+        CHECK(cm->chamfer_body->edge_count() == 48);
+        CHECK(cm->chamfer_body->face_count() == 18);
+        CHECK(brep::euler_characteristic(*cm->chamfer_body) == 2);
+        CHECK(cm->chamfer_operand_id == 14);
+        const std::string digest =
+            brep::chain_digest(*cm->chamfer_body);
+        if (cycle == 0) {
+            first_digest = digest;
+        } else {
+            CHECK(digest == first_digest);
+        }
+        // The eleven entries, the authored order preserved.
+        for (std::size_t k = 0; k < 11; ++k) {
+            const std::string want = k < 4
+                ? std::string("box#13:bottom") + std::to_string(k)
+                : (k < 8
+                       ? std::string("box#13:top") +
+                             std::to_string(k - 4)
+                       : std::string("box#13:vertical") +
+                             std::to_string(k - 7));
+            CHECK(cm->chamfer_multi->entries[k].edge_reference == want);
+            CHECK(cm->chamfer_multi->entries[k].setback == 0.4);
+        }
+        // The single's recipe, character for character.
+        const scene::SceneNode* single = &doc.nodes[13];
+        REQUIRE(single->chamfer.has_value());
+        CHECK(single->chamfer->edge_reference == "box#13:vertical0");
+        CHECK(single->chamfer->setback == 0.4);
+        // Re-save the loaded document (the camera travels with it).
+        scene::Scene sc;
+        native::install_document(sc, native::ParsedDocument(doc));
+        const std::filesystem::path next =
+            std::filesystem::temp_directory_path() /
+            ("cad0_g6m5_cycle_" + std::to_string(cycle) + ".CAD_0");
+        native::save_file(next, sc, doc.camera);
+        const std::string file_bytes = read_file(next);
+        if (cycle == 0) {
+            first_file = file_bytes;
             // The first re-save IS the golden bytes (no bump between).
-            CHECK(file_bytes == read_file(golden_v8_path()));
+            CHECK(file_bytes == read_file(golden_v9_path()));
         } else {
             CHECK(file_bytes == first_file);
         }

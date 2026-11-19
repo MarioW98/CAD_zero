@@ -28,12 +28,14 @@ set(CAD_0_TEST_SOURCES
     unit/io/test_threemf.cpp
     unit/io/test_native.cpp
     unit/io/test_g5_m5_the_door.cpp
+    unit/io/test_g6_m5_the_door.cpp
     unit/scene/test_builders.cpp
     unit/scene/test_mesh_nodes.cpp
     unit/scene/test_operations.cpp
     unit/scene/test_sketch_scene.cpp
     unit/scene/test_g2_u3_m6_fillet_display.cpp
     unit/scene/test_g5_m5_multi_recipe.cpp
+    unit/scene/test_g6_m5_recipe.cpp
     unit/scene/test_perf4_display_derivation.cpp
     unit/viewport/test_camera.cpp
     unit/viewport/test_command_stack.cpp
